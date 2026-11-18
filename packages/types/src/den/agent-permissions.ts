@@ -6,10 +6,12 @@ import { z } from "zod";
  * Den; each member's desktop app applies engine permissions on OpenCode v2,
  * refuses legacy v1 execution under restrictive external-folder rules,
  * applies website permissions in its built-in browser, and enforces computer
- * use and app scripting permissions at the desktop host on both engines.
+ * use permissions (using apps, moving files and copying between them, app
+ * scripting) at the desktop host on both engines.
  *
  * A permission is one family of agent actions (commands, file edits, folders
- * outside the workspace, computer use, app scripting, websites, web search,
+ * outside the workspace, computer use, files and the clipboard between apps,
+ * app scripting, websites, web search,
  * local skills, local MCP servers) with
  *
  *   - a decision: Allow, Ask first or Block (a picklist), or on/off for the
@@ -29,17 +31,29 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload is browser-only and must never enter the engine grammar.
+ * browser_upload, file_send and host_execution are enforced by the OpenWork
+ * host and must never enter the engine grammar.
+ *
+ * host_execution is the sandbox-only switch: blocking it means the agent's
+ * commands and files run in the local sandbox, and everything else that runs
+ * on the member's computer (apps, the built-in browser, local MCP servers) is
+ * refused by the host. A member's own setting can only be stricter.
  */
 
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
-/** OpenCode permission actions, plus local MCP, computer use and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "script", "browser_upload"] as const;
+/** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution"] as const;
 
-export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "appScripting"] as const;
-export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "script"] as const;
+export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution"] as const;
+export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution"] as const;
+
+/** Desktops that enforce host_execution say so; Den keeps it from the ones that do not. */
+export const AGENT_SANDBOX_ONLY_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Only";
+
+/** What blocking computer use blocks too: everything else the agent does in apps. */
+export const AGENT_COMPUTER_USE_DEPENDENT_ACTIONS = ["computer_files", "computer_clipboard", "script"] as const;
 export type AgentPermissionAction = (typeof AGENT_PERMISSION_ACTIONS)[number];
 
 export type AgentPermissionPatternKind = "command" | "website";
@@ -82,6 +96,16 @@ export const agentPermissionDefinitions = [
     patternNoun: "command",
   },
   {
+    key: "hostExecution",
+    section: "commands",
+    label: "Run tools on this computer",
+    description: "When off, the agent's commands and files run only in a local sandbox on the member's computer, with the workspace and authorized folders mounted. Using apps, the built-in browser and local MCP servers are blocked, and desktop apps that cannot run the sandbox refuse to run agents.",
+    action: "host_execution",
+    control: "toggle",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
     key: "fileEdits",
     section: "files",
     label: "Edit files",
@@ -105,9 +129,29 @@ export const agentPermissionDefinitions = [
     key: "computerUse",
     section: "computer",
     label: "Use apps on the computer",
-    description: "Seeing and controlling apps and remote computers through computer use. Ask first asks the member before the agent takes control in each chat. Blocking it also blocks app scripting.",
+    description: "Seeing and controlling apps and remote computers through computer use. Ask first asks the member before the agent takes control in each chat. Blocking it also blocks moving files, copying between apps and app scripting.",
     action: "computer",
     control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "computerFiles",
+    section: "computer",
+    label: "Move files between apps and folders",
+    description: "Files the agent hands to an app (opening a file in it, or choosing files in its Open panel) and files it saves or exports from an app. Allow never asks. Ask first shows the member each file before it moves.",
+    action: "computer_files",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "computerClipboard",
+    section: "computer",
+    label: "Copy and paste between apps",
+    description: "The agent's own clipboard for computer use: copying or cutting in one app and pasting into another. The member's clipboard is never pasted.",
+    action: "computer_clipboard",
+    control: "toggle",
     patterns: null,
     patternNoun: null,
   },
@@ -140,6 +184,16 @@ export const agentPermissionDefinitions = [
     control: "choice",
     patterns: "website",
     patternNoun: "website",
+  },
+  {
+    key: "fileSends",
+    section: "files",
+    label: "Send files to connected accounts",
+    description: "Files the agent uploads to Google Drive, saves back to Drive, OneDrive or SharePoint, or attaches to Gmail and Outlook drafts. Member decides asks unless the member remembered approval. Ask first requires approval for every file, even when the member previously allowed it.",
+    action: "file_send",
+    control: "choice",
+    patterns: null,
+    patternNoun: null,
   },
   {
     key: "webSearch",
@@ -198,9 +252,25 @@ export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefi
 /** Existing permissions allow by default: the member's own settings apply. */
 export const AGENT_PERMISSION_DEFAULT_DECISION: AgentPermissionDecision = "allow";
 
-/** Browser uploads ask by default, without asserting an administrator's authority. */
+/**
+ * Permissions the member decides when the administrator sets nothing: the
+ * app asks, and the member may remember their answer. An explicit Allow is
+ * authority to skip that prompt; an explicit Ask first asks every time.
+ */
+export const AGENT_PERMISSION_MEMBER_DECIDES_KEYS = ["browserUploads", "fileSends"] as const satisfies readonly AgentPermissionKey[];
+export const AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS = ["browser_upload", "file_send"] as const satisfies readonly AgentPermissionAction[];
+
+export function agentPermissionMemberDecides(key: string): boolean {
+  return AGENT_PERMISSION_MEMBER_DECIDES_KEYS.some((entry) => entry === key);
+}
+
+function actionMemberDecides(action: AgentPermissionAction): boolean {
+  return AGENT_PERMISSION_MEMBER_DECIDES_ACTIONS.some((entry) => entry === action);
+}
+
+/** Member-decided permissions ask by default, without asserting an administrator's authority. */
 export function agentPermissionDefaultDecision(key: AgentPermissionKey): AgentPermissionDecision {
-  return key === "browserUploads" ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
+  return agentPermissionMemberDecides(key) ? "ask" : AGENT_PERMISSION_DEFAULT_DECISION;
 }
 
 export const AGENT_PERMISSION_LIST_MAX = 100;
@@ -469,6 +539,20 @@ export function withoutBrowserUploadPermissions(settings: AgentPermissionSetting
   return visible;
 }
 
+/** Hide only connected-account file settings while their independent rollout is off. */
+export function withoutFileSendPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.fileSends;
+  return visible;
+}
+
+/** Hide the sandbox-only setting from editors that do not know it, or while its rollout is off. */
+export function withoutHostExecutionPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.hostExecution;
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -546,6 +630,79 @@ export function withoutBrowserUploadRules(rules: readonly AgentPermissionRule[])
   return rules.filter((rule) => rule.action !== "browser_upload");
 }
 
+/** Host-only file-send rules must not reach clients while the rollout is off, or clients that cannot read them. */
+export function withoutFileSendRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "file_send");
+}
+
+/** host_execution rules must not reach clients that cannot read them. */
+export function withoutHostExecutionRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "host_execution");
+}
+
+/** Whether the organization requires sandbox-only for this member. */
+export function agentPermissionRulesRequireSandbox(rules: readonly AgentPermissionRule[] | undefined): boolean {
+  return matchingAgentPermissionRule(rules, "host_execution", "*")?.effect === "deny";
+}
+
+export const AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE = "Sandbox-only policy requires an updated OpenWork app";
+
+/**
+ * Actions a desktop without sandbox-only support already enforces. Blocking
+ * them is how a required sandbox fails closed there: that desktop cannot run
+ * the sandbox, so it must not run agents' tools on the computer instead.
+ */
+const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"] as const satisfies readonly AgentPermissionAction[];
+
+/**
+ * The rules one desktop receives. Each capability is a request header the
+ * desktop sends; without it the desktop would reject or ignore that action.
+ * Dropping a rule must never loosen what the organization required, so a
+ * dropped requirement is replaced by blocks the desktop does understand.
+ * Whether the sandbox rollout is on plays no part: a stored requirement keeps
+ * blocking host execution when the rollout is turned off.
+ */
+export function agentPermissionRulesForClient(
+  rules: readonly AgentPermissionRule[],
+  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean },
+): AgentPermissionRule[] {
+  let delivered: AgentPermissionRule[] = [...rules];
+  if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
+  if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
+  if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
+  // Published clients drop unknown actions. Refuse browsing conservatively
+  // rather than silently dropping an active managed upload permission.
+  if (!supports.browserUploads && rules.some((rule) => rule.action === "browser_upload")) {
+    delivered.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" });
+  }
+  // Last, so no allowed pattern reopens host execution on a desktop without the sandbox.
+  if (!supports.sandboxOnly && agentPermissionRulesRequireSandbox(rules)) {
+    for (const action of SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS) {
+      delivered.push({ action, resource: "*", effect: "deny", source: AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE });
+    }
+  }
+  return delivered;
+}
+
+/**
+ * The member's own "Run tools on this computer" setting merged with the
+ * organization's: the stricter wins. A member's Allow cannot undo the
+ * organization's Block, and a member's Block stands when the organization allows.
+ */
+export function resolveHostExecution(input: {
+  /** The member's own setting; true is the default. */
+  localAllow: boolean;
+  /** The organization's delivered rules, or undefined when signed out. */
+  rules: readonly AgentPermissionRule[] | undefined;
+}): { decision: "allow" | "deny"; managed: boolean; source: string | null } {
+  const rule = matchingAgentPermissionRule(input.rules, "host_execution", "*");
+  // host_execution is a switch: anything but Allow from the organization blocks.
+  const organization: AgentPermissionDecision = rule && rule.effect !== "allow" ? "deny" : "allow";
+  const decision = stricterAgentPermissionDecision(input.localAllow ? "allow" : "deny", organization);
+  const managed = organization === "deny";
+  return { decision: decision === "allow" ? "allow" : "deny", managed, source: managed ? rule?.source ?? null : null };
+}
+
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
@@ -621,19 +778,22 @@ export function resolveAgentPermissions(input: {
  * other than Allow becomes a `*` rule, its allowed patterns follow as
  * exceptions, and blocked patterns come last so they always win. A
  * permission that allows adds no rules: the member's own settings apply,
- * except explicit browser upload Allow, which authorizes skipping its prompt.
- * Unset browser upload Ask emits no base rule or administrator source.
+ * except an explicit Allow of a member-decided permission (browser uploads,
+ * files sent to connected accounts), which authorizes skipping its prompt.
+ * An unset member-decided Ask emits no base rule or administrator source.
  */
 export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[]): AgentPermissionRule[] {
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, explicit browser upload Allow is authority to
-    // skip the member's prompt. An unset Ask has no admin source or base rule.
-    const explicit = decisionSource !== null && (restricted || action === "browser_upload");
+    // Unlike engine permissions, an explicit Allow of a member-decided
+    // permission is authority to skip the member's prompt. An unset Ask has
+    // no admin source or base rule.
+    const memberDecides = actionMemberDecides(action);
+    const explicit = decisionSource !== null && (restricted || memberDecides);
     return [
       ...(explicit ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
-      ...(restricted || action === "browser_upload" ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
+      ...(restricted || memberDecides ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
@@ -643,10 +803,10 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
-  // App scripts control apps too, so blocking computer use blocks scripts last.
+  // Files, the clipboard and app scripts all act in apps, so blocking computer use blocks them last.
   const computer = resolved.find((entry) => entry.definition.action === "computer");
   if (computer?.decision === "deny" && computer.decisionSource !== null) {
-    rules.push({ action: "script", resource: "*", effect: "deny", source: computer.decisionSource });
+    for (const action of AGENT_COMPUTER_USE_DEPENDENT_ACTIONS) rules.push({ action, resource: "*", effect: "deny", source: computer.decisionSource });
   }
   return rules;
 }
@@ -698,7 +858,7 @@ export function decideAgentPermission(
   action: AgentPermissionAction,
   resources: readonly string[],
 ): AgentPermissionDecisionResult {
-  const defaultEffect = action === "browser_upload" ? "ask" : "allow";
+  const defaultEffect = actionMemberDecides(action) ? "ask" : "allow";
   let result: AgentPermissionDecisionResult | null = null;
   for (const resource of resources.length > 0 ? resources : ["*"]) {
     const rule = matchingAgentPermissionRule(rules, action, resource);
@@ -715,9 +875,13 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   edit: () => "editing files",
   external_directory: (resource) => resource === "*" ? "folders outside the workspace" : `the folder ${resource}`,
   computer: () => "using apps on this computer",
+  computer_files: () => "moving files between apps and folders",
+  computer_clipboard: () => "copying and pasting between apps",
   script: () => "running app scripts",
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
+  file_send: () => "sending files to connected accounts",
+  host_execution: () => "running tools on this computer outside the sandbox",
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,

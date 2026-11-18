@@ -32,7 +32,7 @@ export function changedMcpAppTool(result: unknown, calledTool: string): string |
 
 /** The request a new conversation starts with, to update an App whose tool changed. */
 export function mcpAppToolRepairPrompt({ appId, title, tool }: { appId: string; title: string; tool: string }): string {
-  return `Fix the existing artifact “${title}” (App ID: ${appId}). Its tool “${tool}” changed at its provider since the App was published, so OpenWork blocks the App's calls to it. Follow the build-an-app skill: read the App with read_app using this App ID, find what the tool takes and returns now, then save the fix with update_app under this same App ID, changing the App's code where the tool changed. Do not create a copy. Tell me what you changed.`
+  return `Fix the existing artifact “${title}” (artifact ID: ${appId}). Its tool “${tool}” changed at its provider since the artifact was published, so OpenWork blocks its calls to it. Follow the build-an-app skill: read the artifact with read_app using this artifact ID, find what the tool takes and returns now, then save the fix with update_app under this same artifact ID, changing its code where the tool changed. Do not create a copy. Tell me what you changed.`
 }
 
 /** Shown above an App whose tool changed, to someone who can update the App. */
@@ -53,7 +53,7 @@ export function McpAppChangedToolPrompt({ tool, onFix, className }: {
   }
   return (
     <div data-testid="mcp-app-changed-tool" className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border bg-background px-3 py-2", className)}>
-      <p className="min-w-0 flex-1 text-sm">“{tool}” changed since this App was published, so the App can’t use it until it’s updated.</p>
+      <p className="min-w-0 flex-1 text-sm">“{tool}” changed since this artifact was published. Update the artifact to use the tool again.</p>
       <Button variant="outline" size="sm" disabled={state === "opening"} onClick={() => void fix()}>
         {state === "opening" ? "Opening conversation…" : "Fix with agent"}
       </Button>

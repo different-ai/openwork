@@ -71,12 +71,44 @@ export function isLegacyBrowserPlugin(value: unknown): boolean {
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
   const path = opencodeConfigPath(workspaceRoot);
   if (!(await exists(path))) return false;
-  const { data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
+  let data: Record<string, unknown>;
+  try {
+    ({ data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true }));
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("read", path, error);
+    return false;
+  }
   if (!Array.isArray(data.plugin) || !data.plugin.some(isLegacyBrowserPlugin)) return false;
   // Remove only that entry, keeping the rest of the file and its comments.
   const plugin = data.plugin.filter((item) => !isLegacyBrowserPlugin(item));
-  await updateJsoncTopLevel(path, { plugin: plugin.length ? plugin : undefined });
+  try {
+    await updateJsoncTopLevel(path, { plugin: plugin.length ? plugin : undefined });
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("update", path, error);
+    return false;
+  }
   return true;
+}
+
+// The legacy-plugin cleanup is best-effort. When the OS denies access to the
+// workspace config (e.g. macOS privacy protection on ~/Documents returns EPERM),
+// skip the cleanup instead of failing every request that resolves the workspace.
+const CONFIG_ACCESS_ERROR_CODES = new Set(["EPERM", "EACCES", "EISDIR"]);
+
+function isConfigAccessError(error: unknown): boolean {
+  const code = errorStringField(error, "code");
+  return code !== undefined && CONFIG_ACCESS_ERROR_CODES.has(code);
+}
+
+function warnConfigAccessError(action: "read" | "update", path: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[workspace-init] Skipping legacy plugin cleanup; could not ${action} ${path}: ${message}`, {
+    fsCode: errorStringField(error, "code"),
+    syscall: errorStringField(error, "syscall"),
+    fsPath: errorStringField(error, "path"),
+  });
 }
 
 export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<EnsureWorkspaceFilesResult> {

@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
+import { useOnboardingStep } from "../../shell/use-onboarding-step";
+import { captureOnboardingEvent } from "../../../app/lib/analytics";
 
 import { t } from "../../../i18n";
 import {
@@ -44,6 +46,7 @@ export type ForcedSigninPageProps = {
  * shared `DenSignInSurface` presentation layer.
  */
 export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
+  const signinRef = useOnboardingStep("signin");
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const desktopConfig = useDesktopConfig();
@@ -79,6 +82,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
+      captureOnboardingEvent("onboarding_signin_selected", { choice: mode === "sign-in" ? "sign_in" : "sign_up" });
       const url = buildDenAuthUrl(baseUrl, mode);
       clearSignInReturnTarget();
       markDesktopSignInInitiated();
@@ -91,6 +95,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       setAuthError(null);
       void tryOpenBrowserAuthUrl(url).then((opened) => {
         if (opened) return;
+        captureOnboardingEvent("onboarding_signin_failed", { reason: "browser_open_failed" });
         setStatusMessage(null);
         setManualAuthOpen(true);
       });
@@ -280,6 +285,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   return (
     <DenSignInSurface
+      ref={signinRef}
       variant="fullscreen"
       appName={appName}
       logoUrl={bootstrap.brandLogoUrl ?? null}

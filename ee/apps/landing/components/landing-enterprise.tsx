@@ -6,7 +6,7 @@ import { CoworkComparison } from "./cowork-comparison";
 import { BrandLogo } from "./lp-brand-logos";
 import { LpDemoAiGateway } from "./lp-demo-panels";
 import { LpArrowLink, LpSectionHeader } from "./lp-primitives";
-import { OpenCodeMark, TerminalMark } from "./lp-service-marks";
+import { AwsMark, OpenCodeMark, TerminalMark } from "./lp-service-marks";
 import { LpTrustRow } from "./lp-trust-row";
 import { OpenWorkMark } from "./openwork-mark";
 import { RoadmapStatusPill } from "./roadmap-page";
@@ -235,7 +235,7 @@ export function LandingEnterprise(props: Props) {
             <BoundaryCard
               title={
                 <>
-                  <BrandLogo name="aws" className="h-[18px] w-[18px] text-[#232F3E]" />
+                  <AwsMark className="h-[18px] w-[18px]" />
                   AWS Bedrock
                 </>
               }

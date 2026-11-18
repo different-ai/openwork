@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util"
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
@@ -830,7 +831,10 @@ async function loadLlmProviders(input: {
   })
 }
 
-async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string) {
+export type LlmProviderWriteInput = z.infer<typeof llmProviderWriteSchema>
+
+/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string, preferredId?: LlmProviderId) {
 
   try {
     const normalized = await normalizeLlmProviderInput(input)
@@ -843,7 +847,7 @@ async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrga
       values: input.teamIds,
     })
 
-    const llmProviderId = createDenTypeId("llmProvider")
+    const llmProviderId = preferredId ?? createDenTypeId("llmProvider")
     const protectedMemberIds = [...new Set([payload.currentMember.id, ...memberIds])]
     const now = new Date()
 
@@ -946,7 +950,13 @@ async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrga
   }
 }
 
-async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>) {
+/**
+ * `scope` (config-blob imports) leaves the models or the access list as stored;
+ * routes write both. Both are written as a diff either way.
+ */
+export async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>, scope: { models?: boolean; access?: boolean } = {}) {
+  const writeModels = scope.models ?? true
+  const writeAccess = scope.access ?? true
 
   let llmProviderId: LlmProviderId
   try {
@@ -1002,12 +1012,28 @@ async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrga
           .where(eq(LlmProviderMemberCredentialTable.llmProviderId, provider.id))
       }
 
-      await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
-      await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
-
-      if (normalized.models.length > 0) {
+      // Models and access are written as a diff: rows that stay keep their id and createdAt,
+      // so an edit to one model or one grant touches only that row.
+      const storedModels = writeModels ? await tx.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id)) : []
+      const wantedModels = new Map((writeModels ? normalized.models : []).map((model) => [model.id, model]))
+      const keptModels = new Set<string>()
+      const removedModels: Array<(typeof storedModels)[number]["id"]> = []
+      for (const row of storedModels) {
+        const model = wantedModels.get(row.modelId)
+        if (!model || keptModels.has(row.modelId)) {
+          removedModels.push(row.id)
+          continue
+        }
+        keptModels.add(row.modelId)
+        if (row.name !== model.name || !isDeepStrictEqual(row.modelConfig, model.config)) {
+          await tx.update(LlmProviderModelTable).set({ name: model.name, modelConfig: model.config }).where(eq(LlmProviderModelTable.id, row.id))
+        }
+      }
+      if (removedModels.length > 0) await tx.delete(LlmProviderModelTable).where(inArray(LlmProviderModelTable.id, removedModels))
+      const addedModels = writeModels ? normalized.models.filter((model) => !keptModels.has(model.id)) : []
+      if (addedModels.length > 0) {
         await tx.insert(LlmProviderModelTable).values(
-          normalized.models.map((model) => ({
+          addedModels.map((model) => ({
             id: createDenTypeId("llmProviderModel"),
             llmProviderId: provider.id,
             modelId: model.id,
@@ -1018,41 +1044,31 @@ async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrga
         )
       }
 
-      const accessRows = input.allMembers
-        ? [
-            // One org-wide grant plus the creator's protected direct row.
-            {
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId: provider.id,
-              orgMembershipId: null,
-              teamId: null,
-              createdAt: updatedAt,
-            },
-            {
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId: provider.id,
-              orgMembershipId: provider.createdByOrgMembershipId,
-              teamId: null,
-              createdAt: updatedAt,
-            },
-          ]
+      const wantedAccess = !writeAccess ? [] : input.allMembers
+        // One org-wide grant plus the creator's protected direct row.
+        ? [{ orgMembershipId: null, teamId: null }, { orgMembershipId: provider.createdByOrgMembershipId, teamId: null }]
         : [
-        ...protectedMemberIds.map((orgMembershipId) => ({
-          id: createDenTypeId("llmProviderAccess"),
-          llmProviderId: provider.id,
-          orgMembershipId,
-          teamId: null,
-          createdAt: updatedAt,
-        })),
-        ...teamIds.map((teamId) => ({
-          id: createDenTypeId("llmProviderAccess"),
-          llmProviderId: provider.id,
-          orgMembershipId: null,
-          teamId,
-          createdAt: updatedAt,
-        })),
-      ]
-
+            ...protectedMemberIds.map((orgMembershipId) => ({ orgMembershipId, teamId: null })),
+            ...teamIds.map((teamId) => ({ orgMembershipId: null, teamId })),
+          ]
+      const accessKey = (row: { orgMembershipId: string | null; teamId: string | null }) => row.orgMembershipId ? `member:${row.orgMembershipId}` : row.teamId ? `team:${row.teamId}` : "org"
+      const wantedAccessKeys = new Set(wantedAccess.map(accessKey))
+      const storedAccess = writeAccess ? await tx.select().from(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id)) : []
+      const keptAccess = new Set<string>()
+      const removedAccess = storedAccess.filter((row) => {
+        const key = accessKey(row)
+        if (!wantedAccessKeys.has(key) || keptAccess.has(key)) return true
+        keptAccess.add(key)
+        return false
+      }).map((row) => row.id)
+      if (removedAccess.length > 0) await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.id, removedAccess))
+      const accessRows = wantedAccess.filter((row) => !keptAccess.has(accessKey(row))).map((row) => ({
+        id: createDenTypeId("llmProviderAccess"),
+        llmProviderId: provider.id,
+        orgMembershipId: row.orgMembershipId,
+        teamId: row.teamId,
+        createdAt: updatedAt,
+      }))
       if (accessRows.length > 0) {
         await tx.insert(LlmProviderAccessTable).values(accessRows)
       }
@@ -1085,7 +1101,7 @@ async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrga
   }
 }
 
-async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
 
   let llmProviderId: LlmProviderId
   try {
@@ -1715,7 +1731,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Set one member's LLM provider credential",
-      description: "Requires the Manage people's provider keys permission. Stores write-only credential material and optional external provisioner identifiers.",
+      description: "Requires the Manage people's provider keys permission. Stores write-only credential material and optional external provisioner identifiers. This is the provisioning route: an organization API key may call it (a script that mints each member's key upstream, for example in LiteLLM or TrueFoundry, and pushes it here). The agent may not.",
       responses: {
         200: jsonResponse("Member credential stored.", memberCredentialSummarySchema),
         400: jsonResponse("The provider is not per-member or the credential is invalid.", memberCredentialBadRequestSchema),
@@ -1726,7 +1742,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     orgPermissionRoute("llm_provider_credentials.manage"),
-    refuseMachineSecrets(["apiKey", "apiKeys"]),
+    // Provisioning scripts authenticate with an API key; the agent never sends keys.
+    refuseMachineSecrets(["apiKey", "apiKeys"], { allowApiKeys: true }),
     paramValidator(orgLlmProviderMemberCredentialParamsSchema),
     jsonValidator(adminMemberCredentialWriteSchema),
     async (c) => {

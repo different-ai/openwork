@@ -15,11 +15,18 @@ import { registerRollupRoutes, runRollups } from "./rollups.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
-const modelsApiJsonPath = path.resolve(srcDir, "..", "models-site", "models", "api.json");
+const modelsSiteDir = path.resolve(srcDir, "..", "models-site", "models");
 const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
 const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.OPENWORK_DEV_MODE === "1");
 
 const app = new Hono();
+
+// Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+// A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+app.use("*", async (c, next) => {
+  await next();
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+});
 
 function healthPath(path: string) {
   return path === "/health" || path === "/ready";
@@ -79,12 +86,20 @@ app.get("/ready", async (c) => {
 });
 
 if (shouldServeLocalModelCatalog) {
-  app.get("/models/api.json", async (c) => {
-    const body = await readFile(modelsApiJsonPath, "utf8");
-    c.header("Content-Type", "application/json; charset=utf-8");
-    c.header("Cache-Control", "no-store");
-    return c.body(body);
-  });
+  // The v1 catalog and the v2 one OpenCode v2 engines read first. Like the
+  // published static files, both ignore `?type=`.
+  const catalogFiles = {
+    "/models/api.json": path.join(modelsSiteDir, "api.json"),
+    "/models/experimental/v2.0/api.json": path.join(modelsSiteDir, "experimental", "v2.0", "api.json"),
+  };
+  for (const [route, file] of Object.entries(catalogFiles)) {
+    app.get(route, async (c) => {
+      const body = await readFile(file, "utf8");
+      c.header("Content-Type", "application/json; charset=utf-8");
+      c.header("Cache-Control", "no-store");
+      return c.body(body);
+    });
+  }
 }
 
 registerAnonymousInferenceRoutes(app);

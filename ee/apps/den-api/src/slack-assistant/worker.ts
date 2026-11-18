@@ -9,7 +9,6 @@ import {
 } from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   buildSlackEnvelope,
@@ -58,12 +57,7 @@ type WorkerDeps = {
   slack: typeof slackClient
   runner: (actor: SlackActor) => SlackRunner
   live: LiveFeedSource
-  /** Whether the member's organization has `workbotDriveFiles` on. Unset: Den's feature rollout. */
-  driveFiles?: (actor: SlackActor) => Promise<boolean>
 }
-
-const slackDriveFilesEnabled = (actor: SlackActor) =>
-  organizationFeatureEnabled(actor.organizationId, "workbotDriveFiles", { userId: actor.userId })
 
 const defaultWorkerDeps: WorkerDeps = {
   slack: slackClient,
@@ -76,9 +70,9 @@ const defaultWorkerDeps: WorkerDeps = {
  * The runner session's setup before each message. Off, the instructions travel in each message and the session has
  * none of Workbot's extras, which also takes them away from threads that had them.
  */
-function slackSessionSettings(workbot: boolean, driveFiles: boolean): SlackSessionSettings {
+function slackSessionSettings(workbot: boolean, driveFiles: boolean, answerReply: boolean): SlackSessionSettings {
   return workbot
-    ? { instructions: slackWorkbotInstructions({ driveFiles }), reactions: true, tasks: true }
+    ? { instructions: slackWorkbotInstructions({ driveFiles, answerReply }), reactions: true, tasks: true }
     : { instructions: "", reactions: false, tasks: false }
 }
 
@@ -307,9 +301,10 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     cp.startedAt ??= Date.now()
     // Quiet by default: Slack's working status, then the answer. Admins can turn on live steps and notes.
     cp.live = installation.progressUpdates
-    // Chosen once per message, so turning the feature off never changes a reply half-way.
+    // Persist the reply format for resumable turns; older in-flight checkpoints keep their original format.
     cp.workbot = true
-    cp.driveFiles = await (suppliedDeps.driveFiles ?? slackDriveFilesEnabled)(actor).catch(() => false)
+    cp.driveFiles = true
+    cp.answerReply = true
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -382,7 +377,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps: WorkerDep
     },
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
-    settings: slackSessionSettings(cp.workbot, cp.driveFiles),
+    settings: slackSessionSettings(cp.workbot, cp.driveFiles, cp.answerReply),
     ...(cp.workbot ? { live: deps.live } : {}),
     renew: () => renewSlackLease(event),
     log: (message, fields) => appLogger.warn(message, { event_id: event.id, ...fields }),
@@ -463,6 +458,8 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
           : error instanceof RemoteSessionUnavailableError
             ? "remote_session_unavailable"
             : "worker_error",
+      // Why the runner gave up (a code such as `model_access_unavailable`), without reading the runner's logs.
+      ...(error instanceof RemoteSessionUnavailableError && error.runnerError ? { runner_error: error.runnerError } : {}),
       elapsed_ms: Date.now() - event.createdAt.getTime(),
     })
   await renewSlackLease(event)

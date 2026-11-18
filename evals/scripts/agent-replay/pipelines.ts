@@ -9,6 +9,7 @@ import {
   parseAgentReply,
   projectGoogleCalendarEvents,
   zonedClock,
+  zonedDayStart,
   zonedInstant,
   type AgentPromptSource,
   type AgentWakeReason,
@@ -22,6 +23,7 @@ import {
   agentMessageInstructions,
   agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentToldToday,
   checkSlotsOn,
   decideBriefDelivery,
   extraChecksLeft,
@@ -38,6 +40,7 @@ import {
   type AgentCheckRequest,
   type AgentConversationTurn,
   type AgentRhythm,
+  type AgentSendCheckVerdict,
   type AgentSentRecord,
 } from "../../../packages/automations/src/proactive-brief.ts";
 import { DEFAULT_AGENT_BRIEF, EMPTY_AGENT_PREFERENCES } from "../../../packages/types/src/den/workbot-proactive.ts";
@@ -62,12 +65,16 @@ import type { ReplayMessage, ReplayModel, ReplayToolCall, ReplayToolSpec, Replay
 export type Pipeline = "old" | "new";
 export type StepUsage = { calls: number } & ReplayUsage;
 export type DeliveredMessage = { at: number; text: string };
+/** The send check (workbotAgentSendCheck), as Den asks it for one message step 2 wrote. */
+export type ReplaySendCheck = (input: { brief: string; message: string; update: boolean; toldToday: readonly string[] }) => Promise<AgentSendCheckVerdict>;
 export type CheckLog = {
   at: number;
   occasion: string;
   answer: string;
   outcome: string;
   delivered: string[];
+  /** Messages the send check held, and why. */
+  held?: { text: string; reason: "brief" | "repeat" }[];
   tools: string[];
   usage: { check: StepUsage; message: StepUsage };
 };
@@ -129,24 +136,28 @@ function guardConnectorTools(scenario: DayScenario, offered: ReadonlySet<string>
 function sourcesFor(scenario: DayScenario, lastReadAt: number | null, anyConnector = false): AgentPromptSource[] {
   return [
     { id: "calendar", name: "Calendar", via: ["Google Calendar"], instruction: "", lastReadAt },
-    { id: "email", name: "Email", via: ["Gmail"], instruction: "", lastReadAt },
-    { id: "chat", name: "Team chat", via: ["Slack"], instruction: "", lastReadAt },
+    // The member's Google Workspace and Slack connections, where mail and chat are read; the scenarios call them `email` and `chat`.
+    { id: "email", name: "Google Workspace", via: [], service: "google-workspace", instruction: "", lastReadAt },
+    { id: "chat", name: "Slack", via: [], service: "slack", instruction: "", lastReadAt },
     ...(scenario.github?.length ? [{ id: "conn_github", name: "GitHub", via: [], instruction: "", lastReadAt }] : []),
     ...(anyConnector ? (scenario.connectors ?? []).map((connector) => ({ id: connector.id, name: connector.name, via: [], instruction: "", lastReadAt })) : []),
   ];
 }
 
 /**
- * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Team chat", "GitHub"), the names
- * people use ("slack", "gmail", "my email"), or the start of another source's name.
+ * What Den's findSource does with a source as step 2 wrote it: its id, its name ("Slack", "GitHub"), the calendar by
+ * its app's name, or the start of a connection's name ("google").
  */
 function resolveSource(source: string, scenario?: DayScenario): string | null {
   const needle = source.trim().toLowerCase().replace(/^my\s+/, "");
   const connector = (scenario?.connectors ?? []).find((entry) => entry.id === needle || entry.name.toLowerCase() === needle || (needle.length > 2 && entry.name.toLowerCase().startsWith(needle)));
   if (connector) return connector.id;
-  const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "team chat": "chat", github: "conn_github" };
-  const aliases: Record<string, string> = { slack: "chat", teams: "chat", gmail: "email", outlook: "email", mail: "email", inbox: "email", "outlook mail": "email", "google calendar": "calendar", "outlook calendar": "calendar" };
-  return sources[needle] ?? aliases[needle] ?? ("github".startsWith(needle) && needle.length > 0 ? "conn_github" : null);
+  const sources: Record<string, string> = { calendar: "calendar", email: "email", chat: "chat", conn_github: "conn_github", "google workspace": "email", slack: "chat", github: "conn_github" };
+  const aliases: Record<string, string> = { "google calendar": "calendar", "outlook calendar": "calendar" };
+  const named = sources[needle] ?? aliases[needle];
+  if (named) return named;
+  if (!needle) return null;
+  return [["google workspace", "email"], ["slack", "chat"], ["github", "conn_github"]].find(([name]) => name?.startsWith(needle))?.[1] ?? null;
 }
 
 function conversationAt(scenario: DayScenario, sent: readonly DeliveredMessage[], now: number): AgentConversationTurn[] {
@@ -166,8 +177,9 @@ function previousEvening(scenario: DayScenario): number {
   return zonedInstant(scenario.timeZone, year ?? 0, month ?? 0, (day ?? 0) - 1, 18);
 }
 
-/** The brief's pipeline over a scenario. */
-export async function runNewPipeline(scenario: DayScenario, model: ReplayModel): Promise<DayRun> {
+/** The brief's pipeline over a scenario; with `sendCheck`, each message step 2 wrote is checked before Den's limits. */
+export async function runNewPipeline(scenario: DayScenario, model: ReplayModel, options: { sendCheck?: ReplaySendCheck } = {}): Promise<DayRun> {
+  const { sendCheck } = options;
   const run: DayRun = { scenario: scenario.id, pipeline: "new", messages: [], checks: [], error: null };
   const tz = scenario.timeZone;
   const rhythm: AgentRhythm = { policy: { workingDays: "weekdays", startHour: 8, endHour: 19 }, everyHours: 2, quietWindow: null };
@@ -179,7 +191,8 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
   let lastReport: { at: number; text: string } | null = null;
   let lastCheckAt: number | null = null;
   const name = scenario.person.first;
-  const instructions = agentCheckInstructions({ name, brief: agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" }) });
+  const brief = agentBriefForCheck({ name, organization: DEFAULT_AGENT_BRIEF, member: scenario.memberLines ?? "" });
+  const instructions = agentCheckInstructions({ name, brief });
   // Any connected connector: its read tools only, decided per tool as Den does when the check starts.
   const connectorTools = connectorReadTools(scenario);
   run.connectorTools = connectorTools.map((tool) => tool.name);
@@ -253,7 +266,17 @@ export async function runNewPipeline(scenario: DayScenario, model: ReplayModel):
             log.answer += `\n\n--- step 2 ---\n${reply.content ?? ""}`;
             if (parsed.kind !== "messages") log.outcome = parsed.kind === "quiet" ? "findings_held" : "unreadable_reply";
             else {
-              const decision = decideBriefDelivery({ messages: parsed.messages, sources: new Set(sourcesFor(scenario, null, true).map((source) => source.id)), resolveSource: (source) => resolveSource(source, scenario), told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
+              let written = parsed.messages;
+              if (sendCheck) {
+                const toldToday = agentToldToday({ conversation: conversationAt(scenario, run.messages, now), sent, since: zonedDayStart(now, tz) });
+                const verdicts = await Promise.all(written.map((message) => sendCheck({ brief, message: message.text, update: message.update, toldToday })));
+                log.held = written.flatMap((message, index) => {
+                  const verdict = verdicts[index];
+                  return verdict?.kind === "hold" ? [{ text: message.text, reason: verdict.reason }] : [];
+                });
+                written = written.filter((_, index) => verdicts[index]?.kind !== "hold");
+              }
+              const decision = decideBriefDelivery({ messages: written, sources: new Set(sourcesFor(scenario, null, true).map((source) => source.id)), resolveSource: (source) => resolveSource(source, scenario), told, sentToday, dailyCap: cap, rhythm, snoozedUntil: null, at: now, timeZone: tz });
               if (decision.kind === "held") log.outcome = decision.reason;
               else {
                 for (const message of decision.deliver) {

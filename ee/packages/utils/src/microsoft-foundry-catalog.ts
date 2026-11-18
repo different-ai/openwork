@@ -30,6 +30,21 @@ export function microsoftFoundryBaseUrl(resourceName: unknown): string | null {
   return isMicrosoftFoundryResourceName(resourceName) ? `https://${resourceName.toLowerCase()}.services.ai.azure.com/anthropic/v1` : null
 }
 
+/**
+ * Whether a saved address override may replace that upstream: only the resource's
+ * own origin, or an origin the operator allowlisted (a private endpoint or proxy
+ * the deployment owns). A Foundry provider can carry each member's own Entra ID
+ * token, so an admin-entered host never receives its credentials.
+ */
+export function isMicrosoftFoundryOverrideAllowed(resourceName: unknown, override: unknown, allowedOrigins: ReadonlySet<string>): boolean {
+  if (typeof override !== "string") return false
+  const base = microsoftFoundryBaseUrl(resourceName)
+  try {
+    const origin = new URL(override).origin
+    return allowedOrigins.has(origin) || (base !== null && origin === new URL(base).origin)
+  } catch { return false }
+}
+
 function isFoundryAnthropicModel(model: unknown): model is JsonRecord {
   if (!isRecord(model)) return false
   const provider = isRecord(model.provider) ? model.provider : null

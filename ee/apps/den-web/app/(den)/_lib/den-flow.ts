@@ -356,7 +356,23 @@ export function getReauthRequiredError(payload: unknown, response: Response): Re
   );
 }
 
+export class SsoSessionRequiredError extends Error {
+  readonly signInPath: string;
+
+  constructor(message: string, signInPath: string) {
+    super(message);
+    this.name = "SsoSessionRequiredError";
+    this.signInPath = signInPath;
+  }
+}
+
 export function getRequestError(payload: unknown, response: Response, fallback: string) {
+  if (
+    response.status === 409 && isRecord(payload) && payload.error === "sso_session_required"
+    && typeof payload.signInPath === "string" && /^\/sso\/[a-zA-Z0-9_%.-]+$/.test(payload.signInPath)
+  ) {
+    return new SsoSessionRequiredError(getErrorMessage(payload, fallback), payload.signInPath);
+  }
   return getReauthRequiredError(payload, response) ?? new Error(getErrorMessage(payload, fallback));
 }
 

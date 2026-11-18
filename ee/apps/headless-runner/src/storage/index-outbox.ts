@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { SqlDriver } from "../sql.js"
+import { readMeta, writeMeta } from "./migrations.js"
 
 /**
  * What Den's content-free session index learns about one session: totals and state, never content, and no id beyond
@@ -142,7 +143,15 @@ export function dropIndexUpdatesBefore(db: SqlDriver, createdBefore: number): nu
   return db.prepare("DELETE FROM index_outbox WHERE created_at < ?").run(createdBefore).changes
 }
 
-/** A fresh snapshot of every session (daily reconciliation). Call inside a transaction. */
+const SNAPSHOT_AT = "index_snapshot_at"
+
+/** When every session was last snapshotted (indexSnapshotAll), or null if never. */
+export function indexSnapshotAt(db: SqlDriver): number | null {
+  const at = Number(readMeta(db, SNAPSHOT_AT) ?? "")
+  return Number.isFinite(at) && at > 0 ? at : null
+}
+
+/** A fresh snapshot of every session (daily reconciliation), and when it was taken. Call inside a transaction. */
 export function indexSnapshotAll(db: SqlDriver, now: number) {
   const ids = db
     .prepare("SELECT id FROM sessions ORDER BY rowid")
@@ -152,4 +161,5 @@ export function indexSnapshotAll(db: SqlDriver, now: number) {
       return value.success ? [value.data.id] : []
     })
   for (const id of ids) enqueueIndexUpdate(db, id, now)
+  writeMeta(db, SNAPSHOT_AT, String(now))
 }

@@ -1,8 +1,8 @@
 // Per-conversation model memory. Each session can pick its own model (and
 // reasoning variant) from the composer; the choice is remembered in
 // localStorage so returning to a conversation restores the model it last
-// used. Sessions without a remembered choice fall back to the global
-// default model preference.
+// used. Opening a session restores its engine-bound model when no local
+// choice exists; only sessions without either fall back to the global default.
 import { useMemo } from "react";
 import { create } from "zustand";
 
@@ -72,6 +72,8 @@ type SessionModelStore = {
   bySessionId: Record<string, SessionModelSelection>;
   /** Remember a session's model. No-op when the model is unchanged. */
   setModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
+  /** Adopt the engine's model only if no local choice has been remembered. */
+  restoreModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
   setVariant: (sessionId: string, variant: string | null) => void;
 };
 
@@ -85,6 +87,14 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
     if (sameModel) return state;
     const { [sessionId]: _replaced, ...rest } = state.bySessionId;
     const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant } });
+    writeStoredSelections(bySessionId);
+    return { bySessionId };
+  }),
+  restoreModel: (sessionId, model, variant = null) => set((state) => {
+    // Check at write time: a delayed history read must not replace a picker
+    // choice made while the session was opening (including effort-only edits).
+    if (state.bySessionId[sessionId]) return state;
+    const bySessionId = capSelections({ ...state.bySessionId, [sessionId]: { model, variant } });
     writeStoredSelections(bySessionId);
     return { bySessionId };
   }),

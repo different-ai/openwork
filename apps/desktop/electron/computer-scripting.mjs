@@ -14,6 +14,16 @@ const run = promisify(execFile);
 const OUTPUT_LIMIT = 64 * 1024;
 const BLENDER_ID = "org.blenderfoundation.blender";
 const AUTOMATION_DENIED = "macOS has not allowed OpenWork to control this app. Allow OpenWork for it under System Settings › Privacy & Security › Automation, then try again.";
+// macOS quits apps such as TextEdit once they have no windows but keeps listing them as open, and
+// AppleScript then answers -600 instead of starting the app.
+const NOT_RUNNING = "macOS lists the app as open, but it quit while it had no windows. Open it with computer_open, which starts it again, then run the script.";
+
+/** What a failed osascript run says: macOS's own message, with what to do for the errors that have a known fix. */
+function scriptError(message, status) {
+  if (message.includes("-1743")) return { code: "automation_denied", message: AUTOMATION_DENIED };
+  if (message.includes("(-600)")) return { code: "app_not_running", message: `${message} ${NOT_RUNNING}` };
+  return { code: "script_error", message: message || `osascript exited with status ${status}.` };
+}
 
 /**
  * The slice of a child process scripting uses.
@@ -74,7 +84,7 @@ export function createComputerScripting({ stateDir, bridgeScript, platform = pro
       child.on("close", (status) => {
         const message = stderr.trim();
         if (status === 0) finish({ ok: true, stdout: stdout.trimEnd(), ...(message ? { stderr: message } : {}) });
-        else finish({ ok: false, stdout: stdout.trimEnd(), error: { code: message.includes("-1743") ? "automation_denied" : "script_error", message: message.includes("-1743") ? AUTOMATION_DENIED : message || `osascript exited with status ${status}.` }, mayHaveActed: true });
+        else finish({ ok: false, stdout: stdout.trimEnd(), error: scriptError(message, status), mayHaveActed: true });
       });
       child.stdin.on("error", () => {});
       child.stdin.end(code);

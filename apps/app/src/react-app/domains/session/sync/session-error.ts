@@ -9,6 +9,17 @@ import { normalizeErrorText } from "../../../../lib/error-text";
 
 export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
 
+export function sessionErrorAnalyticsProperties(
+  kind: OpencodeSessionErrorKind,
+  model?: { providerId?: string | null; modelId?: string | null },
+) {
+  return {
+    error_kind: kind,
+    provider_id: model?.providerId ?? null,
+    model_id: model?.modelId ?? null,
+  };
+}
+
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
   title: string;

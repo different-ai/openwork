@@ -1,8 +1,12 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
+import { limitCodemodePatternTime } from "./codemode-pattern-limit.js"
 import { runStandardCodeMode } from "./codemode-run-standard.js"
 import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
+
+// Den runs programs for every organization on one event loop.
+limitCodemodePatternTime()
 
 /**
  * Which interpreter runs a script: OpenWork's original Code Mode, or the
@@ -12,13 +16,12 @@ export type CodemodeRuntime = "openwork" | "standard"
 
 /**
  * Saved code runs only on the interpreter it was written for: OpenWork's for
- * `codemode-js`, the standard one for `ecmascript` while the organization has
- * `standardCodeMode`. With the feature off an `ecmascript` Workflow has none
- * (undefined) and does not run, rather than switching interpreter silently.
+ * `codemode-js`, the standard one for `ecmascript`. Never switch an existing
+ * Workflow to another interpreter silently.
  */
-export function codemodeRuntimeFor(language: CodemodeLanguage, standardCodeMode: boolean): CodemodeRuntime | undefined {
+export function codemodeRuntimeFor(language: CodemodeLanguage): CodemodeRuntime {
   if (language === "codemode-js") return "openwork"
-  return standardCodeMode ? "standard" : undefined
+  return "standard"
 }
 
 type CodemodeRunCommon = {

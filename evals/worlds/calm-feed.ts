@@ -2,11 +2,10 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 /**
- * A member whose organization has the Feed (`settledSessions`) on, in the real
+ * A member with the generally available Feed, in the real
  * app in headless Chrome on OpenCode v2 (the Feed and settling ship for v2
  * only). Den, the local server, the engine and its pending questions are
  * real; only the model is a scripted witness, so one task asks
@@ -43,7 +42,6 @@ export async function calmFeed(seed: Seed) {
     ],
   });
   const { den, webPort } = await denForAppWeb(seed);
-  await enableOrganizationCapabilities(seed, den.admin, { settledSessions: true });
   // The engine stores realpath'd roots (macOS /tmp is a symlink).
   const requested = seed.tmpPath("calm-feed");
   const workspacePath = join(realpathSync(dirname(requested)), basename(requested));

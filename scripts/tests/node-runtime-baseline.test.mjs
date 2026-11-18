@@ -14,7 +14,7 @@ const engine = ">=24.22.1 <25";
 const deploymentRoots = [
   "", "apps/app/", "apps/review/", "apps/server/",
   "ee/apps/den-api/", "ee/apps/den-gateway/", "ee/apps/den-web/",
-  "ee/apps/diagnostics/", "ee/apps/gateway/", "ee/apps/headless-runner/",
+  "ee/apps/gateway/", "ee/apps/headless-runner/",
   "ee/apps/landing/", "ee/apps/workbot/", "evals/packages/open-workplace/",
   "packages/openwork-bootstrap/",
 ];

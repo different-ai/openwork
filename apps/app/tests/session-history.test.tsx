@@ -2091,6 +2091,8 @@ describe("opening a thread", () => {
     expect(view.host.querySelector('[data-thread-scroll] [data-thread-history-status]')).toBeNull();
     expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("absolute")).toBe(false);
     expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("shrink-0")).toBe(true);
+    // A read in flight takes no row, so the thread keeps its size while it loads.
+    expect(view.host.querySelector('[data-thread-history-status]')?.classList.contains("h-0")).toBe(true);
     expect(view.host.textContent).toContain("Latest messages");
     await view.resolve(1, "Complete history");
     expect(view.host.textContent).toContain("Complete history");

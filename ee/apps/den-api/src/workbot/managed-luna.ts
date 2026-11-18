@@ -1,7 +1,7 @@
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { INFERENCE_FREE_MODEL_ID, INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+import { freeInferenceOrganizationAllowed, INFERENCE_FREE_MODEL_ID, INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { isWorkbotManagedLuna, WORKBOT_FREE_LUNA_ID, WORKBOT_PAID_LUNA_ID } from "@openwork/types/den/workbot-settings"
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { db } from "../db.js"
@@ -35,6 +35,23 @@ export async function workbotIncludedDefaultModel(actor: CloudAgentGatewayActor,
   const state = await workbotManagedLunaState(actor).catch(() => null)
   if (!state) return WORKBOT_FREE_LUNA_ID
   return workbotManagedLunaRoutable(state) ? state.model : null
+}
+
+/**
+ * The organization-wide side of `workbotIncludedDefaultModel`: whether the managed default can serve the
+ * workspace's members without a custom Gateway provider, ignoring one person's own state (a team's desktop
+ * policy blocking free Auto, their spent allowance, an accounting hiccup). Admin setup screens use it so one
+ * admin's own entitlement doesn't decide whether the workspace "needs a provider" for everyone.
+ */
+export async function workbotOrganizationManagedDefaultRoutable(organizationId: string, chosen: string | null): Promise<boolean> {
+  if (!workbotUsesManagedDefault(chosen)) return false
+  if (chosen === WORKBOT_PAID_LUNA_ID) return true
+  const orgId = normalizeDenTypeId("organization", organizationId)
+  if (!await organizationAllowsManagedModels(orgId)) return false
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgId)).limit(1)
+  if (!organization) return false
+  if (readInferenceMetadata(organization.metadata)) return true
+  return env.inferenceFree.enabled && freeInferenceOrganizationAllowed(organization.metadata)
 }
 
 /** Same member entitlement as desktop Models. No Gateway provider/grant or saved-default mutations. */

@@ -57,7 +57,7 @@ export type DesktopStartupReport = z.infer<typeof desktopStartupReportSchema>
 
 // ── Sections ───────────────────────────────────────────────────────────────
 
-export const diagnosticsSectionIdSchema = z.enum(["desktop", "providers", "connectors", "installation", "network"])
+export const diagnosticsSectionIdSchema = z.enum(["desktop", "providers", "connectors", "installation"])
 export type DiagnosticsSectionId = z.infer<typeof diagnosticsSectionIdSchema>
 
 /** A section the caller may not open. `permission` is the organization permission key that grants it. */
@@ -199,12 +199,6 @@ export const installationDiagnosticsSchema = z.discriminatedUnion("access", [
 ])
 export type InstallationDiagnostics = z.infer<typeof installationDiagnosticsSchema>
 
-export const networkDiagnosticsSchema = z.strictObject({
-  access: z.literal("granted"),
-  /** egress_diagnostics.manage: may run the check and replace its token. */
-  canRun: z.boolean(),
-})
-
 // ── Attention summary ──────────────────────────────────────────────────────
 
 export const diagnosticsAttentionCodeSchema = z.enum([
@@ -240,7 +234,6 @@ export const orgDiagnosticsSchema = z.strictObject({
   providers: z.discriminatedUnion("access", [providersDiagnosticsSchema, lockedDiagnosticsSectionSchema]),
   connectors: z.discriminatedUnion("access", [connectorsDiagnosticsSchema, lockedDiagnosticsSectionSchema]),
   installation: installationDiagnosticsSchema,
-  network: z.discriminatedUnion("access", [networkDiagnosticsSchema, lockedDiagnosticsSectionSchema]),
 }).meta({ ref: "OrgDiagnostics" })
 export type OrgDiagnostics = z.infer<typeof orgDiagnosticsSchema>
 
@@ -249,5 +242,4 @@ export const DIAGNOSTICS_SECTION_PERMISSIONS = {
   desktop: "desktop_policies.view",
   providers: "gateway_providers.view",
   connectors: "connections.view",
-  network: "egress_diagnostics.view",
 } as const

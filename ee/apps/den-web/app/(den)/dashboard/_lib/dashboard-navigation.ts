@@ -2,12 +2,14 @@ import {
   BarChart3,
   Box,
   CalendarClock,
+  Gauge,
   Radar,
   Globe,
   Laptop,
   LibraryBig,
   LockKeyhole,
   MessageCircle,
+  MonitorSmartphone,
   ScrollText,
   Server,
   Plug,
@@ -23,8 +25,11 @@ import {
   getAnalyticsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
+  getAuthSecurityRoute,
   getAutomationsRoute,
   getBillingRoute,
+  getConfigRoute,
+  getComputersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -33,11 +38,11 @@ import {
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
+  getMyComputersRoute,
+  getMyUsageRoute,
   getOrgSettingsRoute,
   getPermissionsRoute,
   getPluginsRoute,
-  getScimRoute,
-  getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
   getWorkbotSettingsRoute,
@@ -93,9 +98,11 @@ export type BuildDashboardNavSectionsInput = {
   /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
+  /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
+  workbotSettingsInTeams?: boolean;
   /** Explicit server capability, independent of organization role permissions. */
   canManageDeploymentServices?: boolean;
-  /** What clicking Workbot does; a blocked entry stays visible with a marker. */
+  /** What clicking Workbot does; an entry without a provider stays visible with a marker, one turned off is hidden. */
   workbotEntry?: WorkbotEntry;
   /** The workspace on screen, so the Workbot entry opens Workbot for it. */
   organizationId?: string | null;
@@ -111,6 +118,7 @@ export function buildDashboardNavSections({
   libraryNeedsSignIn = 0,
   managedDeployments = false,
   desktopPolicyScreenRemoved = false,
+  workbotSettingsInTeams = false,
   canManageDeploymentServices = false,
   workbotEntry = { kind: "open" },
   organizationId = null,
@@ -118,11 +126,13 @@ export function buildDashboardNavSections({
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
+  // Workbot turned off for the viewer: no Workbot and no My bot in the menu.
+  const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
-    ...(capabilities.workbot
+    ...(capabilities.workbot && !workbotOff
       ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
       : []),
-    ...(myBot && orgSlug
+    ...(myBot && orgSlug && !workbotOff
       ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
       : []),
     {
@@ -135,6 +145,14 @@ export function buildDashboardNavSections({
     },
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
+      : []),
+    // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
+    ...(orgSlug
+      ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
+      : []),
+    // Every member's own usage; needs no permission.
+    ...(orgSlug
+      ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
       : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
@@ -149,7 +167,8 @@ export function buildDashboardNavSections({
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
         ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
-        { href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" },
+        { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },
+        ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
         ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
       ].filter((item) => canOpen(item.href))
     : [];
@@ -175,10 +194,12 @@ export function buildDashboardNavSections({
           { href: getApiKeysRoute(orgSlug), label: "API Keys" },
         ].filter((item) => canOpen(item.href)),
         ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
-        ...(access.canViewSso ? [{ href: getSsoRoute(orgSlug), label: "SSO" }] : []),
-        ...(access.canViewScim ? [{ href: getScimRoute(orgSlug), label: "SCIM" }] : []),
+        ...authSecurityNavChildren(orgSlug, access),
         ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
+          : []),
+        ...(canOpen(getConfigRoute(orgSlug))
+          ? [{ href: getConfigRoute(orgSlug), label: "Config" }]
           : []),
         ...(capabilities.mcpConnections && canOpen(getToolTesterRoute(orgSlug))
           ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
@@ -213,6 +234,11 @@ function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, memb
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
+/** SSO and SCIM: one Auth & Security entry, shown when either tab is visible. */
+function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags): DashboardNavChild[] {
+  return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
+}
+
 // Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
@@ -220,8 +246,11 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Analytics: ["usage", "stats", "workflow runs", "history"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
+  "Auth & Security": ["sso", "single sign on", "saml", "oidc", "scim", "provisioning", "directory", "okta", "entra", "identity provider"],
   Billing: ["plan", "invoice", "payment"],
+  Config: ["export", "import", "backup", "json", "copy settings", "change requests", "revert"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
+  Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners", "remote access", "other devices"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   "Desktop policies": ["policy", "mdm", "lock", "desktop"],
   Deployments: ["aws", "self-hosted", "byoc", "install", "health", "status"],
@@ -233,14 +262,14 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
   "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
+  "My Usage": ["usage", "spend", "cost", "limits", "budget", "tokens", "prices", "models"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],
-  SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
-  SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
   Workbot: ["model", "default model", "assistant", "slack", "automations"],
 };

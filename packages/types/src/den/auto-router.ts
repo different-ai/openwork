@@ -1,7 +1,7 @@
 import { z } from "zod"
 
 /**
- * Smart Model Router (feature `autoRouter`; internal names keep "auto"):
+ * Smart Model Router (internal names keep "auto"):
  * organization admins create any number of Smart Routers. Each has a name,
  * the people it applies to (everyone, teams, members), and AI Gateway models,
  * each tagged with the tasks it should handle. Tasks are shared across the
@@ -337,6 +337,15 @@ export const autoRouterConnectSchema = z
   })
   .meta({ ref: "AutoRouterConnect" })
 export type AutoRouterConnect = z.infer<typeof autoRouterConnectSchema>
+
+/**
+ * The Smart Routers the caller can use: those that apply to them and have at least one model they
+ * can use, while the AI Gateway can route. For setup screens that offer them in 3rd party tools.
+ */
+export const autoRouterMemberListSchema = z
+  .object({ routers: z.array(z.object({ id: z.string(), name: z.string() })) })
+  .meta({ ref: "AutoRouterMemberList" })
+export type AutoRouterMemberList = z.infer<typeof autoRouterMemberListSchema>
 
 /** Whether an assignment reaches a member, given the member's teams. */
 export function autoRouterAssignmentIncludes(assignment: AutoRouterAssignment, memberId: string, teamIds: readonly string[]) {

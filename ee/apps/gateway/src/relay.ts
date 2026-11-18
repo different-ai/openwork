@@ -24,6 +24,68 @@ export function upstreamLifetime(signal: AbortSignal, timeoutMs = 30 * 60_000) {
   }
 }
 
+export type UpstreamFetchFailure = {
+  outcome: "client_aborted" | "upstream_unreachable"
+  status: 502 | 504
+  code: "request_cancelled" | "upstream_timeout" | "upstream_unreachable"
+  /** Plain words for the person who sent the request. */
+  message: string
+  /** The network error code (ECONNRESET, ENOTFOUND, ...), for logs. */
+  cause: string | undefined
+}
+
+const NETWORK_CAUSES: Record<string, string> = {
+  ENOTFOUND: "its address could not be found",
+  EAI_AGAIN: "its address could not be looked up",
+  ECONNREFUSED: "it refused the connection",
+  ECONNRESET: "the connection was dropped",
+  EPIPE: "the connection was dropped",
+  UND_ERR_SOCKET: "the connection was dropped",
+  UND_ERR_CLOSED: "the connection was dropped",
+  ETIMEDOUT: "the connection timed out",
+  UND_ERR_CONNECT_TIMEOUT: "the connection timed out",
+  UND_ERR_HEADERS_TIMEOUT: "it took too long to answer",
+  EHOSTUNREACH: "the network path to it is down",
+  ENETUNREACH: "the network path to it is down",
+  CERT_HAS_EXPIRED: "its security certificate has expired",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "its security certificate could not be verified",
+  SELF_SIGNED_CERT_IN_CHAIN: "its security certificate could not be verified",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "its security certificate could not be verified",
+  ERR_TLS_CERT_ALTNAME_INVALID: "its security certificate does not match its address",
+}
+
+function networkErrorCode(error: unknown): string | undefined {
+  for (let current = error, depth = 0; current && depth < 4; depth++) {
+    if (typeof current !== "object") break
+    const code = "code" in current ? current.code : undefined
+    if (typeof code === "string" && /^[\w.-]{1,64}$/.test(code)) return code
+    current = "cause" in current ? current.cause : undefined
+  }
+  return undefined
+}
+
+/**
+ * A provider that cannot be reached is the provider's problem, not ours: describe it
+ * to the caller in plain words instead of reporting it as a Gateway error.
+ */
+export function describeUpstreamFetchFailure(error: unknown, input: { clientAborted: boolean; timedOut: boolean; target: string }): UpstreamFetchFailure {
+  const cause = networkErrorCode(error) ?? (error instanceof Error && error.name !== "Error" ? error.name : undefined)
+  if (input.clientAborted && !input.timedOut) {
+    return { outcome: "client_aborted", status: 502, code: "request_cancelled", message: "Request cancelled.", cause }
+  }
+  if (input.timedOut) {
+    return { outcome: "upstream_unreachable", status: 504, code: "upstream_timeout", message: `${input.target} took too long to respond. Your work is preserved; try again.`, cause }
+  }
+  const reason = cause === "InferenceEgressError" ? "its address is not allowed" : cause ? NETWORK_CAUSES[cause] : undefined
+  return {
+    outcome: "upstream_unreachable",
+    status: 502,
+    code: "upstream_unreachable",
+    message: `Couldn't reach ${input.target}${reason ? `: ${reason}` : ""}. Your work is preserved; try again in a moment.`,
+    cause,
+  }
+}
+
 export class RequestBodyLimitError extends Error {}
 
 export async function readBoundedBody(request: Pick<Request, "body" | "signal">, maxBytes = 32 * 1024 * 1024): Promise<Uint8Array<ArrayBuffer>> {

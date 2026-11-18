@@ -6,6 +6,7 @@ import { Plus } from "lucide-react";
 
 import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
+import { DASHBOARD_PAGE_CLASS, SETTINGS_MEASURE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -56,8 +57,8 @@ export function PluginDetailScreen({
 
   if (isLoading && !plugin) {
     return (
-      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Loading plugin details…
         </div>
       </div>
@@ -66,8 +67,8 @@ export function PluginDetailScreen({
 
   if (!plugin) {
     return (
-      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <div role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {error instanceof Error ? error.message : "That plugin could not be found."}
         </div>
       </div>
@@ -90,7 +91,7 @@ export function PluginDetailScreen({
   const creator = orgContext?.members.find((member) => member.id === plugin.createdByOrgMembershipId) ?? null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[896px] flex-col gap-7 px-6 py-10 md:px-12">
+    <div className={DASHBOARD_PAGE_CLASS}><div className={`${SETTINGS_MEASURE_CLASS} flex flex-col gap-6`}>
       <ItemHeader compact back={{ href: backHref ?? getPluginsRoute(orgSlug), label: "Plugins" }} logo={<PluginLogo name={plugin.name} size="lg" />} title={plugin.name} actions={canManagePlugin ? <ItemMenu size="md" label={`More actions for ${plugin.name}`} entries={[
         { label: "Edit", onSelect: () => setEditPlugin({ name: plugin.name, description: plugin.description }) },
         removeEntry(plugin.name, async () => { await archivePlugin.mutateAsync(pluginId); router.push(getPluginsRoute(orgSlug)); router.refresh(); }),
@@ -106,6 +107,7 @@ export function PluginDetailScreen({
         <PluginAccessSection
           pluginId={plugin.id}
           pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
+          canManage={canManagePlugin}
           grants={pluginAccessQuery.data ?? []}
           isLoading={pluginAccessQuery.isLoading}
           error={pluginAccessQuery.error}
@@ -151,7 +153,7 @@ export function PluginDetailScreen({
           void attachWorkflow.mutateAsync(workflowId).then(() => setAddWorkflowOpen(false)).catch(() => undefined);
         }}
       />
-    </div>
+    </div></div>
   );
 }
 
@@ -265,7 +267,7 @@ function PrimitiveSection<T>({
 function SkillsSection({ orgSlug, plugin, canEdit }: { orgSlug: string | null; plugin: DenPlugin; canEdit: boolean }) {
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3"><SectionTitle title="Skills" />{canEdit ? <DenButton size="sm" href={getNewPluginSkillRoute(orgSlug, plugin.id)} icon={Plus}>Add skill</DenButton> : null}</div>
+      <div className="flex items-center justify-between gap-3"><SectionTitle title="Skills" />{canEdit ? <DenButton size="sm" variant="secondary" href={getNewPluginSkillRoute(orgSlug, plugin.id)} icon={Plus}>Add skill</DenButton> : null}</div>
       <ItemPanel>
         {plugin.skills.length === 0 ? <p className="px-3 py-4 text-[13px] text-[var(--dls-text-secondary)]">No skills yet.</p> : plugin.skills.map((skill) => <SkillPreview key={skill.id} skill={skill} editHref={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} />)}
       </ItemPanel>
@@ -305,13 +307,13 @@ function WorkflowsSection({
       <div className="mb-3 flex items-center justify-between gap-3">
         <SectionTitle title="Workflows" />
         {canEdit ? (
-          <DenButton size="sm" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Workflow</DenButton>
+          <DenButton size="sm" variant="secondary" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Workflow</DenButton>
         ) : null}
       </div>
       {plugin.workflows.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
-          <p className="text-[14px] font-medium text-gray-900">No Workflows in this Plugin yet.</p>
-          <p className="mt-1 text-[12.5px] text-gray-500">Create a Workflow from a successful Code Mode run and choose this Plugin, or attach an existing Workflow.</p>
+        <div className="border-y border-[var(--den-list-line)] py-4">
+          <p className="text-[13px] font-medium text-[var(--dls-text-primary)]">No Workflows in this Plugin yet.</p>
+          <p className="mt-0.5 text-[12px] leading-4 text-[var(--dls-text-secondary)]">Create a Workflow from a successful Code Mode run and choose this Plugin, or attach an existing Workflow.</p>
         </div>
       ) : (
         <div className="grid gap-2">{plugin.workflows.map((workflow) => renderWorkflowRow(workflow, () => onOpen(workflow.id)))}</div>

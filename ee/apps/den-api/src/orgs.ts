@@ -9,6 +9,8 @@ import {
   ConnectorInstanceAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
+  AutomationShareTable,
+  AutomationTable,
   InvitationTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
@@ -22,6 +24,7 @@ import {
   ScimUserTombstoneTable,
   SsoConnectionTable,
   SsoProviderTable,
+  PermissionSetMemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -50,6 +53,7 @@ import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
+import { moveUsageMemberAssignments } from "@openwork-ee/den-db/gateway-usage-limits"
 import { effectiveOrganizationRole, listMemberAdminTeams, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
@@ -62,17 +66,19 @@ import {
   ASSIGNABLE_ORGANIZATION_ROLES,
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   assignableOrganizationRole,
   organizationRoleValueIncludes,
   shouldRevokeSessionsForRoleChange,
 } from "./organization-role-hierarchy.js"
 import { resolvePermissionsForMember } from "./permissions/resolve.js"
-import { decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
+import { decideActorlessSuperAdminRemoval, decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
 import { permissionDeniedMessage } from "./permissions/effective.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
+import type { AdminReauthMinutes, MaxSessionLengthDays, SessionLengthHours } from "./session-security-settings.js"
 
 const logger = appLogger.child({ component: "organizations" })
 
@@ -222,6 +228,8 @@ export type OrganizationContext = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    /** Whether this member has OpenWork Web (see MemberTable.openworkWeb). */
+    openworkWeb: boolean
   }
 }
 
@@ -241,6 +249,7 @@ export type OrganizationDirectory = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    openworkWeb: boolean
     user: {
       id: UserId | MemberId
       email: string
@@ -783,6 +792,8 @@ async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId,
         .set({ role: existingRole, joinedAt: existingJoinedAt })
         .where(eq(MemberTable.id, existingMember.id))
       if (invitedMember.id !== existingMember.id) {
+        // Limits assigned to the invitation while it was pending belong to the person.
+        await moveUsageMemberAssignments(tx, currentInvitation.organizationId, invitedMember.id, existingMember.id)
         await tx.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
       }
       member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
@@ -1315,6 +1326,9 @@ export async function updateOrganizationSettings(input: {
   allowedDesktopVersions?: readonly string[] | null
   requireSso?: boolean
   restrictDomainToSso?: boolean
+  sessionLengthHours?: SessionLengthHours
+  maxSessionLengthDays?: MaxSessionLengthDays
+  adminReauthMinutes?: AdminReauthMinutes
   brandAppName?: string | null
   brandLogoUrl?: string | null
   brandIconUrl?: string | null
@@ -1335,7 +1349,7 @@ export async function updateOrganizationSettings(input: {
     if (input.allowedEmailDomains !== undefined) {
       updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
     }
-    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.restrictDomainToSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
+    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.restrictDomainToSso !== undefined || input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined || input.adminReauthMinutes !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
       const rows = await tx
         .select({ metadata: OrganizationTable.metadata })
         .from(OrganizationTable)
@@ -1366,6 +1380,18 @@ export async function updateOrganizationSettings(input: {
 
       if (input.restrictDomainToSso !== undefined) {
         nextMetadata.restrictDomainToSso = input.restrictDomainToSso
+      }
+
+      if (input.sessionLengthHours !== undefined) {
+        nextMetadata.sessionLengthHours = input.sessionLengthHours
+      }
+
+      if (input.maxSessionLengthDays !== undefined) {
+        nextMetadata.maxSessionLengthDays = input.maxSessionLengthDays
+      }
+
+      if (input.adminReauthMinutes !== undefined) {
+        nextMetadata.adminReauthMinutes = input.adminReauthMinutes
       }
 
       if (input.brandAppName !== undefined) {
@@ -1620,6 +1646,7 @@ export async function getOrganizationContextForUser(input: {
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
       isOwner: roleIncludesOwner(currentMember.role),
+      openworkWeb: currentMember.openworkWeb,
     },
   } satisfies OrganizationContext
 }
@@ -2037,6 +2064,12 @@ export async function removeOrganizationMember(input: {
    * Invitation cancellation and SCIM deprovisioning authorize separately and omit it.
    */
   requiredPermission?: PermissionKey
+  /**
+   * SCIM deprovisioning (no `removedByOrgMemberId`): the user who set up the SCIM connection.
+   * Removing a super-admin without an actor needs this person to be the owner or a super-admin
+   * now (decideActorlessSuperAdminRemoval); without it, a super-admin is never removed.
+   */
+  actorlessAuthorityUserId?: typeof AuthUserTable.$inferSelect["id"] | null
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
@@ -2089,16 +2122,36 @@ export async function removeOrganizationMember(input: {
 
     if (actorPermissions) {
       const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)
+      const targetIsDirectSuperAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)
       const targetIsAdminViaTeam = !targetIsDirectAdmin && !actorPermissions.isOwner && !actorPermissions.isAdmin
         && (await listAuthoritativeTeamMemberships(tx, { organizationId: input.organizationId, memberId: member.id, adminTeamsOnly: true, lock: "share" })).length > 0
       const adminRemovalDenial = decideMemberRemoval({
         actor: actorPermissions,
+        targetIsDirectSuperAdmin,
         targetIsDirectAdmin,
         targetIsAdminViaTeam,
         targetIsPendingInvitation: member.userId === null,
       })
       if (adminRemovalDenial) {
         return { ok: false, error: "forbidden", message: adminRemovalDenial.message }
+      }
+    } else if (organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+      // Read through this transaction with share locks, like the actor above.
+      const [authorityMember] = input.actorlessAuthorityUserId
+        ? await tx.select({ id: MemberTable.id }).from(MemberTable)
+          .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.actorlessAuthorityUserId), isNull(MemberTable.removedAt)))
+          .limit(1).for("share")
+        : []
+      const authority = authorityMember
+        ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: authorityMember.id, database: tx })
+        : null
+      const superAdminRemovalDenial = decideActorlessSuperAdminRemoval({
+        targetIsDirectSuperAdmin: true,
+        targetIsPendingInvitation: member.userId === null,
+        authority,
+      })
+      if (superAdminRemovalDenial) {
+        return { ok: false, error: "forbidden", message: superAdminRemovalDenial.message }
       }
     }
 
@@ -2133,6 +2186,16 @@ export async function removeOrganizationMember(input: {
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
 
+    // A role given to the person directly ends with their membership, so it
+    // can't come back if they are invited again.
+    await tx.update(PermissionSetMemberTable)
+      .set({ removedAt: new Date() })
+      .where(and(
+        eq(PermissionSetMemberTable.organizationId, input.organizationId),
+        eq(PermissionSetMemberTable.orgMembershipId, member.id),
+        isNull(PermissionSetMemberTable.removedAt),
+      ))
+
     await tx.update(ScimGroupMemberTable)
       .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })
       .where(and(eq(ScimGroupMemberTable.organizationId, input.organizationId), eq(ScimGroupMemberTable.orgMembershipId, member.id)))
@@ -2147,6 +2210,16 @@ export async function removeOrganizationMember(input: {
         eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
         eq(DesktopPolicyMemberTable.orgMemberId, member.id),
       ))
+
+    await tx.delete(AutomationShareTable).where(and(
+      eq(AutomationShareTable.organization_id, input.organizationId),
+      or(
+        eq(AutomationShareTable.org_membership_id, member.id),
+        inArray(AutomationShareTable.automation_id, tx.select({ id: AutomationTable.id }).from(AutomationTable).where(and(
+          eq(AutomationTable.organization_id, input.organizationId), eq(AutomationTable.owner_member_id, member.id),
+        ))),
+      ),
+    ))
 
     await tx
       .delete(ExternalMcpConnectionAccessGrantTable)

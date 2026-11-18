@@ -20,6 +20,8 @@ export type CloudUploadDependencies = {
   signal?: AbortSignal;
   /** Host-only, exact-file capability supplied after native chat approval. */
   approvedDriveFile?: PreparedDriveUploadFile;
+  /** Host-only: the shared file-send approval already approved this save in the chat. */
+  approvedInChat?: boolean;
 };
 
 const workspacePathProperty = {

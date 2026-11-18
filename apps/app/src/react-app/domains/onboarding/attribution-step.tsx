@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState } from "react";
+import { useState, type Ref } from "react";
 
 import {
   PageBackground,
@@ -67,6 +67,7 @@ const options: AttributionOption[] = [
 ];
 
 type AttributionStepProps = {
+  ref?: Ref<HTMLDivElement>;
   onSubmit: (source: AttributionSource, aiPrompt?: string) => void;
   onSkip: () => void;
 };
@@ -76,12 +77,12 @@ type AttributionStepProps = {
  * When the user picks "AI assistant" we ask which prompt led them
  * here — first-party data on how answer engines describe OpenWork.
  */
-export function AttributionStep({ onSubmit, onSkip }: AttributionStepProps) {
+export function AttributionStep({ ref, onSubmit, onSkip }: AttributionStepProps) {
   const [aiSelected, setAiSelected] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
+    <div ref={ref} className="fixed inset-0 z-50 flex items-center justify-center bg-background">
       <PageBackground />
       <PageTitlebarRegion />
 

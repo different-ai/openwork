@@ -20,7 +20,7 @@ const run = (extra = {}) => ({ id: 11, event: 'pull_request', head_sha: head, he
 test('CI and agent configuration includes deletions and renames', () => {
   assert.deepEqual(machineryFiles([file('.github/workflows/ci-tests.yml'), file('apps/a.ts')]), ['.github/workflows/ci-tests.yml']);
   assert.deepEqual(machineryFiles([{ filename: 'docs/x.md', previous_filename: '.opencode/skills/a/SKILL.md' }]), ['.opencode/skills/a/SKILL.md']);
-  for (const path of ['warden.toml', 'opencode.json', 'opencode.jsonc', '.warden/x', '.agents/skills/x', '.claude/skills/x']) {
+  for (const path of ['opencode.json', 'opencode.jsonc', '.agents/skills/x', '.claude/skills/x']) {
     assert.deepEqual(machineryFiles([file(path)]), [path]);
   }
 });

@@ -72,6 +72,7 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
           ackIndexUpdate: (sessionId, version) => store.ackIndexUpdate(sessionId, version),
           deferIndexUpdate: (sessionId, version, retryAt) => store.deferIndexUpdate(sessionId, version, retryAt),
           dropIndexUpdatesBefore: (createdBefore) => store.dropIndexUpdatesBefore(createdBefore),
+          indexSnapshotAt: () => store.indexSnapshotAt(),
           indexSnapshotAll: (now) => store.indexSnapshotAll(now),
         }
       : store
@@ -160,7 +161,7 @@ export async function createRuntime(config: Config, store: Store, stepHost?: Ste
   })
   // Step-mode turns that startup recovery left going continue from their next step (never throws).
   const steps = runner.recoverSteps()
-  const app = createApp({ store, runner, apiToken: config.apiToken, healthConfig: config, models: gatewayModelCatalog(config), modelProbe: createModelProbe(config, modelFetch), events, files, computer, errors, cells: cellsHost.cells, memory: cellsHost.memory, storage })
+  const app = createApp({ store, runner, apiToken: config.apiToken, healthConfig: config, computerFleet: config, models: gatewayModelCatalog(config), modelProbe: createModelProbe(config, modelFetch), events, files, computer, errors, cells: cellsHost.cells, memory: cellsHost.memory, storage })
   return {
     app,
     runner,

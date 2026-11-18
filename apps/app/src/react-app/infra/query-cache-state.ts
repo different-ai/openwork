@@ -1,5 +1,7 @@
 import { useMemo, useSyncExternalStore } from "react";
 
+import type { QueryClient } from "@tanstack/react-query";
+
 import { getReactQueryClient } from "./query-client";
 
 /**
@@ -47,5 +49,17 @@ export function useQueryCacheArrayState<T>(
     (callback) => queryClient.getQueryCache().subscribe(callback),
     getSnapshot,
     () => fallback,
+  );
+}
+
+export function useQueryCacheSelection<T extends string | number | boolean | null>(
+  select: (queryClient: QueryClient) => T,
+  serverValue: T,
+): T {
+  const queryClient = getReactQueryClient();
+  return useSyncExternalStore(
+    (callback) => queryClient.getQueryCache().subscribe(callback),
+    () => select(queryClient),
+    () => serverValue,
   );
 }

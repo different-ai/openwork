@@ -1,6 +1,18 @@
 import { z } from "zod";
 import { GATEWAY_USAGE_LIMIT_ERROR_CODE, hasGatewayUsageLimitHttpMarker, gatewayUsageTimeframeSchema, type GatewayUsageBucket, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 
+// Limit copy lives with Den Web's My Usage page so both surfaces say the same thing.
+export {
+  formatGatewayMoney,
+  formatGatewayReset,
+  gatewayIncreaseMicroUsd,
+  gatewayPercentLeft,
+  gatewayPeriodLabels,
+  gatewayPeriodPossessives,
+  gatewayUsageLimitGroups,
+  type GatewayUsageLimitGroup,
+} from "@openwork/types/den/gateway-member-usage";
+
 export const gatewayUsageQueryPrefix = ["gateway-own-usage"];
 
 const money = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -86,25 +98,6 @@ export function allGatewayUsageBuckets(status: Pick<GatewayUsageStatus, "buckets
   return [...status.buckets, ...(status.providers ?? []).flatMap((provider) => provider.buckets)];
 }
 
-export type GatewayUsageLimitGroup = {
-  key: string;
-  /** Null for the default limit; the provider's name for a provider limit. */
-  providerName: string | null;
-  buckets: GatewayUsageBucket[];
-};
-
-/**
- * The member's limits as separate items: the default limit when one is set,
- * then one item per provider limit. Empty means no limit at all.
- */
-export function gatewayUsageLimitGroups(status: Pick<GatewayUsageStatus, "buckets" | "providers">): GatewayUsageLimitGroup[] {
-  return [
-    ...(status.buckets.length ? [{ key: "default", providerName: null, buckets: status.buckets }] : []),
-    ...(status.providers ?? []).filter((provider) => provider.buckets.length)
-      .map((provider) => ({ key: provider.providerId, providerName: provider.providerName, buckets: provider.buckets })),
-  ];
-}
-
 export type GatewayUsageScopeView = {
   /** The status as the selected model sees it: its provider limit, or the default limits. */
   status: GatewayUsageStatus;
@@ -152,35 +145,4 @@ export function gatewayUsageResetDelay(status: GatewayUsageStatus, receivedAt: n
   if (!buckets.length) return null;
   const remaining = Math.min(...buckets.map((bucket) => Date.parse(bucket.resetAt))) - Date.parse(status.serverTime) - Math.max(0, now - receivedAt);
   return Math.min(2_147_483_647, Math.max(1000, remaining + 250));
-}
-
-export function formatGatewayMoney(microUsd: number): string {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(microUsd / 1_000_000);
-}
-
-export const gatewayPeriodLabels: Record<GatewayUsageBucket["timeframe"], string> = { day: "Today", week: "This week", month: "This month" };
-export const gatewayPeriodPossessives: Record<GatewayUsageBucket["timeframe"], string> = { day: "today’s", week: "this week’s", month: "this month’s" };
-
-/** What an approved increase adds; mirrors the Den approval (a quarter of the base, rounded up). */
-export function gatewayIncreaseMicroUsd(bucket: Pick<GatewayUsageBucket, "baseAllowanceMicroUsd">): number {
-  return Math.ceil(bucket.baseAllowanceMicroUsd / 4);
-}
-
-export function gatewayPercentLeft(bucket: Pick<GatewayUsageBucket, "allowanceMicroUsd" | "usedMicroUsd">): number {
-  if (bucket.allowanceMicroUsd <= 0) return 0;
-  const left = Math.max(0, bucket.allowanceMicroUsd - bucket.usedMicroUsd);
-  return Math.min(100, Math.floor((left * 100) / bucket.allowanceMicroUsd));
-}
-
-export function formatGatewayReset(resetAt: string, now: number): string {
-  const ms = Date.parse(resetAt) - now;
-  if (ms < 60 * 60_000) {
-    const minutes = Math.max(1, Math.round(ms / 60_000));
-    return `Resets in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
-  }
-  if (ms < 24 * 60 * 60_000) {
-    const hours = Math.round(ms / (60 * 60_000));
-    return `Resets in ${hours} ${hours === 1 ? "hour" : "hours"}`;
-  }
-  return `Resets ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(resetAt))}`;
 }

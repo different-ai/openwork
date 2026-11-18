@@ -3,6 +3,8 @@ import { denFetch, readHandoffDeepLink, type DenSession } from "@openwork/behavi
 import { personDefaults, type Place, type Seed } from "@openwork/env";
 import { invitationWitnesses, localInviteNeeds, record, text } from "./org-invite.ts";
 
+export { selfHostDeviceLogin } from "./self-host-device-login.ts";
+
 /** Starts a private single-org Den; specs pass the testkit's `selfHostServer`. */
 export type StartSelfHostServer = (options: {
   place: Place;

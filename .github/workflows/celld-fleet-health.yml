@@ -1,0 +1,126 @@
+name: Check the runner fleet
+
+# The production headless runner runs on a celld fleet (Render service headless-cells). celld closes a node to new
+# cells once its memory passes 80% of the machine, and the conversations that node owns stop answering until it is
+# back under 64%, however idle the other nodes are. Render's autoscaling reads the fleet average, so it does not see
+# one full node. This check does: every 15 minutes it reads each node's memory, celld's own pressure flags, how many
+# requests were refused and how many nodes stopped themselves, and compares the service's settings with the ones
+# ee/apps/headless-runner/OWNER-CELLS.md recommends ("When a node is full").
+#
+# It only reads. The run fails when something needs action now (a node near or past its ceiling, refused requests,
+# a single node) and says so in Slack: on the first failing run, then once an hour while it lasts. Warnings (settings
+# that drifted, a node that stopped for a lost lease) go to Slack once a day.
+#
+# This repository is public, and so are these logs and summaries: they say only how many alerts and warnings there
+# are. Node names, memory and settings go to Slack, or to the terminal of whoever runs the script by hand.
+#
+# Needs, on the celld-production environment: RENDER_API_KEY. Optional: CELLD_R2_ACCESS_KEY_ID and
+# CELLD_R2_SECRET_ACCESS_KEY (celld's own per-node load, from the fleet bucket), and CELLD_ALERT_SLACK_WEBHOOK_URL
+# (else the deploy workflow's CELLD_DEPLOY_SLACK_WEBHOOK_URL). Without RENDER_API_KEY the job skips with a notice.
+
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # To read the previous run's result, so Slack hears of an ongoing problem hourly, not every run.
+  actions: read
+
+concurrency:
+  group: celld-fleet-health
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check each runner node
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-24.04
+    environment: celld-production
+    timeout-minutes: 10
+
+    # Secrets are given only to the steps that use them, never to the checkout or setup actions.
+    env:
+      RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
+      S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
+      FLEET_BUCKET: s3://openwork-celld/fleet
+
+    steps:
+      - name: Check the fleet check is configured
+        id: configured
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "::notice title=Fleet check not configured::set RENDER_API_KEY on the celld-production environment."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.configured.outputs.ready == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+
+      - name: Setup Node
+        if: steps.configured.outputs.ready == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      # celld's fleet sample: every node's own load (cells in memory, memory in use, whether it is under pressure).
+      # Best effort: without it the memory metrics still decide.
+      - name: Read celld's fleet sample
+        id: sample
+        if: steps.configured.outputs.ready == 'true'
+        continue-on-error: true
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
+        run: |
+          set -euo pipefail
+          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "No bucket credentials; checking from Render's metrics only."
+            exit 0
+          fi
+          aws s3 cp "$FLEET_BUCKET/fleet/capacity-v1.json" "$RUNNER_TEMP/fleet-sample.json" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors
+          echo "file=$RUNNER_TEMP/fleet-sample.json" >> "$GITHUB_OUTPUT"
+
+      # Slack hears of a problem when it starts and then once an hour, not on every failing run.
+      - name: Decide whether to tell Slack
+        id: notify
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow celld-fleet-health.yml --status completed --limit 1 --json conclusion --jq '.[0].conclusion // ""' || echo "")"
+          minute="$(date -u +%-M)"
+          if [ "$previous" != "failure" ] || [ "$minute" -lt 15 ]; then echo "notify=true" >> "$GITHUB_OUTPUT"; else echo "notify=false" >> "$GITHUB_OUTPUT"; fi
+          # Warnings stand for days: once a day is enough (the first run after 09:00 UTC).
+          if [ "$(date -u +%-H)" = "9" ] && [ "$minute" -lt 15 ]; then echo "warnings=true" >> "$GITHUB_OUTPUT"; else echo "warnings=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Check each node
+        if: steps.configured.outputs.ready == 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.CELLD_ALERT_SLACK_WEBHOOK_URL || secrets.CELLD_DEPLOY_SLACK_WEBHOOK_URL }}
+          FLEET_SAMPLE_FILE: ${{ steps.sample.outputs.file }}
+          NOTIFY: ${{ steps.notify.outputs.notify }}
+          NOTIFY_WARNINGS: ${{ steps.notify.outputs.warnings }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The celld release the deploy workflow uses is the one the nodes should be built from.
+          EXPECTED_CELLD_VERSION="$(grep -m1 -oE 'CELLD_VERSION: v[0-9]+\.[0-9]+\.[0-9]+' .github/workflows/celld-runner-deploy.yml | cut -d' ' -f2 || true)"
+          export EXPECTED_CELLD_VERSION
+          node .github/scripts/celld-fleet-health.mjs
+
+      - name: Clean up
+        if: always()
+        run: rm -f "$RUNNER_TEMP/fleet-sample.json"

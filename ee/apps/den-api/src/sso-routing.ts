@@ -3,12 +3,12 @@
  * someone opens the organization. No database access, so they are unit tested
  * directly (test/sso-routing.test.ts).
  *
- * With `ssoPerOrganization` off (and always on single-organization
- * deployments) an enabled SSO connection on a verified domain behaves as it
+ * On single-organization deployments an enabled SSO connection on a verified
+ * domain behaves as it
  * always has: every email on that domain is sent to the organization's SSO,
  * and members cannot sign in any other way.
  *
- * With it on, the organization's own settings decide:
+ * On multi-organization deployments, the organization's own settings decide:
  * - SSO set up, nothing required: SSO is offered first, the usual methods stay
  *   available, and people on the domain can join other organizations.
  * - "Require SSO" (`requireSso`): the organization itself can only be opened
@@ -58,7 +58,7 @@ export type DomainSsoRequirement = {
   organizationName: string
   signInPath: string
   policy: OrganizationSsoPolicy
-  /** `ssoPerOrganization` is on for this organization (never on single-organization deployments). */
+  /** Multi-organization routing; false on single-organization deployments. */
   perOrganization: boolean
 }
 

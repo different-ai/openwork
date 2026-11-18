@@ -6,6 +6,7 @@ import { db } from "../db.js"
 import { cloudAgentGatewayCatalog } from "./gateway-model.js"
 import { createHeadlessRunnerClient, defaultHeadlessRunnerDeps, type HeadlessModelCatalog } from "../headless-runner/client.js"
 import { workbotManagedLunaRoutable, workbotManagedLunaState } from "./managed-luna.js"
+import { resolveMemberWorkbotSettings } from "./team-settings.js"
 
 /**
  * The organization's default model for its cloud agents on the headless runner: Workbot, the Slack assistant, and
@@ -13,7 +14,9 @@ import { workbotManagedLunaRoutable, workbotManagedLunaState } from "./managed-l
  *
  * It is a default, not a lock: an Automation with its own model keeps it. Null means the runner's default. A saved
  * model the runner no longer serves also gives null, so a removed model never breaks every chat.
- * One organization-wide value; per-team overrides could later be resolved on top of it here.
+ * A team can hold its own default (workbotTeamSettings, team-settings.ts). Readers that act for one member
+ * (`organizationCloudModel`, `organizationCloudModelSelection`) get that member's default; readers that only
+ * know the organization get the organization's.
  */
 export type OrganizationModelPolicy = {
   /** Callers use `model`; false is reserved for an unavailable policy read. */
@@ -53,7 +56,12 @@ export async function readOrganizationDefaultModel(organizationId: string): Prom
   return readWorkbotModel(organization?.metadata)
 }
 
-export type CloudModelActor = { organizationId: string; userId: string }
+export type CloudModelActor = { organizationId: string; userId: string; memberId?: string }
+
+/** The saved default for this actor: their team's when it overrides the organization's, else the organization's. */
+async function readActorDefaultModel(actor: CloudModelActor): Promise<string | null> {
+  return (await resolveMemberWorkbotSettings({ organizationId: actor.organizationId, userId: actor.userId, memberId: actor.memberId })).model
+}
 
 /** One catalog boundary for settings and execution: the actor's AI Gateway models. Never shared across actors. */
 export async function cloudAgentModelCatalog(actor: CloudModelActor): Promise<HeadlessModelCatalog> {
@@ -77,7 +85,7 @@ export async function workbotModelCatalog(actor: CloudModelActor): Promise<Headl
 
 /** Selection only. Authorization belongs after the shared client's persisted-turn pin, at credential minting. */
 export async function organizationCloudModelSelection(actor: CloudModelActor, fallback: string | null = null): Promise<string | null> {
-  const chosen = await readOrganizationDefaultModel(actor.organizationId)
+  const chosen = await readActorDefaultModel(actor)
   return chosen ?? fallback ?? (await cloudAgentGatewayCatalog(actor)).defaultModel
 }
 
@@ -87,7 +95,7 @@ export async function organizationCloudModelSelection(actor: CloudModelActor, fa
  */
 export async function organizationCloudModel(actor: CloudModelActor, fallback: string | null = null): Promise<string | null> {
   const catalog = await cloudAgentGatewayCatalog(actor)
-  const chosen = await readOrganizationDefaultModel(actor.organizationId)
+  const chosen = await readActorDefaultModel(actor)
   const model = chosen ?? fallback ?? catalog.defaultModel
   if (!model || !catalog.models.some((entry) => entry.id === model)) throw new Error("cloud_model_unavailable")
   return model

@@ -15,6 +15,9 @@ import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/t
  */
 export type HeadlessRunnerConfig = { url: string; token: string; owner?: string }
 
+/** UTF-16 character limit enforced at runner turn admission. */
+export const HEADLESS_MAX_PROMPT_CHARS = 100_000
+
 export const HEADLESS_OWNER_HEADER = "x-openwork-headless-owner"
 
 function runnerHeaders(config: HeadlessRunnerConfig, extra: Record<string, string> = {}): Record<string, string> {
@@ -153,6 +156,8 @@ export const runnerMessageSchema = z.discriminatedUnion("role", [
     output: z.string().optional(),
     isError: z.boolean(),
     imageCount: z.number().optional(),
+    /** The App built in OpenWork that this result opened: its id and name, for the caller to show. */
+    app: z.object({ id: z.string(), title: z.string() }).optional(),
   }),
 ])
 export type RunnerMessage = z.infer<typeof runnerMessageSchema>
@@ -215,7 +220,114 @@ export type RunnerSavedFile = z.infer<typeof runnerSavedFileSchema>
 
 export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string }
 
-const REQUEST_TIMEOUT_MS = 15_000
+/** The runner asks its providers one after another page; each call is bounded there, so this only bounds the whole. */
+const COMPUTERS_TIMEOUT_MS = 30_000
+const fleetText = z.string().max(2_000).nullable()
+const fleetCount = z.number().finite().nullable()
+/** One computer as the runner's `GET /v1/computers` lists it (ee/apps/headless-runner/src/computer-fleet.ts). */
+export const runnerComputerSchema = z.object({
+  id: z.string().min(1).max(200),
+  key: fleetText,
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.string().min(1).max(40),
+  statusReason: fleetText,
+  pool: fleetText,
+  backend: fleetText,
+  region: fleetText,
+  cpu: fleetCount,
+  memoryMb: fleetCount,
+  diskGb: fleetCount,
+  createdAt: fleetText,
+  updatedAt: fleetText,
+  startedAt: fleetText,
+  pausedAt: fleetText,
+  lastActivityAt: fleetText,
+  expiresAt: fleetText,
+  endedAt: fleetText,
+  attempts: fleetCount,
+  // Added after the list first shipped: a runner from before them leaves them out, which reads as "not known".
+  image: fleetText.default(null),
+  imageCurrent: z.boolean().nullable().default(null),
+  idleTimeoutSeconds: fleetCount.default(null),
+  idledAt: fleetText.default(null),
+  resumeRequestedAt: fleetText.default(null),
+  slotReleased: z.boolean().nullable().default(null),
+  trust: fleetText.default(null),
+  runSeconds: fleetCount.default(null),
+})
+export type RunnerComputer = z.infer<typeof runnerComputerSchema>
+/** How the runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */
+export const runnerComputerSettingsSchema = z.object({
+  image: fleetText,
+  idlePauseSeconds: z.number().finite().nonnegative(),
+  keepDays: z.number().finite().nonnegative(),
+  persistent: z.boolean(),
+})
+export type RunnerComputerSettings = z.infer<typeof runnerComputerSettingsSchema>
+export const runnerComputerSourceSchema = z.object({
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.enum(["ok", "unreachable", "unsupported"]),
+  error: z.string().max(40).nullable(),
+  truncated: z.boolean(),
+  pools: z.array(z.object({ name: z.string().max(200), backend: fleetText, region: fleetText, enabled: z.boolean(), health: z.string().max(40) })).max(64),
+  settings: runnerComputerSettingsSchema.nullable().default(null),
+})
+export type RunnerComputerSource = z.infer<typeof runnerComputerSourceSchema>
+export const runnerComputerFleetSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  sources: z.array(runnerComputerSourceSchema).max(8),
+  sandboxes: z.array(runnerComputerSchema).max(8_000),
+})
+export type RunnerComputerFleet = z.infer<typeof runnerComputerFleetSchema>
+/** One computer in full, as the runner's `GET /v1/computers/:source/:id` returns it. */
+export const runnerComputerDetailSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  computer: runnerComputerSchema,
+  limits: z.object({
+    profile: fleetText,
+    classification: fleetText,
+    capabilities: z.array(z.string().max(200)).max(100),
+    preemptible: z.boolean().nullable(),
+    ttlSeconds: fleetCount,
+    maxRunSeconds: fleetCount,
+    maxPausedSeconds: fleetCount,
+    autoDeleteSeconds: fleetCount,
+    totalRunSeconds: fleetCount,
+  }),
+  settings: runnerComputerSettingsSchema.nullable(),
+  placement: z.object({
+    pool: fleetText,
+    strategy: fleetText,
+    outcome: fleetText,
+    reason: fleetText,
+    evaluatedAt: fleetText,
+    policies: z.array(z.string().max(200)).max(50),
+    candidates: z.array(z.object({
+      pool: z.string().max(200),
+      trust: fleetText,
+      eligible: z.boolean().nullable(),
+      hasCapacity: z.boolean().nullable(),
+      rank: fleetCount,
+      reasons: z.array(z.string().max(2_000)).max(20),
+    })).max(50),
+  }).nullable(),
+  events: z.array(z.object({ at: fleetText, action: z.string().max(200), outcome: fleetText, details: z.record(z.string(), z.string().max(2_000)) })).max(200).nullable(),
+  eventsError: z.string().max(40).nullable(),
+})
+export type RunnerComputerDetail = z.infer<typeof runnerComputerDetailSchema>
+const cellIdsSchema = z.object({ ids: z.record(z.string().max(220), z.string().regex(/^[0-9a-f]{16,128}$/)) })
+const computerRefusalSchema = z.object({ error: z.string().max(60), code: z.string().max(40).optional() })
+
+/**
+ * Longer than the cell host's own wait. celld holds a request for a cell it cannot start yet (its node is full, or
+ * the cell is changing owner) for up to 15 s (`CELLD_OPERATION_DEADLINE_MS`) and then answers `503 cell_unavailable`.
+ * With the same 15 s here, callers gave up at the moment the answer arrived and saw a dropped connection instead.
+ */
+const REQUEST_TIMEOUT_MS = 20_000
 
 async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
@@ -257,8 +369,12 @@ export type RunnerCapabilities = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  /** The host opens its teaching window when the person asks to teach a browser task (`open_teaching`). */
+  teachingNavigation?: boolean
   /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
   sandboxGateway?: boolean
+  /** Trusted host rollout, not a model argument. */
+  browserRecovery?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
 export type RunnerDesktopView = (typeof RUNNER_DESKTOP_VIEWS)[number]
@@ -279,7 +395,9 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
   ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
+  ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
   ...(input.ref ? { ref: input.ref } : {}),
   ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -370,7 +488,20 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
-      // The newest setting first. An older runner has no sandbox gateway: the computer stays on the runner's own provider.
+      // The newest setting goes first, so an older runner that only lacks it keeps every other setting. Without
+      // teaching navigation the person opens the teaching window themselves.
+      if (unknownSetting(status, payload) && input.teachingNavigation !== undefined) {
+        const { teachingNavigation: _teaching, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // Older runners keep all other settings, without the new read-only recovery behavior.
+      if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
+        const { browserRecovery: _recovery, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
+      // An older runner has no sandbox gateway: the computer stays on the runner's own provider.
       if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
         const { sandboxGateway: _gateway, ...rest } = compatible
         compatible = rest
@@ -430,6 +561,24 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const { status, payload } = await request(deps, "DELETE", sessionPath(id))
       if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_delete_${status}`) }
       return { ok: true, value: { deleted: true } }
+    },
+
+    /**
+     * Deletes only a conversation's computer; its transcript, files and memory stay, and its next use makes a new one.
+     * Fails with `session_busy` (409) while it answers and `unknown_session` (404) when there is no such conversation.
+     */
+    async deleteComputer(id: string): Promise<RunnerResult<{ deleted: true }>> {
+      const { status, payload } = await request(deps, "DELETE", `${sessionPath(id)}/computer`, undefined, 60_000)
+      if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_computer_delete_${status}`) }
+      return { ok: true, value: { deleted: true } }
+    },
+
+    /** The scratch files the agent wrote in the session (memory/ included, wherever it is kept): paths and sizes only. */
+    async listScratchFiles(sessionId: string): Promise<RunnerResult<Array<{ path: string; size: number; updatedAt: number }>>> {
+      const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/files`)
+      const parsed = z.object({ files: z.array(z.object({ path: z.string(), size: z.number(), updatedAt: z.number() })) }).safeParse(payload)
+      if (status !== 200 || !parsed.success) return { ok: false, status, error: errorCode(payload, `headless_scratch_${status}`) }
+      return { ok: true, value: parsed.data.files }
     },
 
     /** Reads one scratch file the agent wrote in the session. */
@@ -808,6 +957,61 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const result = modelProbeSchema.safeParse(payload)
       if (status !== 200 || !result.success || result.data.requestedModel !== model) return null
       return result.data
+    },
+
+    /**
+     * The cell host's id for each cell name (the runner's `POST /v1/cells/ids`, at most 2,000 names a call). A node's
+     * state report lists the cells it holds in memory by id alone; this is how a known conversation is matched to
+     * one. Derived from the names: no cell is woken. A 404 is a runner from before it, or one with no cell host.
+     */
+    async cellIds(names: readonly string[]): Promise<RunnerResult<Record<string, string>>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "POST", "/v1/cells/ids", { names }, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = cellIdsSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data.ids } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
+    /**
+     * Every computer the runner's providers hold now (the runner's `GET /v1/computers`): the sandbox gateway's and
+     * the direct provider's, read with the runner's own keys. For Den's admin page; a 404 is a runner from before it.
+     */
+    async listComputers(): Promise<RunnerResult<RunnerComputerFleet>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", "/v1/computers", undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = runnerComputerFleetSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
+    /**
+     * One computer in full (the runner's `GET /v1/computers/:source/:id`): the provider's record, where it was placed
+     * and why, and its lifecycle events. `unknown_computer`: the provider has none by that id, or it is not this
+     * runner's. `provider_<code>`: the provider did not answer the runner. `http_404` is a runner from before this.
+     */
+    async readComputer(source: "gateway" | "direct", id: string): Promise<RunnerResult<RunnerComputerDetail>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", `/v1/computers/${source}/${encodeURIComponent(id)}`, undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) {
+        const refusal = computerRefusalSchema.safeParse(answer.payload)
+        const named = refusal.success && (refusal.data.error === "unknown_computer" || refusal.data.error === "invalid_computer") ? refusal.data.error : null
+        const provider = refusal.success && refusal.data.error === "provider_unreachable" ? `provider_${refusal.data.code ?? "unreachable"}` : null
+        return { ok: false, status: answer.status, error: named ?? provider ?? `http_${answer.status}` }
+      }
+      const parsed = runnerComputerDetailSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
     },
 
     /** Scoped catalogs use an authenticated POST; legacy deployment catalogs keep the existing GET. */

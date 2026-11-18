@@ -58,3 +58,4 @@ export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwo
 export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
 export const openworkAutoRouteV2PluginPath = () => openworkPluginPath("openwork-auto-route-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");
+export const openworkSandboxV2PluginPath = () => openworkPluginPath("openwork-sandbox-v2");

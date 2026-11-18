@@ -18,6 +18,7 @@ import {
   gatewayPeriodPossessives,
 } from "./gateway-usage-state";
 import { useGatewayUsage } from "./use-gateway-usage";
+import { GatewayMemberUsageSections, UsageSettingsSection } from "./gateway-member-usage-section";
 import { gatewayApprovalKey, useGatewayApprovalDismissals } from "./gateway-usage-approval-store";
 import { UsageLimitCard, UsageLimitLocked, useUsageLimitViewer } from "./usage-limit-card";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
@@ -216,18 +217,6 @@ export function GatewayUsageMenuItem() {
   );
 }
 
-function SettingsSection({ title, detail, children, testId }: { title: string; detail?: string; children: ReactNode; testId?: string }) {
-  return (
-    <section aria-label={title} data-testid={testId} className="flex flex-col gap-2.5">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
-        {detail ? <p className="text-xs text-muted-foreground">{detail}</p> : null}
-      </div>
-      <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-background">{children}</div>
-    </section>
-  );
-}
-
 function LimitRow({ bucket }: { bucket: GatewayUsageBucket }) {
   const left = gatewayPercentLeft(bucket);
   return (
@@ -329,19 +318,19 @@ export function GatewayUsageSettingsView({ onOpenAccount }: { onOpenAccount: () 
         </p>
       ) : null}
       {!groups.length ? (
-        <SettingsSection title="Your limits">
+        <UsageSettingsSection title="Your limits">
           <div className="flex items-center justify-between px-3.5 py-3 text-[13px]"><span className="text-foreground">No limit</span></div>
-        </SettingsSection>
+        </UsageSettingsSection>
       ) : groups.map((group) => (
-        <SettingsSection key={group.key}
+        <UsageSettingsSection key={group.key}
           testId={group.providerName === null ? "gateway-usage-default-limit" : "gateway-usage-provider-limit"}
           title={!labelled ? "Your limits" : group.providerName ?? "Default"}
           detail={!labelled ? "Set by your organization" : group.providerName === null ? "For providers without their own limit" : `Only ${group.providerName} models count here`}>
           {group.buckets.map((bucket) => <LimitRow key={bucket.id} bucket={bucket} />)}
-        </SettingsSection>
+        </UsageSettingsSection>
       ))}
       {requestable.length ? (
-        <SettingsSection title="More usage" detail="Each approval adds 25% of your base allowance">
+        <UsageSettingsSection title="More usage" detail="Each approval adds 25% of your base allowance">
           {requestable.map(({ bucket, providerName }) => (
             <RequestRow key={bucket.id} bucket={bucket} providerName={providerName} asking={askingId === bucket.id}
               pending={usage.reset.isPending} error={usage.reset.isError} disabled={usage.query.isError || usage.reset.isPending}
@@ -349,10 +338,15 @@ export function GatewayUsageSettingsView({ onOpenAccount }: { onOpenAccount: () 
               onCancel={() => { usage.reset.reset(); setAskingId(null); }}
               onSubmit={(reason) => usage.reset.mutate({ bucketId: bucket.id, reason }, { onSuccess: () => setAskingId(null) })} />
           ))}
-        </SettingsSection>
+        </UsageSettingsSection>
       ) : null}
       <TechnicalDetails status={status} />
     </>
   );
-  return <div data-testid="gateway-usage-settings" className="flex w-full max-w-3xl flex-col gap-8">{content}</div>;
+  return (
+    <div data-testid="gateway-usage-settings" className="flex w-full max-w-3xl flex-col gap-8">
+      {content}
+      {usage.authorized ? <GatewayMemberUsageSections /> : null}
+    </div>
+  );
 }

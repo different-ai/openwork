@@ -70,10 +70,10 @@ jobs:
     environment: celld-production
     timeout-minutes: 30
 
+    # Secrets are given only to the steps that use them, never to the checkout, setup, install or build steps: this
+    # repository's logs are public, and those steps run code this workflow does not control.
     env:
       CELLD_VERSION: v0.6.3
-      AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
       AWS_REGION: auto
       S3_ENDPOINT: https://5abbcca46f2a1399566cab3a8f8bd2c6.r2.cloudflarestorage.com
       FLEET_BUCKET: s3://openwork-celld/fleet
@@ -81,15 +81,22 @@ jobs:
       # Which commit produced the live fleet version ({version, commit}), written after each green deploy. Outside the
       # fleet prefix: celld never reads it.
       DEPLOY_RECORD: s3://openwork-celld/ci/fleet-deployed.json
-      RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
       # Optional plain override so snapshot rotations don't require rewriting the secret JSON blob.
       HEADLESS_COMPUTER_SNAPSHOT: ${{ vars.HEADLESS_COMPUTER_SNAPSHOT }}
-      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_OWNER_ID: tea-cspud29u0jms7384itk0
       RENDER_SERVICE_ID: srv-db3upfjbc2fs73c1ii70
 
     steps:
+      # CELLD_RUNNER_VARS is one JSON object of the runner's HEADLESS_* settings (secrets included). GitHub masks the
+      # whole secret, not the values inside it, so mask them here, before any step can print one. Values under eight
+      # characters ("on", "auto", "true") are settings, not secrets: masking them would blank those words in every
+      # later log line and show a reader which settings hold them.
       - name: Verify secrets are configured
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
+          RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
           set -euo pipefail
           missing=""
@@ -100,12 +107,20 @@ jobs:
             echo "::error::Missing celld-production secrets:$missing (CELLD_R2_ACCESS_KEY_ID, CELLD_R2_SECRET_ACCESS_KEY, CELLD_RUNNER_VARS, RENDER_API_KEY)."
             exit 1
           fi
+          printf '%s' "$RUNNER_VARS" | jq -r '.[] | tostring' | while IFS= read -r value; do
+            if [ "${#value}" -ge 8 ]; then echo "::add-mask::$value"; fi
+          done
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Read the live fleet version
         id: live
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           live="$(aws s3 cp "$FLEET_BUCKET/deploy/current.json" - --endpoint-url "$S3_ENDPOINT" --region auto 2>/dev/null | jq -r '.version // empty' || true)"
@@ -113,12 +128,12 @@ jobs:
           echo "The fleet runs ${live:-nothing yet}"
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.4.0
 
@@ -135,6 +150,8 @@ jobs:
       - name: Use a computer snapshot built for this runner
         id: snapshot
         timeout-minutes: 20
+        env:
+          RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
         run: |
           set -euo pipefail
           computer="$(printf '%s' "$RUNNER_VARS" | jq -r '.HEADLESS_COMPUTER // ""')"
@@ -177,6 +194,8 @@ jobs:
         if: steps.snapshot.outputs.checked == 'true'
         continue-on-error: true
         timeout-minutes: 3
+        env:
+          RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
         run: |
           set -euo pipefail
           key="$(printf '%s' "$RUNNER_VARS" | jq -r '.FREESTYLE_API_KEY // ""')"
@@ -191,7 +210,7 @@ jobs:
           echo "name=workbot-desktop-freestyle-$image-$guest" >> "$GITHUB_OUTPUT"
 
       - name: Check model and smoke result boundaries
-        run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts
+        run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts scripts/route-failure.test.ts scripts/idle-upkeep.test.ts scripts/computer-fleet.test.ts scripts/cell-ids.test.ts
 
       # A sandbox gateway keeps its own copies of the desktop: its template names a Fast Sandbox template and a Freestyle
       # snapshot, and this run can update neither. Those computers stay on the older image until a person rebuilds them
@@ -200,6 +219,8 @@ jobs:
       - name: Check the sandbox gateway's computer template
         id: gateway
         continue-on-error: true
+        env:
+          RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
         run: |
           set -euo pipefail
           gateway="$(printf '%s' "$RUNNER_VARS" | jq -r '.SANDBOX_GATEWAY // ""')"
@@ -212,7 +233,7 @@ jobs:
           fi
           echo "::add-mask::$key"
           identity="$(head -c 16 ee/packages/headless-computer/dist/desktop-image.version)"
-          slug="$(printf 'Authorization: Bearer %s\n' "$key" | curl -fsS --max-time 20 -H @- "${url%/}/v1/templates" \
+          slug="$(printf 'Authorization: Bearer %s\n' "$key" | curl -fs --max-time 20 -H @- "${url%/}/v1/templates" \
             | jq -r --arg name "$template" '.items[] | select(.name == $name) | .images.freestyle // empty' || true)"
           if ! [[ "$slug" =~ ^workbot-desktop-freestyle-([0-9a-f]{16})(-[0-9a-f]{16})?$ ]]; then
             echo "::warning title=Gateway computer template not checked::$template has no Freestyle snapshot named by its desktop image (found '${slug:-nothing}'), so it can't be compared with this runner's ($identity)."
@@ -242,6 +263,8 @@ jobs:
         if: ${{ !inputs.skip_compat_check }}
         timeout-minutes: 10
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
           COMPAT_BASE: ${{ inputs.compat_base }}
           PUSH_BEFORE: ${{ github.event.before }}
           LIVE_VERSION: ${{ steps.live.outputs.version }}
@@ -268,10 +291,10 @@ jobs:
           env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u S3_ENDPOINT -u RUNNER_VARS -u RENDER_API_KEY \
             pnpm exec tsx scripts/compat-check.ts --base FETCH_HEAD --runtime celld
 
-      # CELLD_RUNNER_VARS is one JSON object of the runner's HEADLESS_* settings (secrets included). Mask every value:
-      # GitHub masks the whole secret, not the values inside it.
+      # The values inside CELLD_RUNNER_VARS were masked by the first step; the secrets merged in here are masked by GitHub.
       - name: Bundle the runner
         env:
+          RUNNER_VARS: ${{ secrets.CELLD_RUNNER_VARS }}
           HEADLESS_COMPUTER_SNAPSHOT: ${{ steps.guest.outputs.name || steps.snapshot.outputs.name || vars.HEADLESS_COMPUTER_SNAPSHOT }}
           HEADLESS_SENTRY_DSN: ${{ secrets.HEADLESS_SENTRY_DSN }}
           HEADLESS_DEN_API_URL: ${{ vars.HEADLESS_DEN_API_URL }}
@@ -311,9 +334,7 @@ jobs:
           elif [ -n "${HEADLESS_DEN_API_URL:-}${HEADLESS_DEN_CALLBACK_TOKEN:-}${HEADLESS_GRANT_KEY:-}" ]; then
             echo "::warning title=Self-resume not configured::set all of HEADLESS_DEN_API_URL (variable), HEADLESS_DEN_CALLBACK_TOKEN and HEADLESS_GRANT_KEY (secrets) on celld-production, or none"
           fi
-          jq -r '.[]' "$RUNNER_TEMP/vars.json" | while IFS= read -r value; do [ -n "$value" ] && echo "::add-mask::$value"; done
-          # Storage settings are merged after masking: they are not secret, and masking a value like "on" would hide that
-          # text in every later log line. Checked here so a typo fails before anything is bundled.
+          # Storage settings are not secret. Checked here so a typo fails before anything is bundled.
           if [ -n "${HEADLESS_SEGMENTS:-}" ] && [ "$HEADLESS_SEGMENTS" != "on" ] && [ "$HEADLESS_SEGMENTS" != "off" ]; then
             echo "::error::HEADLESS_SEGMENTS must be on or off"; exit 1
           fi
@@ -341,6 +362,9 @@ jobs:
           echo "CELLD_ESBUILD=$PWD/node_modules/.bin/esbuild" >> "$GITHUB_ENV"
 
       - name: Preflight on a throwaway prefix
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
         run: |
           set -euo pipefail
           celld deploy "$RUNNER_TEMP/celld/wrangler.json" --bucket "$PREFLIGHT_BUCKET"
@@ -349,13 +373,20 @@ jobs:
           cd ee/apps/headless-runner
           SMOKE_BASE=http://127.0.0.1:18080 HEADLESS_API_TOKEN="$(jq -r .HEADLESS_API_TOKEN "$RUNNER_TEMP/vars.json")" pnpm exec tsx scripts/celld-smoke.ts
 
+      # celld's own events, then how each runner turn ended. The runner's console lines (cell_console) carry session ids
+      # and the model provider's error text, which do not belong in a public log: only their status and error code print.
       - name: Preflight node log
         if: failure()
-        run: grep -v -E "log_ship_loop|node_lease_attempt|celld::memory" "$RUNNER_TEMP/node.log" | tail -80 || true
+        run: |
+          grep -v -E "log_ship_loop|node_lease_attempt|celld::memory|cell_console" "$RUNNER_TEMP/node.log" | tail -80 || true
+          echo "Runner turns in the node log, by result:"
+          grep "cell_console" "$RUNNER_TEMP/node.log" | grep -oE '"(status|error)":"[A-Za-z0-9_]+"' | sort | uniq -c || true
 
       - name: Deploy to the fleet
         id: fleet
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
           LIVE_VERSION: ${{ steps.live.outputs.version }}
         run: |
           set -euo pipefail
@@ -372,6 +403,7 @@ jobs:
         id: adopt
         if: steps.fleet.outputs.unchanged != 'true'
         env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           VERSION: ${{ steps.fleet.outputs.version }}
         run: |
           set -euo pipefail
@@ -401,6 +433,8 @@ jobs:
         if: steps.fleet.outcome == 'success' && (steps.fleet.outputs.unchanged == 'true' || steps.adopt.outcome == 'success')
         continue-on-error: true
         env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
           VERSION: ${{ steps.fleet.outputs.version }}
         run: |
           set -euo pipefail
@@ -409,6 +443,9 @@ jobs:
 
       - name: Clean up
         if: always()
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CELLD_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CELLD_R2_SECRET_ACCESS_KEY }}
         run: |
           rm -rf "$RUNNER_TEMP/celld" "$RUNNER_TEMP/vars.json" "$RUNNER_TEMP/watch"
           aws s3 rm --recursive "$PREFLIGHT_BUCKET/" --endpoint-url "$S3_ENDPOINT" --region auto --only-show-errors || true

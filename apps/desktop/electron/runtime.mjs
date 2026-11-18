@@ -677,7 +677,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -693,7 +692,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -707,7 +705,9 @@ function extraPathEntries() {
     );
   }
 
-  return candidates.filter((entry) => entry && isDirectory(entry));
+  // Tools installed while OpenWork is open (Claude Code's installer creates ~/.local/bin) are found without a
+  // restart only when their folder is already on PATH, so this one is listed before it exists.
+  return [...candidates.filter((entry) => entry && isDirectory(entry)), path.join(home, ".local", "bin")];
 }
 
 function enrichedPath(sidecarDirs, currentPath) {
@@ -1428,10 +1428,26 @@ export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}, plat
   ], opts);
 }
 
+/** @param {unknown} raw @returns {string | undefined} */
+export function sandboxFeatureDenOrigin(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || url.search || url.hash || url.pathname !== "/") return undefined;
+    const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return undefined;
+    return url.origin;
+  } catch { return undefined; }
+}
+
+/** @returns {Promise<string | undefined>} */
+async function noConfiguredDenOrigin() { return undefined; }
+
 export function createRuntimeManager({
   app,
   desktopRoot,
   listLocalWorkspacePaths,
+  trustedDenOrigin = noConfiguredDenOrigin,
   localManagedMcpVaultKey,
   driveFileApproval = undefined,
   anonymousInference = undefined,
@@ -1994,6 +2010,7 @@ export function createRuntimeManager({
       anonymousInference,
       freshInstallEngine,
       engineAutoUpgrade: resolveDesktopEngineAutoUpgrade(),
+      trustedDenOrigin: await trustedDenOrigin(),
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

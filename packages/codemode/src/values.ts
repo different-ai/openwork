@@ -1,4 +1,5 @@
 import type { Effect, Fiber } from "effect"
+import { hostRegExp } from "./host-regexp.js"
 
 export class SandboxPromise {
   interrupted = false
@@ -15,7 +16,7 @@ export class SandboxDate {
 export class SandboxRegExp {
   readonly regex: RegExp
   constructor(pattern: string, flags: string) {
-    this.regex = new RegExp(pattern, flags)
+    this.regex = hostRegExp(pattern, flags)
   }
 }
 

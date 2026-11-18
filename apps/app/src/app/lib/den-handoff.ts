@@ -86,6 +86,35 @@ export type ExchangeHandoffResult =
 let handoffAttemptCounter = 0;
 let commitQueue: Promise<unknown> = Promise.resolve();
 
+/** Shared by handoff and device sign-in; cancellation never supersedes a newer attempt. */
+export function beginDenEnrollment(options: { deferred?: boolean } = {}) {
+  let attempt = handoffAttemptCounter;
+  let activated = false;
+  let cancelled = false;
+  const isCurrent = () => !cancelled && attempt === handoffAttemptCounter;
+  const activate = () => {
+    if (!isCurrent()) return false;
+    if (!activated) {
+      attempt = ++handoffAttemptCounter;
+      activated = true;
+    }
+    return true;
+  };
+  // Device discovery must be allowed to fail closed without cancelling a
+  // handoff. Capture its generation now, claim it only after the gate passes.
+  if (!options.deferred) activate();
+  return {
+    activate,
+    isCurrent,
+    cancel: () => {
+      if (activated && isCurrent()) handoffAttemptCounter++;
+      cancelled = true;
+    },
+  };
+}
+
+export type DenEnrollmentAttempt = ReturnType<typeof beginDenEnrollment>;
+
 function bootstrapRestorePayload(previous: DenBootstrapConfig) {
   return {
     baseUrl: previous.baseUrl,
@@ -139,7 +168,7 @@ export async function exchangeHandoffAndSignIn(
   options: ExchangeHandoffOptions,
 ): Promise<ExchangeHandoffResult> {
   const fallback = options.fallbackErrorMessage ?? "Failed to sign in to OpenWork Cloud.";
-  const attempt = ++handoffAttemptCounter;
+  const attempt = beginDenEnrollment();
 
   const fail = (
     error: string,
@@ -167,8 +196,6 @@ export async function exchangeHandoffAndSignIn(
     const message = error instanceof Error ? error.message : fallback;
     return fail(message, { grantConsumed: false });
   }
-  const destinationKey = denOriginComparisonKey(destination.baseUrl);
-  const apiBaseUrl = destination.apiBaseUrl;
 
   // Phase 2: exchange with a client constructed from the resolved
   // destination, so the grant can only be sent to — and the credential can
@@ -189,9 +216,36 @@ export async function exchangeHandoffAndSignIn(
     return fail(fallback, { grantConsumed: true });
   }
 
+  return commitDenEnrollment({ attempt, destination, storedSettings, exchange, options });
+}
+
+/** App-owned durable enrollment, shared with device sign-in. Never expose credentials to control callers. */
+export async function commitDenEnrollment(input: {
+  attempt: DenEnrollmentAttempt;
+  destination: Awaited<ReturnType<typeof resolveDenBaseUrlsForDestination>>;
+  storedSettings: ReturnType<typeof readDenSettings>;
+  exchange: DenDesktopHandoffExchange;
+  options: ExchangeHandoffOptions;
+  /** Device control results must not echo server or persistence errors. */
+  safeErrors?: boolean;
+}): Promise<ExchangeHandoffResult> {
+  const { attempt, destination, storedSettings, exchange, options } = input;
+  const fallback = options.fallbackErrorMessage ?? "Failed to sign in to OpenWork Cloud.";
+  const destinationKey = denOriginComparisonKey(destination.baseUrl);
+  const apiBaseUrl = destination.apiBaseUrl;
+  const sameOrigin = denOriginComparisonKey(storedSettings.baseUrl) === destinationKey;
+  const fail = (
+    error: string,
+    details: { grantConsumed: boolean; stale?: boolean; publishError?: boolean },
+  ): ExchangeHandoffResult => {
+    const message = details.stale || !input.safeErrors ? error : fallback;
+    if (details.publishError !== false) dispatchDenSessionUpdated({ status: "error", message });
+    return { ok: false, error: message, grantConsumed: details.grantConsumed, stale: details.stale === true };
+  };
+
   // Phases 3-5 run serialized: one commit at a time, newest attempt wins.
   const commit = async (): Promise<ExchangeHandoffResult> => {
-    if (attempt !== handoffAttemptCounter) {
+    if (!attempt.isCurrent()) {
       // A newer handoff attempt owns the enrollment now. Do not activate or
       // publish anything from this one.
       return fail("This sign-in was superseded by a newer attempt.", {
@@ -211,10 +265,10 @@ export async function exchangeHandoffAndSignIn(
             apiBaseUrl,
             token: exchange.token,
           }),
-          isCurrent: () => attempt === handoffAttemptCounter,
+          isCurrent: () => attempt.isCurrent(),
         })
       : null;
-    if (attempt !== handoffAttemptCounter) {
+    if (!attempt.isCurrent()) {
       return fail("This sign-in was superseded by a newer attempt.", {
         grantConsumed: true,
         stale: true,
@@ -288,6 +342,19 @@ export async function exchangeHandoffAndSignIn(
         await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
         return fail(fallback, { grantConsumed: true });
       }
+    }
+
+    // A device cancel or newer sign-in can arrive while persistence is in flight.
+    // The serialized queue prevents a newer commit until this rollback finishes.
+    if (!attempt.isCurrent()) {
+      if (needsBootstrapCommit) {
+        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
+      }
+      return fail("This sign-in was superseded by a newer attempt.", {
+        grantConsumed: true,
+        stale: true,
+        publishError: false,
+      });
     }
 
     // Phase 4: activate. One synchronous write publishes origin, token, and

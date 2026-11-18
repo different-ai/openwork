@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { claudeCodeSignInSchema, parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -23,10 +24,16 @@ import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
+import { opencodeConnectionImportResultsSchema, opencodeConnectionsPreviewSchema } from "./opencode-connections-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
 const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
+const fileSendGrantsSchema = z.object({
+  enabled: z.boolean(),
+  grants: z.array(z.object({ id: z.string(), kind: z.string(), account: z.string(), directory: z.string(), createdAt: z.string() })),
+});
+export type FileSendGrants = z.infer<typeof fileSendGrantsSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -335,6 +342,16 @@ export type OpenworkRuntimeServiceSnapshot = {
   upgradeAvailable: boolean;
 };
 
+/** Free space on the disk that holds the server's saved data; null when the system does not say. */
+export type OpenworkDiskSpace = {
+  freeBytes: number | null;
+  totalBytes: number | null;
+  level: "ok" | "low" | "critical";
+};
+
+/** Window event sent when a server reports that a write failed for lack of disk space. */
+export const openworkDiskFullEvent = "openwork-disk-full";
+
 export type OpenworkRuntimeSnapshot = {
   ok: boolean;
   worker?: {
@@ -452,6 +469,14 @@ export type OpenworkAuthorizedFoldersResponse = {
   folders: string[];
   hiddenCount: number;
   workspaceRoot: string;
+};
+
+export type OpenworkSandboxSettingsResponse = {
+  allowHostExecution: boolean;
+  effectiveAllowHostExecution: boolean;
+  pending?: boolean;
+  managed: boolean;
+  featureEnabled: boolean;
 };
 
 export type OpenworkPermissionAction = "allow" | "ask" | "deny";
@@ -1495,6 +1520,9 @@ async function requestJson<T>(
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
+    if (code === "insufficient_storage" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(openworkDiskFullEvent));
+    }
     throw new OpenworkServerError(response.status, code, message, json?.details);
   }
 
@@ -1640,6 +1668,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    claudeAgentIntegration: async (workspaceId: string) => {
+      // Listing initializes the native built-in plugin catalog. An item GET can
+      // return IntegrationNotFoundError on a fresh engine before this read.
+      return parseClaudeAgentIntegrationList(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration`, { token, timeoutMs: timeouts.config }));
+    },
+    connectClaudeAgent: (workspaceId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration/claude-agent/connect/external`, {
+      token, method: "POST", body: { methodID: "claude-login" }, timeoutMs: timeouts.config,
+    }),
+    removeClaudeAgentConnection: (workspaceId: string, credentialId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/credential/${encodeURIComponent(credentialId)}`, {
+      token, method: "DELETE", timeoutMs: timeouts.config,
+    }),
+    /** Only the desktop app that started this server holds the host token its sign-in route asks for. */
+    canSignInToClaudeCode: Boolean(hostToken),
+    /**
+     * Starts, reads or cancels Claude Code's own sign-in on the server's computer. A Claude Code that is already
+     * signed in answers `signed_in` without opening the browser, unless `force` asks for a fresh sign-in.
+     */
+    claudeCodeSignIn: async (action: "start" | "status" | "cancel", options?: { force?: boolean }) => claudeCodeSignInSchema.parse(await requestJson<unknown>(baseUrl, "/claude-code/sign-in", {
+      hostToken, method: action === "start" ? "POST" : action === "cancel" ? "DELETE" : "GET", timeoutMs: timeouts.config,
+      ...(action === "start" ? { body: { force: options?.force === true } } : {}),
+    })),
     cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
     cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
@@ -1654,6 +1703,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     runtimeVersions: () =>
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    diskSpace: () => requestJson<OpenworkDiskSpace>(baseUrl, "/disk-space", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     getConnectState: (workspaceId?: string | null) => {
       const query = new URLSearchParams();
@@ -1661,6 +1711,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    /** "Always allow" on an open file-send approval; answer the approval with "always" right after. */
+    rememberFileSend: async (requestId: string) => {
+      await requestJson<unknown>(baseUrl, "/experimental/file-send/remember", { token, hostToken, method: "POST", body: { requestId }, timeoutMs: timeouts.config });
+    },
+    /** File sends this member always allows on this computer. */
+    listFileSendGrants: async () => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, "/experimental/file-send/grants", { token, hostToken, timeoutMs: timeouts.config })),
+    removeFileSendGrant: async (id: string) => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, `/experimental/file-send/grants/${encodeURIComponent(id)}`, { token, hostToken, method: "DELETE", timeoutMs: timeouts.config })),
     /** Has the server read the member's organization policy from Den again, as it does at sign-in. */
     refreshManagedPolicy: async () => {
       await requestJson<unknown>(baseUrl, "/managed-policy", { token, hostToken, timeoutMs: timeouts.config });
@@ -1678,6 +1735,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {
         hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
+    /**
+     * Device provider sharing: after the person confirms, this server sends
+     * the key it holds for `providerId` to their organization. The key is never
+     * read by or returned to the app. `token` is a freshly verified sign-in, when
+     * Den asked for one.
+     */
+    shareDeviceProvider: async (providerId: string, orgId: string, token?: string): Promise<{ inferenceProviderId: string; name: string }> => {
+      const payload = await requestJson<unknown>(baseUrl, `/cloud-provider-sync/device-providers/${encodeURIComponent(providerId)}/share`, {
+        hostToken, method: "POST", body: { orgId, ...(token ? { token } : {}) }, timeoutMs: timeouts.cloudMcpReconcile,
+      });
+      const shared = z.object({ inferenceProviderId: z.string().min(1), name: z.string() }).safeParse(payload);
+      if (!shared.success) throw new OpenworkServerError(502, "share_unconfirmed", "OpenWork did not confirm the share. Check AI Providers before trying again.");
+      return shared.data;
+    },
+    refreshGatewayProviderCatalog: async (signal?: AbortSignal): Promise<void> => {
+      await requestJson<unknown>(baseUrl, "/cloud-provider-sync/gateway/refresh", {
+        hostToken, method: "POST", body: {}, signal, timeoutMs: timeouts.config,
+      });
+    },
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,
@@ -1879,6 +1955,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.config,
         },
       ),
+    getSandboxSettings: (workspaceId: string) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setSandboxSettings: (workspaceId: string, allowHostExecution: boolean) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { allowHostExecution },
+          timeoutMs: timeouts.config,
+        },
+      ),
     getRuntimeDisabledProviders: (workspaceId: string) =>
       requestJson<OpenworkRuntimeDisabledProvidersResult>(
         baseUrl,
@@ -2045,6 +2139,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     getMcpStatus: (workspaceId: string) =>
       requestJson<McpStatusMap>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode/mcp`, { token, hostToken }),
+    /** The connection catalog of the engine that runs chats on a v2 desktop, as that engine reports it. */
+    getChatEngineMcpCatalog: (workspaceId: string) =>
+      requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/mcp`, { token, hostToken }),
     listMcpApps: (workspaceId: string) =>
       requestJson<{ servers: OpenworkMcpAppCatalogServer[] }>(
         baseUrl,
@@ -2283,6 +2380,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    previewOpencodeConnections: async (workspaceId: string) =>
+      opencodeConnectionsPreviewSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, { token, hostToken }),
+      ),
+    importOpencodeConnections: async (workspaceId: string, names: string[]) =>
+      opencodeConnectionImportResultsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, {
+          token,
+          hostToken,
+          method: "POST",
+          body: { names },
+          timeoutMs: 2 * 60_000,
+        }),
+      ).results,
     listClaudeCodeSessions: async (workspaceId: string) =>
       claudeImportItemsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),

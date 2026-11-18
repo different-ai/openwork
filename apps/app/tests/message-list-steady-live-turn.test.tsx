@@ -1,4 +1,4 @@
-import { afterAll, afterEach, expect, test } from "bun:test"
+import { afterAll, afterEach, expect, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -17,7 +17,6 @@ const { PlatformProvider, createDefaultPlatform } = await import("../src/react-a
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { MessageList } = await import("../src/components/chat/message-list")
 const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
-const { useSteadyLiveTurnStore } = await import("../src/components/chat/steady-live-turn-store")
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 
 let mounted: { root: Root; container: HTMLElement } | null = null
@@ -29,7 +28,6 @@ afterEach(async () => {
     container.remove()
     mounted = null
   }
-  useSteadyLiveTurnStore.getState().setEnabled(false)
 })
 
 const answer = "I found the thread and will check available times."
@@ -51,13 +49,8 @@ const messages: UIMessage[] = [{
   metadata: { opencode: { created: 2 } },
 }]
 
-async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "streaming") {
-  useSteadyLiveTurnStore.getState().setEnabled(steady)
-  const container = document.createElement("div")
-  document.body.append(container)
-  const root = createRoot(container)
-  mounted = { root, container }
-  await act(async () => root.render(createElement(QueryClientProvider, { client: queryClient,
+function liveTurnView(status: "streaming" | "ready", content: UIMessage[] = messages) {
+  return createElement(QueryClientProvider, { client: queryClient,
     children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
       value: createDefaultPlatform(),
       children: createElement(MessageListProvider, {
@@ -67,20 +60,24 @@ async function renderLiveTurn(steady: boolean, status: "streaming" | "ready" = "
         onForkAtMessage: () => {}, onEditUserMessage: () => {},
         onMcpReconnect: async () => { throw new Error("Unexpected reconnect") },
         onMcpReopenAuthorization: async () => {},
-        children: createElement(MessageList, { messages, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
+        children: createElement(MessageList, { messages: content, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
       }),
-    }) }) })))
+    }) }) })
+}
+
+async function renderLiveTurn(status: "streaming" | "ready" = "streaming") {
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  mounted = { root, container }
+  await act(async () => root.render(liveTurnView(status)))
   return container
 }
 
-test("off: a running turn is split at its latest text and its steps area holds its height", async () => {
-  const container = await renderLiveTurn(false)
-  expect(container.querySelector("[data-live-steps]")).not.toBeNull()
-  expect(container.querySelector("[data-live-turn-reserve]")).toBeNull()
-})
 
-test("on: a running turn keeps its parts in arrival order, with no steps area to hold open", async () => {
-  const container = await renderLiveTurn(true)
+
+test("a running turn keeps its parts in arrival order, with no steps area to hold open", async () => {
+  const container = await renderLiveTurn()
   // Nothing moves between a steps area and the answer while the turn runs.
   expect(container.querySelector("[data-live-steps]")).toBeNull()
   expect(container.textContent).toContain(answer)
@@ -92,8 +89,89 @@ test("on: a running turn keeps its parts in arrival order, with no steps area to
   expect(reserve?.previousElementSibling?.contains(working ?? null) || reserve?.previousElementSibling === working).toBe(true)
 })
 
-test("on: a finished turn splits its steps from the answer as before", async () => {
-  const container = await renderLiveTurn(true, "ready")
+test("a finished turn splits its steps from the answer as before", async () => {
+  const container = await renderLiveTurn("ready")
   expect(container.textContent).toContain(answer)
   expect(container.querySelector("[data-live-turn-reserve]")?.getAttribute("style") ?? "").not.toContain("height")
+})
+
+/** Lays out each group and the reserve as a real list would, and drives the reserve's ResizeObserver. */
+async function measuredLiveTurn(viewHeight: number) {
+  const heights: Record<string, number> = { msg_user: 50, msg_turn: 900 }
+  const observed: { callback: ResizeObserverCallback; targets: Element[]; self: ResizeObserver }[] = []
+  const previousObserver = globalThis.ResizeObserver
+  Reflect.set(globalThis, "ResizeObserver", class {
+    entry: (typeof observed)[number]
+    constructor(callback: ResizeObserverCallback) { this.entry = { callback, targets: [], self: this as unknown as ResizeObserver }; observed.push(this.entry) }
+    observe(target: Element) { this.entry.targets.push(target) }
+    unobserve() {}
+    disconnect() { this.entry.targets = [] }
+  })
+  const bottomOf = (list: Element | null) => {
+    let top = 0
+    for (const group of list?.querySelectorAll(":scope > [data-thread-group]") ?? []) top += (heights[group.getAttribute("data-thread-group") ?? ""] ?? 0) + 8
+    return top
+  }
+  const measure = spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this.hasAttribute("data-live-turn-reserve")) return new DOMRect(0, bottomOf(this.parentElement), 600, Number.parseFloat(this.style.height) || 0)
+    const key = this.getAttribute("data-thread-group")
+    if (!key) return new DOMRect(0, 0, 600, 0)
+    let top = 0
+    for (const group of this.parentElement?.querySelectorAll(":scope > [data-thread-group]") ?? []) {
+      if (group === this) break
+      top += (heights[group.getAttribute("data-thread-group") ?? ""] ?? 0) + 8
+    }
+    return new DOMRect(0, top, 600, heights[key] ?? 0)
+  })
+  const container = await renderLiveTurn()
+  container.setAttribute("data-thread-scroll", "")
+  Object.defineProperty(container, "clientHeight", { configurable: true, get: () => viewHeight })
+  const reserve = () => container.querySelector<HTMLElement>("[data-live-turn-reserve]")
+  const resize = async () => {
+    await act(async () => {
+      for (const entry of observed) if (entry.targets.some(target => target.contains(reserve()))) entry.callback([], entry.self)
+    })
+  }
+  return {
+    heights, container, reserve, resize,
+    restore() { measure.mockRestore(); Reflect.set(globalThis, "ResizeObserver", previousObserver) },
+  }
+}
+
+test("a message sent mid-run lands at the bottom instead of inheriting the room held for the earlier turn", async () => {
+  const view = await measuredLiveTurn(2000)
+  try {
+    await view.resize()
+    expect(view.reserve()?.style.height).toBe("")
+    // A step folds while the turn runs: its room moves to the end of the list.
+    view.heights.msg_turn = 100
+    await view.resize()
+    expect(view.reserve()?.style.height).toBe("800px")
+    // The person sends a follow-up: their message is the new last group and
+    // must not sit on top of the 800px held for the turn above it.
+    view.heights.msg_follow = 50
+    const root = mounted?.root
+    if (!root) throw new Error("Missing live turn root")
+    await act(async () => root.render(liveTurnView("streaming", [...messages, {
+      id: "msg_follow", role: "user", parts: [{ type: "text", text: "Use next week instead." }], metadata: { opencode: { created: 3 } },
+    }])))
+    await view.resize()
+    expect(view.container.textContent).toContain("Use next week instead.")
+    expect(view.reserve()?.style.height).toBe("")
+  } finally {
+    view.restore()
+  }
+})
+
+test("a turn that shrinks by more than the view holds at most half of it open", async () => {
+  const view = await measuredLiveTurn(600)
+  try {
+    await view.resize()
+    view.heights.msg_turn = 100
+    await view.resize()
+    // 800px of blank space would leave the screen empty; the turn's end stays in view.
+    expect(view.reserve()?.style.height).toBe("300px")
+  } finally {
+    view.restore()
+  }
 })

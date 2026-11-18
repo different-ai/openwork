@@ -828,7 +828,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       // Published desktops reach this route only from inside the gateway
       // runtime, after OpenWorkWebAccessGate (v0.18.42+) has already resolved
       // Web access for the organization; see openwork-web-runtime-access.ts.
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -882,7 +882,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -937,7 +937,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
@@ -999,7 +999,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
         return c.json({ error: "unauthorized" }, 401)
       }
 
-      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id, { userId: user.id })
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
       }

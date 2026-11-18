@@ -20,8 +20,10 @@ import { deploymentCapabilities } from "../../gateway-deployment.js"
 import { cachedOrganizationServiceReadiness } from "../../service-readiness-runtime.js"
 import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { findDomainSsoRequirement, sessionCanRequireOrganizationSso } from "../../organization-sso-access.js"
+import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
+import { organizationRequiresSsoSession } from "../../sso-routing.js"
+import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS } from "../../session-security-settings.js"
+import { shortenMemberSessions } from "../../session-security-lifetime.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"
 import { sortedPermissionKeys } from "../../permissions/effective.js"
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -45,6 +47,7 @@ import {
 } from "../../orgs.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
+import type { ResourceActionContext, ResourceOrganizationContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { requestClientIpKey } from "../../request-client-ip.js"
 
@@ -57,13 +60,19 @@ const updateOrganizationSchema = z.object({
   allowedEmailDomains: z.array(z.string().trim().min(1).max(255)).max(100).nullable().optional(),
   allowedDesktopVersions: z.array(z.string().trim().min(1).max(32)).max(200).nullable().optional(),
   requireSso: z.boolean().optional(),
-  /** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
+  /** every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().optional(),
+  /** Hours a sign-in lasts without activity, web and desktop (12, 24, 72 or 168). */
+  sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).optional(),
+  /** Days a sign-in lasts at most, however active; people sign in at least once every period (1, 7, 14, 30, 60 or 90). */
+  maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).optional(),
+  /** Minutes since sign-in before an admin must confirm their identity for sensitive changes (15, 60, 240, 480 or 1440); 0 turns it off. */
+  adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).optional(),
   brandAppName: z.string().trim().min(1).max(64).nullable().optional(),
   brandLogoUrl: z.string().url().max(2048).nullable().optional(),
   brandIconUrl: z.string().url().max(2048).nullable().optional(),
   brandAccentColor: z.string().trim().min(1).max(32).nullable().optional(),
-}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
+}).strict().refine((value) => value.name !== undefined || value.allowedEmailDomains !== undefined || value.allowedDesktopVersions !== undefined || value.requireSso !== undefined || value.restrictDomainToSso !== undefined || value.sessionLengthHours !== undefined || value.maxSessionLengthDays !== undefined || value.adminReauthMinutes !== undefined || value.brandAppName !== undefined || value.brandLogoUrl !== undefined || value.brandIconUrl !== undefined || value.brandAccentColor !== undefined, {
   message: "Provide at least one organization field to update.",
 })
 
@@ -77,9 +86,17 @@ const resolveSsoByEmailResponseSchema = z.object({
   organizationSlug: z.string(),
   signInPath: z.string(),
   signInUrl: z.string().url(),
+  ssoRequired: z.boolean().optional(),
 }).or(z.object({
   requireSso: z.literal(false),
   method: z.union([z.literal("google"), z.literal("password"), z.literal("signup")]),
+  // the domain's organization offers SSO as one sign-in
+  // option; `method` stays the usual way in. `ssoRequired` is the
+  // organization's own Require SSO (it opens only from an SSO session).
+  ssoRequired: z.boolean().optional(),
+  organizationSlug: z.string().optional(),
+  signInPath: z.string().optional(),
+  signInUrl: z.string().url().optional(),
 })).meta({ ref: "ResolveOrganizationSsoByEmailResponse" })
 
 const botVerificationFailedSchema = z.object({
@@ -300,6 +317,104 @@ export async function setRequestActiveOrganization(
   }
 }
 
+export type UpdateOrganizationInput = z.infer<typeof updateOrganizationSchema>
+
+/**
+ * PATCH /v1/org, callable with an in-process route context (config-blob
+ * imports, src/config-blobs/areas/settings-general.ts).
+ */
+export async function updateOrganizationAction(c: ResourceActionContext, payload: ResourceOrganizationContext, input: UpdateOrganizationInput) {
+
+      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
+        ? { domains: undefined, invalidDomains: [] }
+        : normalizeAllowedEmailDomains(input.allowedEmailDomains)
+
+      if (normalizedDomains.invalidDomains.length > 0) {
+        return c.json({
+          error: "invalid_email_domain",
+          message: "Enter valid email domains like company.com.",
+          invalidDomains: normalizedDomains.invalidDomains,
+        }, 400)
+      }
+
+      const changesSessionLimits = input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined
+
+      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
+      const enablesRequireSso = (input.requireSso === true && currentMetadata.requireSso !== true)
+        || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
+      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
+      if (enablesRequireSso) {
+        // Requiring SSO takes effect at once for every member, the admin too:
+        // only an admin signed in through it can turn it on, so nobody locks
+        // themselves out of the organization by mistake.
+        const session = c.get("session")
+        if (!await sessionCanRequireOrganizationSso({ sessionId: session?.id ?? null, organizationId: payload.organization.id })) {
+          const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
+          return c.json({
+            error: "sso_session_required",
+            message: "Sign in with this organization's SSO first, then return to Settings and save again. SSO has not been made required.",
+            signInPath,
+            signInUrl: ssoSignInUrl(signInPath),
+          }, 409)
+        }
+      }
+      if (enablesRequireSso || enablesVersionPinning) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
+      if (enablesBranding) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
+        if (!entitlement.ok) {
+          return c.json(entitlement.response, entitlement.status)
+        }
+      }
+
+      if (typeof input.brandIconUrl === "string") {
+        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
+        if (!brandIconCheck.ok) {
+          return c.json({
+            error: "invalid_brand_icon",
+            reason: brandIconCheck.reason,
+            message: brandIconCheck.message,
+          }, 400)
+        }
+      }
+
+      const updated = await updateOrganizationSettings({
+        organizationId: payload.organization.id,
+        name: input.name,
+        allowedEmailDomains: normalizedDomains.domains,
+        allowedDesktopVersions: input.allowedDesktopVersions,
+        requireSso: input.requireSso,
+        restrictDomainToSso: input.restrictDomainToSso,
+        sessionLengthHours: input.sessionLengthHours,
+        maxSessionLengthDays: input.maxSessionLengthDays,
+        adminReauthMinutes: input.adminReauthMinutes,
+        brandAppName: input.brandAppName,
+        brandLogoUrl: input.brandLogoUrl,
+        brandIconUrl: input.brandIconUrl,
+        brandAccentColor: input.brandAccentColor,
+      })
+
+      if (!updated) {
+        return c.json({ error: "organization_not_found" }, 404)
+      }
+
+      // Shorter limits end members' longer sessions now, not at their next extension.
+      if (changesSessionLimits) {
+        await shortenMemberSessions({
+          organizationId: payload.organization.id,
+          limits: organizationSessionLimits(updated.metadata),
+        })
+      }
+
+      return c.json({ organization: updated })
+}
+
 export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.post(
     "/v1/org",
@@ -496,92 +611,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         402: jsonResponse("Enabling enforced SSO or desktop version controls requires an Enterprise plan.", enterprisePlanRequiredSchema),
         403: jsonResponse("The caller does not have permission to update the requested organization fields.", forbiddenSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        409: jsonResponse("ssoPerOrganization: requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string() })),
+        409: jsonResponse("requiring SSO needs the caller's session to have signed in through this organization's SSO.", z.object({ error: z.literal("sso_session_required"), message: z.string(), signInPath: z.string(), signInUrl: z.string().url() })),
       },
     }),
     orgPermissionRoute("organization.update"),
     jsonValidator(updateOrganizationSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const input = c.req.valid("json")
-
-      const normalizedDomains: { domains: string[] | null | undefined; invalidDomains: string[] } = input.allowedEmailDomains === undefined
-        ? { domains: undefined, invalidDomains: [] }
-        : normalizeAllowedEmailDomains(input.allowedEmailDomains)
-
-      if (normalizedDomains.invalidDomains.length > 0) {
-        return c.json({
-          error: "invalid_email_domain",
-          message: "Enter valid email domains like company.com.",
-          invalidDomains: normalizedDomains.invalidDomains,
-        }, 400)
-      }
-
-      if (input.restrictDomainToSso !== undefined && !await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        return c.json({ error: "feature_disabled", message: "Restricting a domain to SSO is not available for this organization." }, 404)
-      }
-
-      const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
-      const enablesRequireSso = (input.requireSso === true && currentMetadata.requireSso !== true)
-        || (input.restrictDomainToSso === true && currentMetadata.restrictDomainToSso !== true)
-      const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
-      if (enablesRequireSso && await organizationFeatureEnabled(payload.organization.id, "ssoPerOrganization")) {
-        // Requiring SSO takes effect at once for every member, the admin too:
-        // only an admin signed in through it can turn it on, so nobody locks
-        // themselves out of the organization by mistake.
-        const session = c.get("session")
-        if (!await sessionCanRequireOrganizationSso({ sessionId: session?.id ?? null, organizationId: payload.organization.id })) {
-          return c.json({
-            error: "sso_session_required",
-            message: "Sign in with this organization's SSO first. Once it is required, everyone who did not sign in with it, you included, has to before opening this organization.",
-          }, 409)
-        }
-      }
-      if (enablesRequireSso || enablesVersionPinning) {
-        const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
-        if (!entitlement.ok) {
-          return c.json(entitlement.response, entitlement.status)
-        }
-      }
-
-      const enablesBranding = (typeof input.brandAppName === "string") || (typeof input.brandLogoUrl === "string") || (typeof input.brandIconUrl === "string") || (typeof input.brandAccentColor === "string")
-      if (enablesBranding) {
-        const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
-        if (!entitlement.ok) {
-          return c.json(entitlement.response, entitlement.status)
-        }
-      }
-
-      if (typeof input.brandIconUrl === "string") {
-        const brandIconCheck = await validateBrandIconUrl(input.brandIconUrl)
-        if (!brandIconCheck.ok) {
-          return c.json({
-            error: "invalid_brand_icon",
-            reason: brandIconCheck.reason,
-            message: brandIconCheck.message,
-          }, 400)
-        }
-      }
-
-      const updated = await updateOrganizationSettings({
-        organizationId: payload.organization.id,
-        name: input.name,
-        allowedEmailDomains: normalizedDomains.domains,
-        allowedDesktopVersions: input.allowedDesktopVersions,
-        requireSso: input.requireSso,
-        restrictDomainToSso: input.restrictDomainToSso,
-        brandAppName: input.brandAppName,
-        brandLogoUrl: input.brandLogoUrl,
-        brandIconUrl: input.brandIconUrl,
-        brandAccentColor: input.brandAccentColor,
-      })
-
-      if (!updated) {
-        return c.json({ error: "organization_not_found" }, 404)
-      }
-
-      return c.json({ organization: updated })
-    },
+    async (c) => updateOrganizationAction(c, c.get("organizationContext"), c.req.valid("json")),
   )
 
   app.get(
@@ -615,7 +650,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       security: [],
       hide: true,
       summary: "Resolve sign-in method by email",
-      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting.",
+      description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting. When the domain's organization has SSO, its sign-in URL is always returned: with requireSso true (method sso) SSO is the only way in; otherwise SSO is one option next to method, and ssoRequired says whether the organization itself only opens from an SSO session.",
       responses: {
         200: jsonResponse("Sign-in resolution returned successfully.", resolveSsoByEmailResponseSchema),
         400: jsonResponse("The SSO resolution query parameters were invalid.", invalidRequestSchema),
@@ -654,19 +689,25 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const requirement = await findEnterpriseAuthRequirementForEmailDomain(query.email)
-      // ssoPerOrganization: only an organization that requires SSO (or
-      // restricts its domain) sends this email to SSO here.
+      // This is the password/Google preflight, not organization access. With
+      // per-org SSO, Require SSO must not undo the alternative offered by login
+      // options: the person may still sign in for their other organizations.
+      // Only restricting the entire domain (or the legacy behavior) redirects.
       const domainPolicy = requirement ? await findDomainSsoRequirement(query.email) : null
-      const ssoOptional = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.requireSso && !domainPolicy.policy.restrictDomainToSso)
+      const permitsNonSsoSignIn = Boolean(domainPolicy?.perOrganization && !domainPolicy.policy.restrictDomainToSso)
 
-      if (requirement && !ssoOptional) {
-        return c.json({
-          requireSso: true,
-          method: "sso",
-          organizationSlug: requirement.organizationSlug,
-          signInPath: requirement.signInPath,
-          signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
-        })
+      const ssoOption = requirement
+        ? {
+            ssoRequired: domainPolicy ? organizationRequiresSsoSession(domainPolicy.policy) : true,
+            organizationSlug: requirement.organizationSlug,
+            signInPath: requirement.signInPath,
+            signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
+          }
+        : null
+
+      if (ssoOption && !permitsNonSsoSignIn) {
+        // SSO is forced for the whole domain: the only way in.
+        return c.json({ requireSso: true, method: "sso", ...ssoOption, ssoRequired: true })
       }
 
       const method = await resolveNonSsoSignInMethodForEmail(query.email)
@@ -681,9 +722,12 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         }
       }
 
+      // SSO set up but not forced for the domain: one of the sign-in options,
+      // next to the usual `method` (the sign-in page redirects only on method "sso").
       return c.json({
         requireSso: false,
         method,
+        ...(ssoOption ?? {}),
       })
     },
   )
@@ -716,6 +760,8 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       // separate per-organization Cloud rollout flag.
       const cloudEnabled = cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })
         && (await getOpenWorkWebAccess(payload.organization.id)).hasAccess
+        // With webPerMember, only members an admin gave Web get Cloud.
+        && payload.currentMember.openworkWeb
       // The directory is only loaded here, not with every org request's context.
       const [directory, ssoRows, scimRows] = await Promise.all([
         loadOrganizationDirectory(payload.organization.id),

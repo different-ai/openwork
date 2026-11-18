@@ -57,7 +57,7 @@ export function registerOrgSandboxJoinRoutes<T extends { Variables: OrgRouteVari
       tags: ["Sandbox organizations"],
       security: [{ bearerAuth: [] }],
       summary: "Join a sandbox organization",
-      description: "Joins the signed-in person to the sandbox organization with the sandbox's join role (member, or admin when its admin chose that) and makes it their active organization. Joining again is harmless and never changes an existing role.",
+      description: "Joins the signed-in person to the sandbox organization with the sandbox's join role (super admin, admin or member, as the platform admin chose) and makes it their active organization. Joining again is harmless and never changes an existing role.",
       responses: {
         200: jsonResponse("Joined.", sandboxJoinedSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),

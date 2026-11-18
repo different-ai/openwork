@@ -1,17 +1,18 @@
-import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
-  AuthAccountTable,
+  AuthSessionTable,
   AuthUserTable,
   MemberTable,
   OrganizationTable,
   SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   SsoConnectionTable,
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { organizationFeatureEnabled } from "./features.js"
+import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
 import {
   blocksNonSsoSignIn,
   organizationRequiresSsoSession,
@@ -21,10 +22,8 @@ import {
 } from "./sso-routing.js"
 
 /**
- * Den side of `ssoPerOrganization` (rules in sso-routing.ts): which
- * organizations a session may open, and which sign-ins an organization's SSO
- * still refuses. Every check reads the SSO organization's own flag, so turning
- * it on for one organization changes only that organization.
+ * Den side of SSO routing: organization settings govern which sessions may
+ * open them; single-organization deployments keep sign-in-wide SSO.
  */
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -56,11 +55,11 @@ export function ssoSignInUrl(signInPath: string) {
   return new URL(signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString()
 }
 
-/** Per organization: is `ssoPerOrganization` on? Always off on single-organization deployments. Cached reads. */
+/** Per-organization routing is available on multi-org deployments; single-org SSO stays sign-in-wide. */
 export async function readSsoPerOrganization(organizationIds: readonly string[]): Promise<Map<string, boolean>> {
   const result = new Map<string, boolean>()
   for (const id of new Set(organizationIds)) {
-    result.set(id, env.orgMode !== "single_org" && await organizationFeatureEnabled(id, "ssoPerOrganization"))
+    result.set(id, env.orgMode !== "single_org")
   }
   return result
 }
@@ -96,7 +95,7 @@ async function readSsoOrganizations(where: ReturnType<typeof and>) {
 export async function findDomainSsoRequirement(email: string): Promise<DomainSsoRequirement | null> {
   const domain = emailDomain(email)
   if (!domain) return null
-  const rows = await readSsoOrganizations(and(eq(SsoConnectionTable.domain, domain), eq(SsoProviderTable.domain, domain)))
+  const rows = await readSsoOrganizations(and(ssoDomainColumnCovers(SsoConnectionTable.domain, domain), ssoDomainColumnCovers(SsoProviderTable.domain, domain)))
   const row = rows[0]
   if (!row) return null
   const perOrganization = (await readSsoPerOrganization([row.organizationId])).get(row.organizationId) === true
@@ -107,6 +106,86 @@ export async function findDomainSsoRequirement(email: string): Promise<DomainSso
     signInPath: row.signInPath || defaultSignInPath(row.organizationSlug),
     policy: readOrganizationSsoPolicy(row.metadata),
     perOrganization,
+  }
+}
+
+/** An organization the person belongs to whose SSO can confirm who they are. */
+export type MemberSsoSignIn = {
+  organizationId: string
+  organizationSlug: string
+  organizationName: string
+  signInPath: string
+  /** Only this SSO may sign in to the organization: a password or Google session would be refused there. */
+  ssoOnly: boolean
+}
+
+/**
+ * The person's organizations with ready SSO (enabled connection, verified
+ * domain), for the re-authentication check. Unlike `/v1/orgs/sso/resolve`
+ * (the sign-in page's email preflight, which only links SSO when it is the
+ * sole way in) this includes SSO that is offered but not required.
+ */
+export async function listMemberSsoSignIns(userId: string): Promise<MemberSsoSignIn[]> {
+  const organizationIds = (await db
+    .select({ organizationId: MemberTable.organizationId })
+    .from(MemberTable)
+    .where(and(eq(MemberTable.userId, normalizeDenTypeId("user", userId)), isNull(MemberTable.removedAt))))
+    .map((row) => row.organizationId)
+  if (organizationIds.length === 0) return []
+
+  const rows = await readSsoOrganizations(inArray(OrganizationTable.id, organizationIds))
+  const perOrganization = await readSsoPerOrganization(rows.map((row) => row.organizationId))
+  const result = new Map<string, MemberSsoSignIn>()
+  for (const row of rows) {
+    if (result.has(row.organizationId)) continue
+    const policy = readOrganizationSsoPolicy(row.metadata)
+    result.set(row.organizationId, {
+      organizationId: row.organizationId,
+      organizationSlug: row.organizationSlug,
+      organizationName: row.organizationName,
+      signInPath: defaultSignInPath(row.organizationSlug),
+      // Flag off: members must use SSO (blocksNonSsoSignIn). Flag on: only when required.
+      ssoOnly: perOrganization.get(row.organizationId) !== true || organizationRequiresSsoSession(policy),
+    })
+  }
+  return [...result.values()]
+}
+
+/** One identity provider a person can sign in with: a ready connection (enabled, domain verified). */
+export type SsoSignInOption = {
+  providerId: string
+  name: string
+  kind: "oidc" | "saml"
+}
+
+/**
+ * The organization's ready SSO connections, oldest first, for sign-in to
+ * show one button each. With an email domain, only those covering it: a
+ * provider only signs in people on its own domains.
+ */
+export async function listOrganizationSsoSignInOptions(input: { organizationSlug: string; emailDomain?: string | null }): Promise<{ organizationName: string; options: SsoSignInOption[] } | null> {
+  const [organization] = await db
+    .select({ id: OrganizationTable.id, name: OrganizationTable.name })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.slug, input.organizationSlug))
+    .limit(1)
+  if (!organization) return null
+  const rows = await db
+    .select({ providerId: SsoConnectionTable.providerId, name: SsoConnectionTable.name, issuer: SsoConnectionTable.issuer, kind: SsoConnectionTable.kind, domain: SsoConnectionTable.domain })
+    .from(SsoConnectionTable)
+    .innerJoin(SsoProviderTable, and(
+      eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
+      eq(SsoConnectionTable.organizationId, SsoProviderTable.organizationId),
+      eq(SsoProviderTable.domainVerified, true),
+    ))
+    .where(and(eq(SsoConnectionTable.organizationId, organization.id), eq(SsoConnectionTable.status, "enabled")))
+    .orderBy(asc(SsoConnectionTable.createdAt), asc(SsoConnectionTable.id))
+  const emailDomain = input.emailDomain?.trim().toLowerCase() || null
+  return {
+    organizationName: organization.name,
+    options: rows
+      .filter((row) => !emailDomain || ssoDomainsCover(row.domain, emailDomain))
+      .map((row) => ({ providerId: row.providerId, name: ssoConnectionDisplayName(row), kind: row.kind === "saml" ? "saml" : "oidc" })),
   }
 }
 
@@ -137,7 +216,7 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
     ? await readSsoOrganizations(inArray(OrganizationTable.id, memberOrganizationIds))
     : []
   const domainRows = domain
-    ? await readSsoOrganizations(and(eq(SsoConnectionTable.domain, domain), eq(SsoProviderTable.domain, domain)))
+    ? await readSsoOrganizations(and(ssoDomainColumnCovers(SsoConnectionTable.domain, domain), ssoDomainColumnCovers(SsoProviderTable.domain, domain)))
     : []
   const rows = [...memberRows, ...domainRows.filter((row) => !memberRows.some((member) => member.organizationId === row.organizationId))]
   if (rows.length === 0) return null
@@ -148,7 +227,7 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
       organizationId: row.organizationId,
       policy: readOrganizationSsoPolicy(row.metadata),
       perOrganization: perOrganization.get(row.organizationId) === true,
-      emailOnVerifiedDomain: domain !== null && row.domain === domain,
+      emailOnVerifiedDomain: domain !== null && ssoDomainsCover(row.domain, domain),
       member: memberOrganizationIds.includes(row.organizationId),
     }
     if (blocksNonSsoSignIn(candidate)) {
@@ -160,10 +239,10 @@ export async function findNonSsoSignInBlock(input: { email: string | null; userI
 
 /**
  * Organizations among `organizationIds` that only a session signed in through
- * their own SSO may open: `ssoPerOrganization` on, SSO enabled on a verified
+ * their own SSO may open: multi-org deployment, SSO enabled on a verified
  * domain, and "Require SSO" (or a restricted domain) set.
  */
-export async function findSsoRequiredOrganizations(organizationIds: readonly string[]): Promise<Map<string, SsoAccessBlock>> {
+async function readSsoRequiredOrganizations(organizationIds: readonly string[]): Promise<Map<string, SsoAccessBlock>> {
   const result = new Map<string, SsoAccessBlock>()
   const ids = [...new Set(organizationIds.map((id) => normalizeDenTypeId("organization", id)))]
   if (ids.length === 0 || env.orgMode === "single_org") return result
@@ -173,7 +252,8 @@ export async function findSsoRequiredOrganizations(organizationIds: readonly str
   if (enabledIds.length === 0) return result
   const rows = await readSsoOrganizations(inArray(OrganizationTable.id, enabledIds))
   for (const row of rows) {
-    if (!organizationRequiresSsoSession(readOrganizationSsoPolicy(row.metadata))) continue
+    const policy = readOrganizationSsoPolicy(row.metadata)
+    if (!organizationRequiresSsoSession(policy)) continue
     result.set(row.organizationId, {
       organizationId: row.organizationId,
       organizationSlug: row.organizationSlug,
@@ -184,41 +264,47 @@ export async function findSsoRequiredOrganizations(organizationIds: readonly str
   return result
 }
 
-/** The organizations this session signed in to through SSO. */
-async function readSessionSsoOrganizationIds(sessionId: string): Promise<Set<string>> {
-  // primary: the row is written by the SSO callback that created the session.
+/** When this session proved each organization's SSO (the identity provider's authentication time). */
+async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date>> {
+  // primary: the rows are written by the SSO callback that created the session.
   const rows = await db.$primary
-    .select({ organizationId: SessionSsoAuthenticationTable.organizationId })
-    .from(SessionSsoAuthenticationTable)
-    .where(eq(SessionSsoAuthenticationTable.sessionId, normalizeDenTypeId("session", sessionId)))
-  return new Set(rows.map((row) => row.organizationId))
+    .select({ organizationId: SessionSsoProofTable.organizationId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
+    .from(SessionSsoProofTable)
+    .where(eq(SessionSsoProofTable.sessionId, normalizeDenTypeId("session", sessionId)))
+  return new Map(rows.map((row) => [row.organizationId, row.authenticatedAt]))
 }
 
 /**
  * Organizations among `organizationIds` this session may not open until it
- * signs in through their SSO. A request without a session (an API key, an
- * MCP token) is checked where that credential was issued instead.
+ * signs in through their SSO. A request without a session (an API key,
+ * an MCP token) is checked where that credential was issued instead.
  */
 export async function findSsoBlockedOrganizations(input: { sessionId: string | null; organizationIds: readonly string[] }): Promise<Map<string, SsoAccessBlock>> {
-  const required = await findSsoRequiredOrganizations(input.organizationIds)
-  if (required.size === 0) return required
-  const signedIn = input.sessionId ? await readSessionSsoOrganizationIds(input.sessionId) : new Set<string>()
-  for (const organizationId of signedIn) required.delete(organizationId)
-  return required
+  const required = await readSsoRequiredOrganizations(input.organizationIds)
+  const result = new Map<string, SsoAccessBlock>()
+  if (required.size === 0) return result
+  const proofs = input.sessionId ? await readSessionSsoProofs(input.sessionId) : new Map<string, Date>()
+  for (const [organizationId, block] of required) {
+    if (proofs.has(organizationId)) continue
+    result.set(organizationId, block)
+  }
+  return result
 }
 
 /**
  * Whether this session may turn on "Require SSO" (or restrict the domain) for
  * the organization without losing access to it: the organization has no
  * enabled SSO on a verified domain yet (nothing is enforced), or the session
- * signed in through it.
+ * has signed in through it.
  */
 export async function sessionCanRequireOrganizationSso(input: { sessionId: string | null; organizationId: string }) {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  if (!(await readSsoPerOrganization([organizationId])).get(organizationId)) return true
   const rows = await readSsoOrganizations(eq(OrganizationTable.id, organizationId))
-  if (rows.length === 0) return true
+  const row = rows[0]
+  if (!row) return true
   if (!input.sessionId) return false
-  return (await readSessionSsoOrganizationIds(input.sessionId)).has(organizationId)
+  return (await readSessionSsoProofs(input.sessionId)).has(organizationId)
 }
 
 export async function findSsoAccessBlock(input: { sessionId: string | null; organizationId: string | null | undefined }): Promise<SsoAccessBlock | null> {
@@ -252,59 +338,94 @@ async function providerOrganization(providerId: string) {
   return provider ?? null
 }
 
-/** The SSO provider the user signed in with most recently, when the callback path does not name it. */
-async function latestSsoProviderForUser(userId: string) {
-  const [row] = await db
-    .select({ organizationId: SsoProviderTable.organizationId, providerId: SsoProviderTable.providerId })
-    .from(AuthAccountTable)
-    .innerJoin(SsoProviderTable, eq(AuthAccountTable.providerId, SsoProviderTable.providerId))
-    .where(eq(AuthAccountTable.userId, normalizeDenTypeId("user", userId)))
-    .orderBy(desc(AuthAccountTable.updatedAt))
-    .limit(1)
-  return row ?? null
-}
-
 /**
  * Remember that an SSO callback created this session, in the provider's
  * organization. Written for every SSO sign-in, whether or not the flag is on,
  * so turning it on does not send people who just used SSO through it again.
  */
-export async function recordSessionSsoAuthentication(input: { sessionId: string; userId: string; providerId: string | null }) {
-  const provider = input.providerId ? await providerOrganization(input.providerId) : await latestSsoProviderForUser(input.userId)
+export async function recordSessionSsoAuthentication(input: { sessionId: string; userId: string; providerId: string | null; authenticatedAt?: Date }) {
+  // A historical account link is not evidence for this session. A callback
+  // without an authenticated provider reference must fail closed.
+  const provider = input.providerId ? await providerOrganization(input.providerId) : null
   if (!provider) return
+  const sessionId = normalizeDenTypeId("session", input.sessionId)
+  const userId = normalizeDenTypeId("user", input.userId)
+  const authenticatedAt = input.authenticatedAt ?? new Date()
+  await db.insert(SessionSsoProofTable).values({
+    sessionId,
+    organizationId: provider.organizationId,
+    userId,
+    ssoProviderId: provider.providerId,
+    authenticatedAt,
+  }).onDuplicateKeyUpdate({ set: { ssoProviderId: provider.providerId, authenticatedAt } })
+  // Replicas from before session_sso_proof read this table (one row per
+  // session). Remove once every replica reads session_sso_proof.
   await db.insert(SessionSsoAuthenticationTable).values({
-    sessionId: normalizeDenTypeId("session", input.sessionId),
-    userId: normalizeDenTypeId("user", input.userId),
+    sessionId,
+    userId,
     organizationId: provider.organizationId,
     ssoProviderId: provider.providerId,
   }).onDuplicateKeyUpdate({ set: { organizationId: provider.organizationId, ssoProviderId: provider.providerId } })
 }
 
-/**
- * A command-line (device) session approved into an organization that
- * requires SSO: the approval itself was refused unless the approving session
- * signed in through that SSO (routes/auth/device.ts), so the device session
- * inherits it.
- */
-export async function recordDeviceSessionSsoAuthentication(input: { sessionId: string; userId: string; organizationId: OrgId | string | null }) {
-  if (!input.organizationId) return
-  const required = await findSsoRequiredOrganizations([input.organizationId])
-  const block = required.get(normalizeDenTypeId("organization", input.organizationId))
-  if (!block) return
-  const [connection] = await db
-    .select({ providerId: SsoConnectionTable.providerId })
-    .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.organizationId, normalizeDenTypeId("organization", block.organizationId)))
+/** Copy only the provider proof captured by the approving browser, keeping when it was earned. */
+export async function recordDeviceSessionSsoAuthentication(input: { sessionId: string; userId: string; organizationId: OrgId | string; providerId: string; authenticatedAt: Date | null }) {
+  const provider = await providerOrganization(input.providerId)
+  if (!provider || provider.organizationId !== normalizeDenTypeId("organization", input.organizationId)) return
+  await recordSessionSsoAuthentication({ ...input, authenticatedAt: input.authenticatedAt ?? undefined })
+}
+
+/** The approving session's proof for one organization, for a device approval to snapshot. */
+export async function readSessionSsoProof(input: { sessionId: string; userId: string; organizationId: string }) {
+  const [proof] = await db.$primary
+    .select({ providerId: SessionSsoProofTable.ssoProviderId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
+    .from(SessionSsoProofTable)
+    .where(and(
+      eq(SessionSsoProofTable.sessionId, normalizeDenTypeId("session", input.sessionId)),
+      eq(SessionSsoProofTable.userId, normalizeDenTypeId("user", input.userId)),
+      eq(SessionSsoProofTable.organizationId, normalizeDenTypeId("organization", input.organizationId)),
+    ))
     .limit(1)
-  if (!connection) return
-  await db.insert(SessionSsoAuthenticationTable).values({
-    sessionId: normalizeDenTypeId("session", input.sessionId),
-    userId: normalizeDenTypeId("user", input.userId),
-    organizationId: normalizeDenTypeId("organization", block.organizationId),
-    ssoProviderId: connection.providerId,
-  }).onDuplicateKeyUpdate({ set: { ssoProviderId: connection.providerId } })
+  return proof ?? null
+}
+
+/**
+ * The same browser signed in through another organization's SSO: the new
+ * session keeps the proofs the session it replaces had earned, with their
+ * original times, so the person is not sent through every other
+ * organization's SSO again. Only between two live sessions of the same user;
+ * a proof the new session already holds is never overwritten.
+ */
+export async function carrySessionSsoProofs(input: { fromSessionId: string; toSessionId: string; userId: string }) {
+  const fromSessionId = normalizeDenTypeId("session", input.fromSessionId)
+  const toSessionId = normalizeDenTypeId("session", input.toSessionId)
+  const userId = normalizeDenTypeId("user", input.userId)
+  if (fromSessionId === toSessionId) return 0
+  const [from] = await db.$primary
+    .select({ userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt })
+    .from(AuthSessionTable)
+    .where(eq(AuthSessionTable.id, fromSessionId))
+    .limit(1)
+  if (!from || from.userId !== userId || from.expiresAt.getTime() <= Date.now()) return 0
+  const proofs = await db.$primary
+    .select()
+    .from(SessionSsoProofTable)
+    .where(and(eq(SessionSsoProofTable.sessionId, fromSessionId), eq(SessionSsoProofTable.userId, userId)))
+  if (proofs.length === 0) return 0
+  await db.insert(SessionSsoProofTable)
+    .ignore()
+    .values(proofs.map((proof) => ({
+      sessionId: toSessionId,
+      organizationId: proof.organizationId,
+      userId,
+      ssoProviderId: proof.ssoProviderId,
+      authenticatedAt: proof.authenticatedAt,
+    })))
+  return proofs.length
 }
 
 export async function deleteSessionSsoAuthentication(sessionId: string) {
-  await db.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.sessionId, normalizeDenTypeId("session", sessionId)))
+  const id = normalizeDenTypeId("session", sessionId)
+  await db.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.sessionId, id))
+  await db.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.sessionId, id))
 }

@@ -31,7 +31,7 @@ const CREDENTIAL_TABLES = new Set([
   "invitation", "desktop_handoff_grant", "worker_token",
   "connected_account", "org_oauth_client", "scim_provider", "organization_diagnostic_credential",
   "llm_provider_member_credential", "inference_keys", "inference_org_upstream_provider_keys",
-  "gateway_keys", "gateway_provider_credentials", "gateway_provider_oauth_states",
+  "gateway_keys", "gateway_api_keys", "gateway_provider_credentials", "gateway_provider_oauth_states",
 ])
 
 /** Server internals that show other connections' statements, and the values in them, or read the server's files. */

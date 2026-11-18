@@ -1785,8 +1785,8 @@ export async function executeMarketplaceCapability(input: {
         ...basePayload(row),
         status: "unsupported",
         hint: env.appMcpServersEnabled
-          ? `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`
-          : "Apps built in OpenWork are turned off on this server, so this App cannot be opened or edited here. No App was opened.",
+          ? `This artifact is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open artifacts or return their source. Editors can use read_app to edit it. No App was opened.`
+          : "Building artifacts is turned off on this server, so this artifact cannot be opened or edited here.",
       },
     }
   }

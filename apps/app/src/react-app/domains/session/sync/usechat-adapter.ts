@@ -165,6 +165,7 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
       ...(backgroundShell ? { backgroundShell } : {}),
       ...(subagentNotice ? { subagentNotice } : {}),
       ...(part.metadata?.openworkPastedText === true ? { pastedText: true } : {}),
+      ...(typeof part.metadata?.openworkFileMention === "string" ? { fileMention: part.metadata.openworkFileMention } : {}),
     } },
   };
 }

@@ -12,9 +12,8 @@ import { getInstallConfigErrorMessage } from "../_lib/install-errors";
 import { detectedInstallPlatform, downloadCtaLabel, installDownloadHref } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { useDesktopHandoffStatus } from "../_lib/use-desktop-handoff-status";
-import { OnboardingCard } from "./onboarding-card";
-import { OnboardingShell } from "./onboarding-shell";
-import { OrganizationBrandIdentity, type OrganizationBrand } from "./organization-brand-identity";
+import { JoinAlert, JoinFrame, JoinHeading, JoinPrimaryButton, JoinQuietButton, JoinText } from "./join-frame";
+import type { OrganizationBrand } from "./organization-brand-identity";
 
 const OPENWORK_DOWNLOAD_URL = "https://openworklabs.com/download";
 
@@ -209,105 +208,57 @@ export function JoinOrgSuccess({
   }
 
   return (
-    <OnboardingShell state="joined" width="wide" background="surface">
-      <section data-testid="join-org-success">
-        <OnboardingCard organization={{ name: organizationName, brand }}>
-          <div className="grid gap-3">
-            <h1 className="m-0 grid max-w-full gap-1 text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-slate-950 sm:text-[38px] sm:leading-[46px]">
-              <span>You&apos;re in, welcome to</span>
-              {/* No horizontal gap: the possessive must hug the org identity
-                  ("Acme Robotics's OpenWork", not "Acme Robotics 's"). */}
-              <span className="flex min-w-0 flex-wrap items-center gap-y-1">
-                <OrganizationBrandIdentity organizationName={organizationName} brand={brand} />
-                <span className="whitespace-nowrap">&apos;s {brand.appName}</span>
-              </span>
-            </h1>
-            <p className="m-0 max-w-2xl text-[15px] leading-[23px] text-slate-600">
-              {desktopAuthRequested
+    <JoinFrame state="joined" organization={{ name: organizationName, brand }} testId="join-org-success">
+            <JoinHeading
+              title={`You're in. Welcome to ${organizationName}.`}
+              copy={desktopAuthRequested
                 ? "Your team setup is ready. Return to OpenWork to continue where you left off."
-                : "The desktop app is where OpenWork runs on your computer and puts your team's setup to work."}
-            </p>
-          </div>
+                : `Get the desktop app to start working with ${organizationName}'s setup.`}
+            />
 
           {isMobile === null ? (
-            <p className="m-0 text-sm text-slate-500">Preparing your next step...</p>
+            <JoinText muted>Preparing your next step...</JoinText>
           ) : isMobile ? (
             <div className="grid gap-3">
-              <div className="grid gap-2 rounded-2xl bg-slate-50 p-4" data-testid="join-org-mobile-note">
+              <div className="grid gap-2 rounded-lg bg-[#fafafa] p-3.5" data-testid="join-org-mobile-note">
                 <p className="m-0 text-sm font-medium text-slate-950">OpenWork runs on your computer.</p>
                 <p className="m-0 text-sm leading-6 text-slate-600">
                   Email the install link to yourself and continue when you&apos;re back at your desk.
                 </p>
               </div>
-              <button
-                type="button"
-                className="den-button-primary min-h-12 w-full"
-                onClick={() => void handleEmailDownload()}
-                disabled={emailBusy || emailSent}
-                data-testid="join-org-email-download"
-              >
-                {emailBusy ? "Sending..." : emailSent ? "Sent" : "Email me the download link"}
-              </button>
-              {emailSent ? <div className="den-notice is-info">Sent — check your inbox when you&apos;re back at your desk.</div> : null}
+              <JoinPrimaryButton onClick={() => void handleEmailDownload()} disabled={emailBusy || emailSent} testId="join-org-email-download">
+{emailBusy ? "Sending..." : emailSent ? "Sent" : "Email me the download link"}
+</JoinPrimaryButton>
+              {emailSent ? <JoinText muted>Sent. Check your inbox when you&apos;re back at your desk.</JoinText> : null}
             </div>
           ) : desktopAuthRequested ? (
             desktopOpenworkUrl ? (
               <ReturnToOpenWorkStatus openworkUrl={desktopOpenworkUrl} grant={desktopGrant} organizationName={organizationName} />
             ) : (
-              <button
-                type="button"
-                className="den-button-primary min-h-12 w-full"
-                onClick={() => void handleReturnToOpenWork()}
-                disabled={handoffBusy}
-                data-testid="join-org-return-openwork"
-              >
-                {handoffBusy ? "Returning to OpenWork..." : "Return to OpenWork"}
-              </button>
+              <JoinPrimaryButton onClick={() => void handleReturnToOpenWork()} disabled={handoffBusy} testId="join-org-return-openwork">
+{handoffBusy ? "Returning to OpenWork..." : "Return to OpenWork"}
+</JoinPrimaryButton>
             )
           ) : !platformReady ? (
-            <p className="m-0 text-sm text-slate-500">Preparing your next step...</p>
+            <JoinText muted>Preparing your next step...</JoinText>
           ) : (
             <div className="grid gap-3">
-              <button
-                type="button"
-                className="den-button-primary min-h-12 w-full"
-                onClick={() => void handleGetApp()}
-                disabled={installBusy}
-                data-testid="join-org-get-app"
-                data-download-href={downloadHref ?? undefined}
-              >
-                {installBusy ? "Preparing your download..." : `${downloadCtaLabel(detected?.os ?? null)} →`}
-              </button>
-              <button
-                type="button"
-                className="min-h-12 w-full rounded-full px-3 text-sm font-medium text-slate-500 underline-offset-4 hover:text-slate-950 hover:underline"
-                onClick={() => void handleReturnToOpenWork()}
-                disabled={handoffBusy}
-                data-testid="join-org-open-app"
-              >
-                {handoffBusy ? "Opening OpenWork..." : "Already have OpenWork? Open it."}
-              </button>
+              <JoinPrimaryButton onClick={() => void handleGetApp()} disabled={installBusy} testId="join-org-get-app" downloadHref={downloadHref ?? undefined}>
+{installBusy ? "Preparing your download..." : downloadCtaLabel(detected?.os ?? null)}
+</JoinPrimaryButton>
+              <JoinQuietButton onClick={() => void handleReturnToOpenWork()} disabled={handoffBusy} testId="join-org-open-app">
+{handoffBusy ? "Opening OpenWork..." : "Already have OpenWork? Open it."}
+</JoinQuietButton>
             </div>
           )}
 
-          {desktopAuthRequested && desktopOpenworkUrl ? null : (
-            <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700" data-testid="join-org-connected">
-              Connected — OpenWork is set up for {organizationName}
-            </div>
-          )}
-
-          <button
-            type="button"
-            className="min-h-12 w-full rounded-full px-3 text-sm font-medium text-slate-500 underline-offset-4 hover:text-slate-950 hover:underline"
-            onClick={onContinueInBrowser}
-            data-testid="join-org-continue-browser"
-          >
-            Continue in the browser
-          </button>
+          <JoinQuietButton onClick={onContinueInBrowser} testId="join-org-continue-browser">
+Continue in the browser
+</JoinQuietButton>
 
           {actionError ? (
             <div className="grid gap-3">
-              <div className="den-notice is-error">{actionError}</div>
+              <JoinAlert>{actionError}</JoinAlert>
               {desktopAuthRequested ? null : (
                 <a href={OPENWORK_DOWNLOAD_URL} className="den-button-secondary min-h-12 w-full">
                   Open the public download page
@@ -315,8 +266,6 @@ export function JoinOrgSuccess({
               )}
             </div>
           ) : null}
-        </OnboardingCard>
-      </section>
-    </OnboardingShell>
+    </JoinFrame>
   );
 }

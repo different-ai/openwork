@@ -32,10 +32,6 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
-// Bound native page allocation across conversations. Refuse new work rather
-// than evicting a live document (unsaved input and CDP handles cannot be restored
-// from a URL). This is a tab bound, not a Chromium process or memory limit.
-const MAX_BROWSER_TABS = 12;
 const MAX_CLOSED_BROWSER_TABS = 20;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
@@ -449,11 +445,16 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
     const ownerSessionId = registry.visibleSessionId();
-    runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    // Promise callbacks still run inside Electron's native navigation event.
+    // Defer the whole routing operation, not just the main-window stop.
+    setImmediate(() => {
+      runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    });
   }
 
+  // Absent unless this launch opened the debug port. Browser tools never need it.
   function cdpBrowserUrl() {
-    return `http://127.0.0.1:${remoteDebugPort}`;
+    return remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : undefined;
   }
 
   /**
@@ -484,10 +485,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
     tab.operation = true;
-    const stop = () => {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
-      closeBrowserTab(tab.tabId);
+    let cleanupQueued = false;
+    const closeAfterNavigation = (error = undefined) => {
+      if (cleanupQueued) return;
+      cleanupQueued = true;
+      // Revoke the tab/control synchronously, before a retry can reuse them.
+      // Only native destruction waits for the navigation callback to unwind.
+      if (getBrowserTab(tab.tabId) === tab) closeBrowserTab(tab.tabId, false, error, { deferNativeClose: true });
     };
+    const stop = () => closeAfterNavigation(signal?.reason);
     signal?.addEventListener("abort", stop, { once: true });
     try {
       await beforeLoad?.(tab);
@@ -506,7 +512,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     catch (error) {
       // Preserve the initiating failure when last-tab cleanup revokes control.
-      closeBrowserTab(tab.tabId, false, error);
+      closeAfterNavigation(error);
       throw error;
     }
     finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
@@ -988,12 +994,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
-    // Check synchronously before creating a WebContentsView, including pending
-    // opens, popups, transcript links and the tab-strip button.
-    if (browserTabs.size >= MAX_BROWSER_TABS) {
-      throw new BrowserTaskError("tab_limit", `OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
-    }
-    if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
+    // Keep existing documents intact when opening a tab: never evict a page
+    // (and its unsaved input or automation handles) to make room for another.
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
@@ -1015,6 +1017,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       deferBackground,
       operation: false, suspending: false, mediaPlaying: false, downloads: new Set(),
       domReady: false, emulation: Promise.resolve(),
+      // Set from render-process-gone until the next document is ready.
+      rendererGone: false,
       // AGENT_VIEWPORTS key while the agent controls the tab, the size it was
       // locked at, and the scale its emulation currently draws at inside the
       // panel (1 when not scaled).
@@ -1048,10 +1052,27 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.on("context-menu", (_event, params) => {
       runDetachedTask("show browser page menu", () => showPageContextMenu(tab, params));
     });
-    view.webContents.once("dom-ready", () => {
+    const onDomReady = () => {
       tab.domReady = true;
+      tab.rendererGone = false;
+      // A viewport update skipped while the renderer was gone left this set.
+      tab.agentViewportQueued = false;
       if (tab.background) emulateBackgroundTab(tab);
       else if (tab.agentViewport) emulateAgentViewport(tab);
+      // Updates skipped while the renderer was gone may have left emulation
+      // from the background or the agent on this foreground tab.
+      else if (view.webContents.debugger.isAttached()) clearLeftoverEmulation(tab);
+    };
+    view.webContents.once("dom-ready", onDomReady);
+    // A dead renderer leaves the contents alive (not destroyed) but without a
+    // page view, and Chromium dereferences that missing view when a viewport
+    // emulation arrives, crashing the whole app. Stop emulating until a reload
+    // brings a new document, then emulate it as on first load.
+    view.webContents.on("render-process-gone", () => {
+      tab.rendererGone = true;
+      if (!tab.domReady) return;
+      tab.domReady = false;
+      view.webContents.once("dom-ready", onDomReady);
     });
     view.webContents.on("media-started-playing", () => { tab.mediaPlaying = true; });
     view.webContents.on("media-paused", () => { tab.mediaPlaying = false; });
@@ -1321,8 +1342,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function queueBrowserTabEmulation(tab, label, operation) {
-    const isCurrent = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
-    const execute = () => { if (isCurrent()) return operation(isCurrent); };
+    const isOwned = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    // Emulating a tab whose renderer is gone crashes Electron's main process
+    // (see render-process-gone in createBrowserTab), so a dead tab is not
+    // current. Detaching the debugger is still safe: use `isOwned` for that.
+    const isCurrent = () => isOwned() && !tab.rendererGone && !tab.view.webContents.isCrashed();
+    const execute = () => { if (isCurrent()) return operation(isCurrent, isOwned); };
     const emulation = tab.emulation.then(execute, execute);
     tab.emulation = emulation;
     runDetachedTask(label, () => emulation);
@@ -1352,7 +1377,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     detachBrowserView(tab.view);
     if (webContents.isDestroyed()) return;
     const cdp = webContents.debugger;
-    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent) => {
+    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent, isOwned) => {
       if (tab.background || !cdp.isAttached()) return;
       try {
         for (const { method, params } of foregroundTabEmulationCommands()) {
@@ -1360,7 +1385,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
       }
     });
     if (tab.agentViewport) emulateAgentViewport(tab);
@@ -1428,7 +1453,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     else if (!tab.view.webContents.isDestroyed()) {
       placeOnScreenView(tab);
       const cdp = tab.view.webContents.debugger;
-      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent) => {
+      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent, isOwned) => {
         if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
         try {
           for (const { method, params } of [
@@ -1440,11 +1465,34 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             await cdp.sendCommand(method, params);
           }
         } finally {
-          if (isCurrent() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+          if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
         }
       });
     }
     sendBrowserState();
+  }
+
+  /**
+   * Undo every emulation the background or the agent sets, then detach, for a
+   * foreground tab whose renderer came back after updates were skipped.
+   */
+  function clearLeftoverEmulation(tab) {
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "clear leftover browser tab emulation", async (isCurrent, isOwned) => {
+      if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
+      try {
+        for (const { method, params } of [
+          { method: "Emulation.setTouchEmulationEnabled", params: { enabled: false } },
+          { method: "Emulation.setUserAgentOverride", params: { userAgent: "" } },
+          ...foregroundTabEmulationCommands(),
+        ]) {
+          if (!isCurrent() || tab.background || tab.agentViewport) return;
+          await cdp.sendCommand(method, params);
+        }
+      } finally {
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+      }
+    });
   }
 
   /** A background tab's view and emulation follow its current viewport. */
@@ -1603,7 +1651,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = tabForView(view);
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
-    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent) => {
+    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent, isOwned) => {
       if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");
       try {
@@ -1616,7 +1664,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (isCurrent() && !tab.background && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
@@ -1687,7 +1735,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab;
   }
 
-  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined) {
+  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined, { deferNativeClose = false } = {}) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     taskHost.invalidate(tabId, { closed: true, reason });
@@ -1715,9 +1763,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (removed && !removed.ownerHasTabs) {
       sendToRenderer("openwork:browser:panel-closed", { ownerSessionId: removed.tab.ownerSessionId });
     }
-    try {
-      if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
-    } catch { /* already destroyed */ }
+    const closeContents = () => {
+      try {
+        if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+      } catch { /* already destroyed */ }
+    };
+    if (deferNativeClose) setImmediate(closeContents);
+    else closeContents();
     releaseEmptyBackgroundWindow();
     sendBrowserState();
     return tabId;
@@ -2161,7 +2213,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
       nativeViews: browserNativeViews(),
-      tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
       popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),

@@ -45,7 +45,7 @@ export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelPr
         href={getLibraryModelRoute(orgSlug, provider.id)}
         kind="model"
         testName={provider.name}
-        logo={<DenBrandMark name={provider.name} simpleIconSlug={provider.iconSlug} className="h-6 w-6 rounded-md border-gray-200" imageClassName="h-3.5 w-3.5" />}
+        logo={<DenBrandMark name={provider.name} simpleIconSlug={provider.iconSlug} className="h-8 w-8 rounded-lg border-gray-200" imageClassName="h-[18px] w-[18px]" />}
         name={provider.name}
         description={notice ?? modelNamesSummary(provider.models)}
         action={action}
@@ -83,7 +83,7 @@ export function LibraryModelProviderScreen({ providerId }: { providerId: string 
   const canSignIn = provider.signInSet !== null && provider.state !== "blocked";
 
   const actions = waiting
-    ? <DenButton variant="secondary" onClick={signIn.cancel}>Cancel</DenButton>
+    ? <DenButton size="sm" variant="secondary" onClick={signIn.cancel}>Cancel</DenButton>
     : signedIn
       ? (
         <ItemMenu
@@ -103,7 +103,7 @@ export function LibraryModelProviderScreen({ providerId }: { providerId: string 
           ]}
         />
       )
-      : canSignIn ? <DenButton onClick={() => void signIn.signIn(provider)}>{`Sign in with ${brand}`}</DenButton> : null;
+      : canSignIn ? <DenButton size="sm" onClick={() => void signIn.signIn(provider)}>{`Sign in with ${brand}`}</DenButton> : null;
 
   return (
     <ItemPage testId="library-model-provider">
@@ -128,22 +128,22 @@ export function LibraryModelProviderScreen({ providerId }: { providerId: string 
       <section className="flex flex-col gap-2.5" data-testid="model-provider-models">
         <SectionTitle title={modelCount(provider.models.length)} />
         <ItemPanel>
-          {provider.models.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">No models yet.</p> : null}
+          {provider.models.length === 0 ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">No models yet.</p> : null}
           {provider.models.map((model) => (
-            <div key={model.name} className="flex items-center gap-3 px-5 py-3" data-testid="model-provider-model">
-              <DenBrandMark name={model.vendor} simpleIconSlug={model.vendorIconSlug} className="h-6 w-6 rounded-md border-gray-200" imageClassName="h-3.5 w-3.5" />
-              <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-gray-900">{model.name}</span>
-              <span className="shrink-0 text-[12px] leading-4 text-gray-500">{model.vendor}</span>
+            <div key={model.name} className="flex min-h-12 items-center gap-3 py-1.5" data-testid="model-provider-model">
+              <DenBrandMark name={model.vendor} simpleIconSlug={model.vendorIconSlug} className="h-8 w-8 rounded-lg border-gray-200" imageClassName="h-[18px] w-[18px]" />
+              <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{model.name}</span>
+              <span className="shrink-0 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{model.vendor}</span>
             </div>
           ))}
         </ItemPanel>
       </section>
-      <details className="group rounded-2xl border border-gray-100 bg-white" data-testid="model-provider-technical">
-        <summary className="flex cursor-pointer list-none items-center justify-between px-5 py-3 text-[13px] font-medium text-gray-700 [&::-webkit-details-marker]:hidden">
+      <details className="group border-y border-[var(--den-list-line)]" data-testid="model-provider-technical">
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between py-2 text-[13px] font-medium text-[var(--dls-text-primary)] [&::-webkit-details-marker]:hidden">
           Technical details
-          <ChevronRight className="h-4 w-4 text-gray-400 transition-transform group-open:rotate-90" aria-hidden />
+          <ChevronRight className="h-4 w-4 text-[var(--dls-text-secondary)] transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" strokeWidth={1.5} aria-hidden />
         </summary>
-        <dl className="flex flex-col gap-2 border-t border-gray-100 px-5 py-4 text-[12px] leading-4 text-gray-500">
+        <dl className="flex flex-col gap-2 border-t border-[var(--den-list-line)] py-4 text-[12px] leading-4 text-[var(--dls-text-secondary)]">
           <div className="flex justify-between gap-4"><dt>Provider</dt><dd className="text-gray-700">{provider.providerKey}</dd></div>
           {provider.modelGroups.length > 0 ? <div className="flex justify-between gap-4"><dt>Model group</dt><dd className="text-gray-700">{provider.modelGroups.join(", ")}</dd></div> : null}
           {provider.memberSets.map((set) => (

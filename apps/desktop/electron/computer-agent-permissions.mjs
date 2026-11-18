@@ -5,6 +5,10 @@ import {
 } from "@openwork/types/den/agent-permissions-runtime";
 
 /** @typedef {import("@openwork/types/den/agent-permissions-runtime").AgentPermissionRule} AgentPermissionRule */
+/** @typedef {"computer" | "computer_files" | "computer_clipboard" | "script"} ComputerPermissionKind */
+
+/** Using apps, moving files and copying between them, and app scripts. */
+const COMPUTER_ACTIONS = ["computer", "computer_files", "computer_clipboard", "script"];
 /** @typedef {{ effect: "allow" } | { effect: "ask", rule: AgentPermissionRule } | { effect: "deny", message: string }} ComputerDecision */
 
 /**
@@ -13,12 +17,11 @@ import {
  * Later failed reads keep the last verified rules; a verified empty policy allows use.
  * @param {{ readRules: () => Promise<unknown>, confirm: (rule: AgentPermissionRule) => Promise<boolean>, now?: () => number }} options
  */
-export function createComputerAgentPermissions({ readRules, confirm, now = Date.now }) {
+export function createComputerAgentPermissions({ readRules, confirm }) {
   /** @type {AgentPermissionRule[]} */
   let rules = [];
   let signature = "[]";
   let revision = 0;
-  let readAt = -Infinity;
   let verified = false;
   /** @type {Promise<void> | null} */
   let reading = null;
@@ -29,13 +32,13 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
 
   async function refresh() {
     if (reading) return reading;
-    if (verified && now() - readAt < 30_000) return;
-    readAt = now();
+    // Host execution can be revoked while a chat is open; recheck at every
+    // computer boundary, not thirty seconds after the next host action.
     reading = Promise.resolve().then(readRules).then((value) => {
       if (!Array.isArray(value)) throw new Error("Computer rules unavailable");
       const next = value.flatMap((entry) => {
         const parsed = agentPermissionRuleSchema.safeParse(entry);
-        return parsed.success && ["computer", "script"].includes(parsed.data.action) ? [parsed.data] : [];
+        return parsed.success && COMPUTER_ACTIONS.includes(parsed.data.action) ? [parsed.data] : [];
       });
       // Rule order is significant, but object property order is not.
       const nextSignature = JSON.stringify(next.map(({ action, resource, effect, source }) => [action, resource, effect, source]));
@@ -47,13 +50,13 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
       }
       rules = next;
       verified = true;
-    }).catch(() => { /* Keep the last known policy when the server cannot answer. */ }).finally(() => { reading = null; });
+    }).catch(() => { /* Retain the last verified rules, including sandbox-only denials. */ }).finally(() => { reading = null; });
     return reading;
   }
 
   return {
     /**
-     * @param {{ kind: "computer" | "script", sessionId?: string }} input
+     * @param {{ kind: ComputerPermissionKind, sessionId?: string }} input
      * @returns {Promise<ComputerDecision>}
      */
     async check({ kind }) {

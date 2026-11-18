@@ -27,6 +27,13 @@ export type ActivationFacts = {
   }
   gateway: { canManage: boolean; hasProvider: boolean; providerName: string | null }
   readyConnectionName: string | null
+  /** The client reported a connection that is connected in the engine on the member's device (`activationLocalSetup`). */
+  connectionOnDevice: boolean
+  /**
+   * `activationLocalSetup` is on for this member: a connection on the device counts, and inviting is optional while
+   * they are the only person in the organization. Off: the checklist is computed exactly as before.
+   */
+  localSetup: boolean
   ownerName: string | null
   dismissed: boolean
 }
@@ -48,11 +55,15 @@ export function computeActivationState(facts: ActivationFacts): ActivationState 
       case "invite_teammate": {
         const { canInvite, invitedByMe, teammates, joined, pending } = facts.invite
         const done = canInvite ? invitedByMe > 0 : teammates > 0
+        // Alone in the organization (nobody joined, nobody invited): the step stays listed with its action but is
+        // not counted, so someone working alone can finish setup (DESIGN P4: presence beats absence).
+        const optional = facts.localSetup && !done && teammates === 0
         return {
           id,
           done,
           ...(done ? { detail: `${joined} joined, ${pending} invited` } : {}),
           ...(!done && !canInvite ? { lockedReason: `${owner(facts)} can invite people` } : {}),
+          ...(optional ? { optional: true } : {}),
         }
       }
       case "use_skill":
@@ -83,12 +94,12 @@ export function computeActivationState(facts: ActivationFacts): ActivationState 
           ...(!done && !facts.gateway.canManage ? { lockedReason: `${owner(facts)} manages AI Gateway` } : {}),
         }
       }
-      case "connector":
-        return {
-          id,
-          done: facts.readyConnectionName !== null,
-          ...(facts.readyConnectionName ? { detail: `${facts.readyConnectionName} connected` } : {}),
-        }
+      case "connector": {
+        // An organization connection names itself; a connection on the device is known only as "connected there".
+        const onDevice = facts.localSetup && facts.connectionOnDevice
+        const detail = facts.readyConnectionName ? `${facts.readyConnectionName} connected` : onDevice ? "Connected on this device" : null
+        return { id, done: facts.readyConnectionName !== null || onDevice, ...(detail ? { detail } : {}) }
+      }
     }
   }
   return { steps: ACTIVATION_STEP_IDS.map(step), dismissed: facts.dismissed }

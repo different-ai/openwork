@@ -2103,6 +2103,18 @@ describe("MCP App resolution", () => {
     } finally { await host.dispose() }
   })
 
+  test.each(["", " \n\t"])("does not mount a blank iframe for an empty App document (%j)", async html => {
+    const host = resolutionFixture(true)
+    host.resolveSpy.mockResolvedValue({ app: fixture({ html }) })
+    try {
+      await host.render()
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(host.container.querySelector("[data-mcp-app-resource]")).toBeNull()
+      expect(host.container.textContent).toBe("")
+    } finally { await host.dispose() }
+  })
+
   test.each([false, true])("catalog-shaped preserved data uses only standard resource resolution (advertised: %s)", async advertised => {
     const host = resolutionFixture(false)
     if (advertised) host.resolveSpy.mockResolvedValue({ app: fixture() })

@@ -1,7 +1,7 @@
 /**
  * Deploy-time permission reconciliation (docs/permissions/overview.md,
  * section 8): adds rows for new catalog permissions to every organization's
- * Member and Admin permission sets. Shared by bootstrap.ts (Docker, Helm, ECS,
+ * Member, Admin and Super admin permission sets. Shared by bootstrap.ts (Docker, Helm, ECS,
  * Cloud Run) and the reconcile-permissions.ts CLI (db:migrate, db:push and the
  * Den DB Migrate workflow). Idempotent; with no permission sets it does nothing.
  */

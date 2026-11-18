@@ -70,7 +70,6 @@ export function report(overrides: Partial<OrgDiagnostics> = {}): OrgDiagnostics 
       ],
     },
     installation: { access: "operator", server: { version: "0.19.2", startedAt: "2026-10-20T13:00:00.000Z", startupMs: 4_100 }, services: services() },
-    network: { access: "granted", canRun: true },
     ...overrides,
   };
 }
@@ -84,7 +83,6 @@ export function lockedReport(overrides: Partial<OrgDiagnostics> = {}): OrgDiagno
     providers: { access: "locked", permission: "gateway_providers.view" },
     connectors: { access: "locked", permission: "connections.view" },
     installation: { access: "managed" },
-    network: { access: "locked", permission: "egress_diagnostics.view" },
     ...overrides,
   });
 }

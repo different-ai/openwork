@@ -2,6 +2,7 @@
 // has not been saved yet . Den checks the
 // catalog, settings and key shape first; the gateway owns the upstream call.
 import type { GatewayProviderTestResult } from "@openwork/types/den/gateway"
+import type { GatewayCustomModel } from "@openwork/types/den/gateway-custom-providers"
 import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/utils/provider-test-signature"
 
 export type GatewayProviderTestInput = {
@@ -9,6 +10,8 @@ export type GatewayProviderTestInput = {
   model: string
   settings: Record<string, string>
   credential: { kind: string; secret: string }
+  /** Custom OpenAI-compatible providers (providerId "openwork-custom"): the unsaved model settings to test. */
+  customModel?: GatewayCustomModel
 }
 
 const GATEWAY_TEST_TIMEOUT_MS = 40_000

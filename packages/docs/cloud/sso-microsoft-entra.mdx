@@ -85,7 +85,8 @@ its domain must match the **Domain** you enter in OpenWork in the next step.
 
 ## 5. Copy Entra values into OpenWork
 
-In OpenWork, open the organization dashboard, then **SSO**. Choose **SAML** and
+In OpenWork, open the organization dashboard, then **Settings → Auth & Security → Single sign-on (SSO)**
+(older versions: **Settings → SSO**). Choose **SAML** and
 enter:
 
 | OpenWork field | Entra value |
@@ -106,7 +107,7 @@ The saved configuration is still disabled at this point.
 
 ## 6. Verify the email domain
 
-In OpenWork **Settings → SSO**, select **Request token** under domain
+In OpenWork **Settings → Auth & Security → Single sign-on (SSO)**, select **Request token** under domain
 verification. Create a DNS TXT record for the email domain:
 
 | DNS field | Value |
@@ -134,7 +135,7 @@ original external email address.
 
 After the Entra assignment and domain verification are complete:
 
-1. In OpenWork **Settings → SSO**, select **Enable Config** or **Enable SSO**.
+1. In OpenWork **Settings → Auth & Security → Single sign-on (SSO)**, select **Enable Config** or **Enable SSO**.
 2. In the **Test SSO before enabling it** dialog, select **SSO Login**.
 3. Complete Microsoft authentication in the separate window.
 4. Return to OpenWork and confirm **Authentication test successful**.

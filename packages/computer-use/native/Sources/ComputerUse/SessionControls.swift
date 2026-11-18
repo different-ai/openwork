@@ -142,8 +142,15 @@ final class SessionControls: NSObject {
         case "takeover":
             onPause?("You have control. Click Continue when you are ready.")
         case "watch":
-            guard let visible = try? Arguments(values: value).bool("visible", default: false) else { return }
-            onWatch?(visible)
+            // `visible`: the live view shows frames. `following`: this chat is on screen in
+            // OpenWork; `beside`: its window may go beside OpenWork. Each is optional.
+            let values = Arguments(values: value)
+            if value["visible"] != nil, let visible = try? values.bool("visible", default: false) { onWatch?(visible) }
+            // `stage_count` and `stage_slot`: the window's tile while several agents work in view.
+            if value["following"] != nil, let following = try? values.bool("following", default: false) {
+                let stage: StageSlot?? = value["stage_count"] == nil ? nil : .some((try? StageSlot.parse(values)) ?? nil)
+                onFollow?(following, value["beside"] == nil ? nil : try? values.bool("beside", default: true), stage)
+            }
         case "stop": onStop?()
         // Embedded sessions show no native panel; "hide"/"show" are accepted and ignored.
         default: break
@@ -194,6 +201,7 @@ final class SessionControls: NSObject {
     var onStop: (() -> Void)?
     var onTick: (() -> Void)?
     var onWatch: ((Bool) -> Void)?
+    var onFollow: ((Bool, Bool?, StageSlot??) -> Void)?
     var isPaused = false
 
     func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String, background: Bool = false) {
@@ -211,7 +219,7 @@ final class SessionControls: NSObject {
             self.onResume?()
         }
         presence.onStop = { [weak self] in self?.onStop?() }
-        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, layered: background, purpose: purpose)
+        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, purpose: purpose)
         if Self.embedded {
             showMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),

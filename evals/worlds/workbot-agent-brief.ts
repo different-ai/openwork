@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
 import { ENCRYPTION_KEY, SLACK_CONNECTION_ID, encryptForDen } from "./workbot-proactive.ts";
 
@@ -30,7 +30,7 @@ function hashId(...parts: string[]) {
 }
 
 /**
- * Your agent's brief (`workbotAgentBrief` on top of `workbotProactive`): Den with Workbot, a headless runner that only
+ * Your agent's brief: Den with Workbot, a headless runner that only
  * answers health checks, and the Workbot Slack app installed (synthetic credentials). The organization used Your agent
  * before the brief: meeting prep turned off and one instruction, so its brief is carried over until the admin saves
  * it. The member's agent is as the wake left it this morning, in a zone where it is about 1 PM: checks on the rhythm
@@ -51,7 +51,7 @@ export async function workbotAgentBriefWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     // Your agent as the organization used it before the brief.
     const before = await seed.api(den.admin, "/v1/org/workbot-settings/proactive", { method: "PUT", body: JSON.stringify({ enabled: true, responsibilities: { meeting_prep: false }, instructions: "Ignore build bot alerts." }) });
     if (!before.response.ok) throw new Error(`Setting up Your agent failed: ${before.text.slice(0, 300)}`);

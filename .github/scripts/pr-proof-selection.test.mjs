@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { CORE_SPECS, NIGHTLY_ONLY, PROOF_MACHINERY, everyCoreJourney, selectProof } from "./pr-proof.mjs";
+import { CORE_SPECS, NIGHTLY_ONLY, PROOF_MACHINERY, everyCoreJourney, selectProof, selectProofForEvent } from "./pr-proof.mjs";
 
 const coreChat = "evals/core/core-chat.e2e.test.ts";
 const restart = "evals/core/thread-continues-after-restart.e2e.test.ts";
@@ -12,6 +12,15 @@ test("a product PR runs core-chat and no other core journey", () => {
   const { specs } = selectProof([product]);
   assert.deepEqual(specs, [coreChat]);
   for (const journey of everyCoreJourney()) assert.equal(specs.includes(journey), false, journey);
+});
+
+test("dispatch selection excludes core-chat, including when changed, and is shared by controller and publisher", () => {
+  const files = [product, ...[coreChat, "evals/proofs/web.proof.test.ts", "evals/core/packaged-startup.e2e.test.ts"].map(filename => ({ filename, status: "modified" }))];
+  assert.deepEqual(selectProofForEvent(files, "workflow_dispatch").specs, ["evals/core/packaged-startup.e2e.test.ts", "evals/proofs/web.proof.test.ts"]);
+  assert.deepEqual(selectProofForEvent(files, "pull_request"), selectProof(files));
+  assert.deepEqual(selectProofForEvent([product], "workflow_dispatch").specs, []);
+  assert.match(readFileSync(new URL("./pr-proof-controller.mjs", import.meta.url), "utf8"), /selectProofForEvent\(files, process.env.GITHUB_EVENT_NAME\)/);
+  assert.match(readFileSync(new URL("../../evals/scripts/publish-review.mjs", import.meta.url), "utf8"), /selectProofForEvent\(files, source.event\)/);
 });
 
 test("a PR that adds or changes a core journey or spec runs it", () => {
@@ -38,13 +47,13 @@ test("a PR that changes the proof machinery runs every core journey but the nigh
   assert.ok(NIGHTLY_ONLY.has("thread-continues-after-restart.e2e.test.ts"));
 });
 
-test("every core journey a PR no longer runs still runs on dev pushes and nightly", () => {
+test("every core journey a PR no longer runs still runs nightly", () => {
   const journeys = [...everyCoreJourney(), ...[...NIGHTLY_ONLY].map((name) => `evals/core/${name}`)];
   assert.ok(journeys.length >= 5);
   assert.ok(journeys.includes(restart));
   assert.ok(journeys.every((spec) => !/\/(core-chat|app-smoke|packaged-[^/]+)\.e2e\.test\.ts$/.test(spec)));
   const workflow = readFileSync(new URL("../workflows/core-journeys.yml", import.meta.url), "utf8");
-  assert.match(workflow, /\n  push:\n    branches: \[dev\]\n/);
+  assert.doesNotMatch(workflow, /\n  push:\n/);
   assert.match(workflow, /\n  schedule:\n/);
   assert.match(workflow, /cancel-in-progress: false/);
   // The workflow lists evals/core itself; it must exclude exactly the journeys
