@@ -36,6 +36,7 @@ LOCAL_IMAGE_TAG="${DAYTONA_LOCAL_IMAGE_TAG:-openwork-daytona-snapshot:${SNAPSHOT
 
 OPENWORK_SERVER_VERSION="${OPENWORK_SERVER_VERSION:-$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(pkg.version));' "$ROOT_DIR/apps/server/package.json")}"
 OPENCODE_VERSION="$(node -e 'const fs=require("fs"); const parsed=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(parsed.opencodeVersion || "").trim().replace(/^v/, ""));' "$ROOT_DIR/constants.json")"
+OPENWORK_GIT_SHA="${OPENWORK_GIT_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 
 # The image is always linux/amd64 because that is what Daytona runs. The
 # Dockerfile's runtime asserts execute the installed binaries, which only works
@@ -58,6 +59,7 @@ docker buildx build \
   -f "$DOCKERFILE" \
   --build-arg "OPENWORK_SERVER_VERSION=$OPENWORK_SERVER_VERSION" \
   --build-arg "OPENCODE_VERSION=$OPENCODE_VERSION" \
+  --build-arg "OPENWORK_GIT_SHA=$OPENWORK_GIT_SHA" \
   --build-arg "RUNTIME_ASSERTS=$RUNTIME_ASSERTS" \
   --load \
   "$ROOT_DIR"

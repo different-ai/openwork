@@ -75,7 +75,7 @@ const LOCAL_NO_WRITE = new Set([
 ]);
 const CLOUD_NO_WRITE = new Set([
   "invalid_request:400", "invalid_request:413", "missing_thread_id:400",
-  "needs_connection:409", "unauthorized:401", "forbidden:403",
+  "needs_connection:409", "unauthorized:401", "forbidden:403", "policy_blocked:403",
   "missing_mcp_token:401", "invalid_mcp_token:401", "wrong_token_use:401", "wrong_mcp_resource:401",
   "missing_mcp_principal:401", "mcp_grant_revoked:401", "mcp_session_required:401", "mcp_session_revoked:401",
   "insufficient_mcp_scope:403", "mcp_membership_revoked:403",

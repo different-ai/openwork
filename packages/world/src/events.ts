@@ -26,6 +26,8 @@ export interface StepHandle {
   ok(detail?: string): Promise<void>;
   fail(detail?: string): Promise<void>;
   note(detail: string): Promise<void>;
+  /** Update the running step's detail in place (for example the current sub-phase). */
+  progress(detail: string): Promise<void>;
 }
 
 export interface Progress {
@@ -223,6 +225,7 @@ function noOpStep(): StepHandle {
     ok: () => Promise.resolve(),
     fail: () => Promise.resolve(),
     note: () => Promise.resolve(),
+    progress: () => Promise.resolve(),
   };
 }
 
@@ -267,6 +270,15 @@ export function progress(): Progress {
           ...(options.log === undefined ? {} : { log: options.log }),
         }),
         note: (detail) => emit({ t: timestamp(), type: "note", text: detail }),
+        progress: (detail) => emit({
+          t: timestamp(),
+          type: "step",
+          id,
+          label,
+          status: "start",
+          detail,
+          ...(options.log === undefined ? {} : { log: options.log }),
+        }),
       };
     },
     note: (text) => emit({ t: timestamp(), type: "note", text }),

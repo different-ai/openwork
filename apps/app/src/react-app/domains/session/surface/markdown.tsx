@@ -9,6 +9,7 @@ import {
 } from "@/components/markdown/markdown-primitive";
 import { useSelectionStableValue } from "@/components/markdown/selection-stability";
 import { useMermaidEnhancer } from "@/components/markdown/mermaid";
+import { MermaidZoomPortals } from "@/components/markdown/mermaid-zoom-viewport";
 
 function MarkdownBlockInner(props: {
   text: string;
@@ -41,7 +42,7 @@ function MarkdownBlockInner(props: {
   const candidateHtml = !props.streaming && highlightedHtml?.text === props.text ? highlightedHtml.html : syncHtml;
   const html = useSelectionStableValue(rootRef, candidateHtml);
   const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);
-  useMermaidEnhancer(rootRef, html, !props.streaming);
+  const mermaidDiagrams = useMermaidEnhancer(rootRef, html, !props.streaming);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -56,11 +57,14 @@ function MarkdownBlockInner(props: {
   if (!html) return null;
 
   return (
-    <div
-      ref={rootRef}
-      className="markdown-content max-w-none select-text text-foreground"
-      dangerouslySetInnerHTML={stableInnerHtml}
-    />
+    <>
+      <div
+        ref={rootRef}
+        className="markdown-content max-w-none select-text text-foreground"
+        dangerouslySetInnerHTML={stableInnerHtml}
+      />
+      <MermaidZoomPortals diagrams={mermaidDiagrams} />
+    </>
   );
 }
 

@@ -6,9 +6,11 @@ import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getMcpConnectionRoute, getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { IntegrationIcon } from "./integration-icon";
+import { useDenFlow } from "../../_providers/den-flow-provider";
+import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
+import { ConnectorLogo } from "./item-logo";
 import {
   PluginMcpSetupDialog,
   type PluginMcpSetupTarget,
@@ -16,6 +18,11 @@ import {
 import type { MarketplacePluginCloudReadinessConnection } from "./marketplace-data";
 import { formatRequiredBy, sortConnectionsForFocus, trustedConnectionFocusId } from "./mcp-connection-display";
 import { marketplaceConnectionNeedsAdminSetup, marketplaceConnectionSetupTarget } from "./mcp-connection-setup";
+import { personalApiKeyStatus, personalApiKeyStatusLabel, usesMemberApiKey } from "./member-api-key";
+import { ItemMenu, ItemRow } from "./item-list";
+import { connectorReadinessState, connectorReadinessNote } from "./connector-readiness";
+import { useCheckMcpConnection } from "./mcp-connections-data";
+import { MemberApiKeyDialog, type MemberApiKeyTarget } from "./member-api-key-dialog";
 import { MICROSOFT_365_DISPLAY_SCOPES } from "./microsoft-365-permissions";
 import {
   canDisconnectMyConnectionAccount,
@@ -30,7 +37,7 @@ import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
 /**
  * The member-facing half of MCP Connections. An admin publishes a
- * connection (mcp-connections-screen.tsx, admin-only); every granted member
+ * connection (its connector page, admin-only); every granted member
  * sees it here. For "per_member" connections this is where each person
  * connects their own account — after which their agent's
  * search_capabilities/execute_capability calls run as them.
@@ -45,11 +52,12 @@ export function YourConnectionsScreen() {
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
   const authorization = useMcpAccountAuthorization();
   const disconnectProvider = useDisconnectMyProviderAccount();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
+  const [apiKeyTarget, setApiKeyTarget] = useState<MemberApiKeyTarget | null>(null);
   const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
   const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
@@ -77,36 +85,43 @@ export function YourConnectionsScreen() {
     }
   }
 
+  function handleConnect(connection: ExternalMcpConnection) {
+    if (usesMemberApiKey(connection)) {
+      setApiKeyTarget({ id: connection.id, name: connection.name, replacing: personalApiKeyStatus(connection) !== "missing" });
+      return;
+    }
+    void authorization.connect(connection.id);
+  }
+
   return (
     <DashboardPageTemplate
       icon={Plug}
       title="Your Connections"
       description="Tools your organization has made available to you. Connect your own account where needed; workspace admins can test tools directly, and your AI coworker uses them with your permissions."
-      colors={["#DBEAFE", "#1E3A8A", "#2563EB", "#93C5FD"]}
     >
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
+        <div role="alert" className="mb-6 border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {error instanceof Error ? error.message : "Failed to load your connections."}
         </div>
       ) : null}
 
       {isLoading ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Loading your connections…
         </div>
       ) : connections.length === 0 ? (
-        <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Nothing has been shared with you yet. Ask a workspace admin to add an MCP connection.
         </div>
       ) : (
-        <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
+        <div className="divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
           {visibleConnections.map((connection) => {
             const needsAdminSetup = marketplaceConnectionNeedsAdminSetup(connection, presets);
-            const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.isAdmin);
+            const setupTarget = marketplaceConnectionSetupTarget(connection, presets, access.canManageConnections);
             return <YourConnectionRow
               key={connection.id}
               connection={connection}
-              isAdmin={access.isAdmin}
+              canManageConnections={access.canManageConnections}
               needsAdminSetup={needsAdminSetup}
               setupTarget={setupTarget}
               presets={presets}
@@ -123,7 +138,7 @@ export function YourConnectionsScreen() {
                     ? authorization.error.message
                     : null
               }
-              onConnect={() => void authorization.connect(connection.id)}
+              onConnect={() => handleConnect(connection)}
               onDisconnect={() => void handleDisconnectMyAccount(connection)}
               toolTesterRoute={getToolTesterRoute(orgSlug)}
             />;
@@ -138,13 +153,18 @@ export function YourConnectionsScreen() {
           void refetch();
         }}
       />
+      <MemberApiKeyDialog
+        target={apiKeyTarget}
+        onClose={() => setApiKeyTarget(null)}
+        onSaved={() => void refetch()}
+      />
     </DashboardPageTemplate>
   );
 }
 
 function YourConnectionRow({
   connection,
-  isAdmin,
+  canManageConnections,
   needsAdminSetup,
   setupTarget,
   presets,
@@ -160,7 +180,8 @@ function YourConnectionRow({
   toolTesterRoute,
 }: {
   connection: ExternalMcpConnection;
-  isAdmin: boolean;
+  /** `connections.manage`: finish setup, connect the org account, review OAuth and test tools. */
+  canManageConnections: boolean;
   needsAdminSetup: boolean;
   setupTarget: { connectionId: string; pluginId: string } | null;
   presets: ReturnType<typeof useMcpConnectionPresets>["data"];
@@ -175,23 +196,50 @@ function YourConnectionRow({
   onDisconnect: () => void;
   toolTesterRoute: string;
 }) {
+  const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
+  const { orgContext, orgSlug } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
+  const apiKeyStatus = personalApiKeyStatus(connection);
   const needsAdminRecovery = !needsAdminSetup
     && connection.needsReconnect === true
     && connection.reconnectActionOwner === "organization_admin";
   const needsReconnect = !needsAdminSetup
     && !needsAdminRecovery
-    && connection.needsReconnect === true;
+    && (connection.needsReconnect === true || apiKeyStatus === "reconnect_required");
   const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && canManageConnections && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
+  // A saved personal key keeps one visible action (Replace key); removal lives in the row menu.
+  const keyInMenu = canDisconnect && apiKeyStatus !== null && apiKeyStatus !== "missing";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
-  const canTestTools = !needsAdminSetup && !needsAdminRecovery && isAdmin
+  const canTestTools = !needsAdminSetup && !needsAdminRecovery && canManageConnections
     && !isNativeProvider && connection.connectedForMe && !needsReconnect;
   const microsoftScopes = (connection.nativeProviderKey === "microsoft-365" || connection.id === "microsoft-365")
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
   const requiredByLabel = formatRequiredBy(connection.requiredBy);
+  const checkConnection = useCheckMcpConnection();
+  const readinessView = { checking: checkConnection.isPending };
+  const state = connectorReadinessState(connection, readinessView);
+  // A shared account is reconnected by an admin; a personal one by its owner.
+  const adminSignIn = state === "Sign in" && !isPerMember;
+  const note = connectorReadinessNote(connection, readinessView);
+  if (state) return (
+    <div data-connector-row={connection.name} ref={rowRef}>
+      <ItemRow href={getLibraryConnectorRoute(orgSlug, connection.id)} logo={<ConnectorLogo name={connection.name} url={connection.url} size="sm" />} title={connection.name}
+        description={checkConnection.error ? "Could not check this connection. Try again."
+          : !canManageConnections && (state === "Couldn't verify" || state === "Not checked") ? `${note ?? ""} An admin can check it.`.trim()
+          : !canManageConnections && adminSignIn ? `${note ?? ""} An admin can reconnect it.`.trim()
+          : note}
+        status={state} statusOnNarrow wideAction wrapDescription={state === "Couldn't verify" || state === "Sign in" || state === "Not checked"}
+        action={state === "Sign in" ? (adminSignIn
+            ? <DenButton size="xs" variant="secondary" disabled={!canManageConnections} title={!canManageConnections ? "An admin can reconnect this connection." : undefined} href={canManageConnections ? getMcpConnectionRoute(orgSlug, connection.id) : undefined}>Reconnect</DenButton>
+            : <DenButton size="xs" variant="secondary" onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>Sign in</DenButton>)
+          : state === "Set up" ? <DenButton size="xs" variant="secondary" disabled={!canManageConnections} title={!canManageConnections ? "An admin can finish setup." : undefined} href={canManageConnections ? getMcpConnectionRoute(orgSlug, connection.id) : undefined}>Set up</DenButton>
+          : <DenButton size="xs" variant="secondary" loading={state === "Checking…"} disabled={!canManageConnections || state === "Checking…"} title={!canManageConnections ? "An admin can check this connection." : undefined} onClick={() => checkConnection.mutate(connection.id)}>{state === "Not checked" ? "Check now" : "Check again"}</DenButton>}
+      />
+    </div>
+  );
 
   return (
     <div
@@ -199,12 +247,12 @@ function YourConnectionRow({
       tabIndex={highlighted ? -1 : undefined}
       className={`outline-hidden transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
     >
-      <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-h-12 flex-col gap-3 py-1.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
+          <ConnectorLogo name={connection.name} url={connection.url} size="sm" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
+              <p className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{connection.name}</p>
               {needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
@@ -217,12 +265,16 @@ function YourConnectionRow({
               ) : needsReconnect ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   <AlertTriangle className="h-3 w-3" />
-                  Reconnect required
+                  {apiKeyStatus === "reconnect_required" ? personalApiKeyStatusLabel(apiKeyStatus) : "Reconnect required"}
+                </span>
+              ) : apiKeyStatus === "saved_unverified" ? (
+                <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600">
+                  {personalApiKeyStatusLabel(apiKeyStatus)}
                 </span>
               ) : connection.connectedForMe ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <Check className="h-3 w-3" />
-                  {isPerMember ? "Connected as you" : "Org account connected"}
+                  {apiKeyStatus === "ready" ? personalApiKeyStatusLabel(apiKeyStatus) : isPerMember ? "Connected as you" : "Org account connected"}
                 </span>
               ) : polling ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -231,7 +283,7 @@ function YourConnectionRow({
                 </span>
               ) : needsMyConnect ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                  Connect your account
+                  {apiKeyStatus === "missing" ? personalApiKeyStatusLabel(apiKeyStatus) : "Connect your account"}
                 </span>
               ) : needsAdminConnect ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
@@ -243,7 +295,7 @@ function YourConnectionRow({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
+            <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]">{connection.url}</p>
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
@@ -280,7 +332,7 @@ function YourConnectionRow({
               onSetup={onSetup}
             />
           ) : null}
-          {needsAdminRecovery && isAdmin ? (
+          {needsAdminRecovery && canManageConnections ? (
             <Link href="/dashboard/mcp-connections" className={buttonVariants({ variant: "primary", size: "sm" })}>
               Review OAuth
             </Link>
@@ -296,18 +348,40 @@ function YourConnectionRow({
               <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
             </Link>
           ) : null}
-          {canDisconnect ? (
+          {canDisconnect && !keyInMenu ? (
             <DenButton variant="destructive" size="sm" loading={disconnecting} onClick={onDisconnect} data-testid={`disconnect-my-mcp-account-${connection.id}`}>
               Disconnect
             </DenButton>
           ) : null}
+          {!needsReconnect && (apiKeyStatus === "saved_unverified" || apiKeyStatus === "ready") ? (
+            <DenButton variant="secondary" size="sm" loading={connecting} onClick={onConnect} data-testid={`replace-my-mcp-key-${connection.id}`}>
+              Replace key
+            </DenButton>
+          ) : null}
           {needsReconnect || needsMyConnect || needsAdminConnect ? (
             <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>
-              {needsReconnect ? "Reconnect" : "Connect"}
+              {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : needsReconnect ? "Reconnect" : "Connect"}
             </DenButton>
+          ) : null}
+          {keyInMenu ? (
+            <ItemMenu
+              label={`More for ${connection.name}`}
+              entries={[{
+                label: "Remove key",
+                destructive: true,
+                onSelect: onDisconnect,
+                confirm: { title: `Remove your ${connection.name} key?`, description: "You can add a key again at any time.", action: "Remove key" },
+              }]}
+            />
           ) : null}
         </div>
       </div>
+      <McpConnectionAppSetup
+        connection={connection}
+        publicApiUrl={runtimeConfigLoaded ? runtimeConfig.denApiUrl : ""}
+        enabled={orgContext?.capabilities.mcpConnections === true}
+        className="mb-4"
+      />
     </div>
   );
 }

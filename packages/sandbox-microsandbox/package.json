@@ -1,0 +1,36 @@
+{
+  "name": "@openwork/sandbox-microsandbox",
+  "private": true,
+  "type": "module",
+  "description": "microsandbox adapter: a local microVM with explicit mounts, deny-by-default egress, loopback previews, process execution and files.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "node --conditions=development --import tsx --test src/provider.test.ts",
+    "test:live": "node --conditions=development --import tsx --test --test-concurrency=1 src/live.test.ts"
+  },
+  "dependencies": {
+    "@openwork/sandbox": "workspace:*",
+    "microsandbox": "0.7.15"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4",
+    "tsx": "^4.23.1"
+  },
+  "license": "MIT"
+}

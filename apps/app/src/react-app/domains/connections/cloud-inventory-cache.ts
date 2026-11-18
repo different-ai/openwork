@@ -1,4 +1,5 @@
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
+import { markStartupStep, trackStartupOrgTools } from "@/app/lib/startup-diagnostics";
 import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
@@ -57,6 +58,8 @@ type CacheSlot<T> = {
 type ScopedCache<T, C> = {
   read: (scope: CloudInventoryScope) => T | null;
   load: (input: { client: C; scope: CloudInventoryScope; maxAgeMs?: number }) => Promise<T>;
+  /** Stores an answer fetched elsewhere, unless a load for this scope is in flight. */
+  seed: (scope: CloudInventoryScope, value: T) => void;
   clear: () => void;
 };
 
@@ -97,6 +100,11 @@ function createScopedCache<T, C>(
         throw error;
       }
     },
+    seed(scope, value) {
+      const key = cloudInventoryScopeKey(scope);
+      if (slot && slot.key === key && slot.inflight) return;
+      slot = { key, value, fetchedAt: Date.now(), inflight: null };
+    },
     clear() {
       slot = null;
     },
@@ -128,7 +136,11 @@ export function loadConnectCapabilities(input: {
   scope: CloudInventoryScope;
   maxAgeMs?: number;
 }) {
-  return connectCapabilitiesCache.load(input);
+  const loading = connectCapabilitiesCache.load(input);
+  // The first load of what the organization gives this member ends the
+  // desktop startup report.
+  trackStartupOrgTools(loading);
+  return loading;
 }
 
 /** Last known organization MCP connections for this scope, without fetching. */
@@ -146,12 +158,32 @@ export function loadOrgMcpConnections(input: {
 
 export const CLOUD_INVENTORY_CHANGED_EVENT = "openwork-cloud-inventory-changed";
 
-export function clearCloudInventoryCache() {
-  connectCapabilitiesCache.clear();
-  orgMcpConnectionsCache.clear();
+function notifyCloudInventoryChanged() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(CLOUD_INVENTORY_CHANGED_EVENT));
   }
+}
+
+export function clearCloudInventoryCache() {
+  connectCapabilitiesCache.clear();
+  orgMcpConnectionsCache.clear();
+  notifyCloudInventoryChanged();
+}
+
+/**
+ * Stores an inventory the Activity sync just loaded, so the composer and
+ * Settings read it instead of fetching the same Den inventory again. When it
+ * changed, views listening for CLOUD_INVENTORY_CHANGED_EVENT re-read it.
+ */
+export function storeCloudInventory(
+  scope: CloudInventoryScope,
+  loaded: { capabilities: ConnectCapabilityInventory; connections: DenExternalMcpConnection[] },
+  options: { changed: boolean },
+) {
+  connectCapabilitiesCache.seed(scope, loaded.capabilities);
+  orgMcpConnectionsCache.seed(scope, loaded.connections);
+  markStartupStep("org_tools");
+  if (options.changed) notifyCloudInventoryChanged();
 }
 
 function denClientForCurrentSession() {

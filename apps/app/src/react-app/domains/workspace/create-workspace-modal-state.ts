@@ -9,10 +9,6 @@ export type CreateWorkspaceLocalState = {
   showProgressDetails: boolean;
   now: number;
   projectLabel: string;
-  remoteUrl: string;
-  remoteToken: string;
-  remoteDisplayName: string;
-  remoteTokenVisible: boolean;
 };
 
 type CreateWorkspaceLocalAction<K extends keyof CreateWorkspaceLocalState = keyof CreateWorkspaceLocalState> =
@@ -28,10 +24,6 @@ export function createInitialWorkspaceLocalState(): CreateWorkspaceLocalState {
     showProgressDetails: false,
     now: Date.now(),
     projectLabel: "",
-    remoteUrl: "",
-    remoteToken: "",
-    remoteDisplayName: "",
-    remoteTokenVisible: false,
   };
 }
 

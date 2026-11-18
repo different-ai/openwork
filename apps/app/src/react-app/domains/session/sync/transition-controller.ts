@@ -25,6 +25,20 @@ export function deriveSessionRenderModel(input: {
     };
   }
 
+  if (input.isError && input.hasSnapshot && input.renderedSessionId === input.intendedSessionId) {
+    // A failed background refresh of the session already on screen is not a
+    // failed transition. The server restarts often and briefly; the rendered
+    // history stays valid, so the composer must keep accepting sends. A send
+    // that reaches a server still down fails with its own visible error and
+    // restores the draft, which is the explanation the user needs.
+    return {
+      intendedSessionId: input.intendedSessionId,
+      renderedSessionId: input.renderedSessionId,
+      transitionState: "idle",
+      renderSource: "error",
+    };
+  }
+
   if (input.isError) {
     return {
       intendedSessionId: input.intendedSessionId,

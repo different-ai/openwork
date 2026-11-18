@@ -3,8 +3,8 @@ import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
-import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
-import { protectedResourceMetadata } from "./index.js"
+import { getMcpResourceContext, mcpPrincipalCredentialId, verifyMcpRequest } from "./auth.js"
+import { protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_ADMIN_MCP_VERSION, registerAdminMcpTools } from "./admin-tools.js"
 
@@ -31,9 +31,9 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
   // desktop and legacy discovery. Public OAuth JWTs are scoped to /mcp/agent
   // only, so this route relies on first-party opaque MCP tokens and still
   // requires the platform-admin allowlist below.
-  app.get("/.well-known/oauth-protected-resource/mcp/admin", publicRoute, (c) =>
+  app.get("/.well-known/oauth-protected-resource/mcp/admin", protectedResourceMetadataRoute("admin"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "admin")))
-  app.get("/mcp/admin/.well-known/oauth-protected-resource", publicRoute, (c) =>
+  app.get("/mcp/admin/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("admin"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "admin")))
 
   app.all("/mcp/admin", tokenRoute, async (c) => {
@@ -63,7 +63,7 @@ export function registerAdminMcpRoutes<T extends { Variables: Record<string, unk
       name: "den-admin",
       version: DEN_ADMIN_MCP_VERSION,
     })
-    registerAdminMcpTools(server)
+    registerAdminMcpTools(server, { userId: principal.userId, credentialId: mcpPrincipalCredentialId(principal), scopes: principal.scopes })
 
     const transport = new StreamableHTTPTransport()
     await server.connect(transport)

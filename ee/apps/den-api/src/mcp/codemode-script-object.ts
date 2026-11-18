@@ -1,10 +1,35 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv"
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
+import { SCHEMA_CHECK_TIME_LIMIT_MS, SCHEMA_CHECK_TOO_SLOW_MESSAGE, TimeLimitExceededError, runWithTimeLimit } from "../time-limit.js"
 
 export type JsonSchemaObject = JsonSchemaType
 
+/**
+ * The language a Workflow was written in: `codemode-js` is the restricted dialect
+ * of OpenWork's original interpreter, `ecmascript` is standard JavaScript.
+ */
+export type CodemodeLanguage = "codemode-js" | "ecmascript"
+
+const CODEMODE_LANGUAGES: readonly string[] = ["codemode-js", "ecmascript"] satisfies CodemodeLanguage[]
+
+function isCodemodeLanguage(value: unknown): value is CodemodeLanguage {
+  return typeof value === "string" && CODEMODE_LANGUAGES.includes(value)
+}
+
+/**
+ * How to write the code execute_capability_script tests, in the language the
+ * organization tests and saves new Workflows in (newWorkflowLanguage). Each rule
+ * is said once, here; the build-an-app skill only names the forms that run one
+ * item at a time.
+ */
+export function workflowCodeRules(language: CodemodeLanguage): string {
+  return language === "ecmascript"
+    ? "Test a confined function body in standard JavaScript (ECMAScript); TypeScript annotations are rejected because they are not JavaScript. End with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls. Await every call, including writes: calls nothing awaits are cancelled when the program returns, and rejections nothing awaits appear only as warning: log lines."
+    : "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls."
+}
+
 export type CodemodeScriptPayload = {
-  language: "codemode-js"
+  language: CodemodeLanguage
   inputSchema?: JsonSchemaObject
   outputSchema?: JsonSchemaObject
   exampleInput?: unknown
@@ -30,7 +55,6 @@ export type CodemodeScriptInputValidation =
   | { ok: false; error: "invalid_arguments"; issues: CodemodeScriptInputIssue[] }
   | { ok: false; error: "invalid_schema"; message: string }
 
-const validatorProvider = new AjvJsonSchemaValidator()
 const VALIDATION_MESSAGE_LIMIT = 1_000
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,6 +68,21 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): b
 
 function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
   return isRecord(value)
+}
+
+function hasAsyncSchema(schema: unknown): boolean {
+  if (!isRecord(schema)) return false
+  if (Object.hasOwn(schema, "$async")) return true
+  for (const key of ["$defs", "definitions", "properties", "patternProperties", "dependentSchemas", "dependencies"]) {
+    const children = schema[key]
+    if (isRecord(children) && Object.values(children).some(hasAsyncSchema)) return true
+  }
+  for (const key of ["allOf", "anyOf", "oneOf", "prefixItems", "items"]) {
+    const children = schema[key]
+    if (Array.isArray(children) ? children.some(hasAsyncSchema) : hasAsyncSchema(children)) return true
+  }
+  return ["additionalProperties", "additionalItems", "contains", "not", "if", "then", "else",
+    "propertyNames", "unevaluatedProperties", "unevaluatedItems", "contentSchema"].some((key) => hasAsyncSchema(schema[key]))
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -60,14 +99,18 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   if (!isRecord(normalizedPayloadJson) || !hasOnlyKeys(normalizedPayloadJson, ["language", "inputSchema", "outputSchema", "exampleInput", "requiredCapabilities", "limits"])) {
     return { ok: false, message: "The Workflow payload must contain only language, inputSchema, outputSchema, exampleInput, requiredCapabilities, and limits." }
   }
-  if (normalizedPayloadJson.language !== "codemode-js") {
-    return { ok: false, message: "The Workflow language must be codemode-js." }
+  const language = normalizedPayloadJson.language
+  if (!isCodemodeLanguage(language)) {
+    return { ok: false, message: "The Workflow language must be codemode-js or ecmascript." }
   }
   if (normalizedPayloadJson.inputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.inputSchema)) {
     return { ok: false, message: "The Workflow inputSchema must be a JSON Schema object." }
   }
   if (normalizedPayloadJson.outputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.outputSchema)) {
     return { ok: false, message: "The Workflow outputSchema must be a JSON Schema object." }
+  }
+  if (hasAsyncSchema(normalizedPayloadJson.inputSchema) || hasAsyncSchema(normalizedPayloadJson.outputSchema)) {
+    return { ok: false, message: "Asynchronous Workflow schemas are not supported." }
   }
   if (!Array.isArray(normalizedPayloadJson.requiredCapabilities)) {
     return { ok: false, message: "The Workflow requiredCapabilities must be an array." }
@@ -111,7 +154,7 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   return {
     ok: true,
     payload: {
-      language: "codemode-js",
+      language,
       ...(normalizedPayloadJson.inputSchema === undefined ? {} : { inputSchema: normalizedPayloadJson.inputSchema }),
       ...(normalizedPayloadJson.outputSchema === undefined ? {} : { outputSchema: normalizedPayloadJson.outputSchema }),
       ...(normalizedPayloadJson.exampleInput === undefined ? {} : { exampleInput: normalizedPayloadJson.exampleInput }),
@@ -127,7 +170,11 @@ export function validateCodemodeScriptOutput(schema: JsonSchemaObject, value: un
 
 export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unknown): CodemodeScriptInputValidation {
   try {
-    const result = validatorProvider.getValidator<unknown>(schema)(value)
+    if (hasAsyncSchema(schema)) {
+      return { ok: false, error: "invalid_schema", message: "Asynchronous Workflow schemas are not supported." }
+    }
+    // A schema's patterns are regular expressions from the caller: see runWithTimeLimit.
+    const result = runWithTimeLimit(() => new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value), SCHEMA_CHECK_TIME_LIMIT_MS)
     if (result.valid) return { ok: true }
     return {
       ok: false,
@@ -140,7 +187,10 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
           : result.errorMessage,
       }],
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof TimeLimitExceededError) {
+      return { ok: false, error: "invalid_arguments", issues: [{ path: "/", keyword: "schema_validation", message: SCHEMA_CHECK_TOO_SLOW_MESSAGE }] }
+    }
     return {
       ok: false,
       error: "invalid_schema",

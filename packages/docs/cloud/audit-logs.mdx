@@ -1,0 +1,120 @@
+---
+title: "Audit logs"
+description: "See who changed what in your OpenWork organization, and when, from Observability › Audit logs. Filter by date, event type, actor, result and origin."
+keywords: ["audit logs", "audit trail", "audit history", "who changed what", "security", "compliance", "export", "SIEM", "Observability"]
+---
+
+**Observability › Audit logs** in OpenWork Cloud lists the changes made in your
+organization: who made each one, when, from where, and whether it worked.
+
+## What's recorded
+
+OpenWork groups everything one action did into an **operation**. For example,
+removing a member is one operation, even if it also revokes that person's API
+keys. Each operation shows who did it, what they did, and the result.
+
+Recorded changes include:
+
+- **Members and invitations**: invitations created, refreshed, canceled or
+  rejected; role changes; removals; ownership transfers.
+- **Roles and permissions**: roles and permission sets created, changed or
+  deleted, and which teams they apply to.
+- **API keys**: keys created, deleted, or revoked when the owner's access
+  changed.
+- **Single sign-on and SCIM**: SSO connections registered, turned on or off,
+  or deleted; SCIM tokens rotated, group mapping changes, and reconciles.
+- **Sign-in and accounts**: sign-ins, failed sign-ins, revoked sessions,
+  password and email changes, and OAuth tokens issued or revoked.
+- **Agent permissions** and **allowed web origins**.
+- **Requests to OpenWork's API**: which route was called, by whom, and the
+  result. Request bodies, query strings, headers and IP addresses are never
+  kept.
+
+The **Event type** filter on the page lists every event type your installation
+records.
+
+Secrets are never recorded: no bearer tokens, API key secrets, SCIM tokens,
+SAML certificates or OIDC client secrets. Where a change touches credentials,
+the entry shows that they changed, not their values.
+
+For the structured `[audit-alert]` log lines operators can route to alerting,
+see [Security and operations](/cloud/security-and-operations#audit-events).
+
+## Find an entry
+
+At the top of the page:
+
+- **From (local time)** and **To (local time)**: a date range.
+- **Event type**: one kind of change, or **All event types**.
+- **Search IDs**: an exact operation, event, request or resource ID.
+
+Open **More filters** for:
+
+- **Actor**: who did it.
+- **Result**: **Running**, **Succeeded**, **Failed**, **Partially completed**
+  or **Unknown**.
+- **Origin**: **API**, **Cloud UI**, **Agent (MCP)**, **Scheduler**,
+  **Webhook** or **Platform admin**.
+
+Click **Apply filters**. **Clear filters** shows everything again. Click
+**Load more operations** to see older entries, and **Refresh history** for the
+newest.
+
+## See what changed
+
+Click an entry to open its timeline. Each step shows the fields that changed,
+with their values **Before** and **After**. Open **Technical details** for the
+operation and actor IDs, the origin, and how many events were recorded.
+
+## Who can see it
+
+You need the **View audit history** permission to read audit logs. Admins have
+it by default. Without it, **Audit logs** shows **Locked** in the sidebar. See
+[Members and roles](/cloud/members-and-rbac).
+
+Turning recording on or off needs the **Change audit capture** permission.
+Admins have it by default, and it asks for a recent sign-in.
+
+## Plans and recording
+
+Recording new activity is part of the **Enterprise** plan. On a self-hosted
+installation, your operator can turn it on for every organization with the
+`DEN_AUDIT_SELF_HOSTED_ENABLED=true` setting on Den API.
+
+Reading history doesn't depend on your plan. If your organization stops being
+on Enterprise, everything recorded so far stays visible; only new activity
+stops being recorded.
+
+### Capture and storage
+
+Open **Capture and storage** at the bottom of the page to see:
+
+- whether recording is **Available** on your plan
+- the **Capture audit logs** switch for your organization (on by default)
+- **Effective recording**: **Recording** or **Not recording**
+- **Retained operations**, **Recorded events** and **Oldest available history**
+
+The totals are recalculated once a day. On a self-hosted installation, that
+needs the scheduled *audit usage refresh* job; see
+[Scheduled maintenance jobs](/self-host/deploy-to-your-cloud/overview#scheduled-maintenance-jobs).
+
+## How long it's kept
+
+OpenWork doesn't delete audit history today. **Capture and storage** shows a
+planned limit on retained operations under **Technical details**, but cleanup
+only runs as a dry run: nothing is deleted.
+
+## Export
+
+People with **View audit history** can export audit history through the API
+with `GET /v1/audit/export`, as NDJSON (the default) or CSV. Each response is
+one page. Keep requesting with the `X-Audit-Next-Cursor` header value until it
+no longer appears. Use the same filters as the page. Send an
+[API key](/cloud/api-keys) in the `x-api-key` header to call it from a script.
+
+CSV pages contain summary fields only, without before and after values.
+
+## Related
+
+- [Security and operations](/cloud/security-and-operations#audit-events)
+- [Analytics](/cloud/analytics): usage counts, not changes.

@@ -4,6 +4,13 @@ import { readFile, realpath, stat } from "node:fs/promises"
 import { extname, resolve, sep } from "node:path"
 import { createJsonStdoutLogger, type JsonObject, type JsonStdoutLogger } from "@openwork-ee/utils/observability"
 import { Hono } from "hono"
+import {
+  buildMcpAppSandboxCsp,
+  MCP_APP_SANDBOX_PROXY_CSS,
+  MCP_APP_SANDBOX_PROXY_HTML,
+  MCP_APP_SANDBOX_PROXY_SCRIPT,
+  parseMcpAppSandboxCsp,
+} from "../../../../apps/server/src/mcp-app-sandbox.js"
 import { env } from "./env.js"
 import { createInstanceFetch, fetchWithConnectRetry, type FetchLike } from "./instance-fetch.js"
 
@@ -40,6 +47,7 @@ export type GatewayAppOptions = {
   denApiBase?: string
   gatewayKey?: string
   buildVersion?: string
+  denWebUrl?: string
   resolveTtlMs?: number
   now?: () => number
   fetchImpl?: typeof fetch
@@ -53,6 +61,7 @@ type GatewayConfig = {
   denApiBase: string
   gatewayKey?: string
   buildVersion?: string
+  denWebUrl?: string
   resolveTtlMs: number
   now: () => number
   fetchImpl: typeof fetch
@@ -89,6 +98,7 @@ const proxyPathNamespaces = [
   "/files",
 ]
 const alwaysProxyPathPrefixes = [
+  "/cloud-computer/",
   "/opencode/",
   "/w/",
   "/runtime/",
@@ -128,6 +138,7 @@ function createConfig(options: GatewayAppOptions): GatewayConfig {
     denApiBase: normalizeHttpBaseUrl(options.denApiBase ?? env.denApiBase),
     gatewayKey: options.gatewayKey ?? env.gatewayKey,
     buildVersion: options.buildVersion ?? env.buildVersion,
+    denWebUrl: options.denWebUrl ?? env.denWebUrl,
     resolveTtlMs: options.resolveTtlMs ?? env.resolveTtlMs,
     now: options.now ?? Date.now,
     fetchImpl: options.fetchImpl ?? fetch,
@@ -349,8 +360,18 @@ function escapeScriptJson(json: string) {
   return json.replace(/[<>&\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
 }
 
-function injectGatewayMarker(html: string, buildVersion: string | undefined) {
-  const gatewayMarker = { version: 1, ...(buildVersion ? { build: buildVersion } : {}) }
+type GatewayMarkerFields = {
+  buildVersion?: string
+  /** Den web origin the app signs in with; the published image bakes none in. */
+  denWebUrl?: string
+}
+
+function injectGatewayMarker(html: string, fields: GatewayMarkerFields) {
+  const gatewayMarker = {
+    version: 1,
+    ...(fields.buildVersion ? { build: fields.buildVersion } : {}),
+    ...(fields.denWebUrl ? { denBaseUrl: fields.denWebUrl } : {}),
+  }
   const marker = escapeScriptJson(JSON.stringify(gatewayMarker))
   const script = `<script>window.__OPENWORK_GATEWAY__ = ${marker}</script>`
   const headCloseIndex = html.toLowerCase().indexOf("</head>")
@@ -360,7 +381,7 @@ function injectGatewayMarker(html: string, buildVersion: string | undefined) {
   return `${html.slice(0, headCloseIndex)}${script}${html.slice(headCloseIndex)}`
 }
 
-async function serveFile(root: string, relativePath: string, requestPathname: string, method: string, buildVersion: string | undefined) {
+async function serveFile(root: string, relativePath: string, requestPathname: string, method: string, marker: GatewayMarkerFields) {
   const filePath = await resolveWithinRoot(root, relativePath)
   const fileStat = await stat(filePath).catch(() => null)
   if (!fileStat?.isFile()) {
@@ -376,7 +397,7 @@ async function serveFile(root: string, relativePath: string, requestPathname: st
 
   if (isTextExtension(extension)) {
     const body = await readFile(filePath, "utf8")
-    const text = relativePath === "index.html" ? injectGatewayMarker(body, buildVersion) : body
+    const text = relativePath === "index.html" ? injectGatewayMarker(body, marker) : body
     return new Response(text, { status: 200, headers })
   }
 
@@ -384,7 +405,7 @@ async function serveFile(root: string, relativePath: string, requestPathname: st
   return new Response(new Uint8Array(bytes), { status: 200, headers })
 }
 
-async function serveStatic(request: Request, webRoot: string | undefined, buildVersion: string | undefined) {
+async function serveStatic(request: Request, webRoot: string | undefined, marker: GatewayMarkerFields) {
   if (!webRoot) {
     return null
   }
@@ -401,14 +422,14 @@ async function serveStatic(request: Request, webRoot: string | undefined, buildV
   }
 
   try {
-    const file = await serveFile(webRoot, relativePath, url.pathname, method, buildVersion)
+    const file = await serveFile(webRoot, relativePath, url.pathname, method, marker)
     if (file) {
       return file
     }
     if (url.pathname.startsWith("/assets/")) {
       return notFoundResponse()
     }
-    return await serveFile(webRoot, "index.html", "/index.html", method, buildVersion) ?? notFoundResponse()
+    return await serveFile(webRoot, "index.html", "/index.html", method, marker) ?? notFoundResponse()
   } catch (error) {
     if (error instanceof GatewayHttpError) {
       return gatewayErrorResponse(error)
@@ -691,6 +712,13 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
   const cache = new Map<string, ReadyCacheEntry>()
   const app = new Hono()
 
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+  app.use("*", async (c, next) => {
+    await next()
+    if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+  })
+
   app.use("*", async (c, next) => {
     const startedAtMs = Date.now()
     await next()
@@ -702,6 +730,24 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
   app.get("/__gw/health", (c) => c.json({ ok: true, service: "den-gateway", ...(config.buildVersion ? { build: config.buildVersion } : {}) }))
   app.get("/__gw/ready", (c) => c.json({ ok: true, service: "den-gateway", ...(config.buildVersion ? { build: config.buildVersion } : {}) }))
 
+  app.get("/mcp-apps/sandbox.html", (c) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy": buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(c.req.query("csp") ?? null)),
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "strict-origin",
+      "X-Content-Type-Options": "nosniff",
+    },
+  }))
+  app.get("/mcp-apps/sandbox.js", () => new Response(MCP_APP_SANDBOX_PROXY_SCRIPT, {
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  }))
+  app.get("/mcp-apps/sandbox.css", () => new Response(MCP_APP_SANDBOX_PROXY_CSS, {
+    headers: { "Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  }))
+  app.all("/mcp-apps", () => notFoundResponse())
+  app.all("/mcp-apps/*", () => notFoundResponse())
+
   app.all(denApiRoutePrefix, (c) => proxyToDenApi({ config, request: c.req.raw }))
   app.all(`${denApiRoutePrefix}/*`, (c) => proxyToDenApi({ config, request: c.req.raw }))
 
@@ -710,7 +756,7 @@ export function createGatewayApp(options: GatewayAppOptions = {}) {
       return handleProxy({ config, cache, request: c.req.raw })
     }
 
-    return await serveStatic(c.req.raw, config.webRoot, config.buildVersion) ?? notFoundResponse()
+    return await serveStatic(c.req.raw, config.webRoot, { buildVersion: config.buildVersion, denWebUrl: config.denWebUrl }) ?? notFoundResponse()
   })
 
   return app

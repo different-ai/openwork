@@ -19,8 +19,10 @@ import {
   recordEmailSignInResult,
 } from "../../auth-protection.js"
 import { db } from "../../db.js"
+import { withDesktopDeviceClaimRequest } from "../../desktop-device-login.js"
 import { env } from "../../env.js"
-import { findEnterpriseAuthRequirementForEmailDomain } from "../../enterprise-auth-requirement.js"
+import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
+import { resolveLoginSsoRouting } from "../../sso-routing.js"
 import {
   authorizeInitialAdminBootstrapSignup,
   completeInitialAdminBootstrapSignup,
@@ -32,19 +34,31 @@ import {
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
-import { checkOAuthTokenRateLimit, recordOAuthTokenFailure } from "../../oauth-token-rate-limit.js"
-import { getOAuthTokenRateLimitLogFields, readBasicAuthClientId } from "../../oauth-token-rate-limit-observability.js"
-import { emptyResponse, jsonResponse } from "../../openapi.js"
+import { checkOAuthTokenRateLimit, recordOAuthTokenFailure, type OAuthTokenFailureBudgets } from "../../oauth-token-rate-limit.js"
+import {
+  getOAuthTokenFailureLogFields,
+  getOAuthTokenRateLimitLogFields,
+  readBasicAuthClientId,
+  type OAuthTokenLimitAttribution,
+} from "../../oauth-token-rate-limit-observability.js"
+import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
 import { appLogger } from "../../observability/logger.js"
+import { timeScimDiagnosticStage } from "../../observability/scim-diagnostics.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
 import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
+import { AUTH_RATE_LIMIT_POLICIES, authRateLimitedResponse, checkAuthRateLimit } from "../../auth-rate-limits.js"
+import { betterAuthRequest, requestClientIpKey, resolveRequestClientIp } from "../../request-client-ip.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
+import { exchangePreclaimAssertion, JWT_BEARER_GRANT_TYPE } from "../../workspace-preclaim.js"
+import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
+import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
+import { registerRawRoleRefusalRoutes } from "./raw-role-refusals.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
 const logger = appLogger.child({ component: "auth" })
@@ -102,7 +116,8 @@ function readStoredOAuthClientScopes(scopes: string | null) {
 }
 
 async function registeredClientHasMcpScope(clientId: string) {
-  const [client] = await db
+  // primary: MCP clients authorize right after registering, and this gates the redirect and resource checks.
+  const [client] = await db.$primary
     .select({ scopes: OAuthClientTable.scopes })
     .from(OAuthClientTable)
     .where(eq(OAuthClientTable.clientId, clientId))
@@ -374,6 +389,19 @@ function oauthRegistrationError(status: number, error: string, errorDescription:
   })
 }
 
+function hasLoopbackRedirectUri(redirectUris: unknown): boolean {
+  if (!Array.isArray(redirectUris)) return false
+  return redirectUris.some((uri) => {
+    if (typeof uri !== "string") return false
+    try {
+      const { hostname } = new URL(uri)
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+    } catch {
+      return false
+    }
+  })
+}
+
 async function rewriteMcpClientRegistrationRequest(request: Request, path: string) {
   const url = new URL(request.url)
   url.pathname = path
@@ -413,6 +441,13 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
     body.scope = normalizedScope
   }
 
+  // Local MCP clients (Claude Code, Cursor, the MCP SDKs) register loopback
+  // redirects without sending application_type. Better Auth defaults that to
+  // "web", which refuses loopback, so declare them native (RFC 8252 §7.3).
+  if (body.application_type === undefined && hasLoopbackRedirectUri(body.redirect_uris)) {
+    body.application_type = "native"
+  }
+
   headers.set("content-type", "application/json")
   headers.delete("content-length")
 
@@ -425,7 +460,7 @@ async function rewriteMcpClientRegistrationRequest(request: Request, path: strin
 
 async function handleMcpClientRegistrationRequest(request: Request, path: string) {
   const rewritten = await rewriteMcpClientRegistrationRequest(request, path)
-  return rewritten instanceof Response ? rewritten : auth.handler(rewritten)
+  return rewritten instanceof Response ? rewritten : auth.handler(betterAuthRequest(rewritten))
 }
 
 // Better Auth includes RFC 9207 `iss` on successful code responses but not on
@@ -447,7 +482,12 @@ async function makeAuthorizationResponseIssuerOptional(response: Response) {
 }
 
 async function getOAuthAuthorizationServerMetadata(request: Request) {
-  return makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const response = await makeAuthorizationResponseIssuerOptional(await oauthProviderAuthServerMetadata(auth)(request))
+  const metadata: unknown = await response.clone().json().catch(() => null)
+  if (!isRecord(metadata)) return response
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  return new Response(JSON.stringify(withAgentAuthMetadata(metadata, env.apiPublicUrl ?? env.betterAuthUrl)), { status: response.status, headers })
 }
 
 async function getOAuthOpenIdConfiguration(request: Request) {
@@ -477,15 +517,47 @@ const loginOptionKindSchema = z.union([
   z.literal("new_account"),
 ])
 
+const ssoSignInOptionSchema = z.object({
+  providerId: z.string(),
+  name: z.string(),
+  kind: z.enum(["oidc", "saml"]),
+}).meta({ ref: "AuthSsoSignInOption" })
+
 const loginOptionsResponseSchema = z.object({
   email: z.string().email(),
   nextStep: loginOptionKindSchema,
   allowPublicSignup: z.boolean().optional(),
   allowInvitationSignup: z.boolean().optional(),
+  /** passwordSignInGoogle: a configured Google sign-in is also offered on the password step. */
+  offerGoogleOnPassword: z.boolean().optional(),
   organizationSlug: z.string().optional(),
   signInPath: z.string().optional(),
   signInUrl: z.string().url().optional(),
+  /** the SSO organization's name, shown on the "Continue with SSO" button. */
+  organizationName: z.string().optional(),
+  /** the organization requires SSO to open it; other methods still sign in. */
+  ssoRequired: z.boolean().optional(),
+  /** the usual step when the person does not use SSO. Absent: SSO is the only way in. */
+  alternativeStep: z.union([z.literal("google"), z.literal("github"), z.literal("password"), z.literal("new_account")]).optional(),
+  /**
+   * The SSO step's identity providers that sign in this email, oldest first.
+   * Several: one button each, each starting sign-in
+   * at signInPath with `providerId`.
+   */
+  ssoProviders: z.array(ssoSignInOptionSchema).optional(),
 }).meta({ ref: "AuthLoginOptionsResponse" })
+
+const ssoOptionsQuerySchema = z.object({
+  organizationSlug: z.string().trim().min(1).max(255),
+})
+
+const ssoOptionsResponseSchema = z.object({
+  organizationName: z.string(),
+  providers: z.array(ssoSignInOptionSchema),
+}).meta({ ref: "AuthSsoOptionsResponse" })
+
+const SSO_OPTIONS_RATE_LIMIT_MAX = 120
+const SSO_OPTIONS_RATE_LIMIT_WINDOW_MS = 60_000
 
 const loginOptionsBotVerificationFailedSchema = z.object({
   error: z.literal("bot_verification_failed"),
@@ -513,11 +585,6 @@ const INITIAL_ADMIN_BOOTSTRAP_VERIFY_RATE_LIMIT_WINDOW_MS = 300_000
 // A generous domain bucket bounds distributed enumeration without recreating coworker lockouts;
 // only unresolved addresses pay the tighter miss bucket.
 
-function readRequestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
-}
-
 function sha256Hex(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -525,7 +592,7 @@ function sha256Hex(value: string) {
 export function loginOptionsRateLimitKeys(headers: Headers, email: string) {
   const domainHash = sha256Hex(email.slice(email.lastIndexOf("@") + 1).trim().toLowerCase())
   return {
-    ip: `auth-login-options:ip:${sha256Hex(readRequestAddress(headers))}`,
+    ip: `auth-login-options:ip:${sha256Hex(requestClientIpKey(headers))}`,
     email: `auth-login-options:email:${sha256Hex(email)}`,
     domain: `auth-login-options:domain:${domainHash}`,
     domainMiss: `auth-login-options:domain-miss:${domainHash}`,
@@ -570,12 +637,17 @@ async function getLoginOptionAccounts(email: string) {
 }
 
 async function hasPendingInvitationForEmail(invitationIdOrToken: string | undefined, email: string) {
+  return (await findPendingInvitationOrganizationForEmail(invitationIdOrToken, email)) !== null
+}
+
+/** The organization of a pending, unexpired invitation addressed to this email, or null. */
+async function findPendingInvitationOrganizationForEmail(invitationIdOrToken: string | undefined, email: string) {
   if (!invitationIdOrToken) {
-    return false
+    return null
   }
 
   const [invitation] = await db
-    .select({ inviteToken: InvitationTable.inviteToken })
+    .select({ organizationId: InvitationTable.organizationId })
     .from(InvitationTable)
     .where(and(
       sql`(${InvitationTable.id} = ${invitationIdOrToken} or ${InvitationTable.inviteToken} = ${invitationIdOrToken})`,
@@ -585,7 +657,7 @@ async function hasPendingInvitationForEmail(invitationIdOrToken: string | undefi
     ))
     .limit(1)
 
-  return Boolean(invitation)
+  return invitation?.organizationId ?? null
 }
 
 async function isInvitationSignupAllowed(request: Request) {
@@ -631,6 +703,88 @@ async function getOrganizationSsoCallbackRequest(request: Request) {
   }
 }
 
+/**
+ * RFC 7523 JWT-bearer grant for pre-claim workspace assertions. Better Auth's
+ * token endpoint does not know this grant, so Den answers it before handing
+ * the request over. Returns null for every other grant type.
+ */
+async function handleJwtBearerGrant(request: Request): Promise<Response | null> {
+  if (!(request.headers.get("content-type") ?? "").includes("application/x-www-form-urlencoded")) return null
+  const form = new URLSearchParams(await request.text())
+  if (form.get("grant_type") !== JWT_BEARER_GRANT_TYPE) return null
+  const assertion = form.get("assertion")?.trim()
+  const headers = { "cache-control": "no-store", pragma: "no-cache" }
+  if (!assertion) {
+    return Response.json({ error: "invalid_request", error_description: "The assertion parameter is required." }, { status: 400, headers })
+  }
+  const result = await exchangePreclaimAssertion(assertion)
+  return Response.json(result.body, { status: result.ok ? 200 : result.status, headers })
+}
+
+function logAuthRateLimited(request: Request, bucket: string, retryAfter: number | string | null) {
+  const clientIp = resolveRequestClientIp(request.headers)
+  logger.warn("auth request rate limited", {
+    http_path: getBetterAuthProxyPath(normalizedPath(request)),
+    bucket,
+    retry_after: retryAfter === null ? undefined : String(retryAfter),
+    // How the address was found, never the address: "none" means every such
+    // caller shares one bucket because no forwarded header could be trusted.
+    client_ip_source: clientIp.source,
+    client_ip_header: clientIp.header ?? undefined,
+  })
+}
+
+/** Says which limiter refused a token request: Den's admission buckets, or one inside auth.handler. */
+async function logOAuthTokenRateLimited(request: Request, response: Response, attribution: Omit<OAuthTokenLimitAttribution, "clientIpSource">) {
+  const fields = await getOAuthTokenRateLimitLogFields(request, response, {
+    ...attribution,
+    clientIpSource: resolveRequestClientIp(request.headers).source,
+  })
+  if (fields) {
+    logger.warn("oauth token request rate limited", fields)
+  }
+}
+
+/** Charges a failed token request and logs each failure budget it filled, so a cooldown is logged when it starts, not on every failure. */
+async function recordOAuthTokenFailureWithLog(failure: OAuthTokenFailureBudgets, request: Request, response: Response) {
+  const filled = await recordOAuthTokenFailure(failure, response)
+  if (!filled.length) return
+  const clientIpSource = resolveRequestClientIp(request.headers).source
+  for (const exhausted of filled) {
+    const fields = await getOAuthTokenFailureLogFields(request, response, exhausted, clientIpSource)
+    if (fields) {
+      logger.warn("oauth token failure budget exhausted", fields)
+    }
+  }
+}
+
+/** Den's per-email / per-invitation / per-address limits for the email auth endpoints (auth-rate-limits.ts). */
+async function checkEmailAuthRateLimit(request: Request, invitationSignupAllowed: boolean) {
+  if (env.devMode || request.method !== "POST") {
+    return null
+  }
+  const path = getBetterAuthProxyPath(normalizedPath(request))
+  if (!AUTH_RATE_LIMIT_POLICIES[path]) {
+    return null
+  }
+  const email = await getAuthRequestEmail(request)
+  const invitation = invitationSignupAllowed
+    ? new URL(request.url).searchParams.get("invite")?.trim() || null
+    : null
+  const result = await checkAuthRateLimit({
+    path,
+    email: email ? normalizeLoginEmail(email) : null,
+    clientIpKey: requestClientIpKey(request.headers),
+    invitation,
+    keySecret: env.betterAuthSecret,
+  }, checkRateLimit)
+  if (!result) {
+    return null
+  }
+  logAuthRateLimited(request, result.bucket, result.retryAfterSeconds)
+  return authRateLimitedResponse(result)
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
   const observabilityRequest = request.method === "POST"
@@ -638,22 +792,31 @@ async function handleAuthRequest(c: Context) {
     ? request.clone()
     : null
   const oauthTokenRateLimit = observabilityRequest
-    ? await checkOAuthTokenRateLimit(request, checkRateLimit)
+    ? await checkOAuthTokenRateLimit(request)
     : null
   if (observabilityRequest && oauthTokenRateLimit?.response) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, oauthTokenRateLimit.response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    await logOAuthTokenRateLimited(observabilityRequest, oauthTokenRateLimit.response, {
+      layer: "den_admission",
+      blocked: oauthTokenRateLimit.blocked,
+    })
     return oauthTokenRateLimit.response
+  }
+  if (observabilityRequest) {
+    const jwtBearerResponse = await handleJwtBearerGrant(observabilityRequest.clone())
+    if (jwtBearerResponse) {
+      if (oauthTokenRateLimit && !jwtBearerResponse.ok) {
+        await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, jwtBearerResponse)
+      }
+      return jwtBearerResponse
+    }
   }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
-    if (oauthTokenRateLimit) {
+    if (observabilityRequest && oauthTokenRateLimit) {
       // Malformed token requests rejected before auth.handler must still
       // consume the failure budget, or repeated invalid-resource submissions
       // would only ever pay the looser attempt buckets.
-      await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, authRequest, checkRateLimit)
+      await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, authRequest)
     }
     return authRequest
   }
@@ -669,6 +832,11 @@ async function handleAuthRequest(c: Context) {
   }
   const invitationSignupAllowed = await isInvitationSignupAllowed(authRequest)
   const initialAdminBootstrapGrant = await getInitialAdminBootstrapGrantFromRequest(authRequest)
+
+  const authRateLimit = await checkEmailAuthRateLimit(authRequest, invitationSignupAllowed)
+  if (authRateLimit) {
+    return authRateLimit
+  }
 
   const emailSignInAttempt = await readEmailSignInAttempt(authRequest)
   if (emailSignInAttempt) {
@@ -725,7 +893,7 @@ async function handleAuthRequest(c: Context) {
 
   let response: Response
   try {
-    response = await auth.handler(authRequest)
+    response = await timeScimDiagnosticStage("better_auth_ms", () => withDesktopDeviceClaimRequest(() => auth.handler(betterAuthRequest(authRequest))))
   } catch (error) {
     if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
       await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
@@ -756,46 +924,91 @@ async function handleAuthRequest(c: Context) {
   if (emailSignInAttempt) {
     await recordEmailSignInResult(emailSignInAttempt, response)
   }
-  if (oauthTokenRateLimit) {
-    await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, response, checkRateLimit)
+  if (observabilityRequest && oauthTokenRateLimit) {
+    await recordOAuthTokenFailureWithLog(oauthTokenRateLimit.failure, observabilityRequest, response)
+  }
+  if (response.status === 429 && !observabilityRequest) {
+    logAuthRateLimited(authRequest, "better_auth_ip", response.headers.get("x-retry-after"))
   }
   if (observabilityRequest) {
-    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, response)
-    if (rateLimitFields) {
-      logger.warn("oauth token request rate limited", rateLimitFields)
-    }
+    // Den's own limits answered above, so a 429 here came from inside auth.handler.
+    await logOAuthTokenRateLimited(observabilityRequest, response, { layer: "auth_handler" })
   }
   return response
 }
 
 export function registerAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerScimAuthRoutes(app)
+  registerRawRoleRefusalRoutes(app)
   app.use("/api/auth/sso/saml2/callback/*", samlResponsePolicyMiddleware)
   app.use("/api/auth/sso/saml2/sp/acs/*", samlResponsePolicyMiddleware)
   // Better Auth uses this configured base URL for the callback `iss` value.
   // Keep discovery on that same canonical issuer even when these routes are
   // reached through a separate API or reverse-proxy origin.
-  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
-  app.get("/api/auth/.well-known/openid-configuration", publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
-  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
-  app.get("/.well-known/openid-configuration/api/auth", publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
-  app.get("/.well-known/oauth-authorization-server", publicRoute, (c) => getOAuthAuthorizationServerMetadata(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")))
-  app.get("/.well-known/openid-configuration", publicRoute, (c) => getOAuthOpenIdConfiguration(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")))
-  app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.get("/api/auth/oauth2/authorize", tokenRoute, async (c) => {
-    const authRequest = await normalizeMcpOAuthRequest(c.req.raw)
-    if (authRequest instanceof Response) {
-      return authRequest
-    }
-    const response = await auth.handler(authRequest)
-    return normalizeOAuthAuthorizeRedirect(response)
+  // OAuth 2.0 / OIDC discovery documents (RFC 8414, OpenID Connect Discovery
+  // 1.0) are served at every path an MCP client may probe. Their bodies follow
+  // the RFCs verbatim, so they are documented as opaque objects.
+  const oauthAuthorizationServerMetadataRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Get OAuth authorization server metadata",
+    description: "Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.",
+    responses: { 200: jsonResponse("Authorization server metadata (RFC 8414).", emptyObjectSchema) },
   })
+  const openIdConfigurationRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Get OpenID Connect discovery document",
+    description: "Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.",
+    responses: { 200: jsonResponse("OpenID Connect discovery document.", emptyObjectSchema) },
+  })
+  const dynamicClientRegistrationRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Register an OAuth client dynamically",
+    description: "RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.",
+    responses: {
+      201: jsonResponse("Client information response (RFC 7591 section 3.2.1).", emptyObjectSchema),
+      400: jsonResponse("Client registration error response (RFC 7591 section 3.2.2).", emptyObjectSchema),
+    },
+  })
+
+  app.get("/api/auth/.well-known/oauth-authorization-server", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
+  app.get("/api/auth/.well-known/openid-configuration", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server/api/auth", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
+  app.get("/.well-known/openid-configuration/api/auth", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")))
+  app.get("/.well-known/openid-configuration", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")))
+  app.post("/register", dynamicClientRegistrationRoute, publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.post("/api/auth/oauth2/register", dynamicClientRegistrationRoute, publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.get(
+    "/api/auth/oauth2/authorize",
+    describeRoute({
+      tags: ["OAuth"],
+      security: [],
+      summary: "Start an OAuth authorization request",
+      description: "RFC 6749 authorization endpoint. The Den request policy normalizes the MCP client's request, then the user signs in and consents through the Better Auth authorization server; the browser is redirected back to the client's redirect URI.",
+      responses: {
+        302: emptyResponse("Redirect to the sign-in flow or to the client's redirect URI with an authorization code or error."),
+        400: jsonResponse("The authorization request was malformed or referenced an unknown client.", emptyObjectSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
+      const authRequest = await normalizeMcpOAuthRequest(c.req.raw)
+      if (authRequest instanceof Response) {
+        return authRequest
+      }
+      const response = await auth.handler(betterAuthRequest(authRequest))
+      return normalizeOAuthAuthorizeRedirect(response)
+    },
+  )
 
   app.get(
     "/v1/auth/bootstrap/status",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Check initial administrator bootstrap availability",
       description: "Returns whether the private-deployment initial-administrator setup flow is available without exposing configured administrator emails.",
       responses: {
@@ -813,10 +1026,11 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     "/v1/auth/bootstrap/verify",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Verify an initial administrator setup code",
       description: "Validates a configured administrator email and one-time operator code, then returns a short-lived setup grant for Better Auth account creation.",
       responses: {
-        200: jsonResponse("Bootstrap grant issued successfully.", z.object({ grant: z.string(), expiresAt: z.string() })),
+        200: jsonResponse("Bootstrap grant issued successfully.", z.object({ grant: z.string(), expiresAt: z.string().datetime() })),
         403: jsonResponse("Bootstrap verification failed.", z.object({ error: z.literal("bootstrap_verification_failed"), message: z.string() })),
         409: jsonResponse("Bootstrap is unavailable.", z.object({ error: z.literal("bootstrap_unavailable"), message: z.string() })),
       },
@@ -849,11 +1063,46 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   )
 
   app.get(
+    "/v1/auth/sso-options",
+    describeRoute({
+      tags: ["Authentication"],
+      security: [],
+      summary: "List an organization's SSO sign-in options",
+      description: "Returns the identity providers people can sign in with on the organization's SSO page (/sso/<slug>): its enabled SSO connections on a verified domain, oldest first. Start sign-in with one by passing its providerId to Better Auth's /sign-in/sso.",
+      responses: {
+        200: jsonResponse("SSO sign-in options returned successfully.", ssoOptionsResponseSchema),
+        400: jsonResponse("The query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
+        404: jsonResponse("No organization has this slug.", z.object({ error: z.literal("organization_not_found") })),
+        429: jsonResponse("Too many attempts.", loginOptionsRateLimitedSchema),
+      },
+    }),
+    publicRoute,
+    queryValidator(ssoOptionsQuerySchema),
+    async (c) => {
+      const { organizationSlug } = c.req.valid("query")
+      const retryAfter = await checkRateLimit(
+        `auth-sso-options:ip:${sha256Hex(requestClientIpKey(c.req.raw.headers))}`,
+        SSO_OPTIONS_RATE_LIMIT_MAX,
+        SSO_OPTIONS_RATE_LIMIT_WINDOW_MS,
+        Date.now(),
+      )
+      if (retryAfter !== null) {
+        c.header("Retry-After", String(retryAfter))
+        return c.json({ error: "rate_limited", message: "Too many sign-in attempts. Try again later." }, 429)
+      }
+      const result = await listOrganizationSsoSignInOptions({ organizationSlug })
+      if (!result) return c.json({ error: "organization_not_found" }, 404)
+      return c.json({ organizationName: result.organizationName, providers: result.options })
+    },
+  )
+
+  app.get(
     "/v1/auth/login-options",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Resolve deterministic login option",
-      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation.",
+      description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation. When the SSO organization does not restrict its domain, the SSO step also carries alternativeStep (the usual method), ssoRequired and organizationName, and a valid pending invitation to another organization skips the domain's SSO.",
       responses: {
         200: jsonResponse("Login option resolved successfully.", loginOptionsResponseSchema),
         400: jsonResponse("The login option query parameters were invalid.", z.object({ error: z.literal("invalid_request") })),
@@ -893,9 +1142,22 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
             signInPath: singletonSsoStatus.signInPath,
           }
         : null
-      const requirement = singletonSsoRequirement ?? await findEnterpriseAuthRequirementForEmailDomain(email)
-      const accounts = requirement ? [] : await getLoginOptionAccounts(email)
-      if (!requirement && accounts.length === 0) {
+      const domainRequirement = singletonSsoRequirement ? null : await findDomainSsoRequirement(email)
+      // Today's behavior (flag off, single organization, restricted domain)
+      // never reads the invitation for an SSO domain: SSO is the only way in.
+      const legacySsoOnly = Boolean(singletonSsoRequirement)
+        || Boolean(domainRequirement && (!domainRequirement.perOrganization || domainRequirement.policy.restrictDomainToSso))
+      const invitationOrganizationId = legacySsoOnly ? null : await findPendingInvitationOrganizationForEmail(invite, email)
+      const routing = resolveLoginSsoRouting({
+        singletonSso: Boolean(singletonSsoRequirement),
+        requirement: domainRequirement,
+        invitationOrganizationId,
+      })
+      const ssoTarget = singletonSsoRequirement ?? (domainRequirement && routing.kind !== "none"
+        ? { organizationSlug: domainRequirement.organizationSlug, signInPath: domainRequirement.signInPath }
+        : null)
+      const accounts = routing.kind === "sso_only" ? [] : await getLoginOptionAccounts(email)
+      if (routing.kind !== "sso_only" && accounts.length === 0) {
         const missRetryAfter = await checkLoginOptionsMissRateLimit(rateLimitKeys.domainMiss)
         if (missRetryAfter !== null) {
           c.header("Retry-After", String(missRetryAfter))
@@ -906,22 +1168,46 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
         }
       }
       const allowPublicSignup = env.orgMode !== "single_org" || env.singleOrg.allowPublicSignup
-      const allowInvitationSignup = !requirement && await hasPendingInvitationForEmail(invite, email)
-      const nextStep = resolveLoginOptionKind({ requireSso: Boolean(requirement), accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
+      const allowInvitationSignup = routing.kind !== "sso_only" && invitationOrganizationId !== null
+      const otherStep = resolveLoginOptionKind({ requireSso: false, accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
+      const nextStep = resolveLoginOptionKind({ requireSso: routing.kind !== "none", accounts, allowNewAccount: allowPublicSignup || allowInvitationSignup })
 
-      if (nextStep === "sso" && requirement) {
-        return c.json({
+      if (nextStep === "sso" && ssoTarget) {
+        const signInOptions = await listOrganizationSsoSignInOptions({
+          organizationSlug: ssoTarget.organizationSlug,
+          emailDomain: email.slice(email.lastIndexOf("@") + 1),
+        })
+        const ssoStep = {
           email,
           nextStep,
           allowPublicSignup,
           allowInvitationSignup,
-          organizationSlug: requirement.organizationSlug,
-          signInPath: requirement.signInPath,
-          signInUrl: new URL(requirement.signInPath, env.betterAuthTrustedOrigins[0] ?? env.betterAuthUrl).toString(),
-        })
+          organizationSlug: ssoTarget.organizationSlug,
+          signInPath: ssoTarget.signInPath,
+          signInUrl: ssoSignInUrl(ssoTarget.signInPath),
+          ...(signInOptions && signInOptions.options.length > 0 ? { ssoProviders: signInOptions.options } : {}),
+        }
+        if (routing.kind === "sso_preferred" && domainRequirement && otherStep !== "sso") {
+          // SSO first, the usual step one click away.
+          return c.json({
+            ...ssoStep,
+            organizationName: domainRequirement.organizationName,
+            ssoRequired: routing.ssoRequired,
+            alternativeStep: otherStep,
+          })
+        }
+        return c.json(ssoStep)
       }
 
-      return c.json({ email, nextStep, allowPublicSignup, allowInvitationSignup })
+      // Before authentication there is no active organization. Like other
+      // sign-in policies, resolve the deployment rollout, not an arbitrary
+      // membership. Never add an alternative to an SSO-only response.
+      const offerGoogleOnPassword = nextStep === "password"
+        && Boolean(env.google.clientId && env.google.clientSecret)
+      return c.json({
+        email, nextStep, allowPublicSignup, allowInvitationSignup,
+        ...(offerGoogleOnPassword ? { offerGoogleOnPassword: true } : {}),
+      })
     },
   )
 
@@ -931,6 +1217,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [],
       summary: "Handle Better Auth flow",
       description: "Proxies Better Auth sign-in, sign-out, session, and verification flows under the Den API auth namespace.",
       responses: {
@@ -946,4 +1233,5 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     (c) => handleAuthRequest(c),
   )
   registerDesktopAuthRoutes(app)
+  registerDeviceAuthRoutes(app)
 }

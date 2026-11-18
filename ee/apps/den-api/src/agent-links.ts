@@ -1,0 +1,54 @@
+import { env } from "./env.js"
+
+// Pure link builders shared by the org routes. Kept free of auth/db imports so
+// unit tests can exercise them without booting Better Auth (which seeds the
+// oauthResource registry against MySQL on import).
+
+/**
+ * The classical member handoff: after an admin (or their agent) publishes a
+ * connection, members connect their own account in the den-web dashboard.
+ * betterAuthUrl is the den-web public origin in every deployment layout.
+ */
+export function memberSignInLink(connection: { id: string; organizationId: string; name: string }) {
+  const signIn = new URL("/connect/mcp", env.betterAuthUrl)
+  signIn.searchParams.set("connectionId", connection.id)
+  signIn.searchParams.set("org", connection.organizationId)
+  signIn.searchParams.set("name", connection.name)
+  return signIn.toString()
+}
+
+/** Where an owner starts seat billing. den-web resolves the active organization. */
+export function invitationBillingUrl() {
+  return new URL("/dashboard/billing", env.betterAuthUrl).toString()
+}
+
+/**
+ * Where a person confirms removing a connection their agent prepared. The
+ * connector page opens its Remove confirmation; nothing is removed until they
+ * choose Remove there, signed in.
+ */
+export function connectionRemovalLink(connectionId: string) {
+  const link = new URL(`/dashboard/mcp-connections/${encodeURIComponent(connectionId)}`, env.betterAuthUrl)
+  link.searchParams.set("remove", "1")
+  return link.toString()
+}
+
+/** The member's own agent (My bot). den-web resolves the active organization. */
+export function myAgentLink() {
+  return new URL("/dashboard/my-bot", env.betterAuthUrl).toString()
+}
+
+/** A connection in the member's Library, where they connect or reconnect their own account. */
+export function libraryConnectorLink(connectionId: string) {
+  return new URL(`/dashboard/library/connectors/${encodeURIComponent(connectionId)}`, env.betterAuthUrl).toString()
+}
+
+/** The Library's connector catalog, where a member adds a connection their organization doesn't have yet. */
+export function libraryCatalogLink() {
+  return new URL("/dashboard/library/connectors/new", env.betterAuthUrl).toString()
+}
+
+/** A saved workflow's page in the member's Library, where they run, schedule and share it. */
+export function libraryWorkflowLink(configObjectId: string) {
+  return new URL(`/dashboard/library/workflows/${encodeURIComponent(configObjectId)}`, env.betterAuthUrl).toString()
+}

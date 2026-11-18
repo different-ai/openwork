@@ -1,0 +1,154 @@
+"use client";
+
+import { Popover } from "@base-ui/react/popover";
+import type { GatewayUsageGroupBy } from "@openwork/types/den/gateway-usage";
+import { Filter, Search } from "lucide-react";
+import { useId, useState } from "react";
+import { DenBadge } from "../../_components/ui/badge";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { AUTOMATION_CARD_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
+import { DenInput } from "../../_components/ui/input";
+import { DenNotice } from "../../_components/ui/notice";
+import { DenSelect } from "../../_components/ui/select";
+import { formatUsageCost, StackedDailyChart } from "../_features/analytics/stacked-daily-chart";
+import { useSeriesColors } from "../_features/analytics/use-series-colors";
+import { useGatewayUsage } from "./gateway-usage-data";
+import { GatewayUsageCoverageNotice } from "./gateway-usage-coverage-notice";
+
+export function GatewayUsageSection({ orgId }: { orgId: string }) {
+  const id = useId();
+  const [groupBy, setGroupBy] = useState<GatewayUsageGroupBy>("model");
+  const [metric, setMetric] = useState<"tokens" | "cost">("tokens");
+  const [filterIds, setFilterIds] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  const [filterOpen, setFilterOpen] = useState(false);
+  const query = useGatewayUsage(orgId, groupBy, filterIds);
+  const loading = query.isPending || query.isFetching || query.isPlaceholderData;
+  const usage = !loading && !query.isError ? query.data : undefined;
+  const noTeams = groupBy === "team" && usage?.emptyReason === "no_teams";
+  const filterKind = groupBy === "model" ? "providers" : groupBy === "team" ? "teams" : "people";
+  const selectedLabel = filterIds.length === 1 ? (groupBy === "model" ? "provider" : groupBy === "team" ? "team" : "person") : filterKind;
+  const options = query.data?.filterOptions;
+  const matches = options?.filter((option) => option.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const isCost = metric === "cost";
+  const missing = usage ? (isCost ? usage.unpricedRequests : usage.unreportedRequests) : undefined;
+  const hasMissing = missing === null || (typeof missing === "number" && missing > 0);
+  const unknownCost = isCost && usage?.totalCostMicroUsd === 0 && hasMissing;
+  const valueLabel = isCost
+    ? (groupBy === "team" ? "Team cost · USD" : "Cost · USD")
+    : (groupBy === "team" ? "Team-attributed tokens" : "Reported tokens");
+  const chartSeries = usage
+    ? usage.series.filter((series) => usage.daily.some((day) => isCost
+      ? typeof day.costValues[series.id] === "number"
+      : (day.values[series.id] ?? 0) > 0))
+    : [];
+  // Keep assignments in this mounted section while the chart reloads for filters.
+  const colors = useSeriesColors(usage?.series.map((series) => series.id) ?? [], `${orgId}:${groupBy}`);
+  const chartDays = usage?.daily.map((day) => ({
+    date: day.date,
+    total: isCost
+      ? (day.totalCostMicroUsd === 0 && Object.values(day.costValues).some((value) => value === null) ? null : day.totalCostMicroUsd)
+      : day.totalTokens,
+    values: isCost ? day.costValues : Object.fromEntries(Object.entries(day.values).filter(([, value]) => value > 0)),
+  }));
+
+  return (
+    <section aria-labelledby={`${id}-heading`} className="mb-10 min-w-0" data-testid="gateway-usage">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id={`${id}-heading`} className={SECTION_TITLE_CLASS}>Usage</h2>
+        <p className="text-[12px] text-[color:var(--dls-text-secondary)]">Last 31 days &middot; UTC</p>
+      </div>
+      <div className={`${AUTOMATION_CARD_CLASS} min-w-0 p-4`}>
+        <div className="flex flex-wrap items-end justify-between gap-5">
+          <div className="min-w-0">
+            <p className="text-[12px] text-[color:var(--dls-text-secondary)]">{valueLabel}</p>
+            {usage ? <p className="mt-1 break-words text-3xl font-semibold tracking-tight text-[color:var(--dls-text-primary)] tabular-nums">{noTeams ? "—" : isCost ? (unknownCost ? "Unknown" : formatUsageCost(usage.totalCostMicroUsd)) : usage.totalTokens.toLocaleString()}</p>
+              : <p role="status" className="mt-2 text-[13px] text-[color:var(--dls-text-secondary)]">{loading ? "Loading usage..." : "Usage unavailable"}</p>}
+            <p className="mt-2 text-[12px] text-[color:var(--dls-text-secondary)]">All Gateway providers, including OpenWork Models.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span id={`${id}-metric-label`} className="text-[12px] text-[color:var(--dls-text-secondary)]">Show</span>
+              <div role="group" aria-labelledby={`${id}-metric-label`} className="flex h-8 items-center gap-0.5 rounded-lg bg-[var(--dls-hover)] p-0.5">
+                <button type="button" aria-pressed={!isCost} onClick={() => setMetric("tokens")} className={`h-full rounded-md px-3 text-[12px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-secondary)] ${!isCost ? "bg-[var(--dls-surface)] text-[color:var(--dls-text-primary)]" : "text-[color:var(--dls-text-secondary)] hover:text-[color:var(--dls-text-primary)]"}`}>Tokens</button>
+                <button type="button" aria-pressed={isCost} onClick={() => setMetric("cost")} className={`h-full rounded-md px-3 text-[12px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-secondary)] ${isCost ? "bg-[var(--dls-surface)] text-[color:var(--dls-text-primary)]" : "text-[color:var(--dls-text-secondary)] hover:text-[color:var(--dls-text-primary)]"}`}>Cost</button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor={`${id}-group`} className="text-[12px] text-[color:var(--dls-text-secondary)]">Group By</label>
+              <DenSelect id={`${id}-group`} aria-label="Group By" size="sm" className="w-32" value={groupBy} onChange={(event) => {
+                const value = event.target.value;
+                if (value !== "model" && value !== "team" && value !== "person") return;
+                setGroupBy(value);
+                setFilterIds([]);
+                setSearch("");
+                setFilterOpen(false);
+              }}>
+                <option value="model">Model</option>
+                <option value="team">Team</option>
+                <option value="person">Person</option>
+              </DenSelect>
+            </div>
+            <Popover.Root open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (!open) setSearch(""); }}>
+              <Popover.Trigger disabled={noTeams} className={buttonVariants({ variant: "secondary", size: "sm", className: "focus-visible:outline-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50" })} aria-label={`Filter by ${filterKind}${filterIds.length ? `, ${filterIds.length} selected` : ", all included"}`}>
+                <Filter className="size-3.5" aria-hidden="true" />
+                Filter
+                {!noTeams && filterIds.length > 0 ? <DenBadge>{filterIds.length}</DenBadge> : null}
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Positioner side="bottom" align="end" sideOffset={8} className="z-50">
+                  <Popover.Popup className="max-h-[calc(100dvh-2rem)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 text-gray-900 outline-none">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <Popover.Title className="text-sm font-semibold">Filter by {filterKind}</Popover.Title>
+                      <DenButton variant="ghost" size="sm" disabled={!filterIds.length} onClick={() => setFilterIds([])}>Clear</DenButton>
+                    </div>
+                    <Popover.Description className="mb-3 text-xs text-gray-500">Select one or more {filterKind}. No selection includes all.</Popover.Description>
+                    <DenInput type="search" icon={Search} aria-label={`Search ${filterKind}`} placeholder={`Search ${filterKind}...`} value={search} onChange={(event) => setSearch(event.target.value)} />
+                    <fieldset className="mt-3 max-h-64 overflow-y-auto">
+                      <legend className="sr-only">Included {filterKind}</legend>
+                      {matches?.map((option) => <label key={option.id} className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-2.5 text-sm hover:bg-gray-50">
+                        <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-blue-600" checked={filterIds.includes(option.id)} onChange={(event) => {
+                          const checked = event.target.checked;
+                          setFilterIds((current) => checked ? [...current, option.id] : current.filter((value) => value !== option.id));
+                        }} />
+                        <span className="min-w-0 break-words">{option.label}</span>
+                      </label>)}
+                      {!options ? <p role="status" className="px-2 py-4 text-xs text-gray-500">{query.isError ? "Filter options unavailable. Retry usage below." : "Loading filter options..."}</p>
+                        : matches?.length === 0 ? <p role="status" className="px-2 py-4 text-xs text-gray-500">{options.length ? `No ${filterKind} match your search.` : `No ${filterKind} available.`}</p> : null}
+                    </fieldset>
+                    <div className="mt-3 flex justify-end border-t border-gray-100 pt-3">
+                      <Popover.Close className={buttonVariants({ variant: "secondary", size: "sm" })}>Done</Popover.Close>
+                    </div>
+                  </Popover.Popup>
+                </Popover.Positioner>
+              </Popover.Portal>
+            </Popover.Root>
+          </div>
+        </div>
+
+        {!noTeams ? <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-[12px] text-[color:var(--dls-text-secondary)]">
+          <p>{filterIds.length ? `${filterIds.length} ${selectedLabel} selected` : `All ${filterKind}`}</p>
+          {filterIds.length > 0 ? <DenButton variant="ghost" size="sm" onClick={() => setFilterIds([])}>Clear filters</DenButton> : null}
+        </div> : null}
+        {groupBy === "team" && !noTeams ? <p className="mt-2 max-w-3xl text-[12px] leading-5 text-[color:var(--dls-text-secondary)]">Usage is grouped by current team membership. People in multiple teams are counted in each, so team totals can exceed model or person totals.</p> : null}
+
+        <div className="mt-6" aria-busy={loading}>
+          {loading ? <div role="status" className="flex min-h-64 items-center justify-center rounded-xl bg-[var(--dls-hover)] text-[13px] text-[color:var(--dls-text-secondary)]">Loading daily usage...</div>
+            : query.isError ? <div className="grid min-h-64 content-center justify-items-start gap-4">
+              <DenNotice tone="error" message={query.error.message} />
+              <DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Retry usage</DenButton>
+            </div>
+              : noTeams ? <div role="status" className="flex min-h-64 flex-col items-center justify-center gap-2 text-center">
+                <p className="text-[14px] font-medium text-[color:var(--dls-text-primary)]">No teams yet</p>
+                <p className="max-w-md text-[13px] text-[color:var(--dls-text-secondary)]">Create a team to view usage grouped by team, or switch Group By to Model or Person.</p>
+              </div>
+                : usage && chartDays ? <StackedDailyChart daily={chartDays} series={chartSeries} colors={colors} valueLabel={valueLabel} valueFormat={isCost ? "usd" : "tokens"} emptyLabel={isCost ? (unknownCost ? "Cost estimates are not available for these requests yet." : "No recorded cost in this period for the selected filters.") : filterIds.length ? "No reported tokens match these filters." : "No reported Gateway tokens in this period."} /> : null}
+        </div>
+        {usage && !noTeams && !isCost ? <GatewayUsageCoverageNotice usage={usage} /> : null}
+        {isCost ? <div role="note" className="mt-5 text-[12px] leading-5 text-[color:var(--dls-text-secondary)]">
+          <p>Costs are approximate based on publicly listed model prices when each request was recorded. <a href="https://openworklabs.com/docs/ai-gateway/token-costs" target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-[color:var(--dls-text-primary)]">Click here to see how costs are calculated</a></p>
+        </div> : null}
+      </div>
+    </section>
+  );
+}

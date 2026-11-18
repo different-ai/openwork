@@ -32,7 +32,7 @@ export function importNodeSqlite(): Promise<typeof import("node:sqlite")> {
   return import(NODE_SQLITE_SPECIFIER);
 }
 
-export function runtimeDbPath(config: ServerConfig): string {
+export function runtimeDbPath(config: Pick<ServerConfig, "configPath">): string {
   const override = process.env.OPENWORK_RUNTIME_DB?.trim();
   if (override) return resolve(override);
   const configPath = config.configPath?.trim();
@@ -41,7 +41,7 @@ export function runtimeDbPath(config: ServerConfig): string {
 }
 
 /** Directory holding runtime state (the SQLite DB and derived files). */
-export function runtimeStorageDir(config: ServerConfig): string {
+export function runtimeStorageDir(config: Pick<ServerConfig, "configPath">): string {
   return dirname(runtimeDbPath(config));
 }
 

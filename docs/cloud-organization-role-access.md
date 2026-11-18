@@ -17,13 +17,15 @@ The built-in organization roles are ordered:
 3. `admin`
 4. `member`
 
-`owner` satisfies every organization gate. `super-admin` satisfies super-admin and admin gates. `admin` satisfies admin gates. `member` satisfies member gates only.
+`owner` satisfies every organization gate and always holds every catalog permission. `super-admin` satisfies super-admin and admin gates. It holds every catalog permission, like the owner; with the `superAdminPermissionSet` feature on it instead holds the organization's Super admin permissions (plus Member and Admin): a default permission set (`permission_set.default_key = 'super-admin'`) seeded with every catalog permission, kept current by reconciliation, and editable only by the owner or a super-admin (see `docs/features/super-admin-permission-set/README.md`). Only deleting the organization and transferring ownership stay owner-only role checks. `admin` satisfies admin gates and holds the organization's Admin permissions. `member` satisfies member gates only.
+
+Only the owner or a super-admin can make someone a super-admin (by invitation or role change), change a super-admin's role, or remove a super-admin. Nobody but the owner can change their own role. Code: `ee/apps/den-api/src/organization-role-hierarchy.ts` and `ee/apps/den-api/src/permissions/role-assignment.ts`.
 
 Organizations may have multiple `super-admin` and `admin` members. Each organization has exactly one protected `owner`; the owner role cannot be assigned through invitations or member role changes, and the owner member cannot be removed.
 
 ## Ownership transfer
 
-Only the current `owner` can transfer ownership. The target must be an active `super-admin`. After transfer, the target becomes the sole `owner` and the previous owner becomes `super-admin`.
+Only the current `owner` can transfer ownership; a `super-admin` cannot. The target must be an active `admin` or `super-admin`. After transfer, the target becomes the sole `owner` and the previous owner becomes `admin`.
 
 ## Den Web sidebar
 
@@ -66,12 +68,13 @@ Plain members have member access only: Dashboard, My Library, and My Automations
 | Operational mutation outside Settings | Yes | Yes | Yes | No |
 | Settings visibility and reads | Yes | Yes | Yes, read-only | No in Den Web |
 | Settings writes | Yes | Yes | No | No |
-| Member role changes | Yes, except owner | Yes, except owner | No | No |
-| Invitations | Invite assignable non-owner roles | Invite assignable non-owner roles | Invite `member` only | No |
-| Removals | Remove non-owner members | Remove non-owner members | Remove non-owner members | No |
-| Ownership transfer | Yes, to active `super-admin` | No | No | No |
+| Member role changes | Yes, except owner | Yes, except owner and their own | With `members.update`, except owner and super-admins | No |
+| Invitations | Invite assignable non-owner roles | Invite assignable non-owner roles | With `members.update`, `member` or `admin` | No |
+| Removals | Remove non-owner members | Remove non-owner members | Remove non-owner members except super-admins | No |
+| Ownership transfer | Yes, to an active `admin` or `super-admin` | No | No | No |
+| Delete organization | Yes | No | No | No |
 
-The owner is the only undeletable member role. Admins can invite members and remove non-owner members, but cannot promote or demote members, write Settings, or invite elevated roles.
+The owner is the only undeletable member role. What admins can do beyond the table follows the organization's Admin permissions. With `superAdminPermissionSet` on, the `super-admin` column shows the shipped Super admin permissions (every permission); if the owner or a super-admin trims that set, super-admins lose the trimmed permissions while keeping their role-hierarchy rights (managing super-admins and admins).
 
 ## Custom roles
 

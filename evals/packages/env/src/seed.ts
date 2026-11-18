@@ -21,6 +21,10 @@ export interface SeedDesktopOptions {
   name?: string;
   /** Extra environment for this isolated Electron process. */
   env?: Record<string, string>;
+  /** Refuse the pooled lane's shared sandbox; this desktop gets one of its own. */
+  ownSandbox?: boolean;
+  /** With a Den: `false` signs in without creating a workspace (a member who has not made one yet). */
+  workspace?: false;
 }
 
 export interface SeedWebOptions {
@@ -93,10 +97,16 @@ export interface SeedDenLink extends AsyncDisposable {
 /** Framework-free arrangement contract implemented by the testkit world fixture. */
 export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
+  /** With a Den the desktop is signed in (or arranged signed-out) against it and carries a workspace unless `workspace: false`. */
+  desktop(options: SeedDesktopOptions & { den: Den }): Promise<App>;
   desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
   appWeb(options: SeedAppWebOptions): Promise<AppWeb>;
   web(options: SeedWebOptions): Promise<AttachedSurface>;
-  /** Ensure a selected workspace; create:true explicitly creates another workspace. */
+  /**
+   * Ensure the workspace at `path` is selected, creating it unless the selected
+   * workspace already sits there (a first launch selects its own default folder,
+   * which must never satisfy a declared path); create:true forces creation.
+   */
   workspace(app: Surface, path?: string, options?: { create?: boolean }): Promise<{ workspaceId: string; route: string }>;
   session(app: Surface, options?: { title?: string }): Promise<{ sessionId: string; title: string }>;
   sessions(app: Surface, titles: readonly string[]): Promise<{ sessionId: string; title: string }[]>;

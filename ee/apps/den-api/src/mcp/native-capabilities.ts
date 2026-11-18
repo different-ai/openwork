@@ -1,6 +1,9 @@
+import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
+import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
-import { listNativeProviderUsableEntries, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
+import { listNativeProviderUsableEntries, nativeProviderConnectionPolicyError, type NativeProviderConnectionEntry } from "../capability-sources/native-provider-connections.js"
+import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseNative, agentReadAllowlist } from "./agent-read-sources.js"
 import type { McpPrincipal } from "./auth.js"
 import type { AgentToolContentPart } from "./tool-content.js"
 import {
@@ -87,11 +90,12 @@ function capabilityMatch(
     hasBody: hasJsonRequestBody(operation.operation),
     ...(bodySchema === undefined ? {} : { bodySchema }),
     ...(querySchema === undefined ? {} : { querySchema }),
+    ...(operation.outputSchema === undefined ? {} : { outputSchema: operation.outputSchema }),
     ...(scriptNamespace ? { scriptPath: codemodeScriptPath(scriptNamespace, operation.name) } : {}),
   }
 }
 
-function connectionStatusMatch(
+export function connectionStatusMatch(
   connection: NativeProviderConnectionEntry,
   score: number,
 ): NativeCapabilityMatch {
@@ -124,7 +128,10 @@ export async function searchNativeCapabilities(input: {
   catalog: readonly McpToolOperation[]
   limit: number
   namespaceContext?: CodemodeConnectionNamespaceContext
+  /** A member's background agent's token: only show what it may read. */
+  scopes?: ReadonlySet<string>
 }): Promise<NativeCapabilityMatch[]> {
+  const agent = input.scopes ? agentReadAllowlist(input.scopes) : null
   if (!input.member) return []
   const namespaceContext = input.namespaceContext ?? await resolveCodemodeConnectionNamespaceContext({
     organizationId: input.organizationId,
@@ -135,10 +142,13 @@ export async function searchNativeCapabilities(input: {
     orgMembershipId: input.member.orgMembershipId,
     teamIds: input.member.teamIds,
   })
+  const catalog = input.catalog
   const queryTokens = tokenize(input.query)
   const matches: NativeCapabilityMatch[] = []
   for (const connection of connections) {
-    const operations = nativeOperations(input.catalog, connection.nativeProviderKey)
+    const operations = nativeOperations(catalog, connection.nativeProviderKey)
+      .filter((operation) => !agent || agentMayUseNative(agent, connection.id, operation))
+    if (agent && (!operations.length || !connection.connectedForMe)) continue
     if (!connection.connectedForMe) {
       const score = Math.max(0, ...operations.map((operation) => operationScore(connection, operation, queryTokens)))
       if (score > 0) matches.push(connectionStatusMatch(connection, score))
@@ -181,6 +191,8 @@ async function resolveNativeCapability(input: {
 type NativeCapabilityToolResult = {
   isError?: boolean
   content: AgentToolContentPart[]
+  /** Untruncated route payload; set only when the caller passes includePayload (Code Mode). */
+  payload?: unknown
 }
 
 export async function executeNativeCapability(input: {
@@ -194,6 +206,9 @@ export async function executeNativeCapability(input: {
   path?: unknown
   query?: unknown
   body?: unknown
+  includePayload?: boolean
+  /** What started this call, recorded with its Library usage event. */
+  usageSource: CapabilityUsageSource
 }): Promise<NativeCapabilityToolResult | null> {
   const parsed = parseNativeCapabilityName(input.name)
   if (!parsed) return null
@@ -205,6 +220,10 @@ export async function executeNativeCapability(input: {
     catalog: input.catalog,
   })
   if (!resolved) {
+    const policyError = await nativeProviderConnectionPolicyError(input.organizationId)
+    if (policyError) {
+      return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: policyError.kind, message: policyError.message }) }] }
+    }
     return {
       isError: true,
       content: [{
@@ -216,16 +235,32 @@ export async function executeNativeCapability(input: {
       }],
     }
   }
-  return invokeMcpOperation({
+  // A member's background agent reads only its sources that are on (agent-read-sources.ts).
+  const agent = agentReadAllowlist(input.principal.scopes)
+  if (agent && !agentMayUseNative(agent, resolved.connection.id, resolved.operation)) {
+    return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "policy_blocked", message: AGENT_SOURCE_BLOCKED_MESSAGE }) }] }
+  }
+  const call = invokeMcpOperation({
     app: input.app,
     env: input.env,
     operation: resolved.operation,
     principal: input.principal,
     nativeConnectionId: resolved.connection.id,
+    includePayload: input.includePayload,
     toolInput: {
       path: normalizeToolRecord(input.path),
       query: normalizeToolRecord(input.query),
       body: normalizeToolBody(input.body),
     },
   })
+  // Library usage: one row per Google Workspace / Microsoft 365 call, ok or error.
+  if (input.member) {
+    recordConnectorCall(call, {
+      organizationId: input.organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      connectionId: resolved.connection.id,
+      source: input.usageSource,
+    }, toolCallFailed)
+  }
+  return call
 }

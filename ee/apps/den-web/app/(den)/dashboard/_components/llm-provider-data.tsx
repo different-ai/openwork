@@ -38,6 +38,7 @@ export type DenLlmProvider = {
   organizationId: string;
   createdByOrgMembershipId: string;
   source: DenLlmProviderSource;
+  credentialMode?: "shared" | "per_member";
   providerId: string;
   name: string;
   providerConfig: Record<string, unknown>;
@@ -48,6 +49,8 @@ export type DenLlmProvider = {
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
+  /** providerConfig and model configs are the non-secret view (the caller can't edit the provider and isn't granted it). */
+  configRedacted: boolean;
   accessibleVia: {
     orgMembershipIds: string[];
     teamIds: string[];
@@ -55,10 +58,17 @@ export type DenLlmProvider = {
   models: DenLlmProviderModel[];
   access: {
     allMembers: boolean;
+    /** People with direct access, counted even when their names are hidden. */
+    memberCount: number;
+    /** Den returned no names or emails: the caller can't edit this provider. `members` is then empty. */
+    membersHidden: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
 };
+
+export const LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE = "Details are hidden because you can't edit or use this provider.";
+export const LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE = "Names are hidden because you can't edit this provider.";
 
 export type DenModelsDevProviderSummary = {
   id: string;
@@ -200,6 +210,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     organizationId,
     createdByOrgMembershipId,
     source,
+    credentialMode: value.credentialMode === "per_member" ? "per_member" : "shared",
     providerId,
     name,
     providerConfig: asJsonRecord(value.providerConfig),
@@ -209,6 +220,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
+    configRedacted: value.configRedacted === true,
     accessibleVia: {
       orgMembershipIds: asStringList(value.accessibleVia.orgMembershipIds),
       teamIds: asStringList(value.accessibleVia.teamIds),
@@ -218,7 +230,9 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       : [],
     access: {
       allMembers: value.access.allMembers === true,
-      members: Array.isArray(value.access.members)
+      memberCount: Array.isArray(value.access.members) ? value.access.members.length : 0,
+      membersHidden: value.access.membersHidden === true,
+      members: Array.isArray(value.access.members) && value.access.membersHidden !== true
         ? value.access.members
             .map(asLlmProviderMemberAccess)
             .filter((entry): entry is DenLlmProviderMemberAccess => entry !== null)
@@ -308,6 +322,7 @@ const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
   mistral: "mistralai",
   xai: "x",
   amazonbedrock: "amazonaws",
+  "amazon-bedrock-mantle": "amazon-bedrock",
   openrouter: "openrouter",
 };
 
@@ -507,6 +522,9 @@ export function useOrgLlmProviders(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = options.scope ?? "manageable";
+  /** Which organization and scope the last finished load was for, so `loaded` never reports a previous one. */
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const requestKey = `${orgId ?? ""}:${scope}`;
 
   async function loadProviders() {
     if (!orgId) {
@@ -535,6 +553,7 @@ export function useOrgLlmProviders(
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");
     } finally {
       setBusy(false);
+      setLoadedKey(requestKey);
     }
   }
 
@@ -546,6 +565,8 @@ export function useOrgLlmProviders(
     llmProviders,
     busy,
     error,
+    /** A load for this organization and scope has finished (it may have failed: see `error`). */
+    loaded: Boolean(orgId) && loadedKey === requestKey && !busy,
     reloadProviders: loadProviders,
   };
 }

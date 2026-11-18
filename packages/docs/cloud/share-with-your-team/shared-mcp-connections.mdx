@@ -1,103 +1,277 @@
 ---
 title: "Sharing MCP connections with your team"
-description: "Share Notion, Linear, Stripe, Exa, or any MCP server in OpenWork Cloud with Individual accounts by default, or One org account when everyone should act as the same account"
+description: "Add Notion, Linear, Slack, Exa, or any MCP server once in OpenWork Cloud, choose how people sign in, and choose who can use it."
+keywords: ["connectors", "MCP", "add connector", "share connection", "Notion", "Linear", "Slack", "Exa", "GitHub", "OAuth", "API key", "Tool Tester", "Your Connections", "redirect URL"]
 ---
 
-Use `Connectors` when you want the organization to manage an MCP integration once
-— the server URL, who can use it, and how people sign in — instead of every
-member configuring Notion or Linear by hand on every machine.
+A connector is an app your organization's AI can use, such as Notion, Linear, or
+Slack. You add it once in OpenWork Cloud. Then you choose how people sign in
+and who can use it. Members don't set anything up on their own computers.
 
-Two ways to handle whose account the AI uses, chosen per connection:
+Each connector uses one of two sign-in options:
 
-- **Individual accounts** — each person signs in as themselves. This is now
-  the default for OAuth servers, and it fits tools like Notion or Linear where
-  people have their own pages, projects, and permissions. The agent acts as
-  *you*, and the provider's own access rules apply.
-- **One org account** — an admin signs in once (a bot, service account, or API
-  key). Every granted member's AI acts as that identity.
+- **Each person signs in.** Everyone uses their own account. The AI acts as
+  that person, with that person's permissions. This is the default for apps
+  that support sign-in.
+- **One account for everyone.** You sign in once, or add one API key. Everyone
+  who can use the connector acts as that account. This works well for a bot or
+  service account.
 
-## Publish the connection in OpenWork Cloud
+Only owners and admins can add connectors under **Manage**.
 
-1. Open `Connectors` in the OpenWork Cloud dashboard.
-2. Click `Add connection`.
-3. Pick a preset (Notion, Linear, Stripe, Sentry, Exa, Context7) or enter any
-   MCP server URL.
-4. Choose the account mode: `Individual accounts` or `One org account`.
-5. Choose who can use it: the whole workspace, specific teams, or specific
-   people.
-6. Click `Create`.
+## Add a connector
 
-<Frame>
-  ![MCP Connections admin screen in OpenWork Cloud](/images/cloud-mcp-connections-admin.png)
+<Frame caption="Add Notion for your organization, then use it from the desktop app (2 min, no sound). Recorded on the real product.">
+  <video
+    controls
+    className="w-full aspect-video"
+    src="/images/add-a-connector/add-a-connector-tutorial.mp4"
+  ></video>
 </Frame>
 
-For a One org account connection, finish by clicking `Connect` and completing
-the provider's sign-in as the org account. Individual accounts connections are
-ready to publish immediately — each person connects themselves.
+1. In OpenWork Cloud, open **Manage › Connectors** and click **Add connector**.
+2. Pick an app from the list and click **Add**. To use another server, paste
+   its MCP address into the search box, or click **Add another MCP**.
 
-On `Your Connections`, an unconnected One org account connection shows
-`Waiting for an admin to connect` to members. Workspace owners and admins get a
-`Connect` button on that row so they can finish the org account sign-in there.
+   <Frame>
+     ![The Add a connector list in OpenWork Cloud](/images/add-a-connector/catalog.png)
+   </Frame>
+3. On the **Add {name}** page, OpenWork runs four checks: **Finds {name}**,
+   **Knows how you sign in**, **Sign in to {name}**, and **Has things your AI
+   can do**. Finish any check that asks for something:
+   - If the app needs a key, paste it and click **Save key**.
+   - If the app needs its own OAuth app (it shows **Approved apps only** in the
+     list), copy the **Callback URL** into that OAuth app, then enter its
+     **Client ID** and **Client secret** and click **Save changes**. See
+     [OAuth redirect URL](#oauth-redirect-url).
+   - Click **Sign in with {name}**. The app's own sign-in page opens in a new
+     tab.
+
+   <Frame>
+     ![Add Notion: two checks passed and a Sign in with Notion button](/images/add-a-connector/sign-in-check.png)
+   </Frame>
+4. Approve access on the app's page. When it says **You're connected**, close
+   that tab and go back to OpenWork. The checks finish on their own.
+
+   <Frame>
+     ![Notion's own page asking to grant OpenWork access](/images/add-a-connector/notion-approve.png)
+   </Frame>
+5. Under **How people connect**, choose **Each person signs in** or **One
+   account for everyone**. Connectors that use an API key offer **Each person
+   adds a key** or **One key for everyone** instead.
+6. Under **Who can use it**, turn on **Everyone in the organization**, or click
+   **Add person** or **Add team**. At first, only you can use it.
+
+   <Frame>
+     ![Notion passed all 4 checks, with How people connect and Who can use it](/images/add-a-connector/who-can-use-it.png)
+   </Frame>
+7. Click **Add {name}**.
+
+People you gave access to find the connector in their Library. In the desktop
+app it shows **Ready** under **Library › Connectors**, with nothing to install.
+
+<Frame>
+  ![The desktop app's Library with Notion shared from OpenWork and Ready](/images/add-a-connector/desktop-library.png)
+</Frame>
+
+Then ask for something the app can do, in plain words. In the video, the agent
+reads a launch plan in Notion and writes a new **Launch risks** page back to
+Notion with the signed-in person's account.
+
+<Frame>
+  ![The Launch risks page the agent created in Notion](/images/add-a-connector/notion-page-created.png)
+</Frame>
+
+If you leave before you finish, the connector shows **Setup not finished** in
+the list. Click **Finish** to pick up where you stopped.
+
+### Apps in the list
+
+The **Add a connector** list has more than 30 apps, including Google
+Workspace, Microsoft 365, GitHub, Notion, Linear, Stripe, Sentry, Granola,
+Slack, Exa, Context7, Airtable, Figma, PostHog and Vercel. Apps marked
+**Approved apps only** (GitHub, Slack, Render, Figma) need an OAuth app you
+register with the provider first.
+
+- Exa needs an API key from your Exa account. See
+  [Enable Exa search](/start-here/connect-your-stack/enable-exa-search).
+- Context7 needs no sign-in.
+- Slack needs a Slack app first. See [Slack](#slack).
+- For Gmail, Google Calendar, Google Drive, and Microsoft 365, see
+  [Connect your services](/start-here/connect-your-stack/connect-services).
+
+Members who aren't admins can add some apps for themselves from **My Library ›
+Add to your Library › Connector**. Apps that need an API key, an OAuth app, or
+one shared account need an admin.
+
+## Change a connector
+
+Open **Manage › Connectors** and click the connector. On its page you can:
+
+- Change **Who can use it**.
+- Open **Settings** to change the name, the address, the sign-in method, **How
+  people sign in**, the API key, the OAuth app, or the requested scopes. Click
+  **Save changes**. If you change how the connector signs in, everyone has to
+  sign in again.
+- Use the **⋯** menu for **Edit settings**, **Test tools**, **Sign everyone
+  out**, and **Remove**.
+
+The **⋯** menu on each row in the list has only **Open** and **Remove**.
+
+Removing a connector, or taking away someone's access, applies right away on
+every device.
 
 ## Test tools
 
-Admins open **Manage → Connectors**, then use the row **⋯ → Test tools**, or go
-directly to **Manage → Tool Tester**. Select a connector to list its tools, run
-one with form or JSON arguments, and inspect the request and response. The tool
-policy controls on this page choose which tools the organization can use.
-**Your Connections** also shows admins a wrench shortcut to the same tester.
+Admins can try a connector's tools before members use them:
 
-## OAuth redirect URL
+1. Open the connector's page and click **⋯ › Test tools**. You can also open
+   **Settings › Tool Tester** in the sidebar.
+2. Pick a connector to see its tools.
+3. Pick a tool, fill in its inputs, and run it. You can see what was sent and
+   what came back.
 
-An OAuth redirect URL, also called a callback URL, is the exact address where
-the provider sends the browser after a person approves access. It belongs to
-your specific Den deployment; it is not the MCP server URL or the client
-metadata URL.
+The Tool Tester also lets you turn individual tools off for the whole
+organization. On **Your Connections**, admins also see a wrench button that
+opens the same tester. See [Tool Tester](/cloud/share-with-your-team/tool-tester).
 
-New MCP connections on one Den instance share this redirect URL:
+## What members see
 
-```text
-<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback
-```
+### In OpenWork Cloud
 
-For the hosted OpenWork Cloud instance, the dashboard is
-`https://app.openworklabs.com` and its public Den API origin is
-`https://api.openworklabs.com`. Register this exact redirect URL with the OAuth
-provider:
+**Your Connections** lists each connector you can use and what it needs:
 
-```text
-https://api.openworklabs.com/v1/mcp-connections/oauth/callback
-```
+- **Connect your account**: click **Connect** and sign in with your own
+  account.
+- **Reconnect required**: click **Reconnect**.
+- **Waiting for an admin to connect**: an admin still needs to sign in with the
+  shared account. Admins see **Connect the org account** and a **Connect**
+  button on this row instead.
+- **Waiting for an admin to finish setup**: an admin still needs to finish
+  setting up the connector.
+- **Connected as you** or **Org account connected**: ready to use.
 
-For a self-hosted instance whose public Den API is
-`https://api.openwork.example.com`, register:
+### In the desktop app
 
-```text
-https://api.openwork.example.com/v1/mcp-connections/oauth/callback
-```
+1. Sign in to OpenWork Cloud in the desktop app.
+2. Open **Settings › Library** and choose the **Connectors** filter.
+3. If a connector shows **Sign in**, click **Sign in**. Your browser opens the
+   app's own sign-in page. Approve access, then return to OpenWork.
 
-Use the exact scheme, hostname, optional path prefix, and port configured in
-`DEN_API_PUBLIC_URL`. Providers compare redirect URLs exactly. Existing
-connections created with an older per-connection callback keep that registered
-URL automatically; do not change it just to reconnect.
+**Set up** means the connector isn't ready yet. Usually an admin still needs to
+finish it.
+
+Your sign-in is stored in OpenWork Cloud, not on your computer. Sign in once and
+every device you use is connected.
+
+## Ask your AI to use it
+
+You don't need to restart anything. Ask for something the app can do:
+
+> Find the "Q3 launch" page in Notion and summarize it.
+
+The AI finds the right tool and runs it with **your** account, so your
+permissions apply. If a connector needs attention, the AI tells you which
+account needs action.
+
+<Frame>
+  ![The agent executing an org-shared MCP tool in chat](/images/desktop-org-mcp-chat.png)
+</Frame>
+
+## Use a connector in other AI apps
+
+You can let people use a connector from Claude, Cursor, or any other app that
+supports MCP.
+
+1. Open the connector's page in **Manage › Connectors**.
+2. Expand **Use in another app** and click **Turn on**. You can also check
+   **Available in other MCP apps** in the connector's **Settings**.
+
+Turning this on also adds the connector to members' desktop apps as its own MCP
+server. The AI then sees the app's tools directly, without searching for them
+first. Turn it on for connectors people use all the time.
+
+### Use a connection in another MCP client
+
+1. Open **Your Connections**, or the connector's page if you're an admin.
+2. Expand **Use in another app** and click **Copy** to copy the address.
+3. In your other app, add the address as a remote MCP server. Choose OAuth and
+   sign in to OpenWork.
+
+Use the address shown in OpenWork Cloud, not the app's own MCP address. You may
+still need to connect your account in OpenWork. Your organization's access
+rules and tool settings still apply.
+
+## Local MCP servers
+
+For Google's hosted cloud tools, see
+[Connect Google Cloud CLI](/cloud/share-with-your-team/google-cloud-cli).
+
+[Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server)
+works without an OpenWork Cloud account. Use it for local tools or servers your
+organization doesn't provide.
+
+Publishing a connector never removes or changes anyone's own local MCP setup.
 
 ## Slack
 
-Slack's MCP server does not support automatic OAuth client registration, so a Slack admin creates a Slack app once and OpenWork Cloud uses its credentials for every member.
+<Tip>
+**In OpenWork Cloud, follow [Connect Slack](/slack/connect-slack).** **Add Slack** walks you through creating the Slack app from a manifest, so you don't need the manual steps below. Use them for an existing Slack app, or when your OpenWork has no guided setup (for example, self-hosted).
+</Tip>
+
+Want to mention `@openwork` or DM an assistant inside Slack? See [OpenWork in Slack](/slack/overview) (private alpha). The assistant adds a bot installation to this existing user connection; it is available only to approved organizations.
+
+Slack's MCP server doesn't let apps register themselves. Someone with permission
+to manage your Slack app sets it up once, and OpenWork Cloud uses that app for
+every member. Being an OpenWork owner or admin does not automatically give you
+permission to manage the app in Slack.
+
+<Warning>
+**Enable MCP in the Slack app before connecting.** In [Slack API apps](https://api.slack.com/apps),
+open the app whose client ID you will use in OpenWork, go to **Agents**, and turn
+on **MCP**. Saving a client ID and secret, installing the app, or approving Slack
+sign-in does not replace this step. Without it, connecting can fail with
+**The MCP server refused to start a session (HTTP 400)**.
+</Warning>
 
 1. Create or open a Slack app in [Slack API apps](https://api.slack.com/apps).
-2. Go to the `Agents` tab in the app settings and turn on the `MCP` toggle. Slack only serves MCP requests for apps that have this enabled.
-3. In `OAuth & Permissions`, add this Den instance's OAuth redirect URL (see above) to the redirect URLs.
-4. Add the `User Token Scopes` for the Slack MCP tools your team wants agents to use (see below).
-5. Install or approve the app for the workspace.
-6. In OpenWork Cloud, add the Slack connection and paste the app's `Client ID` and `Client Secret` from `Basic Information` > `App Credentials`.
-7. Members open `Your Connections` and connect their own Slack account.
+2. Open **Agents** in that app's settings and turn on the **MCP** toggle.
+   Confirm it is enabled in the same app whose credentials you enter in step 6.
+3. In **OAuth & Permissions**, add your
+   [OAuth redirect URL](#oauth-redirect-url) to the redirect URLs.
+4. Add the **User Token Scopes** your team wants the AI to use. See
+   [Slack scopes](#slack-scopes).
+5. Install or approve the app for your Slack workspace.
+6. In OpenWork Cloud, open **Manage › Connectors › Add connector** and pick
+   **Slack**. Paste the **Client ID** and **Client secret** from the Slack app's
+   **Basic Information › App Credentials**, then click **Save changes**.
+7. Click **Sign in with Slack**, then finish the steps in
+   [Add a connector](#add-a-connector).
+8. Members open **Your Connections**, or **Settings › Library** in the desktop
+   app, and connect their own Slack account.
 
-You do not need Slack bot tokens (`xoxb-...` or `xapp-...`) for this flow. Keep the client secret out of chats and source control.
+In OpenWork Cloud, **Add Slack** walks you through these steps as one checklist
+instead (see [Connect Slack](/slack/connect-slack)). On self-hosted OpenWork, the checklist appears once your operator turns on guided Slack setup. First choose what OpenWork can do in
+Slack: **Read and act** (every user scope Slack's MCP server offers) or **Read
+only** (no write scopes). Nothing is chosen for you, and OpenWork asks Slack
+for exactly those scopes. **Create app in Slack** then opens Slack's **Create
+an app › From a manifest** with your redirect URL, those scopes and MCP already
+filled in (**Use an existing Slack app** has them to copy). The **Agents › MCP**
+step says *Not checked yet* until you sign in to test, then shows the result:
+if Slack refuses MCP requests, turn MCP on and click **Check again**. When the
+[Slack assistant](/slack/overview) can run on your OpenWork, an optional last
+step leads to its setup.
+
+You don't need Slack bot tokens (`xoxb-...` or `xapp-...`) for this. Keep the
+client secret out of chats and source control.
 
 ### Slack scopes
 
-Slack MCP uses user token scopes. Choose the smallest set that matches what your team wants agents to do.
+Slack MCP uses user token scopes. Choose the smallest set that matches what
+your team wants the AI to do. The Slack connector asks for a starting set of
+search, history, `chat:write`, and `users:read` scopes. You can change them in
+the connector's **Settings** under **Requested OAuth scopes**. Every scope
+OpenWork asks for must also be added to the Slack app.
 
 For a useful read-first setup, start with:
 
@@ -105,13 +279,22 @@ For a useful read-first setup, start with:
 search:read.public search:read.private search:read.mpim search:read.im search:read.files search:read.users channels:history groups:history mpim:history im:history users:read users:read.email channels:read groups:read mpim:read
 ```
 
-Add write scopes only if you want agents to take action in Slack:
+Add write scopes only if you want the AI to take action in Slack:
 
 ```text
 chat:write reactions:write channels:write groups:write im:write mpim:write canvases:read canvases:write
 ```
 
-Use this table to pick scopes by capability:
+With the **Add Slack** checklist, **Read and act** asks for every user scope Slack's MCP
+server offers:
+
+```text
+canvases:read canvases:write channels:history channels:read channels:write chat:write emoji:read files:read files:write groups:history groups:read groups:write im:history im:read im:write lists:read lists:write mpim:history mpim:read mpim:write reactions:read reactions:write search:read.files search:read.im search:read.mpim search:read.private search:read.public search:read.users users:read users:read.email
+```
+
+**Read only** asks for the same list without any `:write` scope. Either way,
+the Slack app created from the setup page allows exactly the scopes OpenWork
+asks for.
 
 | Slack MCP capability | User token scopes |
 | --- | --- |
@@ -130,90 +313,112 @@ Use this table to pick scopes by capability:
 
 ### Troubleshooting Slack
 
-If members cannot connect even though the client ID and secret are correct, check that MCP is enabled for the Slack app: open it in [Slack API apps](https://api.slack.com/apps), go to the `Agents` tab, and turn on the `MCP` toggle.
+#### Connection failed: HTTP 400
 
-If Slack says the redirect URL is invalid, add this Den instance's OAuth redirect URL to the Slack app's `OAuth & Permissions` redirect URLs. If Slack says a scope is invalid or unavailable, remove it from the Slack app and the connection's scopes, then retry; Slack workspace policies and plan settings can limit which scopes an app may request. If the workspace blocks app installation, a Slack admin must approve the app first.
+If OpenWork shows **The MCP server refused to start a session (HTTP 400)**,
+check the Slack app's **MCP** toggle first. One confirmed cause is Slack rejecting
+the connection because the app is not enabled for MCP access. This can happen
+after you approve sign-in, even when the client ID and secret are correct.
 
-## What members see in the desktop app
+1. Open [Slack API apps](https://api.slack.com/apps) and select the app whose
+   **Basic Information › App Credentials › Client ID** matches the one saved
+   in OpenWork's Slack connector. Do not enable MCP on a different app.
+2. Go to **Agents** and turn on **MCP**. If you cannot edit that page, ask the
+   person who manages the Slack app to do this; changing your OpenWork role
+   will not grant access to Slack's app settings.
+3. Return to OpenWork and retry **Sign in with Slack**. Members should retry
+   connecting their own accounts; do not recreate the connector or rotate its
+   client secret just to enable MCP.
 
-Granted members find the connection in `Settings` > `OpenWork Connect`, grouped by what
-they need to do:
+If MCP is already enabled on the matching app and the error persists, share the
+**Diagnostic reference** from the failure page with support, along with the time
+of the attempt and your time zone. HTTP 400 can have other causes; the reference
+lets support check the provider's response. Never share client secrets or tokens.
 
-- **Needs your sign-in** — individual-account connections that require the
-  member to authenticate or reconnect.
-- **Needs admin setup** — connections that an organization admin still needs
-  to configure or authenticate.
-- **Ready to use** — connections ready for the agent, including accounts
-  managed by the organization.
+#### Other Slack connection problems
 
-## Connect your account
+- **Slack says the redirect URL is invalid.** Add your
+  [OAuth redirect URL](#oauth-redirect-url) to the Slack app's **OAuth &
+  Permissions** redirect URLs.
+- **Slack says a scope is invalid or unavailable.** Remove it from the Slack app
+  and from the connector's **Requested OAuth scopes**, then try again. Slack
+  workspace policies and plans can limit which scopes an app may ask for.
+- **The workspace blocks app installs.** A Slack admin must approve the app
+  first.
 
-1. Sign in to OpenWork, then open `Settings` > `OpenWork Connect`.
-2. Find the service under `Needs your sign-in`, then click `Connect`.
-3. Your browser opens the provider's own sign-in page. Approve access.
-4. The browser shows `Connected` — return to OpenWork.
-5. The connection updates by itself, no reload needed, and moves to
-   `Ready to use`.
+## OAuth redirect URL
 
-Your sign-in is stored in OpenWork Cloud, not on this machine — connect once
-and every device you use is connected.
+An OAuth redirect URL, also called a callback URL, is the exact address the
+provider sends the browser back to after a person approves access. Some
+providers, like Slack, ask you to register it when you create their OAuth app.
+It is not the MCP server URL.
 
-## Your agent can use it immediately
+For OpenWork Cloud at `https://app.openworklabs.com`, register:
 
-No restart, no resync. Ask for something the tool can do:
+```text
+https://api.openworklabs.com/v1/mcp-connections/oauth/callback
+```
 
-> Find the "Q3 launch" page in Notion and summarize it.
+For a self-hosted instance, use your public Den API address:
 
-The agent searches the live capabilities available through OpenWork Connect,
-then executes an exact match with **your** account — your permissions, your
-audit trail on the provider's side.
+```text
+<DEN_API_PUBLIC_URL>/v1/mcp-connections/oauth/callback
+```
 
-<Frame>
-  ![The agent executing an org-shared MCP tool in chat](/images/desktop-org-mcp-chat.png)
-</Frame>
+For example, if your public Den API is `https://api.openwork.example.com`,
+register `https://api.openwork.example.com/v1/mcp-connections/oauth/callback`.
+Use the exact scheme, hostname, optional path prefix, and port from
+`DEN_API_PUBLIC_URL`. Providers compare redirect URLs exactly.
 
-If a connection needs attention, the agent should tell you which account needs
-action and direct you to `Settings` > `OpenWork Connect`.
+Connections created with an older per-connection callback keep their
+registered URL. Don't change it just to reconnect.
 
-## Expose a connection directly as an MCP server
+If a provider refuses to register OpenWork (members see "*Provider* hasn't
+approved OpenWork yet"), or only accepts apps it registered ahead of time, send
+the provider
+[Make your MCP server work with OpenWork](/cloud/share-with-your-team/mcp-server-compatibility).
+It lists the redirect URL, the client metadata document, and the registration
+methods OpenWork supports, plus a request template.
 
-By default the agent reaches every connection through OpenWork Connect's two
-discovery tools, `search_capabilities` and `execute_capability`, so the model
-sees a small, constant tool list no matter how many connections you publish.
+<Accordion title="Technical details">
+**Discovery.** By default, the AI reaches every connector through two OpenWork
+Connect tools, `search_capabilities` and `execute_capability`. The model sees
+the same small tool list no matter how many connectors you add. Connectors with
+**Available in other MCP apps** turned on also appear in OpenCode as their own
+server, named `openwork-direct-<name>-…`. The desktop app never receives the
+provider's URL or token. It talks to Den's per-connection endpoint with the
+member's own OpenWork credential. Access grants and tool settings are enforced
+on every call. Turning the option off, removing access, or removing the
+connector removes the server from every desktop on the next sync. Member-added
+local MCP servers are never touched.
 
-For a connection the agent uses constantly, an admin can instead tick
-`Expose directly as an MCP server` when adding or editing it. Granted members'
-desktop apps then register that connection as its own MCP server in OpenCode,
-so the model sees the provider's real tool names and schemas up front and calls
-them without a search step. The same option is available from any MCP client
-that reads the OpenWork Connect server index.
+**Per-connection MCP URLs.** Each **Use in another app** address serves one
+connector. It doesn't add that connector's tools to the main `/mcp/agent`
+gateway catalog. Don't use Den's internal `/api/den` proxy. Self-hosted
+deployments use their configured public API base URL.
 
-What stays the same:
+**MCP Apps.** Clients that support MCP Apps can read the App HTML bound to
+model-visible tools on these connectors. Arbitrary resources and app-only
+helper tools stay unavailable to ordinary external clients, so every
+interactive App callback may not work. Rendering also depends on the client's
+MCP Apps support.
 
-- Sign-in still happens in OpenWork Cloud. The desktop app never receives the
-  provider's URL or token; it talks to Den's per-connection endpoint with the
-  member's own OpenWork credential.
-- Access grants and the connection's tool policy, edited in **Manage → Tool Tester**, are enforced on every call.
-- Turning the option off, revoking a member's access, or removing the
-  connection removes the server from every desktop on the next sync.
-- Member-added local MCP servers are never touched.
+**Token scopes.** External provider tool calls require the caller's `mcp:write`
+scope, even when the provider advertises `readOnlyHint: true`. Discovery and
+connection-status checks work with `mcp:read`. See
+[MCP token scopes](/cloud/run-in-the-cloud/cloud-mcp#reference).
 
-Directly exposed connections appear in OpenCode as `openwork-direct-<name>-…`.
+**Availability.** Connect is available in every organization, on Cloud and
+self-hosted; there is no switch to turn on or off. Access still follows each
+member's grants and credentials. Missing credentials return `needs_connection`
+and HTTP `409`.
 
-## Notes for admins
-
-- Members only see connections they've been granted — access is explicit
-  (workspace-wide, team, or per-person), and it's enforced by the server on
-  every request, not by the app.
-- Removing a connection (or a member's access) takes effect immediately for
-  every device.
-- Members who already connected a tool directly in their desktop app keep
-  their existing setup — publishing an org connection never removes or
-  changes anyone's local configuration.
-
-## Relationship to local MCP servers
-
-[Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server)
-still works without a cloud account. Use that advanced path for local tools or
-servers your organization does not provide. Use Connect for accounts and
-services managed through OpenWork Cloud.
+**Retired organization switch.** Earlier releases let a platform administrator
+turn Connect off for one organization (`capabilities.mcpConnections`). That
+switch is retired on purpose: an organization that had it off now has Connect
+on, including native Google Workspace and Microsoft 365 actions. To limit who
+can use a service, set the connection's access to specific teams, or remove
+the connection. Google Workspace or Microsoft 365 set up with an older
+organization OAuth client applies to the whole organization; remove that setup
+to stop members from using it.
+</Accordion>

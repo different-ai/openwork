@@ -7,7 +7,10 @@
   "license": "MIT",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     }
@@ -17,12 +20,12 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup",
-    "test": "bun test",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "effect": "4.0.0-beta.83",
+    "@opencode/codemode": "2.2.5",
+    "effect": "4.0.6",
     "acorn": "8.16.0",
     "typescript": "5.9.3"
   },

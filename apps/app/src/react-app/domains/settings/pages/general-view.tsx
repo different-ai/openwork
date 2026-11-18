@@ -5,6 +5,7 @@ import {
   Cloud,
   Cog,
   FolderLock,
+  Keyboard,
   LifeBuoy,
   MessageCircle,
   Paintbrush,
@@ -22,7 +23,6 @@ export type GeneralSettingsViewProps = {
   onNavigateTab: (tab: SettingsTab) => void;
   developerMode: boolean;
   onSendFeedback: () => void;
-  onJoinDiscord: () => void;
   onReportIssue: () => void;
 };
 
@@ -41,6 +41,7 @@ const globalCards: SettingsCardDefinition[] = [
   { tab: "ai", icon: Sparkles, title: "AI Providers", desc: "Connect services that provide AI models." },
   { tab: "cloud-account", icon: Cloud, title: "Cloud", desc: "OpenWork Cloud account and organization." },
   { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
+  { tab: "shortcuts", icon: Keyboard, title: "Keyboard shortcuts", desc: "Keys that switch to your saved models." },
   { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
   { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
 ];
@@ -138,14 +139,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
               >
                 <MessageCircle size={12} />
                 {t("settings.send_feedback")}
-                <ArrowUpRight size={11} />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={props.onJoinDiscord}
-              >
-                {t("settings.join_discord")}
                 <ArrowUpRight size={11} />
               </Button>
               <Button

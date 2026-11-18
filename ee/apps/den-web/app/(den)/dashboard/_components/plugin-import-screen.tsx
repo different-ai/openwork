@@ -19,6 +19,7 @@ import {
   type PluginImportCredentialMode,
   type PluginImportPreview,
 } from "./plugin-import-draft";
+import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 type PreviewItem = {
   detail: string;
@@ -30,7 +31,9 @@ type PreviewItem = {
 };
 
 function serverStatus(preview: PluginImportPreview["servers"][number]): string {
+  if (preview.reuseConnectionName) return `Uses your existing ${preview.reuseConnectionName} connection`;
   if (preview.supported) return "Ready";
+  if (preview.skippedReason === "native_connector") return `Connect ${preview.mapsToName ?? "this provider"} in OpenWork instead`;
   if (preview.skippedReason === "local_unsupported") return "Desktop-only servers cannot be imported";
   if (preview.skippedReason === "missing_url") return "No remote URL found";
   if (preview.skippedReason === "headers_unsupported") return "Static headers are not supported yet";
@@ -138,6 +141,7 @@ export function PluginImportScreen() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
+      <PluginsSetupIntro introKey="plugins.import" />
       <Link
         href={getNewPluginRoute(orgSlug)}
         className="mb-6 inline-flex items-center gap-2 text-[14px] text-gray-500 hover:text-gray-900"
@@ -253,7 +257,7 @@ export function PluginImportScreen() {
           ) : null}
 
           {preview.warnings.length > 0 ? (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
+            <div className="mt-4 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
               {preview.warnings.join(" ")}
             </div>
           ) : null}

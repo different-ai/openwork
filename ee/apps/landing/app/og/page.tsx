@@ -1,4 +1,12 @@
 import OGImage from "../../components/og-image";
+import { withSocialMetadata } from "../../lib/seo";
+
+export const metadata = withSocialMetadata({
+  openGraph: {
+    title: "OpenWork — Social image preview",
+    description: "Preview the OpenWork social sharing image."
+  }
+});
 
 export default function OGPage() {
   return (

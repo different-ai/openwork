@@ -1,23 +1,228 @@
+import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { jsonValidator, orgRoleRoute, paramValidator } from "../../middleware/index.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { getOrganizationBillingQuantities } from "../../billing-users.js"
+import { cache } from "../../cache.js"
+import { db } from "../../db.js"
+import { requireFeature } from "../../features.js"
+import { appLogger } from "../../observability/logger.js"
+import { peopleMemberCondition } from "../../setup-agent-members.js"
+import { organizationHasEligibleOpenWorkWebSubscription, syncOrganizationBillingQuantities } from "../../stripe-billing.js"
+import { finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
+import { jsonValidator, orgPermissionRoute, orgRoleRoute, paramValidator } from "../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, successSchema, unauthorizedSchema } from "../../openapi.js"
 import { listAssignableRoles, removeOrganizationMember, transferOrganizationOwnership, updateOrganizationMemberRole } from "../../orgs.js"
+import { roleAssignmentDecider, roleAssignmentDeniedHeaders, roleAssignmentDeniedResponse, roleAssignmentDenialInTransaction, roleAssignmentTarget, roleAssignmentTargetFromRole } from "../../permissions/team-grants.js"
+import type { ResourceActionContext, ResourceOrganizationContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureMemberRemover, ensureOrganizationSuperAdmin, ensureOwner, idParamSchema, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
+import { ensureOwner, idParamSchema, memberPermissionsForRequest, normalizeRoleName, orgAccessFailureStatus } from "./shared.js"
 
 const updateMemberRoleSchema = z.object({
   role: z.string().trim().min(1).max(64),
 })
 
+const updateMemberOpenWorkWebSchema = z.object({
+  enabled: z.boolean(),
+})
+
+const memberOpenWorkWebResponseSchema = z.object({
+  memberId: z.string(),
+  openworkWeb: z.boolean(),
+  /** Members and pending invitations with OpenWork Web after the change: the Web quantity. */
+  webUsers: z.number().int(),
+}).meta({ ref: "MemberOpenWorkWebResponse" })
+
 type MemberId = typeof MemberTable.$inferSelect.id
 const orgMemberParamsSchema = idParamSchema("memberId", "member")
 
+type MemberActionContext = ResourceActionContext
+
+/**
+ * POST /v1/members/:memberId/role, callable with an in-process route context
+ * (config-blob imports, src/config-blobs/areas/members-people.ts).
+ */
+export async function updateMemberRoleAction(c: MemberActionContext, payload: ResourceOrganizationContext, rawMemberId: string, roleInput: string, capture: AuditChangeCapture | null) {
+    let memberId: MemberId
+    try {
+      memberId = normalizeDenTypeId("member", rawMemberId)
+    } catch {
+      return c.json({ error: "member_not_found" }, 404)
+    }
+
+    const role = normalizeRoleName(roleInput)
+    const availableRoles = await listAssignableRoles(payload.organization.id)
+    if (!availableRoles.has(role)) {
+      return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
+    }
+
+    const caller = await memberPermissionsForRequest(c)
+    if (!caller) return c.json({ error: "organization_not_found" }, 404)
+    const target = await roleAssignmentTarget(payload.organization.id, memberId)
+    if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
+    const decideRoleChange = await roleAssignmentDecider({
+      organizationId: payload.organization.id,
+      caller,
+      callerMemberId: payload.currentMember.id,
+      nextRole: role,
+    })
+    const denial = decideRoleChange(target)
+    if (denial) return c.json(roleAssignmentDeniedResponse(denial), 403, roleAssignmentDeniedHeaders(denial))
+
+    const updated = await updateOrganizationMemberRole({
+      organizationId: payload.organization.id,
+      memberId,
+      nextRole: role,
+      // The target's role, the caller's permissions (members.update included) and the Admin default
+      // set may all have changed since the checks above; decide again on the locked row, reading
+      // through the transaction.
+      authorize: (member, tx) => roleAssignmentDenialInTransaction({
+        tx,
+        organizationId: payload.organization.id,
+        callerMemberId: payload.currentMember.id,
+        target: roleAssignmentTargetFromRole(member.id, member.role),
+        nextRole: role,
+        requiredPermission: "members.update",
+      }),
+    })
+    if (!updated.ok) {
+      if (updated.error === "role_assignment_denied") {
+        return c.json(roleAssignmentDeniedResponse(updated.denial), 403, roleAssignmentDeniedHeaders(updated.denial))
+      }
+      if (updated.error === "member_not_found") {
+        return c.json({ error: updated.error, message: updated.message }, 404)
+      }
+      return c.json({ error: updated.error, message: updated.message }, 400)
+    }
+
+    if (updated.changed) {
+      await finishLegacyAuditAction(capture, {
+        organizationId: payload.organization.id,
+        actorUserId: payload.currentMember.userId,
+        action: ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated,
+        payload: {
+          targetOrgMembershipId: updated.member.id,
+          targetUserId: updated.member.userId,
+          previousRole: updated.previousRole,
+          nextRole: updated.nextRole,
+        },
+      }, updated.auditEventIds)
+    }
+
+    return c.json({ success: true })
+}
+
+/** DELETE /v1/members/:memberId, callable with an in-process route context (config-blob imports). */
+export async function removeMemberAction(c: MemberActionContext, payload: ResourceOrganizationContext, rawMemberId: string, capture: AuditChangeCapture | null) {
+    let memberId: MemberId
+    try {
+      memberId = normalizeDenTypeId("member", rawMemberId)
+    } catch {
+      return c.json({ error: "member_not_found" }, 404)
+    }
+
+    const removed = await removeOrganizationMember({
+      organizationId: payload.organization.id,
+      memberId,
+      removedByOrgMemberId: payload.currentMember.id,
+      requiredPermission: "members.delete",
+    })
+    if (!removed.ok) {
+      if (removed.error === "forbidden") return c.json({ error: removed.error, message: removed.message }, 403)
+      if (removed.error === "member_not_found") {
+        return c.json({ error: removed.error, message: removed.message }, 404)
+      }
+      return c.json({ error: removed.error, message: removed.message }, 400)
+    }
+
+    await finishLegacyAuditAction(capture, {
+      organizationId: payload.organization.id,
+      actorUserId: payload.currentMember.userId,
+      action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
+      payload: {
+        targetOrgMembershipId: removed.member.id,
+        targetUserId: removed.member.userId,
+        previousRole: removed.member.role,
+      },
+    }, removed.auditEventIds)
+
+    return c.body(null, 204)
+}
+
 export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.post(
+    "/v1/members/:memberId/openwork-web",
+    describeRoute({
+      tags: ["Members"],
+      summary: "Turn OpenWork Web on or off for a member",
+      description: "Chooses whether a member or pending invitation has OpenWork Web. The organization's OpenWork Web subscription bills only the people who have it, so the Stripe quantity follows each change, prorated on the next invoice. Requires permission to manage members. The organization subscription and each member's assigned Web entitlement still apply.",
+      responses: {
+        200: jsonResponse("OpenWork Web was turned on or off for the member.", memberOpenWorkWebResponseSchema),
+        400: jsonResponse("The request was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller needs the Manage billing permission and a recent sign-in.", forbiddenSchema),
+        404: jsonResponse("The member, the organization or the feature could not be found.", notFoundSchema),
+        409: jsonResponse("This is the last person with OpenWork Web while the subscription is active. Cancel OpenWork Web from Billing instead.", invalidRequestSchema),
+      },
+    }),
+    orgPermissionRoute("billing.manage"),
+    paramValidator(orgMemberParamsSchema),
+    jsonValidator(updateMemberOpenWorkWebSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const { enabled } = c.req.valid("json")
+      let memberId: MemberId
+      try {
+        memberId = normalizeDenTypeId("member", c.req.valid("param").memberId)
+      } catch {
+        return c.json({ error: "member_not_found" }, 404)
+      }
+      const organizationId = payload.organization.id
+      const memberCondition = and(
+        eq(MemberTable.id, memberId),
+        eq(MemberTable.organizationId, organizationId),
+        isNull(MemberTable.removedAt),
+        peopleMemberCondition(),
+      )
+      const [target] = await db.$primary
+        .select({ id: MemberTable.id, openworkWeb: MemberTable.openworkWeb })
+        .from(MemberTable)
+        .where(memberCondition)
+        .limit(1)
+      if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
+
+      if (target.openworkWeb !== enabled) {
+        // Stripe can't bill zero people for Web, so the last one stays until
+        // the subscription is cancelled.
+        if (!enabled && await organizationHasEligibleOpenWorkWebSubscription(organizationId)) {
+          const { web } = await getOrganizationBillingQuantities(organizationId)
+          if (web.quantity <= 1) {
+            return c.json({
+              error: "openwork_web_last_member",
+              message: "This is the last person with OpenWork Web. To stop paying for Web, cancel it from Billing.",
+            }, 409)
+          }
+        }
+        await db.update(MemberTable).set({ openworkWeb: enabled }).where(memberCondition)
+        // The members list carries openworkWeb; clear it so the change shows at once.
+        await cache.org.deleteMemberList(organizationId)
+        try {
+          await syncOrganizationBillingQuantities({ organizationId })
+        } catch (error) {
+          // The change is saved; the next member change or the hourly job retries the quantity.
+          appLogger.warn("openwork web quantity sync failed after member change", { organization_id: organizationId, member_id: memberId, error })
+        }
+      }
+
+      const { web } = await getOrganizationBillingQuantities(organizationId)
+      return c.json({ memberId, openworkWeb: enabled, webUsers: web.quantity })
+    },
+  )
+
   app.post(
     "/v1/members/:memberId/role",
     describeRoute({
@@ -28,64 +233,14 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         200: jsonResponse("Member role updated successfully.", successSchema),
         400: jsonResponse("The member role update request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update member roles.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can update member roles.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Change member roles permission and a recent sign-in. Making someone an admin also needs every Admin permission, only the owner or an admin can change an admin's role, only the owner or a super-admin can make someone a super-admin or change a super-admin's role, and nobody but the owner can change their own role.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("members.update"),
     paramValidator(orgMemberParamsSchema),
     jsonValidator(updateMemberRoleSchema),
-    async (c) => {
-    const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can update member roles.")
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-
-    const payload = c.get("organizationContext")
-    const input = c.req.valid("json")
-
-    const params = c.req.valid("param")
-    let memberId: MemberId
-    try {
-      memberId = normalizeDenTypeId("member", params.memberId)
-    } catch {
-      return c.json({ error: "member_not_found" }, 404)
-    }
-
-    const role = normalizeRoleName(input.role)
-    const availableRoles = await listAssignableRoles(payload.organization.id)
-    if (!availableRoles.has(role)) {
-      return c.json({ error: "invalid_role", message: "Choose one of the existing organization roles." }, 400)
-    }
-
-    const updated = await updateOrganizationMemberRole({
-      organizationId: payload.organization.id,
-      memberId,
-      nextRole: role,
-    })
-    if (!updated.ok) {
-      if (updated.error === "member_not_found") {
-        return c.json({ error: updated.error, message: updated.message }, 404)
-      }
-      return c.json({ error: updated.error, message: updated.message }, 400)
-    }
-
-    if (updated.changed) {
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.memberRoleUpdated,
-        payload: {
-          targetOrgMembershipId: updated.member.id,
-          targetUserId: updated.member.userId,
-          previousRole: updated.previousRole,
-          nextRole: updated.nextRole,
-        },
-      })
-    }
-
-    return c.json({ success: true })
-    },
+    async (c) => updateMemberRoleAction(c, c.get("organizationContext"), c.req.valid("param").memberId, c.req.valid("json").role, auditChangeCapture(c)),
   )
 
   app.post(
@@ -93,7 +248,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
     describeRoute({
       tags: ["Members"],
       summary: "Transfer workspace ownership",
-      description: "Transfers the protected workspace owner role to another active super-admin member.",
+      description: "Transfers the protected workspace owner role to another active admin member.",
       responses: {
         200: jsonResponse("Workspace ownership transferred successfully.", successSchema),
         400: jsonResponse("The ownership transfer request was invalid.", invalidRequestSchema),
@@ -131,7 +286,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       return c.json({ error: transfer.error, message: transfer.message }, 400)
     }
 
-    await recordOrganizationAuditEvent({
+    await finishLegacyAuditAction(auditChangeCapture(c), {
       organizationId: payload.organization.id,
       actorUserId: payload.currentMember.userId,
       action: ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred,
@@ -146,7 +301,7 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         newOwnerPreviousRole: transfer.newOwner.role,
         newOwnerRole: transfer.newOwnerRole,
       },
-    })
+    }, transfer.auditEventIds)
 
     return c.json({ success: true })
     },
@@ -162,52 +317,12 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
         204: emptyResponse("Member removed successfully."),
         400: jsonResponse("The member removal request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to remove organization members.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can remove members.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Remove members permission and a recent sign-in. Removing a member of an Admin team also needs Manage Admin teams, only the owner or an admin can remove an admin, and only the owner or a super-admin can remove a super-admin.", forbiddenSchema),
         404: jsonResponse("The member or organization could not be found.", notFoundSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgPermissionRoute("members.delete"),
     paramValidator(orgMemberParamsSchema),
-    async (c) => {
-    const permission = ensureMemberRemover(c)
-    if (!permission.ok) {
-      return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    }
-
-    const payload = c.get("organizationContext")
-    const params = c.req.valid("param")
-    let memberId: MemberId
-    try {
-      memberId = normalizeDenTypeId("member", params.memberId)
-    } catch {
-      return c.json({ error: "member_not_found" }, 404)
-    }
-
-    const removed = await removeOrganizationMember({
-      organizationId: payload.organization.id,
-      memberId,
-      removedByOrgMemberId: payload.currentMember.id,
-    })
-    if (!removed.ok) {
-      if (removed.error === "forbidden") return c.json({ error: removed.error, message: removed.message }, 403)
-      if (removed.error === "member_not_found") {
-        return c.json({ error: removed.error, message: removed.message }, 404)
-      }
-      return c.json({ error: removed.error, message: removed.message }, 400)
-    }
-
-    await recordOrganizationAuditEvent({
-      organizationId: payload.organization.id,
-      actorUserId: payload.currentMember.userId,
-      action: ORGANIZATION_AUDIT_ACTIONS.memberRemoved,
-      payload: {
-        targetOrgMembershipId: removed.member.id,
-        targetUserId: removed.member.userId,
-        previousRole: removed.member.role,
-      },
-    })
-
-    return c.body(null, 204)
-    },
+    async (c) => removeMemberAction(c, c.get("organizationContext"), c.req.valid("param").memberId, auditChangeCapture(c)),
   )
 }

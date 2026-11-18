@@ -1,0 +1,18 @@
+// path: core/core-chat.e2e.test.ts
+import { spec } from "@openwork/testkit";
+import type { Target } from "@openwork/cdp";
+import { expect } from "vitest";
+import { coreWebWorld } from "../worlds/core-web.ts";
+const test = spec.world(coreWebWorld, { needs: { placement: "local" } });
+const composer: Target = "composer";
+async function seeReply(user: { see(target: string): Promise<void> }) { await user.see("Acme AI Gateway is working."); }
+test("CHAT-ROUNDTRIP: a signed-in person sends a message and reads the reply", async ({ user, step, evidence }) => {
+  await step("the person sends a message", async () => {
+    await user.type(composer, "Say hello");
+    await user.click("Run task");
+    await seeReply(user);
+  });
+  const reply = await user.screenshot();
+  evidence.recordAssertionEvidence("A reply is shown", "The reply is on screen.", Boolean(reply));
+  expect(reply).toBeTruthy();
+});

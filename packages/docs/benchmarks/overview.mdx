@@ -1,0 +1,157 @@
+---
+title: "Knowledge-work cost benchmark"
+sidebarTitle: "Overview"
+description: "What it costs an AI agent to keep a customer knowledge base up to date, and what happens to quality when you make it cheaper with a skill, subagents or a model router."
+---
+
+The knowledge-work cost benchmark is a small readout of what it costs an AI agent to do one real piece of knowledge work, and what happens to quality when you try to make it cheaper. It compares three ways to cut the cost, alone and combined: a [skill](/start-here/do-work-with-it/skills-plugins-and-mcp), subagents, and a model router.
+
+This is not an exhaustive eval, and it is not proof that a setup will hold up on your work. It is one task on one team's data, run 41 times. It is a way to compare setups against the same work with the same checks.
+
+## The short version
+
+- **A skill is what lets a cheap model lead.** DeepSeek V4.1 Flash alone got 16.7 of 20 planted facts right. With a one-page skill it got 19.3, against 19.7 for Claude Opus 5.5, at about a tenth of the cost.
+- **Subagents halve the bill, and no more.** With Opus leading and a cheap model doing the reading, quality stayed at 20 of 20 and the cost fell by half. Opus was still about 90% of what was left.
+- **A router helps most when it knows about skills.** A router that only reads the prompt kept Opus in charge and saved a third. Told that a skill covers the task, it gave the work to DeepSeek: 19.3 of 20 at 7% of the cost.
+- **The skill result depends on the model.** The same skill did not lift Claude Haiku 5.5 to the bar.
+
+<Frame caption="Average cost of one run for each setup. Solid bars held quality; hollow bars did not.">
+  <img src="/images/benchmarks/knowledge-work-cost.png" alt="Bar chart of cost per run for 15 setups, from DeepSeek alone at $0.38 to Opus alone at $10.34, with the planted facts each got right" />
+</Frame>
+
+## What it is
+
+The task is one we do every week: bring a customer knowledge base up to date. The agent gets two weeks of our own calls, Slack threads and email, anonymized, and one sentence of instruction. That is 33 call transcripts, 36 Slack files (one per channel per day) and 30 email threads, about 1.55 million characters. It has to update seven customer pages and log every new fact with its source.
+
+We planted 20 facts with known answers in those sources. A second model then checks a sample of everything else the agent wrote. Claude Opus 5.5 working alone is the bar. A setup holds quality when, on average, it is at most one planted fact and one sampled row worse than that bar. The rule was fixed before the runs.
+
+## Comparison matrix
+
+The score table lists the best scores first, ranked by planted facts right and then by rows not backed. The cost table ranks setups by the average cost of one run.
+
+Minutes are recorded but not ranked. Runs shared sandboxes, up to eight at a time, and provider load moves wall time more than the setup does. Planted facts and cost are the stable comparison signals.
+
+| Setup | Planted facts right | Each run | Not backed |
+| --- | --- | --- | --- |
+| Sonnet + skill | 20.0 of 20 | 20, 20 | 0 of 30 |
+| Opus + skill | 20.0 of 20 | 20, 20, 20 | 1 of 45 |
+| Router + skill | 20.0 of 20 | 20, 20, 20 | 2 of 45 |
+| Opus + DeepSeek workers | 20.0 of 20 | 20, 20, 20 | 4 of 45 |
+| Router | 20.0 of 20 | 20, 20, 20 | 6 of 45 |
+| Opus + Haiku workers | 20.0 of 20 | 20, 20 | 4 of 30 |
+| Opus + DeepSeek workers + skill | 19.7 of 20 | 19, 20, 20 | 3 of 45 |
+| Opus alone | 19.7 of 20 | 20, 20, 19 | 5 of 45 |
+| Router + DeepSeek workers | 19.7 of 20 | 20, 19, 20 | 6 of 45 |
+| Opus + Sonnet workers | 19.5 of 20 | 20, 19 | 2 of 30 |
+| Skill-aware router + skill | 19.3 of 20 | 19, 20, 19 | 4 of 45 |
+| DeepSeek + skill | 19.3 of 20 | 18, 20, 20 | 5 of 45 |
+| All three | 18.3 of 20 | 16, 20, 19 | 3 of 45 |
+| Haiku + skill | 17.0 of 20 | 16, 18 | 4 of 30 |
+| DeepSeek alone | 16.7 of 20 | 16, 18, 16 | 6 of 45 |
+
+**Haiku and Sonnet rows** have two runs each. Every other row has three.
+
+**Opus + Sonnet workers:** the 19 is one note under "to verify" that names an integration the customer had turned down. Read by hand it is not an error. The script counts it, so the table does too.
+
+### Cost
+
+Lowest cost per run first.
+
+| Setup | Cost per run | Against Opus alone | Held quality |
+| --- | --- | --- | --- |
+| DeepSeek alone | $0.38 | 4% | no |
+| Haiku + skill | $0.56 | 5% | no |
+| All three | $0.69 | 7% | no |
+| Skill-aware router + skill | $0.74 | 7% | yes |
+| DeepSeek + skill | $1.17 | 11% | yes |
+| Opus + DeepSeek workers + skill | $4.08 | 39% | yes |
+| Opus + Haiku workers | $4.66 | 45% | yes |
+| Router + DeepSeek workers | $4.66 | 45% | yes |
+| Router + skill | $4.78 | 46% | yes |
+| Opus + DeepSeek workers | $5.14 | 50% | yes |
+| Router | $6.93 | 67% | yes |
+| Sonnet + skill | $9.13 | 88% | yes |
+| Opus + Sonnet workers | $9.41 | 91% | yes |
+| Opus + skill | $10.07 | 97% | yes |
+| Opus alone | $10.34 | 100% | the bar |
+
+**DeepSeek + skill:** the average includes one run that took 75 minutes and cost $2.40. The other two cost $0.50 and $0.61.
+
+## Reading results
+
+- **Planted facts right** is the headline score: of the 20 planted facts, how many ended up correct, on the right customer, with the final value. It is the mean over the runs listed under **Each run**.
+- **Not backed** is the check for made-up content: of 15 random rows per run, how many a second model could not support from the file the row cites. A row that is not backed is not always invented. It can cite the wrong file, or record a plan as done.
+- **Cost per run** is token usage times list prices, for every model call in the run, subagents included.
+- **Held quality** applies the rule above: on average at most one planted fact and one sampled row worse than Opus alone.
+- **The skill** is the same in every setup that has one. It describes how to do this kind of update and names no fact from the data. The full text is in [How it was run](/benchmarks/how-it-was-run#the-skill).
+- Planted facts test five ways this task goes wrong. They do not measure how many of the real facts a run found.
+
+## Analysis
+
+### Opus alone
+
+Opus 5.5 got 20, 20 and 19 of the planted facts right. The three runs cost $7.99, $10.58 and $12.45.
+
+The data is roughly 400,000 tokens, but that is not what the money buys. Opus works in about 110 steps and re-reads its growing context at every step. In the cheapest run, $3.50 went to adding new text to the cache, $2.87 to writing output and $1.61 to re-reading cached context.
+
+### DeepSeek alone
+
+DeepSeek V4.1 Flash cost $0.38 a run, 4% of Opus, and got 16, 18 and 16 right.
+
+The misses follow a pattern. In two of three runs it left an old value marked current next to the new one. In all three it lost a fact that the sources first pinned on one customer and then corrected to another. Plain new facts were never the problem: it found all eight in every run.
+
+### DeepSeek with a skill
+
+With the skill, DeepSeek got 18, 20 and 20 right. The skill is one page: read every source in date order, decide what counts as a fact, put it on the right customer, let the latest statement win, write the log row, then refresh the summary.
+
+Two runs cost $0.50 and $0.61. The third took 75 minutes, cost $2.40, and had 5 of its 15 sampled rows not backed, the most of any run. That one run is why the average is $1.17. These are single runs of a model that varies, not a guarantee.
+
+### Haiku and Sonnet with the same skill
+
+Claude Haiku 5.5 is priced close to DeepSeek and cost $0.56 a run. The skill did not lift it to the bar: it got 16 and 18 right. It missed two plain facts in one run, and in both runs a corrected-customer fact and a repeated fact.
+
+Claude Sonnet 5.5 had the cleanest result in the benchmark: 20 of 20 in both runs, with no sampled row the judge could not back. It barely saved money. Sonnet costs half of Opus per token, but it took 171 and 265 steps where Opus takes about 110, so a run cost $9.13, 88% of Opus alone.
+
+### Opus with cheap workers
+
+Here Opus leads and a cheap model does the reading. The only change is one instruction telling the lead to hand source files to subagents, and a setting that gives subagents the cheap model.
+
+With DeepSeek workers it got 20 of 20 in all three runs at $5.14, 50% of Opus alone. With Haiku workers it got 20 of 20 in both runs at $4.66.
+
+Opus was still 93% of the cost with DeepSeek workers and 89% with Haiku workers. The reading was never the expensive part. The lead holds the workers' reports, decides what is true and writes seven pages, and that is where the money goes. So this setup halves the bill and stops there.
+
+Adding the skill on top brought it to $4.08 with 19, 20 and 20 right.
+
+### Opus with Sonnet workers
+
+This one saves almost nothing: $9.41, 91% of Opus alone. In one run the Sonnet workers cost $3.96 next to $4.44 for the Opus lead. Workers pay off only when they are much cheaper than the lead.
+
+### Router
+
+The router is a prototype built for this benchmark. For each new session, meaning the main request and each subagent's task, it asks a small judgment model how well the prompt fits the kind of work each model is for, and picks Opus or DeepSeek.
+
+It sent the main request to Opus in all three runs. That is a fair call: this is judgment work. In two runs the reading tasks that Opus handed to subagents went to DeepSeek, and those runs cost $5.88 and $5.58. In the third, the router judged the subagent tasks to be judgment work too and kept everything on Opus. That run cost $9.33, close to the Opus-alone average.
+
+Quality was 20 of 20 every time, at $6.93 on average. A router that only reads the prompt lands where subagents do. With the skill present but invisible to the router, the result was the same shape: $4.78, 20 of 20.
+
+### Skill-aware router
+
+This is the same router, also told the name and description of each skill in the workspace. When a skill covers the request, the cheap model gets the session.
+
+It gave the main request to DeepSeek every time. The runs got 19, 20 and 19 right and cost $1.08, $0.60 and $0.54: $0.74 on average, 7% of Opus alone. It is the cheapest setup that held quality.
+
+What changes is who has to decide. Nobody picks a model. If someone has written a skill for the task, the cheap model does it. If not, the router falls back to reading the prompt.
+
+### All three
+
+Skill, skill-aware router and DeepSeek workers together cost $0.69 and got 16, 20 and 19 right. The 16 pulls the average below the line. Adding workers under a DeepSeek lead did not add quality in these runs.
+
+Across the benchmark, single runs led by DeepSeek ranged from 16 to 20. With two or three runs per setup, a fourth run could move a setup across the quality line. Treat the ranking near the line as open.
+
+## Corpus
+
+The sources are our own working calls, Slack threads and email. They were anonymized before any run and they stay private, so the corpus is not published. [How it was run](/benchmarks/how-it-was-run) describes what is in it and lists the kinds of facts we planted.
+
+## Run it
+
+Because the corpus is private, these exact runs cannot be reproduced outside OpenWork. The method can: [How it was run](/benchmarks/how-it-was-run) has the task, the skill, the router's rules, the grading rules and the prices, so you can run the same comparison on your own work.

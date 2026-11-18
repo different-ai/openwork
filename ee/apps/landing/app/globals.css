@@ -18,8 +18,8 @@
   --lp-page: #fcfdfe;
   --lp-tonal: #f0f4f9;
   --lp-body: #4b5563;
-  --lp-muted: #6b7280;
-  --lp-faint: #9ca3af;
+  --lp-muted: #5e6877;
+  --lp-faint: #5b6b80;
   --lp-border: #e5e7eb;
   --lp-blue: #2563eb;
   --lp-status: #059669;
@@ -44,6 +44,12 @@ body {
 ::selection {
   background: var(--lp-ink);
   color: #fff;
+}
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--lp-ink);
+  outline-offset: 4px;
 }
 
 .lp-pill-primary,
@@ -104,6 +110,25 @@ body {
   padding-right: 16px;
   padding-left: 16px;
   font-size: 14px;
+}
+
+/* Governance editorial pages share the landing palette and control system. */
+.governance-hero { padding-top: 64px; padding-bottom: 12px; }
+.governance-title { font-size: clamp(2.4rem, 5.3vw, 4.5rem); font-weight: 500; line-height: 1.06; letter-spacing: -0.045em; text-wrap: balance; }
+.governance-heading { font-size: clamp(1.8rem, 3.1vw, 2.65rem); font-weight: 500; line-height: 1.16; letter-spacing: -0.035em; text-wrap: balance; }
+.governance-label { font-size: 14px; line-height: 1.5; color: var(--lp-muted); }
+.governance-section { margin-top: 88px; border-top: 1px solid var(--lp-border); padding-top: 32px; }
+.governance-split { display: grid; gap: 28px; }
+.governance-prose { font-size: 16px; line-height: 1.75; color: var(--lp-body); }
+.governance-prose > * + * { margin-top: 20px; }
+.governance-prose strong { color: var(--lp-ink); font-weight: 500; }
+.governance-link, .governance-prose a { color: var(--lp-ink); text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.governance-link:hover, .governance-prose a:hover { text-decoration-thickness: 2px; }
+summary:focus-visible { outline: 2px solid var(--lp-ink); outline-offset: 4px; border-radius: 4px; }
+@media (min-width: 768px) {
+  .governance-hero { padding-top: 88px; }
+  .governance-section { margin-top: 112px; padding-top: 40px; }
+  .governance-split { grid-template-columns: minmax(0, 1fr) minmax(0, 1.65fr); gap: 80px; }
 }
 
 .mono {
@@ -197,6 +222,36 @@ body {
   margin-right: auto;
 }
 
+/* Pixel wordmark with "Work" set in the body face. */
+.lp-wordmark-sans {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.05em;
+}
+
+/* Keep the existing dither to the right of the wider copy column and fade it
+   before the next section. Narrow layouts leave the reading surface clear.
+   Layer order: radial, then (below-band intersect right-half). */
+.lp-hero-dither {
+  opacity: 0.65;
+  -webkit-mask-image:
+    radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.25) 780px, transparent 850px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 90px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+  mask-image:
+    radial-gradient(1100px 800px at calc(50% + 1000px) 157px, #000 0, #000 20%, rgba(0, 0, 0, 0.5) 32%, rgba(0, 0, 0, 0.15) 40%, transparent 46%),
+    linear-gradient(to bottom, transparent 0, transparent 395px, rgba(0, 0, 0, 0.45) 455px, #000 525px, #000 620px, rgba(0, 0, 0, 0.25) 780px, transparent 850px),
+    linear-gradient(to right, transparent 0, transparent calc(50% + 90px), rgba(0, 0, 0, 0.6) calc(50% + 170px), #000 calc(50% + 260px), #000 100%);
+  -webkit-mask-composite: source-over, source-in, source-over;
+  mask-composite: add, intersect, add;
+}
+
+@media (max-width: 1023px) {
+  .lp-hero-dither {
+    display: none;
+  }
+}
+
 .landing-shell {
   background: rgba(255, 255, 255, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.8);
@@ -218,6 +273,64 @@ body {
   background: #ece8de;
   border: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+/* Hero buttons: 43px pill, 16px regular text, trailing glyph icon. */
+.lp-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 43px;
+  padding: 0 22px;
+  border-radius: 9999px;
+  background-color: var(--lp-ink);
+  color: #f7f7f4;
+  border: 1px solid var(--lp-ink);
+  font-size: 16px;
+  line-height: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 100ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover {
+  background-color: #102638;
+  border-color: #102638;
+}
+
+.lp-btn:active {
+  transform: scale(0.98);
+}
+
+.lp-btn-icon {
+  display: flex;
+  padding-left: 4px;
+  font-size: 16px;
+  line-height: 16px;
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lp-btn:hover .lp-btn-icon {
+  transform: translateY(1px);
+}
+
+.lp-btn--secondary {
+  background-color: #e9edf2;
+  color: var(--lp-ink);
+  border-color: rgba(1, 22, 39, 0.04);
+}
+
+.lp-btn--secondary:hover {
+  background-color: #dfe5ec;
+  border-color: rgba(1, 22, 39, 0.06);
+}
+
+.lp-btn--secondary:hover .lp-btn-icon {
+  transform: translateX(2px);
 }
 
 .doc-button {
@@ -529,5 +642,34 @@ hr {
   }
   html {
     scroll-behavior: auto;
+  }
+}
+
+.lp-products-menu {
+  box-shadow:
+    0 1px 2px rgba(1, 22, 39, 0.06),
+    0 12px 32px -8px rgba(1, 22, 39, 0.16),
+    0 0 0 1px rgba(1, 22, 39, 0.05);
+}
+
+/* Product previews: shimmer only on the step that is running (DESIGN.md V6). */
+.lp-demo-shimmer {
+  background: linear-gradient(90deg, currentColor 0%, #c4cad3 50%, currentColor 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: lp-demo-shimmer 1.2s linear infinite;
+}
+
+@keyframes lp-demo-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-demo-shimmer {
+    animation: none;
+    -webkit-text-fill-color: currentColor;
   }
 }

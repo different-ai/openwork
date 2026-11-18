@@ -12,6 +12,8 @@ Do not duplicate the list of policy IDs in app docs or feature code unless a fea
 
 `allowedDesktopVersions` is part of the desktop config response but is not a boolean policy item in `desktopPolicyDefinitions`.
 
+`execution.browserOrigins` is the canonical approved-site list. `desktopExecutionPolicySchema` validates exact HTTP(S) origins, and `resolveDesktopExecutionPolicy()` intersects matching lists; omission adds no restriction and `[]` denies every site. Enforcement is server-owned in `apps/server/src/managed-desktop-policy.ts` and `managed-policy-rules.ts`, called by the native request guard in `apps/desktop/electron/browser-panel.mjs`, not a renderer-pushed host list. See [Approved websites](../packages/docs/cloud/share-with-your-team/desktop-policies.mdx#approved-websites) for configuration and scope.
+
 For boolean policy keys, `false` means the feature is restricted or disabled. `true` or `undefined` means the app should not block the feature locally.
 
 ## Organization Prompt Suggestions
@@ -21,6 +23,18 @@ Desktop policy documents can also include `onboardingPrompts` and `onboardingPro
 In the desktop app, `onboardingPromptDescriptions` become prompt-card titles. `onboardingPrompts` become the visible card descriptions and the text inserted into the composer when a user clicks a card; the click does not auto-send.
 
 Boolean policy keys are OR-unioned across matching policies by `calculateEffectiveDesktopPolicy()`. Prompt suggestions are different: `selectEffectiveOnboardingPromptConfig()` picks one matching prompt config by highest `priority`, then earliest `createdAt`, then policy `id`, falling back to the default policy only when no targeted prompt config applies.
+
+## Organization system prompts
+
+System prompts are available to every organization, independently of desktop policy prompt suggestions. People with `prompts.view` can open the Prompts tab for Everyone or a team; `prompts.manage` is required to save or remove prompts. Ordinary members cannot read the organization's prompt settings, but `GET /v1/me/prompts` returns the prompts assigned to them in their active organization.
+
+Desktops append those prompts to agent instructions on provider sync: Everyone first, then teams by name, then directly assigned member prompts. Saving a revision or removing a prompt takes effect on the next sync. Stored prompt text remains encrypted at rest. There is no feature rollout switch for prompts.
+
+## Organization Automation settings
+
+Every organization has Automation settings under Settings. Any member can read `GET /v1/org/automation-settings`; changing them requires `organization.update`. Desktop and Cloud Automations default to allowed, but each also follows the deployment's Automation switches. Cloud Automations additionally require a configured headless runner; trying to enable Cloud without one returns `409 headless_runner_required`.
+
+Turning either kind off prevents new Automations of that kind and skips scheduled runs, while keeping saved Automations and history. The desktop config reports the effective availability in `desktopAutomationsEnabled` and `cloudAutomationsEnabled`; the organization settings always apply, without a rollout override.
 
 ## Preferred Check
 

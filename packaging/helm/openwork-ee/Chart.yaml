@@ -1,6 +1,6 @@
 apiVersion: v2
 name: openwork-ee
-description: OpenWork EE Den control plane, web app, and optional inference service
+description: OpenWork EE Den control plane, web app, and optional OpenWork Gateway
 type: application
-version: 0.1.0
+version: 0.2.0
 appVersion: "0.1.0"

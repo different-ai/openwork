@@ -1,0 +1,1 @@
+ALTER TABLE `external_mcp_connection` MODIFY COLUMN `scope` text;

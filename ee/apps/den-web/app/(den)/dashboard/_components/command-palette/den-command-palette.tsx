@@ -1,5 +1,8 @@
 "use client";
 
+import { desktopPolicyScreenRemoved } from "../../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../../_lib/workbot-settings-rollout";
+
 import { Command } from "cmdk";
 import {
   Box,
@@ -17,6 +20,7 @@ import {
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../../_lib/den-org";
+import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 import {
   buildDashboardNavSections,
@@ -25,18 +29,18 @@ import {
 import { paletteFilter } from "../../_lib/palette-filter";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useAutomations } from "../automation-data";
-import { usePlugins } from "../plugin-data";
+import { usePluginSummaries } from "../plugin-data";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 const RECENTS_STORAGE_KEY = "den.command-palette.recents";
 const RECENTS_LIMIT = 8;
 
 const EMPTY_CAPABILITIES: DenOrgCapabilities = {
+  auditLogs: false,
   cloud: false,
   installLinks: false,
   mcpConnections: false,
   openworkWeb: false,
-  orgManagedDashboards: false,
   workflows: false,
 };
 
@@ -52,6 +56,8 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Returns true when it handled the navigation itself (the Workbot entry while it is blocked). */
+  interceptNavigation?: (href: string) => boolean;
 };
 
 function matchesQuery(entry: PaletteEntry, query: string): boolean {
@@ -90,7 +96,7 @@ function PaletteGroup({
   return (
     <Command.Group
       heading={heading}
-      className="pb-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.16em] [&_[cmdk-group-heading]]:text-gray-400"
+      className="pb-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:pb-1.5 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:text-gray-500"
     >
       {entries.map((entry) => (
         <Command.Item
@@ -98,31 +104,33 @@ function PaletteGroup({
           value={`${heading}:${entry.id}`}
           keywords={[entry.label, ...entry.keywords, entry.hint]}
           onSelect={() => onSelect(entry)}
-          className="flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-hidden data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
+          className="group flex cursor-default items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] text-gray-700 outline-hidden data-[selected=true]:bg-gray-100 data-[selected=true]:text-gray-900"
         >
           <entry.icon className="h-4 w-4 shrink-0 text-gray-400" strokeWidth={1.8} />
           <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-          <span className="shrink-0 text-[11px] text-gray-400">{entry.hint}</span>
+          <span className="shrink-0 text-[11px] tracking-normal text-gray-500 group-data-[selected=true]:text-gray-600">{entry.hint}</span>
         </Command.Item>
       ))}
     </Command.Group>
   );
 }
 
-export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps) {
+export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: DenCommandPaletteProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { activeOrg, orgContext } = useOrgDashboard();
   const [query, setQuery] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>([]);
-  const access = getOrgAccessFlags(
+  const access = useMemo(() => getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
-  );
+    orgContext?.currentMember.permissions,
+  ), [orgContext?.currentMember.role, orgContext?.currentMember.isOwner, orgContext?.currentMember.permissions]);
   const capabilities = orgContext?.capabilities ?? EMPTY_CAPABILITIES;
-  const pluginsQuery = usePlugins({ enabled: open && access.isAdmin });
+
+  // Plugin results open the admin plugin page, which needs `sharing.manage_all`.
+  const pluginsQuery = usePluginSummaries({ enabled: open && access.canManageAllShared });
   const automationsQuery = useAutomations({ enabled: open && capabilities.workflows });
 
   useEffect(() => {
@@ -148,25 +156,31 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
   const pageEntries = useMemo<PaletteEntry[]>(() => {
     const sections = buildDashboardNavSections({
       orgSlug: activeOrg?.slug ?? null,
+      organizationId: activeOrg?.id ?? null,
       access,
       capabilities,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
+
+      desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
+      canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
+      myBot: myAgentAvailable(orgContext),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")
       .map((entry) => ({ ...entry, hint: entry.section }));
   }, [
-    access.canViewSettings,
-    access.isAdmin,
+    access,
     activeOrg?.slug,
+    orgContext,
     capabilities,
     runtimeConfig.orgMode,
     runtimeConfigLoaded,
   ]);
 
   const pluginEntries = useMemo<PaletteEntry[]>(() => {
-    if (!access.isAdmin || !activeOrg) return [];
+    if (!access.canManageAllShared || !activeOrg) return [];
     return (pluginsQuery.data ?? []).map((plugin) => ({
       id: `plugin:${plugin.id}`,
       label: plugin.name,
@@ -175,7 +189,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       hint: "Plugin",
       keywords: [plugin.slug, plugin.description, "skill", "marketplace"],
     }));
-  }, [access.isAdmin, activeOrg, pluginsQuery.data]);
+  }, [access.canManageAllShared, activeOrg, pluginsQuery.data]);
 
   const automationEntries = useMemo<PaletteEntry[]>(() => {
     if (!activeOrg || !capabilities.workflows) return [];
@@ -236,6 +250,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       // Navigation should still work when browser storage is unavailable.
     }
     onOpenChange(false);
+    if (interceptNavigation?.(entry.href)) return;
     if (/^https?:\/\//.test(entry.href)) {
       window.open(entry.href, "_blank", "noopener,noreferrer");
       return;
@@ -266,11 +281,11 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             onValueChange={setQuery}
             placeholder="Search or jump to…"
             data-testid="den-command-palette-input"
-            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-400"
+            className="h-12 w-full border-b border-gray-100 bg-transparent px-4 text-[14px] text-gray-900 outline-hidden placeholder:text-gray-500"
           />
           <Command.List className="max-h-[min(60vh,420px)] overflow-y-auto p-2">
-            <Command.Empty className="px-3 py-10 text-center text-[13px] text-gray-400">
-              No matches for “{query}”.
+            <Command.Empty className="px-3 py-10 text-center text-[12px] text-gray-500">
+              {`No matches for “${query}”.`}
             </Command.Empty>
             <PaletteGroup heading="Recent" entries={recentEntries} onSelect={selectEntry} />
             <PaletteGroup heading="Pages" entries={pageEntries} onSelect={selectEntry} />
@@ -286,7 +301,7 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             />
             <PaletteGroup heading="Actions" entries={actionEntries} onSelect={selectEntry} />
           </Command.List>
-          <div className="border-t border-gray-100 px-4 py-2.5 text-[11px] text-gray-400">
+          <div data-testid="den-command-palette-footer" className="border-t border-gray-100 px-4 py-2.5 text-[11px] text-gray-500">
             ↑↓ navigate · ↵ open · esc close
           </div>
         </Command>

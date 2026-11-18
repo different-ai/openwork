@@ -1,5 +1,6 @@
-import { index, json, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, timestamps } from "../columns"
+import { bigint, char, index, json, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { compatJsonColumn, denTypeIdColumn, timestamps } from "../columns"
+import type { AuditEventEnvelope } from "../audit-log"
 
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
@@ -69,6 +70,32 @@ export const DaytonaSandboxTable = mysqlTable(
   ],
 )
 
+/**
+ * Provider-neutral record of the host instance behind a Cloud worker. The
+ * provider reference is opaque JSON owned by the provider that created it.
+ * `daytona_sandbox` stays dual-written until every deployment reads from here.
+ */
+export const CloudRuntimeInstanceTable = mysqlTable(
+  "cloud_runtime_instance",
+  {
+    id: denTypeIdColumn("cloudRuntimeInstance", "id").notNull().primaryKey(),
+    worker_id: denTypeIdColumn("worker", "worker_id").notNull(),
+    provider_id: varchar("provider_id", { length: 64 }).notNull(),
+    provider_ref: json("provider_ref").$type<Record<string, string>>().notNull(),
+    workspace_volume_id: varchar("workspace_volume_id", { length: 128 }).notNull(),
+    data_volume_id: varchar("data_volume_id", { length: 128 }).notNull(),
+    endpoint_url: varchar("endpoint_url", { length: 2048 }).notNull(),
+    endpoint_expires_at: timestamp("endpoint_expires_at", { fsp: 3 }).notNull(),
+    endpoint_kind: varchar("endpoint_kind", { length: 32 }).notNull(),
+    region: varchar("region", { length: 64 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("cloud_runtime_instance_worker_id").on(table.worker_id),
+    index("cloud_runtime_instance_provider").on(table.provider_id),
+  ],
+)
+
 export const WorkerTokenTable = mysqlTable(
   "worker_token",
   {
@@ -100,10 +127,22 @@ export const AuditEventTable = mysqlTable(
     id: denTypeIdColumn("auditEvent", "id").notNull().primaryKey(),
     org_id: denTypeIdColumn("org", "org_id").notNull(),
     worker_id: denTypeIdColumn("worker", "worker_id"),
-    actor_user_id: denTypeIdColumn("user", "actor_user_id").notNull(),
+    actor_user_id: denTypeIdColumn("user", "actor_user_id"),
     action: varchar("action", { length: 128 }).notNull(),
     payload: json("payload"),
+    operation_id: denTypeIdColumn("auditOperation", "operation_id"),
+    sequence: bigint("sequence", { mode: "number", unsigned: true }),
+    envelope: compatJsonColumn<AuditEventEnvelope>("envelope"),
+    logical_bytes: bigint("logical_bytes", { mode: "number", unsigned: true }),
+    idempotency_key: char("idempotency_key", { length: 64 }),
+    content_hash: char("content_hash", { length: 64 }),
     created_at: timestamps.created_at,
   },
-  (table) => [index("audit_event_org_id").on(table.org_id), index("audit_event_worker_id").on(table.worker_id)],
+  (table) => [
+    index("audit_event_org_id").on(table.org_id),
+    index("audit_event_worker_id").on(table.worker_id),
+    uniqueIndex("audit_event_org_sequence").on(table.org_id, table.sequence),
+    uniqueIndex("audit_event_idempotency").on(table.org_id, table.operation_id, table.idempotency_key),
+    index("audit_event_operation_sequence").on(table.org_id, table.operation_id, table.sequence),
+  ],
 )

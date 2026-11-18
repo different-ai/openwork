@@ -5,7 +5,8 @@ import { Archive, ArchiveRestore } from "lucide-react";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop } from "@/app/lib/opencode-interruption";
 import { setSessionArchived } from "@/app/lib/opencode-session";
-import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { readSessionTree } from "@/app/lib/session-ownership";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -23,14 +24,45 @@ import { getComposerQueuedDrafts, useComposerStateStore } from "../surface/compo
 import { composerAutoSendScopeKey, consumeComposerAutoSend, hasComposerAutoSend } from "../surface/composer-auto-send";
 import { dispatchQueuedDrain, getQueuedDrainState, hasPendingQueuedAdmission } from "../surface/queued-drain-machine";
 import { clearQueuedSendContext } from "../sync/queued-send-context";
+import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
 
-type ArchiveTarget = { workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; draftScope: string | null };
+/** Archive or unarchive the open session: one toggle shared by the thread header, palette and shortcut. */
+export type SessionArchiveToggle = { archived: boolean; toggle: () => void };
+
+/** The agent conversation that asked, when the request came through the agent bridge. */
+export type ArchiveRequester = { sessionId: string; title: string | null };
+
+type ArchiveTarget = {
+  workspace: RouteWorkspace; endpoint: ResolvedWorkspaceEndpoint; sessionId: string; title: string; draftScope: string | null;
+  requestedBy: ArchiveRequester | null;
+};
+
+export type ArchiveSessionOutcome =
+  | { kind: "done" | "cancelled" }
+  | { kind: "verification_failed" | "archive_outcome_unknown"; message: string }
+  /** Agent path: the warning goes back through the agent's conversation, never a dialog. */
+  | { kind: "target_working" | "self_archive_while_working"; sessionId: string; title: string };
+
+export type ArchiveSessionOptions = {
+  signal?: AbortSignal;
+  requester?: { sessionId: string };
+  /** Agent path: a working target (or the requester's own tree) is refused instead of asking the person. */
+  refuseWorking?: boolean;
+};
+
+/** Archive through the engine that owns the session; v1 keeps the desktop main-process transport. */
+function archiveClient(endpoint: ResolvedWorkspaceEndpoint, directory: string) {
+  return isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+    ? createClientV2(endpoint.opencodeBaseUrl, directory, { token: endpoint.token })
+    : createClient(endpoint.opencodeBaseUrl, directory, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
+}
 
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
   sessionsByWorkspaceId: Record<string, RouteSession[]>;
-  endpointForWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
+  /** The engine that owns the workspace's sessions: v2 (`/opencode2`) when its server routes chat there. */
+  endpointForSessionWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
   draftScope: string | null;
@@ -45,8 +77,10 @@ export function useSessionArchive(input: {
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
+  const activeController = useRef<AbortController | null>(null);
   const mounted = useRef(true);
-  const pending = useRef<((archived: boolean) => void) | null>(null);
+  const pending = useRef<((outcome: ArchiveSessionOutcome) => void) | null>(null);
+  const settle = (kind: "done" | "cancelled"): ArchiveSessionOutcome => ({ kind });
   const undoNavigation = useRef<{
     workspaceId: string; sessionId: string; fromKey: string; landingKey: string | null;
   } | null>(null);
@@ -63,21 +97,24 @@ export function useSessionArchive(input: {
     return () => {
       mounted.current = false;
       undoNavigation.current = null;
-      pending.current?.(false);
-      pending.current = null;
+      if (activeController.current) activeController.current.abort(new Error("Archive cancelled because the view closed."));
+      else {
+        pending.current?.(settle("cancelled"));
+        pending.current = null;
+      }
     };
   }, []);
 
-  function closeDialog(archived: boolean) {
+  function closeDialog(outcome: ArchiveSessionOutcome) {
     if (mounted.current) { setTarget(null); setError(null); }
-    pending.current?.(archived);
+    pending.current?.(outcome);
     pending.current = null;
   }
 
   async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
     const { workspace, endpoint, sessionId } = target;
     try {
-      await setSessionArchived(createClient(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }), sessionId, false, workspace.path);
+      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
       const now = current.current;
       if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
@@ -99,12 +136,13 @@ export function useSessionArchive(input: {
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
-    toast.undo(archived ? t("session_management.session_archived") : t("session_management.session_unarchived"), {
+    const message = archived ? t("session_management.session_archived", { title: target.title }) : t("session_management.session_unarchived");
+    toast.undo(<span title={message}>{message}</span>, {
       id: `session-archive:${target.sessionId}`,
       icon: archived ? Archive : ArchiveRestore,
       undo: { label: t("common.undo"), onClick: () => {
         if (archived) void restore(target, false, undo);
-        else if (mounted.current) void archiveSession(target.sessionId, true);
+        else if (mounted.current) void archiveSessionInWorkspace(target.workspace.id, target.sessionId, true);
       } },
       view: { label: t("common.view"), onClick: () => {
         if (mounted.current) current.current.input.navigateToWorkspaceSession(target.workspace.id, target.sessionId);
@@ -113,17 +151,45 @@ export function useSessionArchive(input: {
     });
   }
 
-  async function archive(target: ArchiveTarget, confirmed: boolean) {
+  async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveSessionOptions) {
     if (busy.current) return;
     busy.current = true;
+    const refusal = (kind: "target_working" | "self_archive_while_working"): ArchiveSessionOutcome =>
+      ({ kind, sessionId: target.sessionId, title: target.title });
+    const askUser = () => {
+      if (!mounted.current) return closeDialog(settle("cancelled"));
+      if (request?.refuseWorking) return closeDialog(refusal("target_working"));
+      setTarget(target);
+    };
     const { workspace, endpoint, sessionId, draftScope } = target;
     const baseUrl = endpoint.opencodeBaseUrl;
-    const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" });
+    // Finite archive verification must not queue behind retained renderer SSEs.
+    // Keep the same safety checks; only the desktop HTTP transport changes.
+    const client = archiveClient(endpoint, workspace.path);
     const releases = new Map<string, () => void>();
     const controller = new AbortController();
-    const deadline = Date.now() + 15_000;
-    const timer = setTimeout(() => controller.abort(new Error("Stopping could not be confirmed before the deadline.")), 15_000);
-    const options = { signal: controller.signal };
+    activeController.current = controller;
+    const budgetMs = request?.refuseWorking ? 3_500 : 15_000;
+    const deadline = Date.now() + budgetMs;
+    const timeout = () => controller.abort(new Error("Archive operation timed out before it could be confirmed."));
+    const timer = setTimeout(timeout, budgetMs);
+    const signal = request?.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal;
+    const options = { signal };
+    const checkDeadline = () => {
+      if (Date.now() >= deadline) timeout();
+      signal.throwIfAborted();
+    };
+    let rejectAborted: () => void = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = () => reject(signal.reason);
+      signal.addEventListener("abort", rejectAborted, { once: true });
+    });
+    void aborted.catch(() => {});
+    const bounded = async <T,>(operation: Promise<T>): Promise<T> => {
+      const result = await Promise.race([operation, aborted]);
+      checkDeadline();
+      return result;
+    };
     const scopes = (id: string) => [...new Set([workspace.id, endpoint.workspaceId])].map(workspaceId =>
       composerAutoSendScopeKey({ draftScope, opencodeBaseUrl: baseUrl, workspaceId, sessionId: id }));
     const localWork = (id: string) => getComposerQueuedDrafts(useComposerStateStore.getState(), id).length > 0
@@ -144,26 +210,14 @@ export function useSessionArchive(input: {
         timeoutMs: Math.max(1, deadline - Date.now()),
         admissionUnknown: phase.kind === "admission_unknown",
         admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
-        onStopped: () => dispatchQueuedDrain(id, { type: "stop_confirmed" }),
+        onStopped: () => { if (!signal.aborted) dispatchQueuedDrain(id, { type: "stop_confirmed" }); },
       });
     };
     let archived = false;
+    let patchDispatched = false;
     try {
-      if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-      const readTree = async () => {
-        const root = unwrap(await client.session.get({ sessionID: sessionId, directory: workspace.path }, options));
-        if (root.id !== sessionId || root.directory !== workspace.path) throw new Error("Could not verify the conversation's workspace.");
-        const ids = [sessionId];
-        for (let index = 0; index < ids.length; index += 1) {
-          const children = unwrap(await client.session.children({ sessionID: ids[index], directory: workspace.path }, options));
-          for (const child of children) {
-            if (child.parentID !== ids[index] || child.directory !== workspace.path) throw new Error("Could not verify a subtask's owner.");
-            if (!ids.includes(child.id)) ids.push(child.id);
-            if (ids.length > 256) throw new Error("Too many subtasks to verify safely.");
-          }
-        }
-        return ids;
-      };
+      checkDeadline();
+      const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;
@@ -174,22 +228,28 @@ export function useSessionArchive(input: {
         rootStop = stop(sessionId);
         void rootStop.catch(() => {});
       }
-      const ids = await readTree();
+      const ids = await bounded(readTree());
+      // The requester is running by construction (it is issuing this call), so
+      // archiving itself or an ancestor would stop its own turn mid-conclusion.
+      if (!confirmed && request?.refuseWorking && target.requestedBy && ids.includes(target.requestedBy.sessionId)) {
+        closeDialog(refusal("self_archive_while_working"));
+        return;
+      }
       const readWorking = async () => {
-        const [permissions, questions] = await Promise.all([
+        const [permissions, questions] = await bounded(Promise.all([
           client.permission.list({ directory: workspace.path }, options).then(unwrap),
           client.question.list({ directory: workspace.path }, options).then(unwrap),
-        ]);
-        const observations = await Promise.all(ids.map(async id => {
-          const [messages, permissionV2] = await Promise.all([
+        ]));
+        const observations = await bounded(Promise.all(ids.map(async id => {
+          const [messages, permissionV2] = await bounded(Promise.all([
             client.session.messages({ sessionID: id, directory: workspace.path }, options).then(unwrap),
             client.v2.session.permission.list({ sessionID: id }, options),
-          ]);
-          if (permissionV2.error && permissionV2.response.status !== 404) unwrap(permissionV2);
+          ]));
+          if (permissionV2.error && permissionV2.response?.status !== 404) unwrap(permissionV2);
           return { id, messages, permissionV2: !permissionV2.error && unwrap(permissionV2).data.length > 0 };
-        }));
+        })));
         const observedAt = Date.now();
-        const statuses = unwrap(await client.session.status({ directory: workspace.path }, options));
+        const statuses = unwrap(await bounded(client.session.status({ directory: workspace.path }, options)));
         return observations.filter(({ id, messages, permissionV2 }) => {
           const idle = !statuses[id] || statuses[id].type === "idle";
           const phase = getQueuedDrainState(id).phase;
@@ -199,42 +259,45 @@ export function useSessionArchive(input: {
           }
           if (idle) dispatchQueuedDrain(id, { type: "idle_reconciled", observedAt, terminalObserved });
           else dispatchQueuedDrain(id, { type: "busy_observed" });
-          return !idle || permissionV2 || permissions.some(request => request.sessionID === id)
-            || questions.some(request => request.sessionID === id) || localWork(id)
+          // A request whose tool call already ended was abandoned by the engine
+          // without a rejection; nobody can answer it, so it is not open work.
+          const terminal = terminalToolCallIds(messages);
+          const unanswered = (request: { sessionID: string; tool?: { messageID: string; callID: string } }) =>
+            request.sessionID === id && !isOrphanedInteraction(request.tool, terminal);
+          return !idle || permissionV2 || permissions.some(unanswered) || questions.some(unanswered) || localWork(id)
             || sessionHasPendingSubmission(baseUrl, id, messages) || sessionNeedsStop(baseUrl, id)
             || hasPendingQueuedAdmission(getQueuedDrainState(id))
             || [workspace.id, endpoint.workspaceId].some(workspaceId =>
               useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[id]?.compacting);
         });
       };
-      if (!confirmed && (await readWorking()).length > 0) {
-        if (mounted.current) setTarget(target);
-        else closeDialog(false);
+      if (!confirmed && (await bounded(readWorking())).length > 0) {
+        askUser();
         return;
       }
       for (const id of ids) hold(id);
       if (!confirmed && ids.some(id => localWork(id) || sessionHasPendingSubmission(baseUrl, id)
         || getQueuedDrainState(id).phase.kind === "sending")) {
-        if (mounted.current) setTarget(target);
-        else closeDialog(false);
+        askUser();
         return;
       }
       if (confirmed) {
         for (const id of ids) if (id !== sessionId) cancelLocal(id);
-        const working = await readWorking();
-        await Promise.all([rootStop, ...working.filter(({ id }) => id !== sessionId).map(({ id }) => stop(id))]);
+        const working = await bounded(readWorking());
+        await bounded(Promise.all([rootStop, ...working.filter(({ id }) => id !== sessionId).map(({ id }) => stop(id))]));
       }
-      const remaining = await readWorking();
+      const remaining = await bounded(readWorking());
       if (remaining.length) {
-        if (!confirmed) { if (mounted.current) setTarget(target); else closeDialog(false); return; }
+        if (!confirmed) { askUser(); return; }
         throw new Error("A task, approval, or message acceptance is still unresolved. Retry Stop when it can be verified.");
       }
-      if ((await readTree()).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
-      controller.signal.throwIfAborted();
+      if ((await bounded(readTree())).some(id => !ids.includes(id))) throw new Error("A new subtask appeared. Try again to include it.");
+      checkDeadline();
       for (const id of ids) cancelLocal(id);
-      await setSessionArchived(client, sessionId, true, workspace.path);
+      checkDeadline();
+      patchDispatched = true;
+      await bounded(setSessionArchived(client, sessionId, true, workspace.path, options));
       archived = true;
-      await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true)));
       if (mounted.current) current.current.input.onArchivedChange(workspace.id, sessionId, true);
       for (const id of ids) clearQueuedSendContext(id);
       if (readLastSessionFor(workspace.id) === sessionId) writeLastSessionFor(workspace.id, null);
@@ -244,51 +307,92 @@ export function useSessionArchive(input: {
       const undo = navigated ? { workspaceId: workspace.id, sessionId, fromKey: route.location.key, landingKey: null } : null;
       if (undo) undoNavigation.current = undo;
       if (navigated) route.input.navigateToWorkspaceSession(workspace.id, null, { replace: true });
-      closeDialog(true);
+      await bounded(Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, true))));
+      closeDialog(settle("done"));
       showUndo(target, true, undo);
-      if (mounted.current) await current.current.input.reloadWorkspaceSessions(workspace.id);
+      if (mounted.current) await bounded(current.current.input.reloadWorkspaceSessions(workspace.id));
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (mounted.current && confirmed && !archived) setError(`The session has not been archived. ${message}`);
-      else {
-        toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
-        closeDialog(archived);
+      const cause = error instanceof Error ? error.message : String(error);
+      const message = patchDispatched && !archived
+        ? `Archive outcome is unknown. The request may have been applied; check the session before retrying. ${cause}`
+        : cause;
+      const outcome: ArchiveSessionOutcome = archived ? settle("done") : {
+        kind: patchDispatched ? "archive_outcome_unknown" : "verification_failed", message,
+      };
+      if (mounted.current && confirmed && !archived) {
+        setError(patchDispatched ? message : `The session has not been archived. ${message}`);
+        pending.current?.(outcome);
+        pending.current = null;
+      } else {
+        if (mounted.current) toast.error(archived ? "Could not refresh sessions" : t("session_management.archive_failed"), { description: message });
+        closeDialog(outcome);
       }
     } finally {
       clearTimeout(timer);
+      signal.removeEventListener("abort", rejectAborted);
       controller.abort();
+      activeController.current = null;
       for (const release of releases.values()) release();
       busy.current = false;
       if (mounted.current) setStopping(false);
     }
   }
 
-  async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
-    if (busy.current || pending.current) return false;
-    const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
-    const endpoint = workspace && input.endpointForWorkspace(workspace);
-    if (!workspace || !endpoint || isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) {
-      toast.error(endpoint && isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : "The session's workspace is not connected.");
-      return false;
+  function sessionTitle(sessionId: string): string | null {
+    for (const workspace of input.workspaces) {
+      const session = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId);
+      if (session) return session.title?.trim() || t("session.default_title");
     }
-    const target = { workspace, endpoint, sessionId, draftScope: input.draftScope };
-    if (!archived) return restore(target, true);
-    return new Promise<boolean>(resolve => {
+    return null;
+  }
+
+  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions, workspaceId?: string): ArchiveTarget | { error: string } {
+    const workspace = input.workspaces.find(workspace => (!workspaceId || workspace.id === workspaceId)
+      && input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
+    if (!workspace) return { error: "Session was not found in the current session list" };
+    const endpoint = input.endpointForSessionWorkspace(workspace);
+    if (!endpoint) return { error: "The session's workspace is not connected." };
+    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
+    const requester = options?.requester?.sessionId.trim();
+    const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
+    return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
+  }
+
+  // Explicit UI owner; the agent's existing archiveSession contract stays unchanged.
+  function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean): Promise<ArchiveSessionOutcome> {
+    if (!workspaceId) return Promise.resolve({ kind: "verification_failed", message: "The session's workspace is missing." });
+    return archiveOwnedSession(sessionId, archived, undefined, workspaceId);
+  }
+
+  function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+    return archiveOwnedSession(sessionId, archived, options);
+  }
+
+  async function archiveOwnedSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions, workspaceId?: string): Promise<ArchiveSessionOutcome> {
+    if (busy.current || pending.current) return settle("cancelled");
+    const target = resolveTarget(sessionId, options, workspaceId);
+    if ("error" in target) {
+      toast.error(target.error);
+      return { kind: "verification_failed", message: target.error };
+    }
+    if (!archived) return settle((await restore(target, true)) ? "done" : "cancelled");
+    return new Promise<ArchiveSessionOutcome>(resolve => {
       pending.current = resolve;
-      void archive(target, false);
+      void archive(target, false, options);
     });
   }
 
   return {
     archiveSession,
+    archiveSessionInWorkspace,
     archiveDialog: (
-      <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(false); }}>
-        <AlertDialogContent>
+      <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
+        <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("session_management.archive_working_title")}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t("session_management.archive_working_description")}
-            </AlertDialogDescription>
+            <AlertDialogTitle className="min-w-0 max-w-full [overflow-wrap:anywhere]">
+              {target ? t("session_management.archive_working_title", { title: target.title }) : null}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t("session_management.archive_working_description")}</AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
           <AlertDialogFooter>

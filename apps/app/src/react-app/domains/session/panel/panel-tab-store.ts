@@ -1,3 +1,5 @@
+import type { DynamicToolUIPart } from "ai";
+import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -5,7 +7,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser" | "app";
+export type PanelTabType = "artifact" | "browser" | "app" | "mcp-app" | "remote-thread" | "side-chat";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -20,7 +22,15 @@ export type ArtifactPanelTab = {
 
 export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab;
+export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; updating?: boolean; part: DynamicToolUIPart; origin: McpAppOrigin };
+
+/** A task running on another computer, opened from its row in the chat. */
+export type RemoteThreadPanelTab = { id: string; type: "remote-thread"; label: string; threadKey: string; owner: { workspaceId: string; sessionId: string } };
+
+export const SIDE_CHAT_TAB_ID = "side-chat";
+export type SideChatPanelTab = { id: typeof SIDE_CHAT_TAB_ID; type: "side-chat"; label: string };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab | RemoteThreadPanelTab | SideChatPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -46,13 +56,9 @@ export type PanelTabStore = {
   transcriptArtifactTargets: Record<string, OpenTarget[]>;
   openTab: (sessionId: string, tab: PanelTab) => void;
   closeTab: (sessionId: string, tabId: string) => void;
-  selectTab: (sessionId: string, tabId: string) => void;
+  selectTab: (sessionId: string, tabId: string | null) => void;
   reorderTabs: (sessionId: string, tabIds: string[]) => void;
   syncBrowserTabs: (sessionId: string, browserTabs: BrowserPanelTab[], activeBrowserTabId: string | null) => void;
-  syncArtifactTargets: (
-    sessionId: string,
-    targets: Array<{ id: string; name: string; preview: OpenTargetPreview }>,
-  ) => void;
   syncTranscriptArtifacts: (sessionId: string, targets: OpenTarget[]) => void;
   clearSession: (sessionId: string) => void;
 };
@@ -107,7 +113,7 @@ function reconcileOpenArtifactTabs(
 
   return {
     tabs,
-    activeTabId: resolveActiveTabId(tabs, session.activeTabId),
+    activeTabId: session.activeTabId === null ? null : resolveActiveTabId(tabs, session.activeTabId),
   };
 }
 
@@ -146,6 +152,18 @@ function isSameTab(left: PanelTab, right: PanelTab) {
     );
   }
 
+  if (left.type === "mcp-app" && right.type === "mcp-app") {
+    return left.label === right.label && left.part === right.part && left.origin === right.origin;
+  }
+
+  if (left.type === "side-chat" && right.type === "side-chat") {
+    return left.label === right.label;
+  }
+
+  if (left.type === "remote-thread" && right.type === "remote-thread") {
+    return left.label === right.label && left.threadKey === right.threadKey;
+  }
+
   if (left.type === "app" && right.type === "app") {
     return left.label === right.label && left.appId === right.appId && left.revisionId === right.revisionId && left.receiptId === right.receiptId;
   }
@@ -160,9 +178,9 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.canGoBack === right.canGoBack &&
       left.canGoForward === right.canGoForward &&
       left.ownerSessionId === right.ownerSessionId &&
-      JSON.stringify(left.browserApproval) === JSON.stringify(right.browserApproval) &&
       JSON.stringify(left.loadError) === JSON.stringify(right.loadError) &&
       JSON.stringify(left.browserTask) === JSON.stringify(right.browserTask) &&
+      JSON.stringify(left.agentViewport) === JSON.stringify(right.agentViewport) &&
       left.siteToolCount === right.siteToolCount &&
       JSON.stringify(left.siteTools) === JSON.stringify(right.siteTools) &&
       JSON.stringify(left.siteToolActivity) === JSON.stringify(right.siteToolActivity)
@@ -216,7 +234,7 @@ function mergePersistedSessions(
 
     sessions[sessionId] = {
       tabs,
-      activeTabId: resolveActiveTabId(tabs, session.activeTabId),
+      activeTabId: session.activeTabId === null ? null : resolveActiveTabId(tabs, session.activeTabId),
     };
   }
 
@@ -266,7 +284,7 @@ export const usePanelTabStore = create<PanelTabStore>()(
       }),
       selectTab: (sessionId, tabId) => set((state) => {
         const session = getWritableSession(state, sessionId);
-        if (!session.tabs.some((tab) => tab.id === tabId)) {
+        if (tabId !== null && !session.tabs.some((tab) => tab.id === tabId)) {
           return state;
         }
 
@@ -319,12 +337,14 @@ export const usePanelTabStore = create<PanelTabStore>()(
         }
 
         const currentActiveTab = session.tabs.find((tab) => tab.id === session.activeTabId);
+        // A null selection with retained tabs is the Files empty state, not
+        // permission for background browser updates to take over the panel.
         const shouldSyncActiveFromElectron =
-          !session.activeTabId || currentActiveTab?.type === "browser";
+          session.tabs.length === 0 || currentActiveTab?.type === "browser";
 
         const activeTabId = shouldSyncActiveFromElectron
           ? resolveActiveTabId(mergedTabs, activeBrowserTabId)
-          : resolveActiveTabId(mergedTabs, session.activeTabId);
+          : session.activeTabId === null ? null : resolveActiveTabId(mergedTabs, session.activeTabId);
 
         if (isSameSessionPanelState(session, mergedTabs, activeTabId)) {
           return state;
@@ -334,16 +354,6 @@ export const usePanelTabStore = create<PanelTabStore>()(
           tabs: mergedTabs,
           activeTabId,
         });
-      }),
-      syncArtifactTargets: (sessionId, targets) => set((state) => {
-        const session = getWritableSession(state, sessionId);
-        const nextSession = reconcileOpenArtifactTabs(session, targets);
-
-        if (isSameSessionPanelState(session, nextSession.tabs, nextSession.activeTabId)) {
-          return state;
-        }
-
-        return updateSession(state, sessionId, nextSession);
       }),
       syncTranscriptArtifacts: (sessionId, targets) => set((state) => {
         const currentTranscript = state.transcriptArtifactTargets[sessionId] ?? [];
@@ -413,7 +423,7 @@ export const usePanelTabStore = create<PanelTabStore>()(
               sessionId,
               {
                 tabs,
-                activeTabId: resolveActiveTabId(tabs, session.activeTabId),
+                activeTabId: session.activeTabId === null ? null : resolveActiveTabId(tabs, session.activeTabId),
               },
             ];
           }),
@@ -432,6 +442,6 @@ export function useActivePanelTab(sessionId: string): PanelTab | null {
   return usePanelTabStore((state) => {
     const session = state.sessions[sessionId] ?? EMPTY_SESSION;
 
-    return session.tabs.find((tab) => tab.id === session.activeTabId) ?? session.tabs[0] ?? null;
+    return session.tabs.find((tab) => tab.id === session.activeTabId) ?? null;
   });
 }

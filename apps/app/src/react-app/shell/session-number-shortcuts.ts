@@ -165,6 +165,61 @@ export function isSessionNumberModifierPressed(
   return os === "macos" ? event.metaKey : event.ctrlKey;
 }
 
+// Holding the modifier only reveals the hints after this delay, so quick
+// presses for other shortcuts (Cmd+K, Cmd+T, ...) never flash them.
+export const SESSION_NUMBER_HINT_REVEAL_DELAY_MS = 300;
+// Matches the `duration-1000` fade on the sidebar badge.
+export const SESSION_NUMBER_HINT_FADE_IN_MS = 1000;
+
+type SessionNumberHintTimers = {
+  set: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clear: (handle: ReturnType<typeof setTimeout>) => void;
+};
+
+const defaultSessionNumberHintTimers: SessionNumberHintTimers = {
+  set: (callback, delayMs) => setTimeout(callback, delayMs),
+  clear: (handle) => clearTimeout(handle),
+};
+
+export type SessionNumberHintReveal = {
+  /** The modifier is (still) held: start the reveal timer if it is not running. */
+  hold: () => void;
+  /** The modifier was released or the window lost focus: cancel and hide at once. */
+  release: () => void;
+  isVisible: () => boolean;
+};
+
+export function createSessionNumberHintReveal(options: {
+  onChange: (visible: boolean) => void;
+  delayMs?: number;
+  timers?: SessionNumberHintTimers;
+}): SessionNumberHintReveal {
+  const delayMs = options.delayMs ?? SESSION_NUMBER_HINT_REVEAL_DELAY_MS;
+  const timers = options.timers ?? defaultSessionNumberHintTimers;
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  let visible = false;
+  return {
+    hold() {
+      if (visible || pending !== null) return;
+      pending = timers.set(() => {
+        pending = null;
+        visible = true;
+        options.onChange(true);
+      }, delayMs);
+    },
+    release() {
+      if (pending !== null) {
+        timers.clear(pending);
+        pending = null;
+      }
+      if (!visible) return;
+      visible = false;
+      options.onChange(false);
+    },
+    isVisible: () => visible,
+  };
+}
+
 export function nextSessionNumberModifierHeld(
   transition: SessionNumberShortcutTransition,
 ) {

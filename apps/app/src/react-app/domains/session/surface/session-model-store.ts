@@ -1,12 +1,12 @@
 // Per-conversation model memory. Each session can pick its own model (and
 // reasoning variant) from the composer; the choice is remembered in
 // localStorage so returning to a conversation restores the model it last
-// used. Sessions without a remembered choice fall back to the global
-// default model preference.
+// used. Opening a session restores its engine-bound model when no local
+// choice exists; only sessions without either fall back to the global default.
 import { useMemo } from "react";
 import { create } from "zustand";
 
-import { formatGenericBehaviorLabel, getModelBehaviorSummary } from "@/app/lib/model-behavior";
+import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import type { ModelRef } from "@/app/types";
 
 type BehaviorOption = { value: string | null; label: string };
@@ -72,6 +72,8 @@ type SessionModelStore = {
   bySessionId: Record<string, SessionModelSelection>;
   /** Remember a session's model. No-op when the model is unchanged. */
   setModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
+  /** Adopt the engine's model only if no local choice has been remembered. */
+  restoreModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
   setVariant: (sessionId: string, variant: string | null) => void;
 };
 
@@ -85,6 +87,14 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
     if (sameModel) return state;
     const { [sessionId]: _replaced, ...rest } = state.bySessionId;
     const bySessionId = capSelections({ ...rest, [sessionId]: { model, variant } });
+    writeStoredSelections(bySessionId);
+    return { bySessionId };
+  }),
+  restoreModel: (sessionId, model, variant = null) => set((state) => {
+    // Check at write time: a delayed history read must not replace a picker
+    // choice made while the session was opening (including effort-only edits).
+    if (state.bySessionId[sessionId]) return state;
+    const bySessionId = capSelections({ ...state.bySessionId, [sessionId]: { model, variant } });
     writeStoredSelections(bySessionId);
     return { bySessionId };
   }),
@@ -158,15 +168,13 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
       };
     }
     const providerModel = providerCatalog?.[selection.model.providerID]?.[selection.model.modelID];
-    const summary = providerModel
-      ? getModelBehaviorSummary(selection.model.providerID, providerModel, selection.variant)
-      : null;
+    const summary = getModelBehaviorSummary(selection.model.providerID, providerModel, selection.variant);
     return {
       selectedModel: selection.model,
       modelLabel: providerModel?.name || resolveModelDisplayName(selection.model.modelID),
-      modelVariant: summary ? summary.value : selection.variant,
-      modelVariantLabel: summary?.label ?? formatGenericBehaviorLabel(selection.variant),
-      modelBehaviorOptions: summary?.options ?? [],
+      modelVariant: summary.value,
+      modelVariantLabel: summary.label,
+      modelBehaviorOptions: summary.options,
       hasSessionOverride: true,
       setModel,
       setVariant: (value: string | null) => useSessionModelStore.getState().setVariant(sessionId, value),

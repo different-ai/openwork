@@ -1,0 +1,72 @@
+name: Evidence review candidate checks
+
+# Not on PRs (only the quick check runs there): dev pushes that change the
+# review app, evidence tooling or its workflows, and manual runs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - apps/review/**
+      - packages/review/**
+      - evals/packages/test-artifacts/**
+      - evals/packages/test-evidence/**
+      - evals/scripts/publish-review*.mjs
+      - evals/scripts/pr-proof*.mjs
+      - evals/worlds/*review*.ts
+      - .github/scripts/pr-proof*.mjs
+      - .github/scripts/internal-proof-contributor*.mjs
+      - .github/scripts/evidence-association.mjs
+      - .github/scripts/evidence-presentation*.mjs
+      - .github/scripts/evidence-preview-card*.mjs
+      - .github/actions/setup-browser/**
+      - .github/workflows/evidence-review*.yml
+      - .github/workflows/pr-proof.yml
+      - .github/workflows/ci-tests.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-review-checks-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-browser:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - uses: ./.github/actions/setup-browser
+      - name: Verify browser-only setup leaves OAuth handoff disabled
+        shell: bash
+        run: |
+          "$CHROME_BIN" --version
+          test -z "${BROWSER:-}"
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+  check-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - uses: pnpm/action-setup@v4
+      - run: |
+          pnpm --filter @openwork/review-app... --filter @openwork/world... --filter @openwork/types... install --frozen-lockfile --ignore-scripts
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+      - run: node --test evals/scripts/publish-review.test.mjs
+      - name: Build the review app
+        run: pnpm --filter @openwork/review-app build

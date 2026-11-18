@@ -2,40 +2,49 @@
 import { useEffect } from "react"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+  REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+  REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
 } from "@openwork/types/automations"
 import type {
   AutomationDesktopRunnerCapability,
   AutomationDesktopRunnerRegistration,
 } from "@openwork/types/automations"
+import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 
-import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
+import { createDenClient, DenApiError, isDenSessionRevokedError, readDenSettings } from "@/app/lib/den"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
+import { observeDesktopAutomationLifecycle } from "@/app/lib/analytics"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import { useAutomationDeploymentEnabled } from "./automation-availability"
+import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
+import {
+  denSignInKey,
+  markThisComputerConnected,
+  markThisComputerDisconnected,
+  thisComputerStillDisconnected,
+} from "@/react-app/domains/devices/computer-connection-store"
+import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
+import { desktopRunnerId, organizationRunnerId } from "./automation-runner-identity"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
-const RUNNER_ID_KEY = "openwork.automations.desktop-runner-id"
-
-function desktopRunnerId() {
-  const existing = localStorage.getItem(RUNNER_ID_KEY)?.trim()
-  if (existing) return existing
-  const created = crypto.randomUUID()
-  localStorage.setItem(RUNNER_ID_KEY, created)
-  return created
-}
-
-function resetDesktopRunnerId() {
-  localStorage.removeItem(RUNNER_ID_KEY)
-  return desktopRunnerId()
-}
+/** A disconnected computer asks Den again this often. A new sign-in asks at once. */
+const RUNNER_DISCONNECTED_RETRY_MS = 5 * 60_000
 
 /** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
 export function AutomationRunnerBridge() {
-  const { status } = useDenAuth()
-  const deploymentEnabled = useAutomationDeploymentEnabled()
+  if (useEnterpriseActivationRequired()) return null
+  return <ActivatedAutomationRunnerBridge />
+}
+
+function ActivatedAutomationRunnerBridge() {
+  const { status, refresh } = useDenAuth()
+  const deploymentEnabled = useDesktopAutomationsEnabled()
 
   useEffect(() => {
     if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return
@@ -44,8 +53,9 @@ export function AutomationRunnerBridge() {
       .catch(() => undefined)
     const coordinator = createAutomationRunnerConnectCoordinator({
       refreshMs: RUNNER_TOKEN_REFRESH_MS,
+      disconnectedRetryMs: RUNNER_DISCONNECTED_RETRY_MS,
       connect: async (isCurrent) => {
-        if (!deploymentEnabled || status !== "signed_in") {
+        if (status !== "signed_in") {
           await disconnect()
           return
         }
@@ -56,6 +66,7 @@ export function AutomationRunnerBridge() {
           await disconnect()
           return
         }
+        const signIn = denSignInKey(settings)
         try {
           const client = createDenClient({ baseUrl: settings.baseUrl, token: authToken })
           let runnerId = desktopRunnerId()
@@ -63,6 +74,7 @@ export function AutomationRunnerBridge() {
           if (!isCurrent()) return
           const agent = navigator.userAgent
           const platform = /Mac/i.test(agent) ? "darwin" : /Win/i.test(agent) ? "win32" : "linux"
+          const mintToken = deploymentEnabled ? client.mintAutomationRunnerToken : client.mintSessionRunnerToken
           const mintRunner = async (id: string) => {
             const registration = (
               capabilities: AutomationDesktopRunnerCapability[],
@@ -75,64 +87,143 @@ export function AutomationRunnerBridge() {
               platform,
               concurrency: 1,
             })
-            try {
-              return await client.mintAutomationRunnerToken(organizationId, registration([
+            // Older/self-hosted Den versions reject capabilities they do not
+            // know with a 400. Step down one capability set at a time so
+            // Automation delivery keeps working until that server upgrades.
+            const recoveryCapabilities: AutomationDesktopRunnerCapability[] = [
+              AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+              REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+              REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+            ]
+            // Den sends answer requests only to runners that say they take them,
+            // lets other devices open sessions started here only on runners
+            // that honour the owner's session access choice, and under an
+            // organization's opt-in allows only runners whose owner can choose.
+            // Released Dens take fewer capabilities, so every set they accept
+            // today follows, in the order they were introduced.
+            const answerCapabilities: AutomationDesktopRunnerCapability[] = [
+              ...recoveryCapabilities,
+              REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
+            ]
+            const sessionOnlyCapabilities: AutomationDesktopRunnerCapability[] = [
+              REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+              REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
+              REMOTE_SESSION_ONLY_RUNNER_CAPABILITY,
+            ]
+            const capabilitySets: AutomationDesktopRunnerCapability[][] = deploymentEnabled ? [
+              [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
+              [...answerCapabilities, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
+              answerCapabilities,
+              recoveryCapabilities,
+              [
                 AUTOMATION_MODEL_ATTENTION_CAPABILITY,
                 REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-              ]))
-            } catch (error) {
-              // Older/self-hosted Den versions accept at most the original
-              // capability. Preserve existing Automation delivery until that
-              // server upgrades; it will not advertise remote-session presence.
-              if (!(error instanceof DenApiError) || error.status !== 400) throw error
-              return client.mintAutomationRunnerToken(
-                organizationId,
-                registration([AUTOMATION_MODEL_ATTENTION_CAPABILITY]),
-              )
+                REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              ],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+            ] : [
+              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY],
+              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY, REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY],
+              [...sessionOnlyCapabilities, REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY],
+              sessionOnlyCapabilities,
+            ]
+            for (const [index, capabilities] of capabilitySets.entries()) {
+              try {
+                return await mintToken(organizationId, registration(capabilities))
+              } catch (error) {
+                const last = index === capabilitySets.length - 1
+                if (last || !(error instanceof DenApiError) || error.status !== 400) throw error
+              }
             }
+            throw new Error("automation_runner_registration_unreachable")
           }
           let runner: Awaited<ReturnType<typeof client.mintAutomationRunnerToken>>
           try {
             runner = await mintRunner(runnerId)
           } catch (error) {
+            // An older Den answers 404 for remote session targets when that
+            // organization never had them turned on (or the route predates
+            // them). Nothing to connect: wait for the next refresh quietly
+            // instead of retrying every few seconds.
+            if (!deploymentEnabled && error instanceof DenApiError && error.status === 404) {
+              if (!isCurrent()) return
+              await disconnect()
+              return
+            }
             if (!(error instanceof DenApiError) || error.status !== 409 || error.code !== "automation_runner_identity_conflict") {
               throw error
             }
             if (!isCurrent()) return
-            runnerId = resetDesktopRunnerId()
+            // Only a Den from before runner rows were scoped refuses an install
+            // already registered in another organization. Use an id derived
+            // for this organization rather than replacing the install's id,
+            // which left a stale runner behind on every switch.
+            runnerId = organizationRunnerId(runnerId, organizationId)
             runner = await mintRunner(runnerId)
           }
           if (!isCurrent()) return
+          markThisComputerConnected()
           await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("automationRunnerConfigure", {
             baseUrl: client.baseUrls.apiBaseUrl,
             token: runner.token,
             runnerId,
           })
         } catch (error) {
-          if (isCurrent()) console.warn("[automation-runner] registration failed", error)
+          if (!isCurrent()) throw error
+          // This computer was disconnected from the organization. Only a new
+          // sign-in reconnects it, so asking again right away cannot help.
+          if (error instanceof DenApiError && error.status === 403 && error.code === COMPUTER_DISCONNECTED_ERROR) {
+            markThisComputerDisconnected(signIn)
+            await disconnect()
+            return "disconnected"
+          }
+          // The sign-in itself was refused: check it, which signs out when it
+          // is gone, instead of minting against it again.
+          if (isDenSessionRevokedError(error)) {
+            void refresh()
+            return
+          }
+          console.warn("[automation-runner] registration failed", error)
           throw error
         }
       },
     })
 
     const requestConnect = () => void coordinator.request().catch(() => undefined)
-    const handleSettingsChanged = () => requestConnect()
+    // While Den refuses this computer, only a different sign-in is worth an attempt before the long interval.
+    const handleSettingsChanged = () => { if (!thisComputerStillDisconnected()) requestConnect() }
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged)
     // Rejoining a network mints a fresh credential immediately instead of
     // leaving this desktop unreachable until the next refresh, which is long
     // enough for a scheduled occurrence to come due and be missed.
     window.addEventListener("online", handleSettingsChanged)
     const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
-      ?.onCredentialRejected?.(() => coordinator.credentialRejected())
-    requestConnect()
+      ?.onCredentialRejected?.((rejection) => {
+        if (rejection?.reason !== COMPUTER_DISCONNECTED_ERROR) {
+          coordinator.credentialRejected()
+          return
+        }
+        markThisComputerDisconnected(denSignInKey(readDenSettings()))
+        coordinator.computerDisconnected()
+        // A disconnect usually ends this sign-in too: find out now, not at the next request.
+        void refresh()
+      })
+    const unsubscribeRunLifecycle = window.__OPENWORK_ELECTRON__.automationRunner
+      ?.onRunLifecycle?.(observeDesktopAutomationLifecycle)
+    if (thisComputerStillDisconnected()) coordinator.computerDisconnected()
+    else requestConnect()
     return () => {
       coordinator.dispose()
       unsubscribeCredentialRejected?.()
+      unsubscribeRunLifecycle?.()
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged)
       window.removeEventListener("online", handleSettingsChanged)
       void disconnect()
     }
-  }, [deploymentEnabled, status])
+  }, [deploymentEnabled, refresh, status])
 
   return null
 }

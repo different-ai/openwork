@@ -18,6 +18,8 @@ export interface EngineSessionProbePart {
   status: string;
   input: Record<string, unknown>;
   output: string;
+  /** Why a tool call failed, as the engine recorded it. */
+  error: string;
 }
 
 export interface EngineSessionProbeMessage {
@@ -37,7 +39,7 @@ export interface EngineSessionProbeResult<T> {
 }
 
 interface ProbeRequestOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   body?: unknown;
   timeoutMs?: number;
 }
@@ -109,6 +111,14 @@ function partValues(value: Record<string, unknown>): unknown[] {
   return text === undefined ? [] : [{ type: "text", text }];
 }
 
+/** A v2 tool result: the text parts of its content, else its result, as the app's v2 adapter shows it. */
+function v2ToolOutput(state: Record<string, unknown>): string {
+  const content = Array.isArray(state.content) ? state.content : [];
+  const text = content.flatMap((item) => isRecord(item) && readString(item, "type") === "text" ? [readString(item, "text") ?? ""] : []);
+  if (text.length > 0) return text.join("\n");
+  return typeof state.result === "string" ? state.result : "";
+}
+
 function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSessionProbePart | null {
   if (!isRecord(value)) return null;
   const state = readRecord(value, "state") ?? {};
@@ -122,7 +132,8 @@ function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSess
       : readString(value, "callID") ?? readString(value, "callId") ?? readString(value, "toolCallId") ?? "",
     status: readString(state, "status") ?? "",
     input: readRecord(state, "input") ?? readRecord(value, "input") ?? {},
-    output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output") ?? "",
+    output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output") ?? v2ToolOutput(state),
+    error: readString(state, "error") ?? readString(readRecord(state, "error") ?? {}, "message") ?? "",
   };
 }
 
@@ -136,6 +147,15 @@ function parseMessage(value: unknown, engine: EngineSessionProbeEngine): EngineS
       return parsed ? [parsed] : [];
     }),
   };
+}
+
+/** Oldest first on both engines: a native v2 page comes newest first, so it is reversed as in the app's v2 adapter. */
+function parseMessages(body: unknown, engine: EngineSessionProbeEngine): EngineSessionProbeMessage[] {
+  const messages = responseItems(body).flatMap((message) => {
+    const item = parseMessage(message, engine);
+    return item ? [item] : [];
+  });
+  return isRecord(body) && "cursor" in body ? messages.toReversed() : messages;
 }
 
 function parseTransportResult(value: unknown): ProbeTransportResult {
@@ -164,15 +184,24 @@ async function requestFromSurface(
     throw new Error(`Could not serialize engine session probe body for ${path}`);
   }
   const value = await evalIn(surface, browserScript(async (path, value, inputValue, inputValue2) => {
+    // Desktop: the bridge reports the embedded server. App in a browser:
+    // the app keeps the same address and token in localStorage.
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
-    const baseUrl = String(info.baseUrl);
+    let baseUrl = info?.running && info.baseUrl ? String(info.baseUrl) : "";
+    let token = baseUrl ? String(info?.ownerToken ?? info?.clientToken ?? "") : "";
+    if (!baseUrl) {
+      const override = (localStorage.getItem("openwork.server.urlOverride") ?? "").trim();
+      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+      baseUrl = override || (port ? "http://127.0.0.1:" + port : "");
+      token = (localStorage.getItem("openwork.server.token") ?? "").trim();
+    }
+    if (!baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
     let end = baseUrl.length;
     while (end > 0 && baseUrl[end - 1] === "/") end -= 1;
     const response = await fetch(baseUrl.slice(0, end) + path, {
       method: value,
       headers: {
-        Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+        Authorization: "Bearer " + token,
         "Content-Type": "application/json",
       },
       body: inputValue,
@@ -247,11 +276,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
       options,
       `${mount}${sessionPath}/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
     );
-    const parsed = responseItems(response.body).flatMap((message) => {
-      const item = parseMessage(message, options.engine);
-      return item ? [item] : [];
-    });
-    return result(response, parsed);
+    return result(response, parseMessages(response.body, options.engine));
   };
 
   const snapshot = async (sessionId: string): Promise<EngineSessionProbeResult<EngineSessionProbeSnapshot>> => {
@@ -270,10 +295,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
     const messagesResponse = responses[1];
     if (!sessionResponse || !messagesResponse) throw new Error("Engine session snapshot responses were incomplete.");
     const session = parseSession(sessionResponse.body);
-    const parsedMessages = responseItems(messagesResponse.body).flatMap((message) => {
-      const item = parseMessage(message, options.engine);
-      return item ? [item] : [];
-    });
+    const parsedMessages = parseMessages(messagesResponse.body, options.engine);
     const failed = responses.find((response) => response.status < 200 || response.status >= 300);
     const snapshotResponse = {
       status: failed?.status ?? sessionResponse.status,
@@ -306,8 +328,8 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
     }
     const renamedResponse = await request(
       options,
-      `${mount}${sessionPath}/${encodeURIComponent(created.id)}/rename`,
-      { method: "POST", body: { title }, timeoutMs: 30_000 },
+      `${mount}${sessionPath}/${encodeURIComponent(created.id)}`,
+      { method: "PATCH", body: { title }, timeoutMs: 30_000 },
     );
     const renamed = parseSession(renamedResponse.body) ?? { id: created.id, title };
     return result(renamedResponse, renamed);

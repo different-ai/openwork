@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { db } from "../db.js"
 import { env } from "../env.js"
+import { parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,
@@ -326,7 +329,9 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
           // Most providers omit refresh_token on refresh responses; keep the existing one.
           refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
           tokenType: tokens.token_type ?? null,
-          scopes: tokens.scope ? tokens.scope.split(" ") : null,
+          ...(tokens.scope === undefined && !this.tokenExchangeCodeVerifier
+            ? {}
+            : { scopes: parseGrantedOAuthScopes(tokens.scope) }),
           expiresAt,
           pendingCodeVerifier: null,
         },
@@ -342,7 +347,9 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? this.connection.refreshToken ?? null,
       tokenType: tokens.token_type ?? null,
-      scope: tokens.scope ?? null,
+      ...(tokens.scope === undefined && !this.tokenExchangeCodeVerifier
+        ? {}
+        : { scope: tokens.scope ?? null }),
       expiresAt,
       ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
     })
@@ -353,7 +360,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     const refreshed = await getExternalMcpConnection({
       organizationId: this.connection.organizationId,
       connectionId: this.connection.id,
-    })
+    }, db.$primary)
     if (refreshed) this.connection = refreshed
     this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
   }
@@ -384,7 +391,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         const refreshed = await getExternalMcpConnection({
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
-        })
+        }, db.$primary)
         if (refreshed) this.connection = refreshed
       }
     }
@@ -460,7 +467,13 @@ function buildTransport(
   const provider = connection.authType === "oauth"
     ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
     : undefined
-  const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
+  // Administrator request headers go on the innermost fetch, and only to the
+  // MCP URL itself, so OAuth servers, diagnostics and inspection never see them.
+  const guardedFetch = withExternalMcpRequestHeaders(
+    env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch(),
+    connection.url,
+    parseStoredExternalMcpRequestHeaders(connection.requestHeaders),
+  )
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch
@@ -473,7 +486,7 @@ function buildTransport(
     // time. Hosted-deployment protection; self-hosted/dev opt out via env.
     fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
-      ? { headers: { authorization: `Bearer ${connection.apiKey}` } }
+      ? { headers: { authorization: `${connection.apiKeyAuthScheme === "token" ? "Token" : "Bearer"} ${connection.apiKey}` } }
       : undefined,
   })
   return { transport, provider, diagnostic }

@@ -39,7 +39,8 @@ export function iframeAllowsTools(allow, parentOrigin, childOrigin, sourceOrigin
     .map((value) => value.trim())
     .filter(Boolean);
   const directive = directives.find((value) => /^tools(?:\s|$)/i.test(value));
-  if (!directive) return false;
+  // Default same-origin access never overrides an explicit container directive.
+  if (!directive) return parentOrigin === childOrigin;
   const tokens = directive.split(/\s+/).slice(1).map((value) => value.replace(/^["']|["']$/g, ""));
   // `allow="tools"` is the standard shorthand for delegating to the frame's
   // source origin only. A frame that has since navigated elsewhere, or whose
@@ -161,16 +162,14 @@ export function createWebMcpFramePolicy(browserSession) {
       if (parentPolicy === false) {
         return { allowed: false, originKeyed: true, reason: "ancestor_permissions_policy" };
       }
-      if (parentOrigin !== candidateOrigin) {
-        const embedding = await readEmbeddingPolicy(parent, candidate);
-        if (!embedding || !iframeAllowsTools(
-          embedding.allow,
-          parentOrigin,
-          candidateOrigin,
-          serializedOrigin(embedding.sourceOrigin),
-        )) {
-          return { allowed: false, originKeyed: true, reason: "missing_iframe_delegation" };
-        }
+      const embedding = await readEmbeddingPolicy(parent, candidate);
+      if (!embedding || !iframeAllowsTools(
+        embedding.allow,
+        parentOrigin,
+        candidateOrigin,
+        serializedOrigin(embedding.sourceOrigin),
+      )) {
+        return { allowed: false, originKeyed: true, reason: "missing_iframe_delegation" };
       }
     }
 

@@ -1,3 +1,4 @@
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
 import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { SettingsTab } from "@/app/types";
@@ -14,15 +15,18 @@ import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advance
 import type { PaletteItem } from "./command-palette-search";
 
 const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
+  ollama: ["local models", "llama", "offline", "on device"],
   ai: ["provider", "providers", "api key", "anthropic", "openai", "openrouter", "google", "gemini", "claude", "gpt", "connect model", "models"],
   preferences: ["default model", "reasoning", "thinking", "compaction", "effort"],
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
-  extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use"],
+  extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
   advanced: ["advanced settings", "runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
+  shortcuts: ["shortcut", "shortcuts", "keyboard", "keys", "hotkey", "keybinding", "switch model", "fast"],
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],
   updates: ["version", "upgrade", "check for updates", "release"],
   debug: ["logs", "diagnostics", "developer mode"],
+  usage: ["usage", "limit", "spend", "budget", "quota", "increase"],
   "cloud-account": ["sign in", "log in", "login", "account", "organization", "org", "den", "cloud", "openwork cloud"],
   general: ["settings", "preferences", "options", "configure"],
 };
@@ -49,6 +53,8 @@ export function buildCommandPaletteSettingsItems(input: {
     "general",
     ...getWorkspaceSettingsTabs(),
     ...getGlobalSettingsTabs(input.developerMode, input.capabilities),
+    // Not in the sidebar (opened from AI Providers), but still searchable.
+    "ollama",
     ...CLOUD_SETTINGS_TABS,
   ] satisfies SettingsTab[]).filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
 
@@ -79,7 +85,7 @@ export function buildCommandPaletteSettingsItems(input: {
   }));
 
   const advancedItems: PaletteItem[] = tabs.includes("advanced")
-    ? ADVANCED_SETTINGS_SECTIONS.map((section) => ({
+    ? ADVANCED_SETTINGS_SECTIONS.filter((section) => section.id !== "experimental-engine" || isDesktopRuntime()).map((section) => ({
         id: `settings:advanced/${section.id}`,
         title: section.title,
         keywords: section.keywords,

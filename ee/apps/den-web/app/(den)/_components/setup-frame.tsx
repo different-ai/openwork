@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ArrowRight, ArrowUpRight, ChevronDown, ChevronRight, FileText, Folder, LayoutDashboard, MessageSquare, Network, Paperclip, Play, Plug, Search, Users, Workflow } from "lucide-react";
+import { OnboardingTexture } from "./onboarding-texture";
 import styles from "./setup-frame.module.css";
 
 const steps = [
@@ -10,6 +11,12 @@ const steps = [
   { id: "people", label: "People" },
   { id: "tools", label: "Tools" },
   { id: "ready", label: "Get to work" },
+];
+
+const simplifiedSteps = [
+  { id: "account", label: "Name" },
+  { id: "space", label: "Workspace" },
+  { id: "people", label: "Invite (optional)" },
 ];
 
 export type SetupStep = "account" | "space" | "people" | "tools" | "ready";
@@ -98,60 +105,124 @@ function WorkPreview({ step }: { step: SetupStep }) {
   );
 }
 
-/** A shared visual rhythm from the first auth screen to the first useful task. */
-export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false }: {
-  step: SetupStep;
+/**
+ * A shared visual rhythm from the first auth screen to the first useful task.
+ * Without a `step` the frame is a one-page flow (agent sign-in, device and
+ * claim codes, connection links): no stepper, no eyebrows, and the story column
+ * shows who is asking through `aside` instead of the product preview.
+ */
+export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified, workbot = false, single = false, brand: brandContent }: {
+  step?: SetupStep;
   title: string;
   description: string;
   children: ReactNode;
   aside?: ReactNode;
   panelVisual?: ReactNode;
   embedded?: boolean;
+  /** Keep the consent panel focal in a device approval flow; other callers retain display type. */
+  compactHeader?: boolean;
+  /** Shared onboarding steps use the simplified layout unless a caller opts out (single-organization mode). */
+  simplified?: boolean;
+  /** First-party Workbot sign-in: one compact panel, no Cloud story or setup steps. */
+  workbot?: boolean;
+  /** One centered panel with the brand band and no setup steps: invitations and sandbox links. */
+  single?: boolean;
+  /** Replaces the OpenWork mark and "OpenWork / Cloud", for an organization with its own brand. */
+  brand?: ReactNode;
 }) {
-  const current = steps.findIndex((item) => item.id === step);
-  return (
-    <section className={`${styles.frame} ${embedded ? styles.embedded : ""}`} data-testid="setup-frame" data-step={step}>
-      <header className={styles.top}>
-        <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>OpenWork<span className={styles.cloud}> / Cloud</span></span></div>
-        <nav className={styles.progress} aria-label="Setup progress">
-          <div className={styles.progressSummary}>
-            <span>{steps[current]?.label}</span>
-            <span>Step {current + 1} of {steps.length}</span>
-          </div>
-          <ol className={styles.steps}>{steps.map((item, index) => (
-            <li
-              key={item.id}
-              aria-current={item.id === step ? "step" : undefined}
-              aria-label={`${item.label}: ${index < current ? "completed" : index === current ? "current step" : "upcoming"}`}
-              className={index < current ? styles.done : ""}
-            >
-              <span className={styles.stepLabel}>{item.label}</span>
-              <span className={styles.progressSegment} aria-hidden="true" />
-            </li>
-          ))}</ol>
-        </nav>
-      </header>
-      <div className={styles.grid}>
-        <aside className={styles.story}>
-          <div className={styles.intro}>
-            <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p>
-            <h1>{title}</h1>
-            <p className={styles.description}>{description}</p>
-            <div className={styles.modelSupport}>
-              <p>Your choice of model. One place to work.</p>
-              <span>OpenAI</span><i aria-hidden="true">·</i><span>Anthropic</span><i aria-hidden="true">·</i><span>Google</span><i aria-hidden="true">·</i><span>and more</span>
-            </div>
-          </div>
-          {aside ? <div className={styles.customPreview}>{aside}</div> : <WorkPreview step={step} />}
-          <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p>
-        </aside>
-        <div className={styles.panel} key={step}>
-          {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}
-          <div className={styles.panelEyebrow}><span>0{current + 1}</span><span>{steps[current]?.label}</span><span className={styles.panelRule} /></div>
-          {children}
-        </div>
+  const sharedStep = step === "account" || step === "space" || step === "people";
+  const useSimplifiedSteps = sharedStep && (simplified ?? true);
+  const visibleSteps = useSimplifiedSteps ? simplifiedSteps : steps;
+  const current = step ? visibleSteps.findIndex((item) => item.id === step) : -1;
+  const plain = !step;
+  const progress = (
+    <nav className={styles.progress} aria-label="Setup progress">
+      <div className={styles.progressSummary}>
+        <span>{visibleSteps[current]?.label}</span>
+        <span>Step {current + 1} of {visibleSteps.length}</span>
       </div>
-      <footer className={styles.footer}><span>Built for work. With room for you.</span><span>Your desktop + your tools + your team</span></footer>
+      <ol className={styles.steps}>{visibleSteps.map((item, index) => (
+        <li
+          key={item.id}
+          aria-current={item.id === step ? "step" : undefined}
+          aria-label={`${item.label}: ${index < current ? "completed" : index === current ? "current step" : "upcoming"}`}
+          className={index < current ? styles.done : ""}
+        >
+          <span className={styles.stepLabel}>{item.label}</span>
+          <span className={styles.progressSegment} aria-hidden="true" />
+        </li>
+      ))}</ol>
+    </nav>
+  );
+  const brand = <div className={styles.brand}>{brandContent && !workbot ? brandContent : <><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>{workbot ? "Workbot" : <>OpenWork<span className={styles.cloud}> / Cloud</span></>}</span></>}</div>;
+  if (workbot) {
+    return (
+      <section className={`${styles.frame} ${styles.simplified}`} data-testid="workbot-sign-in-frame">
+        <div className={styles.simpleBody}>
+          {brand}
+          <div className={styles.panel}>{children}</div>
+        </div>
+      </section>
+    );
+  }
+  if (single) {
+    return (
+      <section className={`${styles.frame} ${styles.simplified}`} data-testid="setup-frame" data-step="none">
+        <div className={styles.simpleBody}>
+          {brand}
+          <div className={styles.panel}>
+            <div className={styles.panelVisual}>{panelVisual ?? <OnboardingTexture />}</div>
+            {title ? <h1 className={styles.simpleTitle}>{title}</h1> : null}
+            {children}
+          </div>
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section className={`${styles.frame} ${embedded ? styles.embedded : ""} ${plain ? styles.plain : ""} ${useSimplifiedSteps ? styles.simplified : ""}`} data-testid="setup-frame" data-step={step ?? "none"}>
+      {useSimplifiedSteps ? (
+        // One column (P7): brand, progress, then one panel that owns the brand
+        // texture, the title and the form. No product preview, step eyebrow,
+        // description or tagline (P1, P2, C7).
+        <div className={styles.simpleBody}>
+          {brand}
+          {progress}
+          <div className={styles.panel}>
+            <div className={styles.panelVisual}>{panelVisual ?? <OnboardingTexture />}</div>
+            {title ? <h1 className={styles.simpleTitle}>{title}</h1> : null}
+            {children}
+          </div>
+        </div>
+      ) : <>
+        <header className={styles.top}>
+          {brand}
+          {step ? progress : null}
+        </header>
+        <div className={styles.grid}>
+          <aside className={styles.story}>
+            <div className={styles.intro}>
+              {step ? <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p> : null}
+              <h1 className={compactHeader ? styles.compactHeading : undefined}>{title}</h1>
+              <p className={styles.description}>{description}</p>
+              {step ? (
+                <div className={styles.modelSupport}>
+                  <p>Your choice of model. One place to work.</p>
+                  <span>OpenAI</span><i aria-hidden="true">·</i><span>Anthropic</span><i aria-hidden="true">·</i><span>Google</span><i aria-hidden="true">·</i><span>and more</span>
+                </div>
+              ) : null}
+            </div>
+            {aside ? <div className={styles.customPreview}>{aside}</div> : step ? <WorkPreview step={step} /> : null}
+            {step ? <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p> : null}
+          </aside>
+          <div className={styles.panel} key={step ?? "plain"}>
+            {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}
+            {step ? <div className={styles.panelEyebrow}><span>0{current + 1}</span><span>{visibleSteps[current]?.label}</span><span className={styles.panelRule} /></div> : null}
+            {children}
+          </div>
+        </div>
+        <footer className={styles.footer}><span>Built for work. With room for you.</span><span>Your desktop + your tools + your team</span></footer>
+      </>}
     </section>
   );
 }

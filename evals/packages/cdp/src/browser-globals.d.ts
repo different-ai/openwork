@@ -4,6 +4,7 @@ import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 /** Test-facing browser protocols. State is installed by the corresponding world before use. */
 declare global {
   interface Window {
+    [key: `command-observer-${string}`]: { requests: { method: string; path: string }[]; stop(): void } | undefined;
     __openworkControl: {
       listActions(): { id: string; disabled: boolean; args?: unknown; [key: string]: unknown }[];
       execute(action: string, args?: unknown): Promise<{ ok: boolean; error?: string; result?: unknown; value?: unknown }>;
@@ -15,14 +16,13 @@ declare global {
     __reauthOriginalOpen?: typeof window.open;
     __OPENWORK_ELECTRON__: {
       shell: { relaunch(): Promise<void> };
-      browserLogins: {
-        testWitnessUrl(): Promise<string>;
-        writeTestStore(request: { path: string; cookies: unknown[] }): Promise<unknown>;
-        signedInSites(): Promise<unknown>;
-        state(): Promise<unknown>;
-        pause(): Promise<unknown>;
-      };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
+      /** Development-only native popup observation; absent from packaged builds. */
+      contextMenu: {
+        inspect(): Promise<unknown>;
+        choose(id: string): Promise<unknown>;
+        dismiss(): Promise<unknown>;
+      };
       browser: {
         openUrl(url: string, provider?: string, options?: { sessionId?: string | null }): Promise<{ tab_id: string; target_id: string; [key: string]: unknown }>;
         createTab(url?: string, sessionId?: string | null): Promise<{ tabId: string }>;
@@ -55,7 +55,7 @@ declare global {
       };
       slice(name: "route"): {
         selectedWorkspaceId: string | null;
-        workspaces: { id: string; name?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];
+        workspaces: { id: string; name?: string; path?: string; displayName?: string; displayNameResolved?: string; loading?: boolean; error?: string | null }[];
         sessionsByWorkspaceId: Record<string, { id: string; title?: string }[]>;
       };
     };

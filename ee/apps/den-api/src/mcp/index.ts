@@ -2,9 +2,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
+import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
+import { jsonResponse } from "../openapi.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
@@ -39,6 +41,25 @@ export async function getCatalog(app: Hono, env: unknown) {
   return catalog
 }
 
+const protectedResourceMetadataSchema = z.object({
+  resource: z.string(),
+  authorization_servers: z.array(z.string()),
+  scopes_supported: z.array(z.string()),
+  bearer_methods_supported: z.array(z.string()),
+}).meta({ ref: "OAuthProtectedResourceMetadata" })
+
+// OpenAPI metadata for the RFC 9728 protected-resource documents. Every MCP
+// transport publishes the same shape at the paths clients are known to probe.
+export function protectedResourceMetadataRoute(route: "mcp" | "agent" | "admin") {
+  return describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: `Get OAuth protected resource metadata for /${route === "mcp" ? "mcp" : `mcp/${route}`}`,
+    description: "Returns the RFC 9728 protected-resource metadata MCP clients use to discover the authorization server and scopes for this transport.",
+    responses: { 200: jsonResponse("Protected resource metadata (RFC 9728).", protectedResourceMetadataSchema) },
+  })
+}
+
 export function protectedResourceMetadata(request: Request, route: "mcp" | "agent" | "admin" = "mcp") {
   const resource = getMcpResourceContext(request, route).resourceUrl
   return {
@@ -61,9 +82,9 @@ export function protectedResourceMetadata(request: Request, route: "mcp" | "agen
 }
 
 export function registerMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
-  app.get("/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
-  app.get("/.well-known/oauth-protected-resource/mcp", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
-  app.get("/mcp/.well-known/oauth-protected-resource", publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("mcp"), publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/.well-known/oauth-protected-resource/mcp", protectedResourceMetadataRoute("mcp"), publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
+  app.get("/mcp/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("mcp"), publicRoute, (c) => c.json(protectedResourceMetadata(c.req.raw)))
 
   app.all("/mcp", tokenRoute, async (c) => {
     const requestIdValue = c.get("requestId")

@@ -32,15 +32,6 @@ export interface QuestionMetadata extends ToolMetadata {
   answers: string[][];
 }
 
-export interface EnvVarRequestInput {
-  key: string;
-  label?: string;
-  description?: string;
-  placeholder?: string;
-  helpUrl?: string;
-  followUpPrompt?: string;
-}
-
 export interface BashInput {
   command: string;
   timeout?: number;
@@ -233,7 +224,10 @@ export interface RepoOverviewMetadata extends ToolMetadata {
 }
 
 export interface SkillInput {
-  name: string;
+  /** OpenCode v2 loads a skill by id. */
+  id?: string;
+  /** OpenCode v1 loaded it by name. */
+  name?: string;
 }
 
 export interface SkillMetadata extends ToolMetadata {
@@ -350,6 +344,16 @@ export function isApplyPatchToolPart(part: ToolUIPart | DynamicToolUIPart): part
 
 export type SkillToolPart = BuiltInDynamicToolPart<"skill", SkillInput>;
 
+/**
+ * The skill a person would recognize: v2 sends an id, and organization skills
+ * carry an engine prefix and Den's 8-character uniqueness suffix.
+ */
+export function skillDisplayName(input: Partial<SkillInput> | undefined): string {
+  const raw = (input?.id ?? input?.name ?? "").trim();
+  if (!raw.startsWith("openwork-cloud-")) return raw;
+  return raw.slice("openwork-cloud-".length).replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "");
+}
+
 export function isSkillToolPart(part: ToolUIPart | DynamicToolUIPart): part is SkillToolPart {
   return part.type === "dynamic-tool" && part.toolName === "skill";
 }
@@ -376,12 +380,6 @@ export type QuestionToolPart = BuiltInDynamicToolPart<"question", QuestionInput>
 
 export function isQuestionToolPart(part: ToolUIPart | DynamicToolUIPart): part is QuestionToolPart {
   return part.type === "dynamic-tool" && part.toolName === "question";
-}
-
-export type EnvVarRequestToolPart = BuiltInDynamicToolPart<"request_env_var" | "env_var_request", EnvVarRequestInput, unknown>;
-
-export function isEnvVarRequestToolPart(part: ToolUIPart | DynamicToolUIPart): part is EnvVarRequestToolPart {
-  return part.type === "dynamic-tool" && (part.toolName === "request_env_var" || part.toolName === "env_var_request");
 }
 
 export type TaskToolPart = BuiltInDynamicToolPart<"task", TaskInput>;

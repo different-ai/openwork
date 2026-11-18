@@ -4,8 +4,7 @@
  * Hero agent-install prompt with copied feedback states.
  */
 
-import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronRight } from "lucide-react";
+import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { capturePosthogEvent } from "../lib/posthog-client";
@@ -19,14 +18,29 @@ type CopyMethod = "clipboard" | "execCommand" | "none";
 type Props = {
   className?: string;
   compact?: boolean;
+  /** Another prompt for another page; defaults to the setup prompt. */
+  prompt?: string;
+  heading?: string;
+  description?: string;
+  /** Analytics variant and placement for this card. */
+  variant?: string;
+  placement?: string;
+  /** Show the prompt text in the card, so people see what they paste. */
+  showPrompt?: boolean;
 };
 
-const steps = ["Installs OpenWork", "Creates your workspace", "Opens ready to run"];
-
-export function LandingHeroPrompt({ className, compact = false }: Props) {
+export function LandingHeroPrompt({
+  className,
+  compact = false,
+  prompt = AGENT_START_PROMPT,
+  heading = "Already use an AI agent?",
+  description = "Paste one prompt. It installs and sets up OpenWork for you.",
+  variant = PROMPT_VARIANT,
+  placement = "hero",
+  showPrompt = false
+}: Props) {
   const [feedback, setFeedback] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const [revealed, setRevealed] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -39,12 +53,12 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
     let copied = false;
     let method: CopyMethod = "none";
     try {
-      await navigator.clipboard.writeText(AGENT_START_PROMPT);
+      await navigator.clipboard.writeText(prompt);
       copied = true;
       method = "clipboard";
     } catch {
       const textarea = document.createElement("textarea");
-      textarea.value = AGENT_START_PROMPT;
+      textarea.value = prompt;
       textarea.setAttribute("readonly", "");
       textarea.style.cssText = "position:absolute;left:-9999px;top:-9999px;";
       document.body.appendChild(textarea);
@@ -57,12 +71,11 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
     }
     setCopyError(!copied);
     setFeedback(true);
-    if (copied) setRevealed(true);
     capturePosthogEvent("landing_copy_prompt_clicked", {
       copied,
       method,
-      variant: PROMPT_VARIANT,
-      placement: "hero"
+      variant,
+      placement
     });
     if (resetTimer.current) clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => {
@@ -74,8 +87,8 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
   const copyButton = (
     <button
       type="button"
-      aria-label="Copy the agent setup prompt"
-      title={AGENT_START_PROMPT}
+      aria-label={prompt === AGENT_START_PROMPT ? "Copy the agent setup prompt" : "Copy the prompt"}
+      title={prompt}
       onClick={(event) => {
         event.stopPropagation();
         void onClick();
@@ -128,60 +141,26 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
         }}
         className="group cursor-pointer rounded-2xl bg-white p-5 shadow-[0_8px_24px_rgba(1,22,39,0.05)] transition-shadow hover:shadow-[0_10px_28px_rgba(1,22,39,0.08)]"
       >
-        <div className="mb-2 text-[13px] text-[var(--lp-muted)]">
-          Already use an AI agent? Paste this prompt — it installs OpenWork for you.
+        <div className="text-[15px] leading-snug text-[#011627]">
+          {heading}
         </div>
-        <p className="text-[15px] leading-relaxed text-[#011627]">
-          Install OpenWork on my computer, set up my first workspace, and open it
-          ready to use. Follow the steps in{" "}
-          <span className="text-[var(--lp-muted)]">
-            https://openworklabs.com/start.md?v={PROMPT_VARIANT}
-          </span>
-          <span
-            className="hero-prompt-caret ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] bg-[#011627]"
-            aria-hidden="true"
-          />
-        </p>
-        <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="mt-1 text-[13px] leading-relaxed text-[var(--lp-muted)]">
+          {description}
+        </div>
+        {showPrompt ? (
+          <p className="mt-4 rounded-xl bg-[var(--lp-tonal)] px-3.5 py-3 font-mono text-[12.5px] leading-[1.6] text-[var(--lp-ink)]">
+            {prompt}
+          </p>
+        ) : null}
+        <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 text-[var(--lp-faint)]">
             <LandingAgentGlyphs />
             <span className="hidden text-xs text-[var(--lp-faint)] sm:inline">
-              Works with Claude Code, Cursor, Codex — any agent
+              Claude Code, Cursor, Codex, or any agent
             </span>
           </div>
           {copyButton}
         </div>
-        <AnimatePresence initial={false}>
-          {revealed ? (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.25 }}
-              className="overflow-hidden"
-            >
-              <div className="mt-3 border-t border-[#F1F5F9] pt-3">
-                <div className="flex items-center gap-2 text-[13px] font-medium text-[#011627]">
-                  <Check
-                    className="h-5 w-5 shrink-0 text-green-600"
-                    strokeWidth={1.75}
-                    aria-hidden="true"
-                  />
-                  Copied — now paste it into Claude Code, Cursor, or ChatGPT:
-                </div>
-                <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-2">
-                  {steps.map((label, index) => (
-                    <div key={label} className="flex items-center gap-2">
-                      {index > 0 ? <ChevronRight size={12} className="text-[var(--lp-faint)]" /> : null}
-                      <span className="step-circle">{index + 1}</span>
-                      <span className="text-[13px] text-[var(--lp-body)]">{label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
       </div>
       <span aria-live="polite" className="sr-only">
         {feedback ? (copyError ? "Couldn't copy the prompt" : "Prompt copied to clipboard") : ""}

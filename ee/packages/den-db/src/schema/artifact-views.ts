@@ -32,6 +32,7 @@ export const ArtifactViewTable = mysqlTable(
     description: varchar("description", { length: 2_000 }),
     status: mysqlEnum("status", ["active", "retired"]).notNull().default("active"),
     active_revision_id: denTypeIdColumn("artifactViewRevision", "active_revision_id"),
+    data_mode: mysqlEnum("data_mode", ["live", "snapshot"]).notNull().default("snapshot"),
     use_in_workflow: boolean("use_in_workflow").notNull().default(true),
     ...timestamps,
   },

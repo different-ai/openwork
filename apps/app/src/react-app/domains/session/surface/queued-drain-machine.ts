@@ -20,8 +20,10 @@
  *                                      must retry explicitly
  * - `rejected`                       — the send was cancelled (context
  *                                      changed / unmounted); item re-queued
- * - `admission_unknown`              — POST may have been accepted; only exact
- *                                      message observation releases the hold
+ * - `admission_unknown`              — POST may have been accepted; released
+ *                                      only by observing the exact message, or
+ *                                      by native listing the idle conversation
+ *                                      without it (a halt, never a resend)
  * - `terminal_failure`               — definite failure; explicit retry required
  *
  * A missing busy event is never the only signal that allows progress: an
@@ -71,6 +73,7 @@ export type QueuedDrainEvent =
   | { type: "send_error"; itemId: string }
   | { type: "send_unknown"; itemId: string; messageID: string; at: number; deferred?: boolean }
   | { type: "admission_observed"; itemId: string; messageID: string; at: number }
+  | { type: "admission_rejected"; itemId: string; messageID: string }
   | { type: "busy_observed" }
   /** An authoritative status level read (SSE-followed idle after a busy
    * observation, or an explicit snapshot/status probe). `observedAt` is when
@@ -114,7 +117,7 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
         if (!event.steer) return state;
         if (phase.kind === "running" || phase.kind === "awaiting_observation") {
           if (phase.itemId === event.itemId) return state;
-        } else if (phase.kind !== "halted" || phase.itemId !== event.itemId) return state;
+        } else if (phase.kind !== "halted" || (phase.reason !== "terminal_failure" && phase.itemId !== event.itemId)) return state;
       }
       const attempts = (state.attemptsByItemId[event.itemId] ?? 0) + 1;
       return {
@@ -168,6 +171,12 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
       // observation; a busy/idle from the previously running parent is not proof.
       return resolved(state, { kind: "awaiting_observation", itemId: event.itemId, admittedAt: event.at, ...(phase.deferred ? { messageID: phase.messageID } : {}) }, event.itemId, "admitted_awaiting_observation");
     }
+    case "admission_rejected": {
+      if (phase.kind !== "admission_unknown" || phase.itemId !== event.itemId || phase.messageID !== event.messageID) return state;
+      // Native listed the conversation without the message, so the settled POST
+      // did not admit it. Halt like any definite failure: the person retries.
+      return resolved(state, { kind: "halted", itemId: event.itemId, reason: "terminal_failure" }, event.itemId, "terminal_failure");
+    }
     case "busy_observed": {
       if (phase.kind === "sending") {
         return { ...state, phase: { ...phase, busySeen: true } };
@@ -219,8 +228,11 @@ function dropAttempt(state: QueuedDrainState, itemId: string): Record<string, nu
 }
 
 /** True when the drain may admit the next queued item. */
-export function canAdmitNextQueuedItem(state: QueuedDrainState): boolean {
-  return state.phase.kind === "ready";
+export function canAdmitNextQueuedItem(state: QueuedDrainState, steer = false): boolean {
+  if (state.phase.kind === "ready") return true;
+  // A requested send (Cmd/Ctrl+Enter or Send now) follows an admitted turn
+  // without waiting for it to finish; never an uncertain or halted one.
+  return steer && (state.phase.kind === "running" || state.phase.kind === "awaiting_observation");
 }
 
 export function hasPendingQueuedAdmission(state: QueuedDrainState): boolean {

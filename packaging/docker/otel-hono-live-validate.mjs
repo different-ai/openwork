@@ -4,6 +4,12 @@ import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+// /api/auth/* is served by den-web's server-side upstream proxy, so the request
+// produces a connected den-web -> den-api trace. /api/den/* is a 307 redirect
+// to den-api and must not be used here.
+const PROXIED_UPSTREAM_PATH = "/api/auth/get-session";
+const HONO_ROUTE = "/api/auth/*";
+
 function argValue(name, fallback) {
   const index = process.argv.indexOf(`--${name}`);
   if (index === -1) return fallback;
@@ -155,7 +161,7 @@ function analyzeTrace(payload, traceId) {
   const apiSpans = spans.filter((span) => serviceName(span.resource) === "den-api");
   const honoSpan = apiSpans.find((span) => {
     const route = span.attributes["http.route"];
-    return route === "/openapi.json" && typeof span.attributes["request.id"] === "string";
+    return route === HONO_ROUTE && typeof span.attributes["request.id"] === "string";
   });
 
   return {
@@ -337,13 +343,13 @@ function analyzeNoneStdout(logs, secret) {
   const web = entries.find((entry) => {
     return entry.payload.service === "den-web"
       && entry.payload.message === "den-web upstream proxy completed"
-      && entry.payload.upstream_path === "/openapi.json"
+      && entry.payload.upstream_path === PROXIED_UPSTREAM_PATH
       && Number(entry.payload.status) === 200;
   });
   const api = entries.find((entry) => {
     return entry.payload.service === "den-api"
       && entry.payload.message === "request completed"
-      && entry.payload.http_route === "/openapi.json"
+      && entry.payload.http_route === HONO_ROUTE
       && Number(entry.payload.http_status_code) === 200;
   });
 
@@ -455,12 +461,12 @@ async function collectSignals({ auth, datasources, endMs, grafanaUrl, secret, st
   }
 
   try {
-    const query = `{__name__=~"http_server_request_duration.*",service_name="den-api",http_route="/openapi.json"}`;
+    const query = `{__name__=~"http_server_request_duration.*",service_name="den-api",http_route=${JSON.stringify(HONO_ROUTE)}}`;
     const params = encodeQuery({ query, time: `${Math.floor(Date.now() / 1000)}` });
     const metricPayload = await fetchJson(proxyUrl(grafanaUrl, datasources.prometheus.uid, `/api/v1/query?${params}`), { headers: auth });
     signal.metrics.duration = analyzeMetricSeries(metricPayload, {
       requirePositive: true,
-      route: "/openapi.json",
+      route: HONO_ROUTE,
       serviceName: "den-api",
     });
   } catch (error) {
@@ -532,24 +538,31 @@ function dockerLogs({ denComposeFile, otelComposeFile, project, since }) {
   return execFileSync("docker", args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 }
 
-async function requestOpenApi({ requestPath, secret, traceId = randomBytes(16).toString("hex"), webUrl }) {
+async function requestProxiedRoute({ requestPath, secret, traceId = randomBytes(16).toString("hex"), webUrl }) {
   const parentSpanId = randomBytes(8).toString("hex");
   const traceparent = `00-${traceId}-${parentSpanId}-01`;
+  const redactedPath = requestPath.replaceAll(secret, "[redacted]");
+  // A redirect means den-web did not run its upstream proxy, so the connected
+  // den-web -> den-api trace this validator proves cannot exist. Fail loudly
+  // instead of following it and measuring a direct den-api request.
   const requestResponse = await fetch(`${webUrl}${requestPath}`, {
     headers: {
       traceparent,
       "x-openwork-otel-hono-e2e": traceId,
     },
+    redirect: "manual",
   });
+  if (requestResponse.status >= 300 && requestResponse.status < 400) {
+    const location = (requestResponse.headers.get("location") ?? "").replaceAll(secret, "[redacted]");
+    throw new Error(`${redactedPath} answered ${requestResponse.status} redirect to ${location || "(no location)"}; the validator needs a route served by den-web's upstream proxy, not a redirect to den-api`);
+  }
   const requestBody = await requestResponse.text();
-  const openApi = safeJsonParse(requestBody);
   return {
     body: requestBody,
     report: {
       contentType: requestResponse.headers.get("content-type"),
-      path: requestPath.replaceAll(secret, "[redacted]"),
+      path: redactedPath,
       status: requestResponse.status,
-      title: openApi?.info?.title,
       traceparent,
     },
     response: requestResponse,
@@ -570,7 +583,7 @@ async function runNonePhase({ denComposeFile, otelComposeFile, project, requestP
     project,
   });
 
-  const request = await requestOpenApi({ requestPath, secret, webUrl });
+  const request = await requestProxiedRoute({ requestPath, secret, webUrl });
   if (request.response.status !== 200) {
     throw new Error(`Expected HTTP 200 from none backend ${request.report.path}; got ${request.response.status}: ${request.body.slice(0, 400)}`);
   }
@@ -615,7 +628,7 @@ function printSummary(report) {
     console.log(`log: den-api trace_id=${log.traceId} span_id=${log.spanId}`);
   }
   if (report.evidence?.metrics?.duration) {
-    console.log(`metric: ${report.evidence.metrics.duration.name} route=/openapi.json value=${report.evidence.metrics.duration.value}`);
+    console.log(`metric: ${report.evidence.metrics.duration.name} route=${HONO_ROUTE} value=${report.evidence.metrics.duration.value}`);
   }
   if (report.evidence?.metrics?.active) {
     console.log(`metric: ${report.evidence.metrics.active.name} active_value=${report.evidence.metrics.active.value}`);
@@ -635,7 +648,7 @@ async function main() {
   const denComposeFile = requiredArg("den-compose-file");
   const otelComposeFile = requiredArg("otel-compose-file");
   const secret = argValue("secret", process.env.OTEL_HONO_SECRET ?? "super-secret");
-  const requestPath = argValue("request-path", `/api/den/openapi.json?token=${encodeURIComponent(secret)}`);
+  const requestPath = argValue("request-path", `${PROXIED_UPSTREAM_PATH}?token=${encodeURIComponent(secret)}`);
   const timeoutMs = Number(process.env.OTEL_HONO_POLL_SECONDS ?? "240") * 1000;
   const intervalMs = Number(process.env.OTEL_HONO_POLL_INTERVAL_SECONDS ?? "5") * 1000;
   const grafanaUser = process.env.OTEL_HONO_GRAFANA_USER ?? "admin";
@@ -674,7 +687,7 @@ async function main() {
     };
 
     const startMs = Date.now() - 30_000;
-    const otelRequest = await requestOpenApi({ requestPath, secret, traceId, webUrl });
+    const otelRequest = await requestProxiedRoute({ requestPath, secret, traceId, webUrl });
     report.request = otelRequest.report;
     addAssertion(report, "http_200", otelRequest.response.status === 200, report.request);
     if (otelRequest.response.status !== 200) {
@@ -723,7 +736,7 @@ async function main() {
       tracePayloadAbsent: lastSignal.traceSecretAbsent,
     };
     addAssertion(report, "trace_contains_den_web_and_den_api", lastSignal.trace.hasApi && lastSignal.trace.hasWeb, lastSignal.trace.services);
-    addAssertion(report, "hono_openapi_span_has_request_id", Boolean(lastSignal.trace.honoSpan), lastSignal.trace.honoSpan);
+    addAssertion(report, "hono_route_span_has_request_id", Boolean(lastSignal.trace.honoSpan), lastSignal.trace.honoSpan);
     addAssertion(report, "secret_absent_from_trace_and_loki_log_output", lastSignal.traceSecretAbsent && lastSignal.logSecretAbsent && lastSignal.secretLeakEntries === 0, report.evidence.secret);
     addAssertion(report, "den_web_log_trace_span_matches_trace", Boolean(lastSignal.logs.web.match), lastSignal.logs.web.match);
     addAssertion(report, "den_api_log_trace_span_matches_trace", Boolean(lastSignal.logs.api.match), lastSignal.logs.api.match);

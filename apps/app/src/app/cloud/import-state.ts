@@ -6,7 +6,9 @@ export type CloudImportedProvider = {
   source: string | null;
   updatedAt: string | null;
   modelIds: string[];
+  pinnedModelIds?: string[];
   importedAt: number | null;
+  modelConfigVersion?: number;
 };
 
 export type CloudImportedMarketplace = {
@@ -83,6 +85,8 @@ export function readWorkspaceCloudImports(value: unknown): WorkspaceCloudImports
         source: typeof entry.source === "string" ? entry.source.trim() || null : null,
         updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt.trim() || null : null,
         modelIds: readStringArray(entry.modelIds),
+        pinnedModelIds: [...new Set(readStringArray(entry.pinnedModelIds))].filter((id) => readStringArray(entry.modelIds).includes(id)),
+        modelConfigVersion: typeof entry.modelConfigVersion === "number" ? entry.modelConfigVersion : undefined,
         importedAt: typeof entry.importedAt === "number" && Number.isFinite(entry.importedAt)
           ? entry.importedAt
           : null,
