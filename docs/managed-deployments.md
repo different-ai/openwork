@@ -44,6 +44,11 @@ published release and approved customer-project install pass. Design and contrac
 2. **Prepare AWS approval** › **Review and approve in AWS**. The CloudFormation
    console opens prefilled. Review the installer permissions, acknowledge IAM,
    create the stack. Nothing is launched until this approval.
+   If your organization signs in through an AWS access portal (IAM Identity
+   Center), save it under **AWS sign-in** first (feature
+   `managedDeploymentAwsSignIn`, see
+   [`features/managed-deployment-aws-sign-in`](./features/managed-deployment-aws-sign-in/README.md)):
+   the approval link then opens through the portal in the deployment's account.
 3. OpenWork shows the installer's six steps as they happen (about 15–25
    minutes): installer connected, release verified, account and domain verified,
    infrastructure installed, services started, HTTPS and database verified.

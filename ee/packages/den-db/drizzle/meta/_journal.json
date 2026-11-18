@@ -1408,6 +1408,13 @@
       "when": 1794771929581,
       "tag": "0201_plugin_skill_external_key",
       "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "5",
+      "when": 1794982523042,
+      "tag": "0202_managed_deployment_aws_sign_in",
+      "breakpoints": true
     }
   ]
 }

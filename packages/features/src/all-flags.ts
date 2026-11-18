@@ -14,6 +14,7 @@ export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gatewa
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
+export { default as managedDeploymentAwsSignIn } from "@openwork/features/flags/managed-deployment-aws-sign-in"
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
