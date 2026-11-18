@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
 import { correctWorkspaceRoot, workspaceFileGuidance, workspaceFileHooks } from "./workspace-file-destinations.js";
+import { questionToolDefinition } from "./openwork-agent-questions.js";
 import { automationRuntimeKnowledge } from "../automation-runtime-knowledge.js";
 
 /**
@@ -188,8 +189,14 @@ function excerpt(content: string, query: string): string {
   return content.slice(from, from + 500).replace(/\s+/g, " ").trim();
 }
 
-export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof workspaceFileHooks>[0]) => ({
-  ...workspaceFileHooks(context),
+export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof workspaceFileHooks>[0]) => {
+  const fileHooks = workspaceFileHooks(context);
+  return {
+  ...fileHooks,
+  "tool.definition": async (input: { toolID: string }, output: { description: string; jsonSchema?: unknown }) => {
+    await fileHooks["tool.definition"](input, output);
+    questionToolDefinition(input, output);
+  },
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
     if (context?.directory) correctWorkspaceRoot(output.system, context.directory);
     appendAgentInstructions(output.system,
@@ -231,4 +238,5 @@ export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof 
       },
     },
   },
-});
+  };
+};
