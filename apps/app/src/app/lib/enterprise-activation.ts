@@ -41,9 +41,6 @@ export function outboundEgressAllowed(
     && (!DESKTOP_POLICY_ENFORCEMENT_ENABLED || options.desktopConfigLoading !== true);
 }
 
-export function externalTelemetryAllowed(input: {
-  flavor: DesktopDistributionInfo["flavor"];
-  selfHostedControlPlane: boolean;
-}): boolean {
-  return input.flavor !== "enterprise" && !input.selfHostedControlPlane;
+export function externalTelemetryAllowed(distribution: Pick<DesktopDistributionInfo, "flavor">): boolean {
+  return distribution.flavor !== "enterprise";
 }

@@ -15,7 +15,7 @@
  *   assert instrumentation without any analytics backend.
  */
 import { denSessionUpdatedEvent, denSettingsChangedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
-import { isSelfHostedControlPlane, readDenSettings } from "./den";
+import { readDenSettings } from "./den";
 import { readDesktopDistributionInfo } from "./desktop";
 import { externalTelemetryAllowed } from "./enterprise-activation";
 import { analyticsLaunchProperties, analyticsRuntimeProperties, recordAnalyticsLaunch, createRunQualityTracker, createFeatureAnalytics, createFeatureToolObserver, recordDesktopAutomationLifecycle, createUpdateAnalytics } from "@openwork/product-analytics";
@@ -54,10 +54,7 @@ let signedIn = false;
 
 function telemetryAllowedForInstall(): boolean {
   try {
-    return externalTelemetryAllowed({
-      flavor: readDesktopDistributionInfo().flavor,
-      selfHostedControlPlane: isSelfHostedControlPlane(),
-    });
+    return externalTelemetryAllowed(readDesktopDistributionInfo());
   } catch {
     return false;
   }
