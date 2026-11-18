@@ -1338,6 +1338,9 @@ importers:
       '@daytonaio/sdk':
         specifier: ^0.214.0
         version: 0.214.0
+      '@insforge/instabox-sdk':
+        specifier: 0.9.0
+        version: 0.9.0
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3

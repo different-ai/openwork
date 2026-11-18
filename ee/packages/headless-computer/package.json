@@ -18,7 +18,8 @@
     "snapshot:build:daytona": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-daytona-snapshot.ts",
     "proof:live": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/prove-computer.ts",
     "snapshot:build:freestyle-desktop": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-desktop-snapshot.ts",
-    "snapshot:build:freestyle-guest": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-guest-snapshot.ts"
+    "snapshot:build:freestyle-guest": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-freestyle-guest-snapshot.ts",
+    "snapshot:build:instabox": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-instabox-snapshot.ts"
   },
   "dependencies": {
     "@openwork/sandbox": "workspace:*",
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "@daytonaio/sdk": "^0.214.0",
+    "@insforge/instabox-sdk": "0.9.0",
     "@types/node": "^24.0.0",
     "@types/ws": "8.18.1",
     "esbuild": "0.25.12",
