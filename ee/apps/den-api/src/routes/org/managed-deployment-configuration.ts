@@ -24,7 +24,7 @@ import {
 import { effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
-import { RUN_LIFETIME_MS, deploymentParam, launchDetails, oneView, operation, runParam } from "./managed-deployments.js"
+import { RUN_LIFETIME_MS, awsSignInFor, deploymentParam, launchDetails, oneView, operation, runParam } from "./managed-deployments.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 // Each refusal carries the sentence the dashboard shows as is.
@@ -166,13 +166,14 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
       })
       if ("refused" in result) return c.json(result.refused.body, result.refused.status)
       if (result.assistants) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
-      const deployment = await oneView(result.row, { primary: true, configuration: true })
+      const signIn = await awsSignInFor(org, db.$primary)
+      const deployment = await oneView(result.row, signIn, { primary: true, configuration: true })
       if (result.outcome !== "approval_required") return c.json(deploymentConfigurationChangeResultSchema.parse({ outcome: result.outcome, deployment }))
       // The handoff carries the requested configuration; the row keeps the recorded one until the run verifies health.
       const { run, record } = result
       return c.json(deploymentConfigurationChangeResultSchema.parse({
         outcome: "approval_required", deployment, kind: "configure",
-        ...launchDetails({ ...result.row, target: record.requested.target, owner_email: record.requested.ownerEmail }, run),
+        ...launchDetails({ ...result.row, target: record.requested.target, owner_email: record.requested.ownerEmail }, run, signIn),
         expiresAt: run.expires_at.toISOString(), changes: record.changes,
       }))
     })

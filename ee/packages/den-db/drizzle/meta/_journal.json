@@ -1419,8 +1419,15 @@
     {
       "idx": 203,
       "version": "5",
+      "when": 1794984625784,
+      "tag": "0203_managed_deployment_aws_sign_in",
+      "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "5",
       "when": 1794986184329,
-      "tag": "0203_opposite_omega_red",
+      "tag": "0204_managed_deployment_configuration",
       "breakpoints": true
     }
   ]

@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "b3d0bc5b-379f-40fd-8916-5e0373caab70",
+  "id": "0a847155-d7cc-416e-86a4-943108fccc94",
   "prevId": "685e5b4b-f2e3-48b4-b53b-09de73c018a2",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -3938,6 +3938,60 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "managed_deployment_aws_sign_in": {
+      "name": "managed_deployment_aws_sign_in",
+      "columns": {
+        "org_id": {
+          "name": "org_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "portal_url": {
+          "name": "portal_url",
+          "type": "varchar(300)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "role_name": {
+          "name": "role_name",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "managed_deployment_aws_sign_in_org_id": {
+          "name": "managed_deployment_aws_sign_in_org_id",
+          "columns": [
+            "org_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "managed_deployment_event": {
       "name": "managed_deployment_event",
       "columns": {
@@ -4084,7 +4138,7 @@
         },
         "kind": {
           "name": "kind",
-          "type": "enum('install','update','retry','configure')",
+          "type": "enum('install','update','retry')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -4165,13 +4219,6 @@
           "type": "timestamp(3)",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
-        },
-        "configuration_change": {
-          "name": "configuration_change",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
           "autoincrement": false
         },
         "created_at": {

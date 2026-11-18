@@ -337,7 +337,7 @@ organization once the challenge matches. The claim itself is the run's
 
 ## Rollback is roll-forward only
 
-Migration `0203` adds `configure` to the run kind and the `configuration_change`
+Migration `0204` adds `configure` to the run kind and the `configuration_change`
 column. That it only adds does not make an older API or dashboard safe to run
 against the data this feature writes:
 
@@ -386,6 +386,7 @@ States of a requested change, and what the page offers in each:
 | State | Status | Actions |
 | --- | --- | --- |
 | Awaiting approval | Awaiting AWS approval | **Show approval command** (when the command is not on the page, for example after a reload), **Edit change**, **Discard change** |
+| Approval reserved | AWS approval reserved | none; waiting for the installer to enroll. An abandoned reservation needs operator inspection; expiry never unlocks it automatically. |
 | Applying | Applying configuration change | none; the six steps fill in |
 | Failed | Configuration change failed | **Review and try again**, prefilled with the failed request. The failure sentence names that action, not Retry. |
 | Approval expired | the deployment's health | **Prepare again**, **Discard change**. No step list: nothing started. |
@@ -423,8 +424,8 @@ On a real installation:
    for an internal organization (and `managedDeploymentAssistants` to add the
    gateway runtime), then reload **Manage › Deployments**.
 2. As the owner, select an installed AWS deployment. **Edit configuration**
-   is in the row of buttons under its status checks. An admin who is not the
-   owner sees it locked.
+   is in its action row (in the header on the guided deployment detail page).
+   Someone without **Manage deployments** sees it locked.
 3. Change the first administrator email, click **Review changes**, tick the
    consent sentence and click **Prepare AWS approval**. The deployment reads
    **Awaiting AWS approval** and still shows the old email under **First

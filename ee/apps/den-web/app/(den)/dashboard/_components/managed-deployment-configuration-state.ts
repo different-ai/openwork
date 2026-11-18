@@ -18,7 +18,7 @@ const LOCK_REASONS: Record<NonNullable<ConfigurationView["lock"]>, string> = {
   run_in_progress: "An install, update or change is waiting for approval or running in AWS. Finish it first.",
   unfinished_run: "The last install, retry or update didn't finish. Finish it with Retry or Update, then edit the configuration.",
   installer_unknown: "OpenWork can't tell which installer this deployment runs. Update the deployment, then edit the configuration.",
-  installer_unavailable: "This deployment's installer can no longer be run as it was installed. Update the deployment, then edit the configuration.",
+  installer_unavailable: "This deployment's installer can't be run again exactly as it was installed. Update the deployment when a newer version is available, then edit the configuration.",
 };
 
 export function hasConfiguration(deployment: ManagedDeployment): deployment is EditableDeployment {

@@ -15,6 +15,7 @@ export { default as importOpencodeConnections } from "@openwork/features/flags/i
 export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
+export { default as managedDeploymentAwsSignIn } from "@openwork/features/flags/managed-deployment-aws-sign-in"
 export { default as managedDeploymentConfigUpdates } from "@openwork/features/flags/managed-deployment-config-updates"
 export { default as managedDeployments } from "@openwork/features/flags/managed-deployments"
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
