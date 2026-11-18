@@ -288,3 +288,40 @@ describe("minimizing a question from another computer (questionMinimize)", () =>
     });
   });
 });
+
+describe("a question in the conversation (questionInThread)", () => {
+  beforeEach(() => clearQuestionDrafts());
+
+  test("single choice waits for Submit instead of answering on click", async () => {
+    const replies: string[][][] = [];
+    await render(<QuestionPanel variant="thread" questions={twoQuestions.slice(0, 1)} busy={false} onReply={(a) => replies.push(a)} />, async ({ container }) => {
+      expect(container.querySelector("[data-question-variant='thread']")).not.toBeNull();
+      await click(button(container, "main"));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(replies).toEqual([]);
+      await click(button(container, "Submit"));
+      expect(replies).toEqual([[["main"]]]);
+    });
+  });
+
+  test("Other takes a typed answer in place of a picked option", async () => {
+    const replies: string[][][] = [];
+    await render(<QuestionPanel variant="thread" questions={twoQuestions.slice(0, 1)} busy={false} onReply={(a) => replies.push(a)} />, async ({ container }) => {
+      await click(button(container, "dev"));
+      await click(button(container, "Other"));
+      const input = container.querySelector("input[type='text']") as HTMLInputElement;
+      await type(input, "release");
+      await click(button(container, "Submit"));
+      expect(replies).toEqual([[["release"]]]);
+    });
+  });
+
+  test("Skip at the bottom dismisses the question", async () => {
+    let dismissed = 0;
+    await render(<QuestionPanel variant="thread" questions={questions} busy={false} onReply={() => {}} onDismiss={() => { dismissed += 1; }} />, async ({ container }) => {
+      expect(container.textContent).toContain("Sending a message skips this question");
+      await click(button(container, "Skip"));
+      expect(dismissed).toBe(1);
+    });
+  });
+});
