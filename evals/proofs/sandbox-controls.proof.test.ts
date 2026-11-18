@@ -28,7 +28,9 @@ controls("an owner enables host tools for one team without giving other members 
     // DenSelect mounts its public role=option buttons in a portal only while open;
     // there are no native <option> elements to inspect in the closed row.
     await user.click(location);
-    await user.see({ role: "option", text: "Member chooses" });
+    await user.see({ role: "option", label: "Member chooses" });
+    await user.see({ role: "option", label: "On this computer" });
+    await user.see({ role: "option", label: "In a sandbox (isolated)" });
     expect((await probe.dom('[role="listbox"] [role="option"]')).elements.map(option => option.text)).toEqual(["Member chooses", "On this computer", "In a sandbox (isolated)"]);
     expect((await probe.dom('[role="listbox"] [role="option"][aria-selected="true"]')).elements.map(option => option.text)).toEqual(["In a sandbox (isolated)"]);
     expect((await probe.dom('[role="listbox"] [role="option"][disabled]')).elements).toHaveLength(0);

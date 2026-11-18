@@ -91,8 +91,12 @@ test("a member sees real sandbox preparation before commands can run in the pack
     await user.see({ role: "heading", label: "Where the agent runs commands" });
     await user.see({ role: "radio", label: "On this computer" });
     await user.see({ role: "radio", label: "In a sandbox (isolated)" });
-    const selected = await probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]');
-    evidence.recordAssertionEvidence("The computer is selected before sandbox preparation", JSON.stringify(selected), selected.elements.length === 1);
+    const selected = await probe.eventually(() => probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]'), {
+      within: 60_000, label: "the loaded personal setting selects this computer in the rendered radio group", until: value => value.elements.length === 1,
+    });
+    const settings = await probe.desktopApi(world.settingsPath);
+    expect(settings.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: true, pending: false });
+    evidence.recordAssertionEvidence("The computer is selected before sandbox preparation", JSON.stringify({ selected, settings: settings.body }), selected.elements.length === 1 && settings.status === 200);
     expect(selected.elements).toHaveLength(1);
     await user.screenshot();
   });
@@ -219,10 +223,26 @@ managedSandboxTest("a member sees the organization's locked sandbox location in 
     await agent.run("route.settings.authorized_folders");
     await user.see({ role: "heading", label: "Where the agent runs commands" });
     await user.see({ testId: "host-execution-note" });
-    expect((await probe.dom('[data-testid="host-execution-note"][data-host-execution-note="managed"]')).elements.map(note => note.text)).toEqual(["Managed by your organization. An admin can change it in agent permissions."]);
-    const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
-    const selected = await probe.dom('[data-testid="sandbox-location-sandbox"][aria-checked="true"]');
-    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
+    const managedCopy = "Managed by your organization. An admin can change it in agent permissions.";
+    // While a policy change is pending, the primary status span carries the pending
+    // explanation and the organization message is a separate visible footnote.
+    const displayed = await probe.eventually(() => probe.text(), {
+      within: 60_000, label: "the loaded policy displays its organization lock explanation", until: text => text.split("\n").some(line => line.trim() === managedCopy),
+    });
+    expect(displayed.split("\n").map(line => line.trim()).filter(line => line === managedCopy)).toEqual([managedCopy]);
+    const managedRow = await probe.eventually(() => probe.dom('[data-testid="host-execution-row"][data-host-execution-managed="true"]'), {
+      within: 60_000, label: "the rendered execution-location section is managed", until: value => value.elements.length === 1,
+    });
+    expect(managedRow.elements).toHaveLength(1);
+    const disabled = await probe.eventually(() => probe.dom('[data-testid^="sandbox-location-"][disabled]'), {
+      within: 60_000, label: "both organization-managed choices finish mounting as disabled controls", until: value => value.elements.length === 2,
+    });
+    const selected = await probe.eventually(() => probe.dom('[data-testid="sandbox-location-sandbox"][aria-checked="true"]'), {
+      within: 60_000, label: "the loaded organization policy selects the sandbox radio", until: value => value.elements.length === 1,
+    });
+    const settings = await probe.desktopApi(world.settingsPath);
+    expect(settings.body).toMatchObject({ managed: true, effectiveAllowHostExecution: false });
+    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected, settings: settings.body, managedCopy }), disabled.elements.length === 2 && selected.elements.length === 1 && settings.status === 200);
     expect(disabled.elements).toHaveLength(2);
     expect(selected.elements).toHaveLength(1);
     await user.screenshot();
@@ -258,10 +278,26 @@ managedComputerTest("a member sees the organization's locked computer location i
     await agent.run("route.settings.authorized_folders");
     await user.see({ role: "heading", label: "Where the agent runs commands" });
     await user.see({ testId: "host-execution-note" });
-    expect((await probe.dom('[data-testid="host-execution-note"][data-host-execution-note="managed"]')).elements.map(note => note.text)).toEqual(["Managed by your organization. An admin can change it in agent permissions."]);
-    const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
-    const selected = await probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]');
-    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
+    const managedCopy = "Managed by your organization. An admin can change it in agent permissions.";
+    // While a policy change is pending, the primary status span carries the pending
+    // explanation and the organization message is a separate visible footnote.
+    const displayed = await probe.eventually(() => probe.text(), {
+      within: 60_000, label: "the loaded policy displays its organization lock explanation", until: text => text.split("\n").some(line => line.trim() === managedCopy),
+    });
+    expect(displayed.split("\n").map(line => line.trim()).filter(line => line === managedCopy)).toEqual([managedCopy]);
+    const managedRow = await probe.eventually(() => probe.dom('[data-testid="host-execution-row"][data-host-execution-managed="true"]'), {
+      within: 60_000, label: "the rendered execution-location section is managed", until: value => value.elements.length === 1,
+    });
+    expect(managedRow.elements).toHaveLength(1);
+    const disabled = await probe.eventually(() => probe.dom('[data-testid^="sandbox-location-"][disabled]'), {
+      within: 60_000, label: "both organization-managed choices finish mounting as disabled controls", until: value => value.elements.length === 2,
+    });
+    const selected = await probe.eventually(() => probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]'), {
+      within: 60_000, label: "the loaded organization policy selects the computer radio", until: value => value.elements.length === 1,
+    });
+    const settings = await probe.desktopApi(world.settingsPath);
+    expect(settings.body).toMatchObject({ managed: true, effectiveAllowHostExecution: true });
+    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected, settings: settings.body, managedCopy }), disabled.elements.length === 2 && selected.elements.length === 1 && settings.status === 200);
     expect(disabled.elements).toHaveLength(2);
     expect(selected.elements).toHaveLength(1);
     await user.screenshot();
