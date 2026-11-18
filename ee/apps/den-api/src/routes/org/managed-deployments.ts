@@ -19,7 +19,8 @@ import { attributeAuditRequest, auditServiceAttribution } from "../../audit/requ
 import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
-import { awsRelease, gcpRelease, releaseReadiness, type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
+import { type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
+import { effectiveInstallerReadiness, effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
 import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limit.js"
@@ -65,8 +66,8 @@ function awsTarget(row: DeploymentRow) {
   return normalizeAwsTargetForView(row.target)
 }
 
-function releaseFor(row: DeploymentRow): ManagedDeploymentRelease | null {
-  return row.provider === "aws" ? awsRelease() : row.provider === "gcp" ? gcpRelease() : null
+async function releaseFor(row: DeploymentRow): Promise<ManagedDeploymentRelease | null> {
+  return row.provider === "aws" || row.provider === "gcp" ? effectiveInstallerRelease(row.provider) : null
 }
 
 function launchDetails(row: DeploymentRow, run: RunRow) {
@@ -124,11 +125,12 @@ async function deploymentViews(rows: DeploymentRow[], now = new Date(), database
   const runs = runIds.length ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
   const events = runIds.length ? await database.select().from(ManagedDeploymentEventTable).where(inArray(ManagedDeploymentEventTable.run_id, runIds)).orderBy(asc(ManagedDeploymentEventTable.sequence)) : []
   const health = await database.select().from(ManagedDeploymentHealthTable).where(inArray(ManagedDeploymentHealthTable.deployment_id, rows.map((row) => row.id)))
+  const [aws, gcp] = await Promise.all([effectiveInstallerRelease("aws"), effectiveInstallerRelease("gcp")])
   return rows.map((row) => {
     const run = runs.find((entry) => entry.id === row.active_run_id) ?? null
     const report = health.find((entry) => entry.deployment_id === row.id) ?? null
     const checks = report ? z.array(healthCheckSchema).catch([]).parse(report.checks) : []
-    const available = releaseFor(row)?.version ?? null
+    const available = (row.provider === "aws" ? aws : row.provider === "gcp" ? gcp : null)?.version ?? null
     const installed = report?.version ?? row.installed_version
     const target = row.provider === "gcp" ? gcpTargetSchema.parse(row.target) : awsTarget(row)
     return managedDeploymentSchema.parse({
@@ -171,10 +173,10 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
-      const gcp = releaseReadiness("gcp")
+      const [aws, gcp] = await Promise.all([effectiveInstallerReadiness("aws"), effectiveInstallerReadiness("gcp")])
       return c.json(managedDeploymentConfigurationSchema.parse({
         providers: [
-          releaseReadiness("aws"),
+          aws,
           { provider: "azure", available: false, version: null, reason: "not_supported" },
           gcp,
         ],
@@ -196,7 +198,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
-      if (!(body.provider === "aws" ? awsRelease() : gcpRelease())) return c.json({ error: "release_not_configured" }, 503)
+      if (!await effectiveInstallerRelease(body.provider)) return c.json({ error: "release_not_configured" }, 503)
       const id = randomUUID()
       const created = await db.transaction(async (tx) => {
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
@@ -269,7 +271,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const runtimeSettingsChanged = Boolean(changedTarget?.success && storedTarget && target && (storedTarget.runtimeProfile !== target.runtimeProfile || JSON.stringify(storedTarget.assistants) !== JSON.stringify(target.assistants)))
         if (target && (runtimeProfile || assistants || target.runtimeProfile === "gateway" || (storedTarget && assistantsEnabled(storedTarget.assistants)))
           && !await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
-        const release = releaseFor(row)
+        const release = await releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
         const live = active && active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")

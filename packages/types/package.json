@@ -46,6 +46,14 @@
       "bun": "./src/microsoft-drive-transfer.ts",
       "default": "./dist/microsoft-drive-transfer.js"
     },
+    "./den/managed-installer-releases": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/managed-installer-releases.d.ts",
+        "default": "./src/den/managed-installer-releases.ts"
+      },
+      "development": "./src/den/managed-installer-releases.ts",
+      "default": "./src/den/managed-installer-releases.ts"
+    },
     "./den/managed-deployments": {
       "types": {
         "openwork-build": "./dist/types/src/den/managed-deployments.d.ts",
