@@ -2294,6 +2294,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
+  const questionInThreadEnabled = useDesktopFeature("questionInThread");
+  const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -2601,6 +2603,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    skipThreadQuestionBeforeSendRef.current?.();
     const focusedComposer = document.activeElement;
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
@@ -3701,6 +3704,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
   const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
+  const threadQuestion = questionInThreadEnabled ? composerQuestion : null;
+  const dockedQuestion = questionInThreadEnabled ? null : composerQuestion;
+  skipThreadQuestionBeforeSendRef.current = threadQuestion && props.respondQuestion && !props.questionReplyBusy
+    ? () => { void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {}); }
+    : null;
   // The agent is waiting for computer use in this chat (setup or allowance).
   const computerRequest = useComputerRequest(props.sessionId);
   // A turn that ended on a Connect card picks up once its sign-in lands, as if the person said so.
@@ -4030,6 +4038,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </DevProfiler>
             )}
             </SessionHistoryBoundary>
+            {threadQuestion ? (
+              <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
+                <QuestionPanel
+                  key={threadQuestion.id}
+                  variant="thread"
+                  questions={threadQuestion.questions}
+                  busy={props.questionReplyBusy ?? false}
+                  requestId={threadQuestion.id}
+                  onReply={(answers) => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                  }}
+                  onDismiss={props.respondQuestion ? () => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                  } : undefined}
+                />
+              </div>
+            ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
@@ -4188,9 +4213,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
+          compactTopSpacing={Boolean(dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
+            dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4228,22 +4253,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onStop={snapshotEngine === "v2" ? handleStopBackgroundTask : undefined}
                   />
                 ) : null}
-                {composerQuestion ? (
+                {dockedQuestion ? (
                   <div data-composer-interaction="question">
                   <QuestionPanel
-                    questions={composerQuestion.questions}
+                    questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
                     collapsible={questionMinimizeEnabled}
-                    requestId={composerQuestion.id}
+                    requestId={dockedQuestion.id}
                     shortcutActive={props.isControlTarget}
                     onReply={(answers) => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {});
                       }
                     }}
                     onDismiss={props.respondQuestion ? () => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, null)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, null)).catch(() => {});
                       }
                     } : undefined}
                   />
