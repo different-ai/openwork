@@ -13,14 +13,22 @@
       "types": "./src/eval-engine.ts",
       "development": "./src/eval-engine.ts",
       "default": "./src/eval-engine.ts"
+    },
+    "./eval-ref": {
+      "types": "./src/eval-ref.ts",
+      "development": "./src/eval-ref.ts",
+      "default": "./src/eval-ref.ts"
     }
   },
   "dependencies": {
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/hosts": "workspace:*",
+    "@openwork/freestyle": "link:../../../packages/freestyle",
     "@openwork/labs": "workspace:*",
     "@openwork/world": "link:../../../packages/world",
-    "mysql2": "^3.11.3"
+    "mysql2": "^3.11.3",
+    "@openwork/evidence-provider": "link:../../../packages/evidence-provider",
+    "@openwork/daytona-evidence": "link:../../../packages/daytona-evidence"
   }
 }

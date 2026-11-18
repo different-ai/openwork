@@ -1,19 +1,28 @@
 // Embedded browser panel: tab state, BrowserView lifecycle, native context menus,
 // proxy configuration, and browser IPC registrations. Extracted from
 // main.mjs as a factory so the main process only owns window creation.
+import { constants as fsConstants } from "node:fs";
+import { access, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session, shell } from "electron";
 import {
+  AGENT_VIEWPORTS,
   BACKGROUND_TAB_VIEWPORT,
+  DEFAULT_AGENT_VIEWPORT,
+  DRAFT_OWNER_KEY,
+  agentViewportEmulationCommands,
   backgroundTabEmulationCommands,
   createBrowserTabRegistry,
+  fitAgentViewport,
+  lockedAgentViewport,
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
-import { listInstalledBrowsers } from "./installed-browsers.mjs";
-import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { openExternalUrl } from "./open-external.mjs";
+import { BrowserTaskError, createBrowserTaskHost } from "@openwork/computer-use/browser-task";
+import { agentPermissionDenialMessage, decideAgentPermission, stricterAgentPermissionDecision } from "@openwork/types/den/agent-permissions-runtime";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -23,10 +32,7 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
-// Bound native page allocation across conversations. Refuse new work rather
-// than evicting a live document (unsaved input and CDP handles cannot be restored
-// from a URL). This is a tab bound, not a Chromium process or memory limit.
-const MAX_BROWSER_TABS = 12;
+const MAX_CLOSED_BROWSER_TABS = 20;
 const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
 const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   sandbox: true,
@@ -41,7 +47,217 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
   webviewTag: false,
 });
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu,
+  approveFiles = async () => false, approveCredential = undefined }) {
+  // The member's agent permission rules for websites, from their desktop
+  // config. They apply to every page, frame and request the built-in browser
+  // makes, whoever opens it, as the engines apply them to the agent's web fetches.
+  // Empty, so every page opens, unless the app reports that the member's
+  // organization uses agent permissions; null while those are not yet verified
+  // for this sign-in: no page opens meanwhile, and the pages kept closed reload
+  // once they arrive. On a computer where website rules were ever in force it
+  // starts null, so no page opens before the first verified answer.
+  let websiteRules = websiteRulesWereInForce ? null : [];
+  // The rules the open pages were last checked against: pages stay open while
+  // new rules load, and are checked against them once they arrive.
+  let checkedWebsiteRules = [];
+  // Each tab kept closed while the rules load, with the address it was opening.
+  const tabsWaitingForWebsiteRules = new Map();
+  // Sites the member approved under an "Ask first" rule, until the rules change.
+  let approvedWebsites = new Set();
+  const websiteApprovals = new Map();
+  // Most addresses a page requested since it opened, for checking it against new rules.
+  const REMEMBERED_REQUESTS = 1_000;
+  // How long a frame or other request waits for new rules before it is kept closed.
+  const WEBSITE_RULES_WAIT_MS = 20_000;
+  // Resolves once new rules arrive; frames and requests made while they load wait for it.
+  let websiteRulesArrival = null;
+  function websiteRulesArrived() {
+    if (!websiteRulesArrival) {
+      /** @type {(value?: unknown) => void} */
+      let arrive = () => {};
+      const arrived = new Promise((resolve) => { arrive = resolve; });
+      websiteRulesArrival = { arrived, arrive };
+    }
+    return websiteRulesArrival.arrived;
+  }
+  /** The address website rules judge: a WebSocket connects to its site over http or https. */
+  function websiteAddress(url) {
+    return String(url).replace(/^ws(s?):/i, "http$1:");
+  }
+  /** What the rules decide for an address; while new rules load, nothing opens. */
+  function websiteDecision(url) {
+    if (websiteRules === null) {
+      return { effect: "deny", waiting: true, message: "Your organization's agent permissions are still loading. This page opens once they have." };
+    }
+    const decision = decideAgentPermission(websiteRules, "webfetch", [websiteAddress(url)]);
+    return decision.rule && decision.effect !== "allow"
+      ? { effect: decision.effect, rule: decision.rule, message: agentPermissionDenialMessage(decision.rule, decision.resource) }
+      : { effect: "allow" };
+  }
+  /** Whether the member approved the site of an address under an "Ask first" rule. */
+  function websiteApproved(url) {
+    try { return approvedWebsites.has(new URL(websiteAddress(url)).origin); } catch { return false; }
+  }
+  /** Asks the member before a page opens under an "Ask first" rule; anything but an approval keeps it closed. */
+  function approveWebsite(url, rule) {
+    let site;
+    try { site = new URL(url); } catch { return Promise.resolve(false); }
+    if (approvedWebsites.has(site.origin)) return Promise.resolve(true);
+    const pending = websiteApprovals.get(site.origin);
+    if (pending) return pending;
+    const rules = websiteRules;
+    const parent = viewHost();
+    const approval = (parent && !parent.isDestroyed()
+      ? dialog.showMessageBox(parent, {
+        type: "question",
+        buttons: ["Open", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        message: `Open ${site.host}?`,
+        detail: `Your organization's agent permissions ask before this site opens (set for ${rule.source}).`,
+      }).then(({ response }) => response === 0)
+      : Promise.resolve(false))
+      .catch(() => false)
+      // Rules that changed while the member decided get a fresh question.
+      .then((approved) => approved && rules === websiteRules)
+      .then((approved) => {
+        if (approved) approvedWebsites.add(site.origin);
+        return approved;
+      })
+      .finally(() => websiteApprovals.delete(site.origin));
+    websiteApprovals.set(site.origin, approval);
+    return approval;
+  }
+  /**
+   * Throws when the website rules keep a page, frame or other request closed.
+   * A page under an "Ask first" rule opens once the member approves; frames
+   * and other requests never ask, and pass only for a site already approved.
+   * While new rules load, a page is kept closed and reopened once they arrive,
+   * and a frame or other request waits for them.
+   */
+  async function checkWebsiteRules(url, { page = false } = {}) {
+    if (websiteRules === null && !page) {
+      let timer;
+      await Promise.race([websiteRulesArrived(), new Promise((resolve) => { timer = setTimeout(resolve, WEBSITE_RULES_WAIT_MS); })]);
+      clearTimeout(timer);
+    }
+    const decision = websiteDecision(url);
+    if (decision.effect === "allow") return;
+    if (decision.effect === "ask" && (page ? await approveWebsite(url, decision.rule) : websiteApproved(url))) return;
+    throw Object.assign(new Error(decision.message), { code: "organization_policy_denied", websiteRule: true, waiting: decision.waiting === true, blocked: decision.effect === "deny" && decision.waiting !== true });
+  }
+  /**
+   * The page a tab shows instead of a site a website rule blocks, like a
+   * browser's own "blocked by your administrator" page: the same words for
+   * every rule, without naming the rule or who it is set for.
+   * @param {string} url
+   * @returns {{ code: "blocked_by_organization"; message: string; url: string; errorCode: number; errorDescription: string }}
+   */
+  function blockedSitePage(url) {
+    return {
+      code: "blocked_by_organization",
+      message: "Your organization doesn't allow you to view this site.",
+      url,
+      errorCode: -22,
+      errorDescription: "ERR_BLOCKED_BY_ADMINISTRATOR",
+    };
+  }
+  /** Whether a tab shows an error page in place of its document. */
+  function showsErrorPage(tab) {
+    return tab.loadError?.code === "page_load_failed" || tab.loadError?.code === "blocked_by_organization";
+  }
+  /**
+   * Website rules first, then the managed policy. A site under an "Ask first"
+   * rule passes here; the member is asked as its page loads. Opening a link
+   * outside OpenWork is not a built-in browser load.
+   */
+  async function checkBrowserPolicy(input) {
+    const decision = input.external ? { effect: "allow" } : websiteDecision(input.url);
+    if (decision.effect === "deny") throw Object.assign(new Error(decision.message), { code: "organization_policy_denied" });
+    await checkPolicy?.(input);
+  }
+  /** What rules decide for an address, with a site the member approved under "Ask first" allowed. */
+  function approvedEffect(rules, approvals, address) {
+    const effect = decideAgentPermission(rules, "webfetch", [address]).effect;
+    if (effect !== "ask") return effect;
+    try { return approvals.has(new URL(address).origin) ? "allow" : effect; } catch { return effect; }
+  }
+  /** Whether the current rules and approvals block or ask first for an address the earlier ones let open. */
+  function newlyRestricted(previousRules, previousApprovals, url) {
+    const address = websiteAddress(url);
+    if (!/^https?:/i.test(address)) return false;
+    const before = approvedEffect(previousRules, previousApprovals, address);
+    const after = approvedEffect(websiteRules, approvedWebsites, address);
+    return after !== before && stricterAgentPermissionDecision(before, after) === after;
+  }
+  /** Remembers what a page requested, so new website rules can tell whether they restrict it. */
+  function rememberRequest(tab, url) {
+    if (tab.requests.size >= REMEMBERED_REQUESTS) {
+      tab.requestsOverflowed = true;
+      return;
+    }
+    try {
+      const { origin, pathname } = new URL(url);
+      tab.requests.add(`${origin}${pathname}`);
+    } catch { /* not an address */ }
+  }
+  /**
+   * Replaces a page on a site the new rules restrict with a blank page at
+   * once, so it is not usable even while the member is asked. A blocked site
+   * shows the blocked page; a site that asks first loads again through the
+   * request check, which asks.
+   */
+  function closeRestrictedPage(tab, url) {
+    const contents = tab.view.webContents;
+    const blocked = websiteDecision(url).effect === "deny";
+    tab.closingRestrictedPage = true;
+    tab.loadError = blocked ? blockedSitePage(url) : null;
+    if (blocked) tab.view.setVisible(false);
+    runDetachedTask("close a page agent permissions restrict", async () => {
+      await contents.loadURL("about:blank");
+      if (!blocked && getBrowserTab(tab.tabId) === tab && !contents.isDestroyed()) await contents.loadURL(url);
+    });
+  }
+  function setWebsiteRules(rules) {
+    if (JSON.stringify(rules) === JSON.stringify(websiteRules)) return;
+    websiteRules = rules;
+    if (rules === null) return;
+    if (rules.length > 0) onWebsiteRulesInForce?.();
+    websiteRulesArrival?.arrive();
+    websiteRulesArrival = null;
+    const previousRules = checkedWebsiteRules;
+    const previousApprovals = approvedWebsites;
+    checkedWebsiteRules = rules;
+    // Sites approved under "Ask first" stay approved until the rules change;
+    // pages open on them are then asked about again.
+    if (JSON.stringify(rules) !== JSON.stringify(previousRules)) approvedWebsites = new Set();
+    const waiting = [...tabsWaitingForWebsiteRules];
+    tabsWaitingForWebsiteRules.clear();
+    for (const [tab, url] of waiting) {
+      if (getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()) continue;
+      tab.loadError = null;
+      runDetachedTask("open a page held for agent permissions", () => tab.view.webContents.loadURL(url));
+    }
+    // A page already open on a site the new rules block or ask first for is
+    // closed at once. A page that has a frame of such a site, or requested
+    // anything from one, loads again, so the request check keeps those out.
+    for (const tab of browserTabs.values()) {
+      const contents = tab.view.webContents;
+      if (contents.isDestroyed() || waiting.some(([waitingTab]) => waitingTab === tab) || showsErrorPage(tab)) continue;
+      const url = contents.getURL();
+      if (newlyRestricted(previousRules, previousApprovals, url)) {
+        closeRestrictedPage(tab, url);
+        continue;
+      }
+      let frames;
+      try { frames = contents.mainFrame.framesInSubtree.map((frame) => frame.url); } catch { frames = []; }
+      if (!tab.requestsOverflowed && ![...frames, ...tab.requests].some((address) => newlyRestricted(previousRules, previousApprovals, address))) continue;
+      tab.websiteRecheck = true;
+      runDetachedTask("check an open page against new agent permissions", () => contents.loadURL(url));
+    }
+    sendBrowserState();
+  }
   let browserSessionHooksInstalled = false;
   function installBrowserSessionHooks() {
     if (browserSessionHooksInstalled) return;
@@ -55,7 +271,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       item.once("done", () => tab.downloads.delete(item));
     });
     browserSessionHooksInstalled = true;
-    if (!checkPolicy) return;
     // The session request boundary covers normal navigation, redirects, frames,
     // scripted fetches and CDP navigation; window navigation events do not.
     browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
@@ -65,13 +280,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const documentGeneration = tab?.documentGeneration;
       const guard = details.resourceType === "mainFrame" ? taskHost.navigationGuard(tab?.tabId) : null;
       const request = { url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) };
+      if (tab && details.resourceType !== "mainFrame") rememberRequest(tab, details.url);
+      // Browser tasks wait for requests an action started before reporting settled.
+      if (tab && details.resourceType !== "webSocket") tab.inFlight.set(details.id, Date.now());
       Promise.resolve().then(async () => {
-        await checkPolicy(request);
+        // Every request follows the website rules; only a page may ask first.
+        const page = details.resourceType === "mainFrame";
+        await checkWebsiteRules(details.url, { page });
+        const checkedRules = websiteRules;
+        await checkPolicy?.(request);
+        let validate;
         if (guard) {
-          const validate = await guard(details.url);
-          await checkPolicy(request);
-          return validate;
+          validate = await guard(details.url);
+          await checkPolicy?.(request);
         }
+        // Rules that changed during those checks apply to this request too.
+        if (websiteRules !== checkedRules) await checkWebsiteRules(details.url, { page });
+        return validate;
       })
         .then((validate) => {
           try {
@@ -80,8 +305,21 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           } catch { callback({ cancel: true }); return; }
           callback({ cancel: false });
         }, (error) => {
+          if (error?.websiteRule && tab && details.resourceType === "mainFrame"
+            && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()) {
+            tab.loadError = error.blocked ? blockedSitePage(details.url) : { code: "organization_policy_denied", message: error.message };
+            if (error.blocked) tab.view.setVisible(false);
+            if (error.waiting) tabsWaitingForWebsiteRules.set(tab, details.url);
+            // A navigation that cut short the blank page replacing a restricted
+            // one must not leave that page in place.
+            if (tab.closingRestrictedPage) runDetachedTask("close a page agent permissions restrict", () => tab.view.webContents.loadURL("about:blank"));
+            sendBrowserState();
+            callback({ cancel: true });
+            return;
+          }
           if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && !showsErrorPage(tab)
             && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
             tab.loadError = {
               code: error.code,
@@ -94,6 +332,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           callback({ cancel: true });
         });
     });
+    const finished = (details) => { [...browserTabs.values()].find((item) => item.view.webContents.id === details.webContentsId)?.inFlight.delete(details.id); };
+    browserSession.webRequest.onCompleted({ urls: ["<all_urls>"] }, finished);
+    browserSession.webRequest.onErrorOccurred({ urls: ["<all_urls>"] }, finished);
   }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
   // tab per conversation, and which conversation is on screen live in the
@@ -116,21 +357,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   const browserTabs = new Map();
   const suspendedTabs = new Map();
   const registry = createBrowserTabRegistry();
+  // URL-only, memory-only history. Closed pages never retain task/approval/CDP
+  // handles, and a conversation can only reopen its own most recent entry.
+  let closedTabs = [];
+  let shortcutFocus = null;
+  let reopeningTab = false;
   let browserViewVisible = false;
+  // How the renderer presents the visible conversation's browser
+  // ({ sessionId, mode }), so Escape inside a full-screen page can leave full
+  // screen. It never survives a conversation switch.
+  let browserPresentation = null;
   let backgroundWindow = null;
+  // The browser's own OS window while the person has it popped out, and whether
+  // the on-screen page is in it rather than in the app window. Each bounds call
+  // says which window it measured, so the page moves once its new place exists.
+  let popOutWindow = null;
+  let pageInPopOut = false;
   // Last accepted geometry in window DIPs. Reattaching must not scale an old
   // CSS rectangle with a newer zoom while the renderer is still catching up.
   let lastBrowserBounds = null;
+  let lastBrowserZoomFactor = null;
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
   let browserControlEnabled = true;
+  // The size tabs lock to while the agent controls them (AGENT_VIEWPORTS key).
+  /** @type {string} */
+  let agentViewportKey = DEFAULT_AGENT_VIEWPORT;
   let menuRequest = null;
   let menuShowSerial = 0;
+  let linkChoiceRequest = null;
+  let linkChoiceCounter = 0;
   const webMcpRefreshTimers = new Map();
 
   function window() {
     return getWindow?.() ?? null;
+  }
+
+  /** The window the on-screen page is in: the popped-out browser, or the app. */
+  function viewHost() {
+    return pageInPopOut && popOutWindow && !popOutWindow.isDestroyed() ? popOutWindow : window();
   }
 
   /** Send an IPC message to the main renderer, guarding against disposed frames. */
@@ -154,7 +420,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function browserTaskAllowed(url) {
     if (!browserControlEnabled || typeof checkPolicy !== "function") return false;
     try {
-      await checkPolicy({ url });
+      await checkBrowserPolicy({ url });
       return browserControlEnabled;
     } catch {
       return false;
@@ -179,11 +445,16 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
     const ownerSessionId = registry.visibleSessionId();
-    runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    // Promise callbacks still run inside Electron's native navigation event.
+    // Defer the whole routing operation, not just the main-window stop.
+    setImmediate(() => {
+      runDetachedTask("open linked browser page", () => openBrowserUrlForAutomation(url, "builtin", { ownerSessionId }));
+    });
   }
 
+  // Absent unless this launch opened the debug port. Browser tools never need it.
   function cdpBrowserUrl() {
-    return `http://127.0.0.1:${remoteDebugPort}`;
+    return remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : undefined;
   }
 
   /**
@@ -214,10 +485,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     signal?.throwIfAborted();
     const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, deferBackground: true, ownerSessionId, automationProtected: true });
     tab.operation = true;
-    const stop = () => {
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop();
-      closeBrowserTab(tab.tabId);
+    let cleanupQueued = false;
+    const closeAfterNavigation = (error = undefined) => {
+      if (cleanupQueued) return;
+      cleanupQueued = true;
+      // Revoke the tab/control synchronously, before a retry can reuse them.
+      // Only native destruction waits for the navigation callback to unwind.
+      if (getBrowserTab(tab.tabId) === tab) closeBrowserTab(tab.tabId, false, error, { deferNativeClose: true });
     };
+    const stop = () => closeAfterNavigation(signal?.reason);
     signal?.addEventListener("abort", stop, { once: true });
     try {
       await beforeLoad?.(tab);
@@ -228,11 +504,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       applySurfacing();
       await tab.emulation;
       signal?.throwIfAborted();
+      await lockAgentViewport(tab);
+      signal?.throwIfAborted();
+      // Sites pick their phone pages from the first request's user agent.
+      if (tab.agentViewportSize?.mobile) { await tab.view.webContents.loadURL(tab.view.webContents.getURL()); signal?.throwIfAborted(); }
       return tab;
     }
     catch (error) {
-      // No usable handle was returned; retries must not retain abandoned pages.
-      closeBrowserTab(tab.tabId);
+      // Preserve the initiating failure when last-tab cleanup revokes control.
+      closeAfterNavigation(error);
       throw error;
     }
     finally { signal?.removeEventListener("abort", stop); tab.operation = false; sendBrowserState(); }
@@ -272,8 +552,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function browserTabToPanelTab(tabId, tab) {
     const webContents = tab.view.webContents;
-    const url = webContents.getURL();
-    const title = webContents.getTitle();
+    const failed = showsErrorPage(tab) ? tab.loadError : null;
+    const url = failed?.url ?? webContents.getURL();
+    const title = failed ? "" : webContents.getTitle();
     const isLoading = webContents.isLoading();
 
     return {
@@ -287,9 +568,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       canGoBack: webContents.canGoBack(),
       canGoForward: webContents.canGoForward(),
       ownerSessionId: registry.ownerOf(tabId),
-      browserApproval: tab.browserApproval ?? null,
       loadError: tab.loadError,
-      browserTask: tab.browserTask ?? { status: "idle", operation: null },
+      browserTask: tab.browserTask,
+      agentViewport: tab.agentViewport
+        ? { key: tab.agentViewport, width: tab.agentViewportSize.width, height: tab.agentViewportSize.height, scale: tab.viewportScale }
+        : null,
       siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
       siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
       siteToolActivity: Array.isArray(tab.webMcpActivity) ? tab.webMcpActivity : [],
@@ -328,6 +611,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         attached: index !== -1,
         // BrowserWindow's primary renderer is below the entire contentView.
         aboveApp: index !== -1,
+        poppedOut: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.contentView.children.includes(view)),
+        focused: !view.webContents.isDestroyed() && view.webContents.isFocused(),
         visible: view.getVisible(),
         bounds: view.getBounds(),
       };
@@ -397,8 +682,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const parsed = new URL(url);
     if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
     if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    // Capture ownership before discovery; a later focus change must not retarget
-    // the link. Dismissals invalidate pending discovery through the serial.
+    // A later focus change must not retarget the captured link.
     const ownerSessionId = normalizeSessionId(sessionId) ?? registry.visibleSessionId();
     await showContextMenu({
       source: "link",
@@ -450,7 +734,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // Chromium supplies view-relative coordinates, already in window DIPs.
     // Convert to app CSS pixels for the shared helper, not through page zoom.
     const bounds = tab.view.getBounds();
-    const appZoom = window().webContents.getZoomFactor();
+    const appZoom = viewHost().webContents.getZoomFactor();
     await showContextMenu({
       source: "page", tabId: tab.tabId, ownerSessionId: registry.ownerOf(tab.tabId),
       url: params.linkURL, items, actions,
@@ -461,11 +745,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   async function showContextMenu(request) {
     hideContextMenu();
     const showSerial = ++menuShowSerial;
-    const mainWindow = window();
-    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    // A page's menu opens over the page, wherever the page is.
+    const menuWindow = () => (request.source === "page" ? viewHost() : window());
+    const host = menuWindow();
+    if (!host || host.isDestroyed() || host.webContents.isDestroyed()) return;
     const tab = request.tabId ? getBrowserTab(request.tabId) : null;
-    const isCurrent = () => showSerial === menuShowSerial && window() === mainWindow
-      && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()
+    const isCurrent = () => showSerial === menuShowSerial && menuWindow() === host
+      && !host.isDestroyed() && !host.webContents.isDestroyed()
       && (!tab || (getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed() && registry.ownerOf(tab.tabId) === request.ownerSessionId))
       && (request.source !== "page" || browserTabVisible(request.tabId));
     const dismiss = () => { if (menuRequest === request) hideContextMenu(); };
@@ -476,24 +762,21 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
     const navigated = (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame || request.source === "page") invalidate(); };
     menuRequest = request;
-    mainWindow.on("blur", dismiss);
-    mainWindow.webContents.on("did-start-navigation", navigated);
-    mainWindow.webContents.on("destroyed", invalidate);
+    host.on("blur", dismiss);
+    host.webContents.on("did-start-navigation", navigated);
+    host.webContents.on("destroyed", invalidate);
     tab?.view.webContents.on("did-start-navigation", navigated);
     try {
       if (request.source === "link") {
-        request.browsers = await listInstalledBrowsers();
-        if (!isCurrent()) return;
         request.items = [
           { type: "item", id: "open-builtin", label: "Open in OpenWork" },
-          { type: "item", id: "open-external", label: "Open in Default Browser" },
-          ...request.browsers.map(({ id, name }) => ({ type: "item", id: `browser:${id}`, label: `Open in ${name}` })),
+          { type: "item", id: "open-external", label: "Open in external browser" },
           { type: "separator" },
           { type: "item", id: "copy-url", label: "Copy Link Address" },
         ];
       }
       // The native helper owns zoom conversion and resolves only an ID or null.
-      const itemId = await showNativeContextMenu({ items: request.items, point: request.point });
+      const itemId = await showNativeContextMenu({ items: request.items, point: request.point }, host);
       if (!isCurrent()) return;
       menuRequest = null;
       if (!request.items.some((item) => item.type === "item" && item.id === itemId && item.enabled !== false)) return;
@@ -502,9 +785,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       await handleMenuChoice(request, itemId, isCurrent);
     } finally {
       dismiss();
-      mainWindow.removeListener("blur", dismiss);
-      mainWindow.webContents.removeListener("did-start-navigation", navigated);
-      mainWindow.webContents.removeListener("destroyed", invalidate);
+      host.removeListener("blur", dismiss);
+      host.webContents.removeListener("did-start-navigation", navigated);
+      host.webContents.removeListener("destroyed", invalidate);
       tab?.view.webContents.removeListener("did-start-navigation", navigated);
     }
   }
@@ -515,15 +798,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if ((request.source === "link" && itemId !== "copy-url") || (request.source === "page" && itemId === "open-new-tab")) {
       try {
         const external = request.source === "link" && itemId !== "open-builtin";
-        await checkPolicy?.({ url: request.url, external });
+        await checkBrowserPolicy({ url: request.url, external });
         if (!isCurrent()) return;
         if (!external) {
           createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
-        } else if (itemId === "open-external") {
-          await shell.openExternal(request.url);
         } else {
-          const browser = request.browsers.find(({ id }) => `browser:${id}` === itemId);
-          await browser.open(request.url);
+          const result = await openExternalUrl(request.url);
+          // A slow browser is still opening the link; only a real failure needs a dialog.
+          if (!result.ok && !result.pending) throw new Error(result.error);
         }
       } catch (error) {
         if (isCurrent()) {
@@ -552,10 +834,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         }
         break;
       case "close-tab":
-        if (tab) closeBrowserTab(tab.tabId);
+        if (tab) closeUserBrowserTab(tab.tabId);
         break;
       case "close-all-tabs":
-        closeAllBrowserTabs();
+        closeAllBrowserTabs(true);
         break;
     }
   }
@@ -599,42 +881,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
   }
 
-  const approvals = new Map();
   function browserTabVisible(tabId) {
     const tab = getBrowserTab(tabId);
     return !!tab && browserViewVisible && registry.onScreenTabId() === tabId
-      && window()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
+      && viewHost()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
-  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once", waitForVisible = false }) {
-    const tab = getBrowserTab(tabId);
-    const owner = registry.ownerOf(tabId);
-    if (!tab || (!waitForVisible && !browserTabVisible(tabId)) || signal?.aborted) return Promise.resolve(false);
-    if (approvals.has(tabId)) return Promise.resolve(false);
-    return new Promise((resolve) => {
-      const id = createBrowserTabId();
-      const finish = (allowed) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", canceled);
-        if (approvals.get(tabId)?.id !== id) return;
-        approvals.delete(tabId); tab.browserApproval = null;
-        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
-        sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
-      };
-      const canceled = () => finish(false);
-      const timer = setTimeout(canceled, 60_000);
-      approvals.set(tabId, { id, finish });
-      tab.browserApproval = { id, title, message, detail, approveLabel };
-      tab.view.setVisible(false);
-      signal?.addEventListener("abort", canceled, { once: true });
-      sendBrowserState();
-    });
-  }
-  async function confirmWebMcpExecution({ tool, inputSummary, tabId, signal }) {
-    return confirmBrowserAction({ tabId, signal, title: "Allow website action?",
-      message: `Allow ${tool.origin} to run “${tool.name}”?`,
-      detail: `This website tool may change data. Arguments: ${inputSummary}` });
-  }
-
   const webMcpBroker = createWebMcpBroker({
     getTab: (tabId) => getBrowserTab(tabId),
     getActiveTabId: (sessionId) => registry.activeTabIdFor(sessionId),
@@ -643,12 +894,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       const tab = getBrowserTab(tabId);
       if (!tab || !await browserTaskAllowed(tab.view.webContents.getURL())) throw new Error("website_blocked");
     },
-    confirmExecution: confirmWebMcpExecution,
-    confirmResultDisclosure: ({ tabId, signal, tool, resultText }) => confirmBrowserAction({
-      tabId, signal, title: "Share website result?", approveLabel: "Share result",
-      message: `Share the result from ${tool.origin} with this conversation and its model provider?`,
-      detail: `The website action has already run. Review this complete result for passwords, session cookies, tokens or other private data before sharing. Denying keeps the result out of the conversation and does not undo the action.\n\n${resultText}`,
-    }),
     isFrameAllowed: async (frame) => await browserTaskAllowed(frame.url) && ensureWebMcpFramePolicy().checkFrame(frame),
     onActivity: (activity) => {
       const tab = getBrowserTab(activity.tabId);
@@ -682,10 +927,32 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     allowed: browserTaskAllowed,
     openTab: openBrowserTab,
     navigate: (tab, url) => tab.view.webContents.loadURL(url),
-    confirm: confirmBrowserAction,
-    changed: (tabId, activity) => { const tab = getBrowserTab(tabId); if (tab) { tab.browserTask = activity; sendBrowserState(); } },
+    // Pages get files through the intercepted chooser, never the system picker. Run only
+    // after the person approved these exact paths: each must be its own real path (no link
+    // anywhere in it) to a readable regular file, so what is attached is what they saw.
+    checkFiles: async (paths) => {
+      for (const file of paths) {
+        if (await realpath(file) !== file) throw new Error("not_the_real_path");
+        if (!(await lstat(file)).isFile()) throw new Error("not_a_file");
+        await access(file, fsConstants.R_OK);
+      }
+    },
+    approveFiles,
+    approveCredential,
+    changed: (tabId, activity) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.browserTask = activity;
+      // A takeover hands the page back at the panel's own width.
+      if (activity.status === "paused") releaseAgentViewport(tab);
+      sendBrowserState();
+    },
     siteTools: (args) => webMcpBroker.listTools(args),
     runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
+    inFlight: (tab, since) => [...tab.inFlight.values()].filter((started) => started >= since).length,
+    prepare: (tab) => lockAgentViewport(tab),
+    inputScale: (tab) => tab.agentViewport && !tab.background ? tab.viewportScale : 1,
+    capture: (tab, viewport) => captureAgentViewport(tab, viewport),
   });
 
   function scheduleWebMcpToolCountRefresh(tabId) {
@@ -726,13 +993,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
-    // Check synchronously before creating a WebContentsView, including pending
-    // opens, popups, transcript links and the tab-strip button.
-    if (browserTabs.size >= MAX_BROWSER_TABS) {
-      throw new BrowserTaskError("tab_limit", `OpenWork has ${MAX_BROWSER_TABS} browser tabs open. Close an unused browser tab in any conversation, then try again.`);
-    }
-    if (!restoreTabId && registry.size() >= 100) throw new Error("OpenWork has 100 saved browser tabs. Close an unused tab, then try again.");
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, deferBackground = false, ownerSessionId = null, restoreTabId = null, automationProtected = false, forPerson = false, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
+    // Keep existing documents intact when opening a tab: never evict a page
+    // (and its unsaved input or automation handles) to make room for another.
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
@@ -741,6 +1004,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       webPreferences: {
         ...contentsOptions.webPreferences,
         backgroundThrottling: false,
+        // The agent and policy checks load pages too: a load must never take the
+        // keyboard from what the person is typing. Their own navigations focus the page.
+        focusOnNavigation: false,
         ...BROWSER_SECURITY_PREFERENCES,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
         partition: BROWSER_SESSION_PARTITION,
@@ -751,12 +1017,32 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       deferBackground,
       operation: false, suspending: false, mediaPlaying: false, downloads: new Set(),
       domReady: false, emulation: Promise.resolve(),
+      // Set from render-process-gone until the next document is ready.
+      rendererGone: false,
+      // AGENT_VIEWPORTS key while the agent controls the tab, the size it was
+      // locked at, and the scale its emulation currently draws at inside the
+      // panel (1 when not scaled).
+      /** @type {string | null} */
+      agentViewport: null,
+      /** @type {Readonly<import("@openwork/browser-tabs").AgentViewport> | null} */
+      agentViewportSize: null,
+      agentViewportAwaitsPanel: false,
+      viewportScale: 1,
+      agentViewportQueued: false,
       /** @type {((error: Error | null) => void) | null} */
       finishSuspension: null,
       webMcpRevision: 0,
       documentGeneration: 0,
       /** @type {import("@openwork/browser-tabs").BrowserPanelTab["loadError"]} */
       loadError: null,
+      /** What the page requested since it opened (origin and path), for checking it against new website rules. */
+      requests: new Set(),
+      requestsOverflowed: false,
+      /** @type {Map<number, number>} Request id -> start time, until it completes or fails. */
+      inFlight: new Map(),
+      // Set while a page reloads, or is replaced by a blank one, because new website rules restrict it.
+      websiteRecheck: false,
+      closingRestrictedPage: false,
       webMcpToolCount: 0,
       webMcpTools: [],
       webMcpActivity: [],
@@ -766,14 +1052,37 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     view.webContents.on("context-menu", (_event, params) => {
       runDetachedTask("show browser page menu", () => showPageContextMenu(tab, params));
     });
-    view.webContents.once("dom-ready", () => {
+    const onDomReady = () => {
       tab.domReady = true;
+      tab.rendererGone = false;
+      // A viewport update skipped while the renderer was gone left this set.
+      tab.agentViewportQueued = false;
       if (tab.background) emulateBackgroundTab(tab);
+      else if (tab.agentViewport) emulateAgentViewport(tab);
+      // Updates skipped while the renderer was gone may have left emulation
+      // from the background or the agent on this foreground tab.
+      else if (view.webContents.debugger.isAttached()) clearLeftoverEmulation(tab);
+    };
+    view.webContents.once("dom-ready", onDomReady);
+    // A dead renderer leaves the contents alive (not destroyed) but without a
+    // page view, and Chromium dereferences that missing view when a viewport
+    // emulation arrives, crashing the whole app. Stop emulating until a reload
+    // brings a new document, then emulate it as on first load.
+    view.webContents.on("render-process-gone", () => {
+      tab.rendererGone = true;
+      if (!tab.domReady) return;
+      tab.domReady = false;
+      view.webContents.once("dom-ready", onDomReady);
     });
     view.webContents.on("media-started-playing", () => { tab.mediaPlaying = true; });
     view.webContents.on("media-paused", () => { tab.mediaPlaying = false; });
-    view.webContents.on("will-prevent-unload", () => {
-      // Do not preventDefault: the page's beforeunload veto must win.
+    view.webContents.on("will-prevent-unload", (event) => {
+      // A page new agent permissions restrict cannot keep itself open.
+      if (tab.websiteRecheck || tab.closingRestrictedPage) {
+        event.preventDefault();
+        return;
+      }
+      // Otherwise do not preventDefault: the page's beforeunload veto must win.
       if (!tab.suspending || browserTabs.get(tabId) !== tab) return;
       tab.suspending = false;
       suspendedTabs.delete(tabId);
@@ -848,11 +1157,54 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       }
       sendToRenderer("openwork:browser:panel-opened", { ownerSessionId: registry.ownerOf(tabId) });
     });
-    view.webContents.on("did-navigate", () => {
+    view.webContents.on("did-navigate", (_event, url) => {
       // Only a main-frame commit replaces the document. Aborts and downloads
       // retain its warning; old resource failures cannot affect the new document.
       tab.documentGeneration += 1;
+      tab.requests = new Set();
+      tab.requestsOverflowed = false;
+      tab.websiteRecheck = false;
+      // The blank page that replaced a restricted one keeps the blocked page in front.
+      if (tab.closingRestrictedPage && url === "about:blank") {
+        tab.closingRestrictedPage = false;
+        sendBrowserState();
+        return;
+      }
+      tab.closingRestrictedPage = false;
       tab.loadError = null;
+      if (registry.onScreenTabId() === tabId) attachActiveBrowserView();
+      sendBrowserState();
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame) tab.websiteRecheck = false;
+      // Aborts (including downloads and superseded navigations) and iframe
+      // failures do not replace the page with a connection error.
+      if (!isMainFrame || errorCode === -3) return;
+      // The request policy already supplies the actionable reason for a
+      // blocked load. Keep that reason instead of calling it a network error.
+      if (errorDescription === "ERR_BLOCKED_BY_CLIENT" && tab.loadError && tab.loadError.code !== "page_load_failed") return;
+      // A tab opened straight onto a blocked site can fail before the request
+      // check finds it: show the same blocked page, not a connection error.
+      if (errorDescription === "ERR_BLOCKED_BY_CLIENT" && websiteDecision(validatedURL).effect === "deny" && websiteRules !== null) {
+        tab.loadError = blockedSitePage(validatedURL);
+        tab.view.setVisible(false);
+        sendBrowserState();
+        return;
+      }
+      tab.loadError = {
+        code: "page_load_failed",
+        message: errorCode === -102
+          ? "This site refused the connection. Check that it is running, then reload."
+          : errorCode === -106
+            ? "You are offline. Check your connection, then reload."
+            : "This page could not be loaded. Check the address and your connection, then reload.",
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+      };
+      // Native views sit above the app renderer. Hide the failed document so
+      // the renderer's recovery controls can receive clicks and keyboard input.
+      tab.view.setVisible(false);
       sendBrowserState();
     });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -866,7 +1218,26 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       scheduleWebMcpToolCountRefresh(tabId);
     });
-    view.webContents.on("focus", () => resetViewportEmulation(view));
+    view.webContents.on("focus", () => {
+      if (isFocusedBrowserTab(tab)) setShortcutFocus(tabId);
+      resetViewportEmulation(view);
+    });
+    view.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.key === "Escape" && !input.alt && !input.control && !input.meta && !input.shift
+        && requestPresentationExit(tab)) {
+        event.preventDefault();
+        return;
+      }
+      if (!isFocusedBrowserTab(tab)) return;
+      setShortcutFocus(tabId);
+      handleBrowserShortcut(event, input);
+    });
+    // Browser-native and CDP key delivery take different paths in Chromium.
+    // The page preload's fallback only asks to leave full screen; the same
+    // foreground checks apply, and it never grants or resumes browser control.
+    view.webContents.on("ipc-message", (event, channel) => {
+      if (channel === "openwork:browser:escape" && event.senderFrame === view.webContents.mainFrame) requestPresentationExit(tab);
+    });
     view.webContents.once("destroyed", () => {
       // CDP Target.closeTarget and page-initiated close bypass our tab-strip
       // handler; they must release the native parent and owner state too.
@@ -893,14 +1264,31 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
     if (finalUrl !== "about:blank") {
-      runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(finalUrl));
+      runDetachedTask("navigate new browser tab", () => (forPerson ? loadForPerson(view, finalUrl) : view.webContents.loadURL(finalUrl)));
     }
     return tab;
   }
 
+  /**
+   * A page the person asked for takes the keyboard, as in any browser. A page
+   * that changes process commits unfocused, so it takes it again then, but only
+   * if they have not moved on: focus() also raises the window over other apps.
+   */
+  function loadForPerson(view, url) {
+    const contents = view.webContents;
+    const focusIfUntouched = () => {
+      const host = viewHost();
+      if (!contents.isDestroyed() && host?.isFocused() && !host.webContents.isFocused()) contents.focus();
+    };
+    contents.once("did-navigate", focusIfUntouched);
+    const loading = contents.loadURL(url).finally(() => contents.removeListener("did-navigate", focusIfUntouched));
+    contents.focus();
+    return loading;
+  }
+
   function detachBrowserView(view) {
     if (!view) return;
-    for (const host of [window(), backgroundWindow]) {
+    for (const host of [window(), popOutWindow, backgroundWindow]) {
       try {
         if (host && !host.isDestroyed() && host.contentView.children.includes(view)) {
           host.contentView.removeChildView(view);
@@ -947,23 +1335,39 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (webContents.isDestroyed()) return;
     tab.background = true;
     detachBrowserView(tab.view);
-    tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
+    const viewport = tab.agentViewport ? tab.agentViewportSize : BACKGROUND_TAB_VIEWPORT;
+    tab.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height });
     backgroundBrowserWindow().contentView.addChildView(tab.view);
     if (tab.domReady) emulateBackgroundTab(tab);
   }
 
+  function queueBrowserTabEmulation(tab, label, operation) {
+    const isOwned = () => browserTabs.get(tab.tabId) === tab && !tab.view.webContents.isDestroyed();
+    // Emulating a tab whose renderer is gone crashes Electron's main process
+    // (see render-process-gone in createBrowserTab), so a dead tab is not
+    // current. Detaching the debugger is still safe: use `isOwned` for that.
+    const isCurrent = () => isOwned() && !tab.rendererGone && !tab.view.webContents.isCrashed();
+    const execute = () => { if (isCurrent()) return operation(isCurrent, isOwned); };
+    const emulation = tab.emulation.then(execute, execute);
+    tab.emulation = emulation;
+    runDetachedTask(label, () => emulation);
+  }
+
   function emulateBackgroundTab(tab) {
-    const webContents = tab.view.webContents;
-    const cdp = webContents.debugger;
-    tab.emulation = tab.emulation.then(async () => {
-      if (webContents.isDestroyed() || !tab.background) return;
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "emulate background browser tab", async (isCurrent) => {
+      if (!tab.background) return;
       if (!cdp.isAttached()) cdp.attach("1.3");
-      for (const { method, params } of backgroundTabEmulationCommands()) {
-        if (webContents.isDestroyed() || !tab.background) return;
+      // Off screen the view is already the agent's size, so it draws unscaled.
+      const commands = tab.agentViewport
+        ? [...agentViewportEmulationCommands(tab.agentViewportSize, 1, process.versions.chrome), { method: "Emulation.setFocusEmulationEnabled", params: { enabled: true } }]
+        : backgroundTabEmulationCommands();
+      for (const { method, params } of commands) {
+        if (!isCurrent() || !tab.background) return;
         await cdp.sendCommand(method, params);
       }
+      tab.viewportScale = 1;
     });
-    runDetachedTask("emulate background browser tab", () => tab.emulation);
   }
 
   function exitBackgroundMode(tab) {
@@ -973,17 +1377,159 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     detachBrowserView(tab.view);
     if (webContents.isDestroyed()) return;
     const cdp = webContents.debugger;
-    if (!cdp.isAttached()) return;
-    runDetachedTask("restore foreground browser tab", async () => {
+    queueBrowserTabEmulation(tab, "restore foreground browser tab", async (isCurrent, isOwned) => {
+      if (tab.background || !cdp.isAttached()) return;
       try {
         for (const { method, params } of foregroundTabEmulationCommands()) {
-          if (webContents.isDestroyed()) return;
+          if (!isCurrent() || tab.background) return;
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (!webContents.isDestroyed() && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
       }
     });
+    if (tab.agentViewport) emulateAgentViewport(tab);
+  }
+
+  // While the agent controls a tab it lays out at one fixed size, drawn scaled
+  // to fit the panel like Chrome's device mode. Resizing the panel then only
+  // rescales the page, so what the agent observed stays valid. The person's own
+  // browsing, and a takeover, fit the panel as before.
+  function agentViewportPlacement(tab) {
+    if (!tab.agentViewport || !lastBrowserBounds) return null;
+    return fitAgentViewport(tab.agentViewportSize, lastBrowserBounds);
+  }
+
+  function emulateAgentViewport(tab) {
+    // Panel resizes arrive every frame; one queued update reads the latest bounds.
+    if (tab.view.webContents.isDestroyed() || tab.agentViewportQueued) return;
+    tab.agentViewportQueued = true;
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "emulate agent browser viewport", async (isCurrent) => {
+      tab.agentViewportQueued = false;
+      if (tab.background || !tab.agentViewport || !tab.domReady) return;
+      if (!cdp.isAttached()) cdp.attach("1.3");
+      const scale = agentViewportPlacement(tab)?.scale ?? 1;
+      for (const { method, params } of agentViewportEmulationCommands(tab.agentViewportSize, scale, process.versions.chrome)) {
+        if (!isCurrent() || tab.background || !tab.agentViewport) return;
+        await cdp.sendCommand(method, params);
+        // Agent input converts with the scale Chromium now draws at.
+        if (method === "Emulation.setDeviceMetricsOverride") tab.viewportScale = scale;
+      }
+      sendBrowserState();
+    });
+  }
+
+  /**
+   * Lock a tab the agent is about to use to the chosen size; resolves once it
+   * is applied. A failed emulation leaves the page at the panel's size rather
+   * than failing the agent's operation.
+   */
+  function lockAgentViewport(tab) {
+    if (tab.agentViewport !== agentViewportKey) {
+      tab.agentViewport = agentViewportKey;
+      // `panel` keeps the page's current size, so taking the tab rescales
+      // nothing. A page off screen takes the panel's size when it is shown.
+      const bounds = tab.background ? null : lastBrowserBounds;
+      tab.agentViewportSize = lockedAgentViewport(agentViewportKey, bounds);
+      tab.agentViewportAwaitsPanel = Boolean(tab.agentViewportSize.fitsPanel && !bounds);
+      if (tab.background) enterBackgroundSize(tab);
+      else {
+        placeOnScreenView(tab);
+        emulateAgentViewport(tab);
+      }
+      sendBrowserState();
+    }
+    return tab.emulation.catch(() => {});
+  }
+
+  function releaseAgentViewport(tab) {
+    if (!tab.agentViewport) return;
+    tab.agentViewport = null;
+    tab.agentViewportSize = null;
+    tab.agentViewportAwaitsPanel = false;
+    tab.viewportScale = 1;
+    if (tab.background) enterBackgroundSize(tab);
+    else if (!tab.view.webContents.isDestroyed()) {
+      placeOnScreenView(tab);
+      const cdp = tab.view.webContents.debugger;
+      queueBrowserTabEmulation(tab, "release agent browser viewport", async (isCurrent, isOwned) => {
+        if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
+        try {
+          for (const { method, params } of [
+            { method: "Emulation.setTouchEmulationEnabled", params: { enabled: false } },
+            { method: "Emulation.setUserAgentOverride", params: { userAgent: "" } },
+            ...foregroundTabEmulationCommands(),
+          ]) {
+            if (!isCurrent() || tab.background || tab.agentViewport) return;
+            await cdp.sendCommand(method, params);
+          }
+        } finally {
+          if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        }
+      });
+    }
+    sendBrowserState();
+  }
+
+  /**
+   * Undo every emulation the background or the agent sets, then detach, for a
+   * foreground tab whose renderer came back after updates were skipped.
+   */
+  function clearLeftoverEmulation(tab) {
+    const cdp = tab.view.webContents.debugger;
+    queueBrowserTabEmulation(tab, "clear leftover browser tab emulation", async (isCurrent, isOwned) => {
+      if (tab.background || tab.agentViewport || !cdp.isAttached()) return;
+      try {
+        for (const { method, params } of [
+          { method: "Emulation.setTouchEmulationEnabled", params: { enabled: false } },
+          { method: "Emulation.setUserAgentOverride", params: { userAgent: "" } },
+          ...foregroundTabEmulationCommands(),
+        ]) {
+          if (!isCurrent() || tab.background || tab.agentViewport) return;
+          await cdp.sendCommand(method, params);
+        }
+      } finally {
+        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+      }
+    });
+  }
+
+  /** A background tab's view and emulation follow its current viewport. */
+  function enterBackgroundSize(tab) {
+    const viewport = tab.agentViewport ? tab.agentViewportSize : BACKGROUND_TAB_VIEWPORT;
+    tab.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height });
+    if (tab.domReady) {
+      if (!tab.agentViewport) {
+        const cdp = tab.view.webContents.debugger;
+        queueBrowserTabEmulation(tab, "clear agent device emulation", async () => {
+          if (!tab.background || !cdp.isAttached()) return;
+          await cdp.sendCommand("Emulation.setTouchEmulationEnabled", { enabled: false });
+          await cdp.sendCommand("Emulation.setUserAgentOverride", { userAgent: "" });
+        });
+      }
+      emulateBackgroundTab(tab);
+    }
+  }
+
+  /** Size the on-screen tab's native view: the whole panel, or its fitted agent viewport. */
+  function placeOnScreenView(tab) {
+    const host = viewHost();
+    if (!lastBrowserBounds || !host || !host.contentView.children.includes(tab.view)) return;
+    tab.view.setBounds(agentViewportPlacement(tab)?.bounds ?? lastBrowserBounds);
+  }
+
+  /** The agent's screenshot at the full emulated resolution, not the scaled pixels on screen. */
+  async function captureAgentViewport(tab, viewport) {
+    const cdp = tab.view.webContents.debugger;
+    if (!tab.agentViewport || !cdp.isAttached()) return null;
+    try {
+      await tab.emulation;
+      const { data } = await cdp.sendCommand("Page.captureScreenshot", { format: "png" });
+      return nativeImage.createFromBuffer(Buffer.from(data, "base64")).resize({ width: viewport.width, height: viewport.height }).toPNG({ scaleFactor: 1 });
+    } catch {
+      return null;
+    }
   }
 
   /** Re-evaluate every tab after the on-screen conversation changed. */
@@ -995,42 +1541,97 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     releaseEmptyBackgroundWindow();
   }
 
+  /**
+   * Escape pressed inside the on-screen page of a full-screen conversation
+   * returns focus to OpenWork and asks the renderer to leave full screen.
+   * Only the exact foreground tab of the presented conversation qualifies.
+   */
+  function requestPresentationExit(tab) {
+    const owner = registry.ownerOf(tab.tabId);
+    if (browserPresentation?.mode !== "fullscreen" || browserPresentation.sessionId !== owner
+      || registry.visibleSessionId() !== owner || registry.onScreenTabId() !== tab.tabId || !browserViewVisible
+      || getBrowserTab(tab.tabId) !== tab || tab.view.webContents.isDestroyed()
+      || !window()?.contentView.children.includes(tab.view)) return false;
+    browserPresentation = null;
+    window()?.webContents.focus();
+    sendToRenderer("openwork:browser:presentation-exit", { sessionId: owner, tabId: tab.tabId });
+    return true;
+  }
+
+  function setBrowserPresentation(input) {
+    const mode = input && typeof input === "object" ? input.mode : null;
+    if (!["hidden", "floating", "side", "fullscreen"].includes(mode)) return false;
+    const sessionId = normalizeSessionId(input.sessionId);
+    browserPresentation = sessionId === registry.visibleSessionId() ? { sessionId, mode } : null;
+    return browserPresentation !== null;
+  }
+
   function setVisibleSession(sessionId) {
     const previous = registry.visibleSessionId();
     const next = registry.setVisibleSession(sessionId);
     if (next === previous) return next;
-    hideContextMenu();
+    browserPresentation = null;
+    shortcutFocus = null;
+    hideBrowserView();
     applySurfacing();
-    attachActiveBrowserView();
     sendBrowserState();
     return next;
   }
 
-  function mainWindowZoomFactor() {
+  function viewHostZoomFactor() {
     try {
-      const factor = window()?.webContents.getZoomFactor();
+      const factor = viewHost()?.webContents.getZoomFactor();
       return Number.isFinite(factor) && factor > 0 ? factor : 1;
     } catch {
       return 1;
     }
   }
 
-  function acceptBrowserBounds(bounds) {
+  function invalidateBrowserBounds() {
+    lastBrowserBounds = null;
+    lastBrowserZoomFactor = null;
+    detachIdleBrowserViews();
+    return false;
+  }
+
+  function clampBrowserBounds(bounds) {
+    const host = viewHost();
+    if (!host || host.isDestroyed()) return null;
+    const right = bounds.x + bounds.width;
+    const bottom = bounds.y + bounds.height;
+    if (![bounds.x, bounds.y, right, bottom].every(Number.isFinite)) return null;
+    const [width, height] = host.getContentSize();
+    const x = Math.max(0, bounds.x);
+    const y = Math.max(0, bounds.y);
+    const clippedRight = Math.min(width, right);
+    const clippedBottom = Math.min(height, bottom);
+    if (clippedRight <= x || clippedBottom <= y) return null;
+    return { x, y, width: clippedRight - x, height: clippedBottom - y };
+  }
+
+  /** `target` names the window that measured these bounds: "window" for the popped-out browser. */
+  function acceptBrowserBounds(bounds, target) {
     if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
-      || bounds.width <= 0 || bounds.height <= 0) return false;
-    const currentZoom = mainWindowZoomFactor();
-    // Unstamped callers retain the existing CSS-pixel IPC contract.
-    const zoom = bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
-    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return false;
+      || bounds.width <= 0 || bounds.height <= 0) return invalidateBrowserBounds();
+    const popOut = target === "window";
+    if (popOut && (!popOutWindow || popOutWindow.isDestroyed())) return invalidateBrowserBounds();
+    pageInPopOut = popOut;
+    const currentZoom = viewHostZoomFactor();
+    // Unstamped callers retain the existing CSS-pixel IPC contract. The stamp
+    // is the app window's zoom; the popped-out window has its own.
+    const zoom = popOut || bounds.zoomFactor === undefined ? currentZoom : bounds.zoomFactor;
+    if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - currentZoom) > 1e-6) return invalidateBrowserBounds();
     // Round edges (not width/height) so the far edge has no sub-pixel seam.
     const x = Math.round(bounds.x * zoom);
     const y = Math.round(bounds.y * zoom);
-    lastBrowserBounds = {
+    lastBrowserBounds = clampBrowserBounds({
       x,
       y,
       width: Math.round((bounds.x + bounds.width) * zoom) - x,
       height: Math.round((bounds.y + bounds.height) * zoom) - y,
-    };
+    });
+    if (!lastBrowserBounds) return invalidateBrowserBounds();
+    lastBrowserZoomFactor = currentZoom;
     return true;
   }
 
@@ -1050,8 +1651,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = tabForView(view);
     if (!tab?.domReady || tab.background || tab.suspending) return;
     const cdp = webContents.debugger;
-    if (cdp.isAttached()) return;
-    runDetachedTask("reset browser viewport emulation", async () => {
+    queueBrowserTabEmulation(tab, "reset browser viewport emulation", async (isCurrent, isOwned) => {
+      if (tab.background || tab.suspending || cdp.isAttached()) return;
       cdp.attach("1.3");
       try {
         await cdp.sendCommand("Emulation.setDeviceMetricsOverride", {
@@ -1060,9 +1661,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           deviceScaleFactor: 0,
           mobile: false,
         });
+        if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && cdp.isAttached()) cdp.detach();
       }
     });
   }
@@ -1075,19 +1677,45 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function attachActiveBrowserView() {
-    const mainWindow = window();
-    if (!mainWindow || !browserViewVisible) return;
-    if (!lastBrowserBounds || lastBrowserBounds.width <= 0 || lastBrowserBounds.height <= 0) return;
+    const host = viewHost();
+    if (!host || !browserViewVisible) return;
+    if (!lastBrowserBounds || lastBrowserZoomFactor !== viewHostZoomFactor()) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    const cachedBounds = lastBrowserBounds;
+    lastBrowserBounds = clampBrowserBounds(cachedBounds);
+    if (!lastBrowserBounds) {
+      invalidateBrowserBounds();
+      sendToRenderer("openwork:browser:bounds-invalidated");
+      return;
+    }
+    if (["x", "y", "width", "height"].some(key => cachedBounds[key] !== lastBrowserBounds[key])) {
+      // The host changed placement outside a bounds IPC. Clear both renderer
+      // caches so returning to the same CSS rectangle still sends fresh bounds.
+      sendToRenderer("openwork:browser:bounds-invalidated");
+    }
     const tab = getBrowserTab();
     if (!tab) { detachIdleBrowserViews(); return; }
     exitBackgroundMode(tab);
-    tab.view.setVisible(!approvals.has(tab.tabId));
+    tab.view.setVisible(!showsErrorPage(tab));
     detachIdleBrowserViews(tab.view);
-    // Size before attaching so a restored view never flashes at stale bounds.
-    tab.view.setBounds(lastBrowserBounds);
-    if (!mainWindow.contentView.children.includes(tab.view)) {
-      mainWindow.contentView.addChildView(tab.view);
+    // A `panel` page the agent took while it was off screen lays out at the
+    // panel's size once, rather than being drawn scaled for the whole turn.
+    const adopted = tab.agentViewportAwaitsPanel;
+    if (adopted) {
+      tab.agentViewportSize = lockedAgentViewport(tab.agentViewport, lastBrowserBounds);
+      tab.agentViewportAwaitsPanel = false;
     }
+    // Size before attaching so a restored view never flashes at stale bounds.
+    tab.view.setBounds(agentViewportPlacement(tab)?.bounds ?? lastBrowserBounds);
+    if (!host.contentView.children.includes(tab.view)) {
+      // The same view moves between windows, so the page keeps its document.
+      detachBrowserView(tab.view);
+      host.contentView.addChildView(tab.view);
+    }
+    if (tab.agentViewport && (adopted || agentViewportPlacement(tab)?.scale !== tab.viewportScale)) emulateAgentViewport(tab);
   }
 
   function selectBrowserTab(tabId) {
@@ -1107,11 +1735,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab;
   }
 
-  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false) {
+  function closeBrowserTab(tabId = registry.onScreenTabId(), preserve = false, reason = undefined, { deferNativeClose = false } = {}) {
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
-    approvals.get(tabId)?.finish(false);
-    taskHost.invalidate(tabId, { closed: true });
+    taskHost.invalidate(tabId, { closed: true, reason });
     if (!preserve) suspendedTabs.delete(tabId);
     if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;
@@ -1136,12 +1763,134 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (removed && !removed.ownerHasTabs) {
       sendToRenderer("openwork:browser:panel-closed", { ownerSessionId: removed.tab.ownerSessionId });
     }
-    try {
-      if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
-    } catch { /* already destroyed */ }
+    const closeContents = () => {
+      try {
+        if (tab && !tab.view.webContents.isDestroyed()) tab.view.webContents.close({ waitForBeforeUnload: false });
+      } catch { /* already destroyed */ }
+    };
+    if (deferNativeClose) setImmediate(closeContents);
+    else closeContents();
     releaseEmptyBackgroundWindow();
     sendBrowserState();
     return tabId;
+  }
+
+  function isFocusedBrowserTab(tab) {
+    return browserViewVisible && registry.onScreenTabId() === tab.tabId
+      && !tab.view.webContents.isDestroyed() && tab.view.webContents.isFocused()
+      && tab.view.getVisible() && viewHost()?.contentView.children.includes(tab.view);
+  }
+
+  function hasBrowserShortcutFocus() {
+    const tab = getBrowserTab();
+    if (tab && isFocusedBrowserTab(tab)) setShortcutFocus(tab.tabId);
+    if (!shortcutFocus || shortcutFocus.visibleSessionId !== registry.visibleSessionId()) return false;
+    // A last-tab close leaves a short-lived browser context so T can recover it
+    // and a held/repeated W cannot accidentally close the application window.
+    // Keyboard focus on an inactive tab-strip button still belongs to that
+    // browser tab, even if an artifact currently occupies the native viewport.
+    return shortcutFocus.tabId === null || registry.has(shortcutFocus.tabId);
+  }
+
+  function setShortcutFocus(tabId) {
+    if (!registry.has(tabId) || registry.surfacingFor(tabId) !== "foreground") { shortcutFocus = null; return; }
+    if (shortcutFocus?.tabId === tabId && shortcutFocus.visibleSessionId === registry.visibleSessionId()) return;
+    shortcutFocus = { ownerSessionId: registry.ownerOf(tabId), visibleSessionId: registry.visibleSessionId(), tabId };
+  }
+
+  function closeUserBrowserTab(tabId = registry.onScreenTabId()) {
+    if (!registry.has(tabId)) return null;
+    const tab = getBrowserTab(tabId);
+    const saved = tab && !tab.view.webContents.isDestroyed()
+      ? browserTabToPanelTab(tabId, tab) : suspendedTabs.get(tabId);
+    const ownerSessionId = registry.ownerOf(tabId);
+    const focus = shortcutFocus?.ownerSessionId === ownerSessionId ? shortcutFocus : null;
+    if (saved && (saved.url === "about:blank" || isHttpUrl(saved.url))) {
+      closedTabs.push({ url: saved.url, ownerSessionId });
+      closedTabs = closedTabs.slice(-MAX_CLOSED_BROWSER_TABS);
+    }
+    const result = closeBrowserTab(tabId);
+    if (focus) {
+      const nextId = registry.onScreenTabId();
+      shortcutFocus = { ...focus, tabId: nextId && registry.ownerOf(nextId) === ownerSessionId ? nextId : null };
+    }
+    return result;
+  }
+
+  async function reopenClosedBrowserTab() {
+    if (reopeningTab || !hasBrowserShortcutFocus()) return;
+    const focus = shortcutFocus;
+    const saved = closedTabs.slice().reverse().find((entry) => entry.ownerSessionId === focus.ownerSessionId);
+    if (!saved) return;
+    reopeningTab = true;
+    try {
+      await checkBrowserPolicy({ url: saved.url });
+      // Focus, owner cleanup, or a conversation switch may change while policy
+      // is checked. A stale shortcut must not resurrect a deleted owner's page.
+      if (shortcutFocus !== focus || registry.visibleSessionId() !== focus.visibleSessionId || !closedTabs.includes(saved)) return;
+      // Use the ordinary manual-open path. Target the new tab immediately,
+      // before its asynchronous navigation: W must never fall through to Close
+      // Window while loading. A later reload/navigation owns its own document.
+      const tab = createBrowserTab(saved.url, { initializeBlank: false, ownerSessionId: saved.ownerSessionId });
+      closedTabs = closedTabs.filter((entry) => entry !== saved);
+      shortcutFocus = { ...focus, tabId: tab.tabId };
+      focusBrowserShortcutTarget();
+    } catch (error) {
+      if (shortcutFocus === focus && window() && !window().isDestroyed()) {
+        await dialog.showMessageBox(window(), {
+          type: "error", message: "Could not reopen browser tab",
+          detail: error instanceof Error ? error.message : "Try again after checking browser availability and your organization's policy.",
+        });
+      }
+    } finally {
+      reopeningTab = false;
+    }
+  }
+
+  function focusBrowserShortcutTarget() {
+    const tab = getBrowserTab();
+    if (tab && shortcutFocus?.tabId === tab.tabId && browserViewVisible && tab.view.getVisible() && viewHost()?.contentView.children.includes(tab.view)) tab.view.webContents.focus();
+    else window()?.webContents.focus();
+  }
+
+  function closeFocusedBrowserTab(host = window()) {
+    // In the popped-out browser Close means the tab, wherever focus is, as in any browser.
+    if (host && host === popOutWindow) return closeUserBrowserTab() !== null;
+    if (host !== window() || !hasBrowserShortcutFocus()) return false;
+    if (shortcutFocus.tabId) closeUserBrowserTab(shortcutFocus.tabId);
+    focusBrowserShortcutTarget();
+    return true;
+  }
+
+  function handleBrowserShortcut(event, input) {
+    const primary = process.platform === "darwin" ? input.meta && !input.control : input.control && !input.meta;
+    const key = input.key?.toLowerCase();
+    if (!primary || input.alt || input.shift || (key !== "w" && key !== "t") || !hasBrowserShortcutFocus()) return false;
+    // Cancel both Chromium delivery and Electron menu accelerators synchronously.
+    event.preventDefault();
+    if (input.type !== "keyDown" || input.isAutoRepeat) return true;
+    if (key === "w") closeFocusedBrowserTab();
+    else runDetachedTask("reopen browser tab", reopenClosedBrowserTab);
+    return true;
+  }
+
+  function registerWindowShortcuts(host) {
+    host.webContents.on("before-input-event", (event, input) => {
+      if (host !== window()) return;
+      if (input.type === "keyDown" && (input.key === "Tab" || input.key === "Escape")) shortcutFocus = null;
+      handleBrowserShortcut(event, input);
+    });
+    host.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+      if (host === window() && isMainFrame) shortcutFocus = null;
+    });
+    host.webContents.on("did-navigate", () => {
+      // Only a committed main-frame document replaces the container. A started
+      // navigation may be canceled and rerouted to the browser by the host.
+      if (host === window()) closePresentedBrowser();
+    });
+    host.webContents.on("render-process-gone", () => {
+      if (host === window()) closePresentedBrowser();
+    });
   }
 
   function requireTabOwner(tabId, sessionId) {
@@ -1252,9 +2001,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     }
   }
 
-  function closeAllBrowserTabs() {
+  function closeAllBrowserTabs(remember = false) {
+    if (!remember) { closedTabs = []; shortcutFocus = null; }
     const closedTabIds = registry.list().map((tab) => tab.tabId);
-    for (const tabId of closedTabIds) closeBrowserTab(tabId);
+    for (const tabId of closedTabIds) {
+      if (remember) closeUserBrowserTab(tabId); else closeBrowserTab(tabId);
+    }
     return closedTabIds;
   }
 
@@ -1263,6 +2015,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     // tabs or the currently visible conversation.
     const ownerSessionId = normalizeSessionId(sessionId);
     if (!ownerSessionId) return [];
+    closedTabs = closedTabs.filter((entry) => entry.ownerSessionId !== ownerSessionId);
+    if (shortcutFocus?.ownerSessionId === ownerSessionId) shortcutFocus = null;
     const closedTabIds = registry.list()
       .filter((tab) => tab.ownerSessionId === ownerSessionId)
       .map((tab) => tab.tabId);
@@ -1281,46 +2035,85 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   /**
-   * Attach the browser view to the main window.
+   * Attach the browser view to the window that shows it.
    * @param {object} bounds — { x, y, width, height }
    * @param {object} [opts]
-   * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
-   * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
+   * @param {string} [opts.target] - "window" when the popped-out browser measured `bounds`
    */
-  function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
-    if (!window() || !acceptBrowserBounds(bounds)) return false;
+  function attachBrowserView(bounds, { sessionId, target } = {}) {
+    if (!window() || !acceptBrowserBounds(bounds, target)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
       const previous = registry.visibleSessionId();
       if (registry.setVisibleSession(sessionId) !== previous) {
+        browserPresentation = null;
+        shortcutFocus = null;
         hideContextMenu();
         applySurfacing();
       }
     }
-    if (ensureTab && !registry.onScreenTabId()) {
-      createBrowserTab("about:blank", { ownerSessionId: registry.visibleSessionId() });
-    }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
     resetViewportEmulation(view);
-    const url = view?.webContents.getURL();
-    if (preloadDefault && (!url || url === "about:blank")) {
-      runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
-    }
     sendBrowserState();
     return true;
   }
 
-  function hideBrowserView() {
+  function hideBrowserView(preserveShortcutFocus = false) {
+    if (!preserveShortcutFocus && shortcutFocus?.tabId) shortcutFocus = null;
     hideContextMenu();
     browserViewVisible = false;
-    if (!window()) return;
-    detachIdleBrowserViews();
+    invalidateBrowserBounds();
+  }
+
+  // A new thread's first message makes it a conversation. Its pages go with it
+  // and stay on screen, so nothing leaves the window or reloads on the way.
+  function claimDraftTabs(sessionId) {
+    const onScreen = registry.visibleSessionId() === DRAFT_OWNER_KEY;
+    registry.reassignOwner(DRAFT_OWNER_KEY, sessionId);
+    if (onScreen) registry.setVisibleSession(sessionId);
+    closedTabs = closedTabs.map((entry) => (entry.ownerSessionId === DRAFT_OWNER_KEY ? { ...entry, ownerSessionId: sessionId } : entry));
+    if (shortcutFocus?.ownerSessionId === DRAFT_OWNER_KEY) shortcutFocus = null;
+    sendBrowserState();
+    return true;
+  }
+
+  /** The app's renderer draws the popped-out window, so it cannot outlive that document. */
+  function closePresentedBrowser() {
+    hideBrowserView();
+    if (popOutWindow && !popOutWindow.isDestroyed()) popOutWindow.close();
+  }
+
+  /** The renderer just opened the browser's own window; the page moves in once it reports bounds. */
+  function adoptPopOutWindow(child) {
+    popOutWindow = child;
+    // Follow the window's edge during a drag; the renderer's measurement catches up.
+    child.on("resize", () => {
+      const tab = getBrowserTab();
+      if (!pageInPopOut || popOutWindow !== child || !lastBrowserBounds || !tab) return;
+      const [width, height] = child.getContentSize();
+      lastBrowserBounds = { ...lastBrowserBounds, width: width - lastBrowserBounds.x, height: height - lastBrowserBounds.y };
+      placeOnScreenView(tab);
+    });
+    child.once("close", () => {
+      if (popOutWindow !== child) return;
+      // Closing a window would take its views with it; every page lives on.
+      for (const { view } of browserTabs.values()) {
+        if (child.contentView.children.includes(view)) child.contentView.removeChildView(view);
+      }
+      popOutWindow = null;
+      if (!pageInPopOut) return;
+      pageInPopOut = false;
+      hideBrowserView(true);
+    });
+    sendToRenderer("openwork:browser:bounds-invalidated");
   }
 
   function destroyBrowserView() {
-    hideBrowserView();
+    linkChoiceRequest?.finish(null);
+    closePresentedBrowser();
+    browserPresentation = null;
     menuShowSerial += 1;
     closeAllBrowserTabs();
     browserTabs.clear();
@@ -1337,6 +2130,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   function registerIpc(ipcMain) {
+    ipcMain.on("openwork:browser:shortcut-focus", (event, tabId) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      setShortcutFocus(tabId);
+    });
     function authorizeManualNavigation(event) {
       const contents = window()?.webContents;
       if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) throw new Error("Use the browser toolbar to navigate.");
@@ -1344,11 +2142,37 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (tabId && registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
       taskHost.manualNavigation(tabId);
     }
-    ipcMain.handle("openwork:browser:show", (_event, bounds, sessionId) => (
-      attachBrowserView(bounds, sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) })
-    ));
-    ipcMain.handle("openwork:browser:hide", () => hideBrowserView());
-    ipcMain.handle("openwork:browser:setVisibleSession", (_event, sessionId) => setVisibleSession(normalizeSessionId(sessionId)));
+    function isMainRenderer(event) {
+      const contents = window()?.webContents;
+      return !!contents && event.sender === contents && event.senderFrame === contents.mainFrame;
+    }
+    ipcMain.handle("openwork:browser:show", (event, bounds, sessionId, target) => {
+      if (!isMainRenderer(event)) return false;
+      return attachBrowserView(bounds, { target, ...(sessionId === undefined ? {} : { sessionId: normalizeSessionId(sessionId) }) });
+    });
+    ipcMain.handle("openwork:browser:hide", (event, options) => {
+      if (!isMainRenderer(event)) return false;
+      return hideBrowserView(options?.preserveShortcutFocus === true);
+    });
+    ipcMain.handle("openwork:browser:setVisibleSession", (event, sessionId) => {
+      if (!isMainRenderer(event)) return false;
+      return setVisibleSession(normalizeSessionId(sessionId));
+    });
+    ipcMain.handle("openwork:browser:claimDraftTabs", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner) return false;
+      return claimDraftTabs(owner);
+    });
+    ipcMain.handle("openwork:browser:presentation", (event, input) => {
+      if (!isMainRenderer(event)) return false;
+      return setBrowserPresentation(input);
+    });
+    ipcMain.handle("openwork:browser:focusWindow", (event) => {
+      if (!isMainRenderer(event) || !popOutWindow || popOutWindow.isDestroyed()) return false;
+      popOutWindow.show();
+      popOutWindow.focus();
+      return true;
+    });
     ipcMain.handle("openwork:browser:openUrl", (_event, url, provider, options) => (
       openBrowserUrlForAutomation(url, provider, {
         ownerSessionId: normalizeSessionId(options && typeof options === "object" ? options.sessionId : null),
@@ -1359,7 +2183,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       getActiveWebContents(); // Reject navigation while suspension is pending.
       const view = getActiveBrowserView()
         ?? createBrowserTab("about:blank", { select: true, ownerSessionId: registry.visibleSessionId() }).view;
-      runDetachedTask("navigate browser tab", () => view.webContents.loadURL(normalizeBrowserUrl(url)));
+      runDetachedTask("navigate browser tab", () => loadForPerson(view, normalizeBrowserUrl(url)));
     });
     ipcMain.handle("openwork:browser:back", (event) => {
       authorizeManualNavigation(event);
@@ -1373,31 +2197,34 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:reload", (event) => {
       authorizeManualNavigation(event);
-      getActiveWebContents()?.reload();
-    });
-    ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
-      if (!acceptBrowserBounds(bounds)) return false;
-      const view = getActiveBrowserView();
-      if (view && browserViewVisible) {
-        view.setBounds(lastBrowserBounds);
+      const webContents = getActiveWebContents();
+      const failure = getBrowserTab()?.loadError;
+      if (failure?.code === "page_load_failed" || failure?.code === "blocked_by_organization") {
+        runDetachedTask("retry browser page", () => webContents?.loadURL(failure.url));
+      } else {
+        webContents?.reload();
       }
+    });
+    ipcMain.handle("openwork:browser:bounds", (event, bounds, target) => {
+      if (!isMainRenderer(event) || !acceptBrowserBounds(bounds, target)) return false;
+      attachActiveBrowserView();
       return true;
     });
     ipcMain.handle("openwork:browser:state", () => ({
       ...browserStatePayload(),
       nativeViews: browserNativeViews(),
-      tabLimit: MAX_BROWSER_TABS,
       backgroundWindowCount: Number(Boolean(backgroundWindow && !backgroundWindow.isDestroyed())),
       backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
+      popOutAboveOthers: Boolean(popOutWindow && !popOutWindow.isDestroyed() && popOutWindow.isAlwaysOnTop()),
       visibleWindowCount: BrowserWindow.getAllWindows().filter((host) => host.isVisible()).length,
     }));
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const ownerSessionId = sessionId === undefined ? registry.visibleSessionId() : normalizeSessionId(sessionId);
-      const tab = createBrowserTab(target, { select: true, ownerSessionId });
+      const tab = createBrowserTab(target, { select: true, ownerSessionId, forPerson: true });
       return { tabId: tab.tabId };
     });
-    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
+    ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeUserBrowserTab(tabId == null ? undefined : String(tabId)));
     ipcMain.handle("openwork:browser:suspendTab", (_event, tabId) => suspendBrowserTab(tabId));
     ipcMain.handle("openwork:browser:restoreTab", async (_event, tabId, sessionId) => {
       requireTabOwner(tabId, sessionId);
@@ -1411,7 +2238,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       return { tabId, released: true };
     });
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
     ipcMain.handle("openwork:browser:closeSessionTabs", (_event, sessionId) => closeSessionBrowserTabs(sessionId));
     ipcMain.handle("openwork:browser:selectTab", async (_event, tabId) => {
       const id = String(tabId ?? "");
@@ -1421,15 +2247,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab.tabId;
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tools", args }));
-    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tool", args }));
-    ipcMain.handle("openwork:browser:approve", (event, tabId, approvalId, allowed) => {
-      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || registry.ownerOf(tabId) !== registry.visibleSessionId()) return false;
-      const pending = approvals.get(tabId);
-      if (!pending || pending.id !== approvalId) return false;
-      pending.finish(allowed === true); return true;
-    });
     ipcMain.handle("openwork:browser:taskControl", (event, tabId, action) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || !getBrowserTab(tabId) || registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
       if (action === "resume") taskHost.resume(tabId);
@@ -1444,14 +2261,123 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
+    // The app says when the member's rules may have changed. It can only make
+    // the browser stricter itself (null keeps pages closed while it verifies
+    // them); the rules are read from the local OpenWork server, never taken
+    // from the window, so a script in the window cannot loosen them.
+    let websiteRulesRead = 0;
+    ipcMain.handle("openwork:browser:setAgentPermissionRules", async (event, rules) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
+      const read = ++websiteRulesRead;
+      // Rules the app reports keep pages closed until verified: that only makes it stricter.
+      if (rules === null || (Array.isArray(rules) && rules.length > 0)) setWebsiteRules(null);
+      if (rules === null) return true;
+      // The local server may still be starting: try for about half a minute.
+      for (let attempt = 0; attempt < 20 && read === websiteRulesRead; attempt++) {
+        try {
+          const verified = await readWebsiteRules?.();
+          if (read !== websiteRulesRead || !Array.isArray(verified)) return false;
+          setWebsiteRules(verified.filter((rule) => rule?.action === "webfetch"
+            && typeof rule.resource === "string" && ["allow", "ask", "deny"].includes(rule.effect) && typeof rule.source === "string"));
+          return true;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+        }
+      }
+      return false;
+    });
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;
       if (!browserControlEnabled) for (const tab of browserTabs.values()) taskHost.pause(tab.tabId, "Browser control disabled");
       return browserControlEnabled;
     });
+    ipcMain.handle("openwork:browser:setAgentViewport", (event, key) => {
+      if (!isMainRenderer(event) || typeof key !== "string" || !Object.hasOwn(AGENT_VIEWPORTS, key)) return agentViewportKey;
+      agentViewportKey = key;
+      // Tabs the agent is using switch now; the agent observes the new layout.
+      for (const tab of browserTabs.values()) if (tab.agentViewport && tab.agentViewport !== key) lockAgentViewport(tab);
+      sendBrowserState();
+      return agentViewportKey;
+    });
+    // The person took over, then wrote to the agent again: that message
+    // hands the conversation's tabs back, so the new turn can use them.
+    ipcMain.handle("openwork:browser:startAgentTurn", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner || !browserControlEnabled) return false;
+      const paused = registry.tabsFor(owner).find((item) => taskHost.stateFor(item.tabId).status === "paused");
+      if (!paused) return false;
+      taskHost.resume(paused.tabId);
+      return true;
+    });
+    ipcMain.handle("openwork:browser:endAgentTurn", (event, sessionId) => {
+      const owner = normalizeSessionId(sessionId);
+      if (!isMainRenderer(event) || !owner) return false;
+      for (const item of registry.tabsFor(owner)) {
+        const tab = browserTabs.get(item.tabId);
+        if (tab) releaseAgentViewport(tab);
+      }
+      return true;
+    });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.handle("openwork:browser:chooseLinkDestination", (event, id, destination) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return false;
+      if (!linkChoiceRequest || linkChoiceRequest.id !== id) return false;
+      if (destination !== null && destination !== "openwork" && destination !== "external") return false;
+      return linkChoiceRequest.finish(destination);
+    });
+    ipcMain.on("openwork:browser:linkClick", (event, payload) => {
+      const contents = window()?.webContents;
+      if (!contents || event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      const url = payload?.url;
+      if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
+      const parsed = new URL(url);
+      if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+      // A second activation must not replace the link the open dialog names.
+      if (linkChoiceRequest) return;
+      const ownerSessionId = normalizeSessionId(payload.sessionId) ?? registry.visibleSessionId();
+      const sourceFrame = event.senderFrame;
+      let navigated = false;
+      let cancelChoice = () => {};
+      const isCurrent = () => !navigated && !contents.isDestroyed() && window()?.webContents === contents
+        && contents.mainFrame === sourceFrame;
+      const cleanup = () => {
+        contents.removeListener("did-start-navigation", invalidate);
+        contents.removeListener("destroyed", destroyed);
+      };
+      const open = (external) => runDetachedTask("open clicked browser link", () => handleMenuChoice(
+        { source: "link", url, ownerSessionId }, external ? "open-external" : "open-builtin", isCurrent,
+      ).finally(cleanup));
+      const cancel = () => {
+        navigated = true;
+        cancelChoice();
+      };
+      const invalidate = (_event, _url, isInPlace, isMainFrame) => {
+        if (isMainFrame && !isInPlace) cancel();
+      };
+      const destroyed = () => cancel();
+      contents.on("did-start-navigation", invalidate);
+      contents.on("destroyed", destroyed);
+      if (payload.ask === true) {
+        const id = `link_${++linkChoiceCounter}`;
+        cancelChoice = () => { if (linkChoiceRequest?.id === id) linkChoiceRequest.finish(null); };
+        linkChoiceRequest = {
+          id,
+          finish(destination) {
+            if (linkChoiceRequest?.id !== id) return false;
+            linkChoiceRequest = null;
+            sendToRenderer("openwork:browser:link-open-request", null);
+            if (destination === null || !isCurrent()) { cleanup(); return false; }
+            open(destination === "external");
+            return true;
+          },
+        };
+        sendToRenderer("openwork:browser:link-open-request", { id, url });
+      } else {
+        open(payload.external === true);
+      }
+    });
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;
       if (event.sender !== mainContents || event.senderFrame !== mainContents?.mainFrame) return;
@@ -1464,17 +2390,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.on("openwork:webmcp:tools-changed", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab) return;
-      invalidateWebMcpTab(tab);
+      // The page relays this after a debounce, so it routinely arrives after a
+      // listing that already saw the same registrations. It is not a new
+      // document: only navigation bumps the revision. Listed handles stay
+      // valid, and execution revalidates each tool's live descriptor digest
+      // before running it, so a changed or removed tool still fails as
+      // stale_tool while an unchanged one runs.
       scheduleWebMcpToolCountRefresh(tab.tabId);
     });
   }
 
   return {
+    adoptPopOutWindow,
+    closeFocusedBrowserTab,
+    registerWindowShortcuts,
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
     browserTask: (args, options) => taskHost.request(args, options),
-    listWebMcpTools: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tools", args }, options),
-    executeWebMcpTool: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tool", args }, options),
     registerIpc,
     routeBlockedMainWindowNavigation,
   };

@@ -38,6 +38,7 @@ export type ExecuteOptions<Tools extends Record<string, unknown> = {}> = {
   code: string
   /** Plain-data values exposed as read-only variables in program scope. */
   bindings?: Record<string, DataValue>
+  readonlyBindings?: boolean
   /** Explicit tool tree exposed to the program as `tools`. */
   tools?: Tools & ToolTree<Services<Tools>>
   /** Per-execution overrides for the default resource limits. */

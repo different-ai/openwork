@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  text,
   timestamp,
   uniqueIndex,
   varchar,
@@ -66,6 +67,29 @@ export const OrgOAuthClientTable = mysqlTable(
   ],
 )
 
+export type ExternalMcpReadinessFailure = "sign_in_required" | "sign_in_rejected" | "setup_required" | "provider_setup_required" | "unavailable" | "timed_out" | "settings_changed" | "tools_unreadable"
+
+export type ExternalMcpReadinessCheck = {
+  status: "ready" | "could_not_verify"
+  checkedAt: string
+  lastSuccessfulAt: string | null
+  /** Server-written copy only; never provider text. */
+  reason: string | null
+  /**
+   * Why a check did not pass, so clients can tell a rejected sign-in from an
+   * outage without parsing copy. Absent on checks recorded before 2026-10-22.
+   */
+  failure?: ExternalMcpReadinessFailure | null
+  /** Diagnostic code of a failed check or sign-in attempt. Never returned. */
+  code?: string | null
+  /** Diagnostic reference of a failed check or sign-in attempt, for support. */
+  referenceId?: string | null
+  /** Validated link to the provider page where the named setting is changed. */
+  providerSettingsUrl?: string | null
+  /** Binds the probe to the configuration and credential it actually checked. Never returned. */
+  fingerprint: string
+}
+
 export const ConnectedAccountTable = mysqlTable(
   "connected_account",
   {
@@ -84,6 +108,7 @@ export const ConnectedAccountTable = mysqlTable(
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     externalAccountId: varchar("external_account_id", { length: 255 }),
     scopes: compatJsonColumn<string[]>("scopes"),
+    /** OAuth access token, or an opaque personal MCP API key with tokenType="api_key" (never refreshed as OAuth). */
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
@@ -95,6 +120,9 @@ export const ConnectedAccountTable = mysqlTable(
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
+    readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
+    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
+    readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -125,7 +153,14 @@ export type ExternalMcpOAuthConfiguration = {
   version: 1
   authorizationServerIssuer: string | null
   requestedScopes: string[]
+  /**
+   * Sign-in asks for `requestedScopes` alone, leaving out any others the
+   * server's sign-in challenge names. Absent means the challenge's are kept.
+   */
+  requestSelectedScopesOnly?: boolean
   callbackMode: ExternalMcpOAuthCallbackMode
+  /** Explicit administrator-pinned endpoints; absent on discovery-based connections. */
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
   /**
    * SDK-owned discovery state. Den validates it before reuse and never exposes
    * it through the connection API. Keeping it with the connection allows
@@ -209,16 +244,24 @@ export const ExternalMcpConnectionTable = mysqlTable(
      * - "shared": one org-level credential (this row's token columns, or
      *   apiKey). Everyone granted access acts as that single account —
      *   right for service-account/bot-style integrations.
-     * - "per_member": the connection (and its dynamically-registered OAuth
-     *   client) is org-level, but each member authorizes their own account;
-     *   tokens live in ConnectedAccountTable keyed by
+      * - "per_member": the connection (and any OAuth client) is org-level,
+      *   but each member authorizes their own account or enrolls their own
+      *   API key. Credentials live in ConnectedAccountTable keyed by
      *   (orgMembershipId, providerId = this row's id). The agent then acts
      *   as the calling member, preserving the provider's own ACLs and audit
      *   trail — right for Notion/Linear-style personal-permission SaaS.
      */
     credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
-    /** Only set when authType = "apikey". Sent as a Bearer token. */
+    /** Only set for authType="apikey", credentialMode="shared". Never a personal-key fallback. Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
+    /** Administrator-selected transport only; the member supplies the raw key. */
+    apiKeyAuthScheme: mysqlEnum("api_key_auth_scheme", ["bearer", "token"]).notNull().default("bearer"),
+    /**
+     * Administrator-configured request headers sent with every MCP request,
+     * stored encrypted as a JSON string of `[{ name, value }]` (at most four).
+     * Values are never returned by the API; only names are exposed.
+     */
+    requestHeaders: encryptedTextColumn("request_headers"),
     /**
      * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
      * this is deliberately org-level, not per-member: an external MCP
@@ -230,7 +273,7 @@ export const ExternalMcpConnectionTable = mysqlTable(
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
-    scope: varchar("scope", { length: 1024 }),
+    scope: text("scope"),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
     /**
      * Transient PKCE code verifier, present only between connect/start and
@@ -238,6 +281,9 @@ export const ExternalMcpConnectionTable = mysqlTable(
      */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
+    readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
+    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
+    readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
     /**
      * Set when live discovery no longer matches the selected OAuth issuer.
      * The mismatch remains fail-closed until an administrator explicitly

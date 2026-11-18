@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
+import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
@@ -7,8 +8,13 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
+import { readComposerPill } from "../surface/composer/composer-pills";
+import { BACKGROUND_SHELL_NOTICE_KEY, readBackgroundShellNotice } from "../../../../app/lib/background-shell-tasks";
+import { SUBAGENT_NOTICE_KEY, readSubagentNotice } from "../../../../app/lib/subagent-notices";
 import {
   presentOpencodeSessionError,
   type OpencodeSessionErrorPresentation,
@@ -114,7 +120,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   if (!mapped) return [];
 
   if (part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(mapFileParts), part.callID)];
   }
 
   return [mapped];
@@ -131,14 +137,37 @@ export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
       || !("mime" in attachment) || typeof attachment.mime !== "string"
       || !("url" in attachment) || typeof attachment.url !== "string"
       || !attachment.url.startsWith("file://")) return [];
+    const bytes = "bytes" in attachment && typeof attachment.bytes === "number" ? attachment.bytes : undefined;
     return [{
       type: "file",
       filename: attachment.filename,
       mediaType: attachment.mime,
       url: attachment.url,
-      providerMetadata: { opencode: { partId: `${part.id}:attachment:${index}` } },
+      providerMetadata: { opencode: { partId: `${part.id}:attachment:${index}`, ...(bytes === undefined ? {} : { bytes }) } },
     }];
   });
+}
+
+export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | null {
+  if (part.synthetic || part.ignored) return null;
+  const composerToken = part.metadata?.openworkComposerToken;
+  const composerPill = readComposerPill(part.metadata?.openworkComposerPill);
+  const backgroundShell = readBackgroundShellNotice(part.metadata?.[BACKGROUND_SHELL_NOTICE_KEY]);
+  const subagentNotice = readSubagentNotice(part.metadata?.[SUBAGENT_NOTICE_KEY]);
+  return {
+    type: "text",
+    text: part.text,
+    state: "done",
+    providerMetadata: { opencode: {
+      partId: part.id,
+      ...(typeof composerToken === "string" ? { composerToken } : {}),
+      ...(composerPill ? { composerPill } : {}),
+      ...(backgroundShell ? { backgroundShell } : {}),
+      ...(subagentNotice ? { subagentNotice } : {}),
+      ...(part.metadata?.openworkPastedText === true ? { pastedText: true } : {}),
+      ...(typeof part.metadata?.openworkFileMention === "string" ? { fileMention: part.metadata.openworkFileMention } : {}),
+    } },
+  };
 }
 
 type SnapshotMessages = OpenworkSessionSnapshot["messages"];
@@ -148,7 +177,7 @@ const snapshotMessageCache = new WeakMap<SnapshotMessages[number], UIMessage[]>(
 // Query snapshots are immutable. Share the projection between rendering and
 // hydration; a refreshed tail can also reuse unchanged historical messages.
 // Callers must copy before applying live updates to these cached messages.
-export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
+export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "messages">): UIMessage[] {
   const cached = snapshotMessagesCache.get(snapshot.messages);
   if (cached) return cached;
   const messages = snapshot.messages.flatMap((message) => {
@@ -157,28 +186,27 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
     const created = message.info.time?.created;
     const time = message.info.time;
     const completed = time && "completed" in time ? time.completed : undefined;
+    const parentID = "parentID" in message.info ? message.info.parentID : undefined;
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      ...(typeof created === "number"
-        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
-        : {}),
+      metadata: { opencode: {
+        ...(typeof created === "number" ? { created } : {}),
+        ...(typeof completed === "number" ? { completed } : {}),
+        ...(typeof parentID === "string" ? { parentID } : {}),
+        ...(replyModelFromInfo(message.info) ? { replyModel: replyModelFromInfo(message.info) } : {}),
+      } },
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
-          if (part.synthetic || part.ignored) return attachmentNoteToUIParts(part);
-          return [{
-            type: "text",
-            text: getTextPartValue(part),
-            state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
-          }];
+          const mapped = textPartToUIPart(part);
+          return mapped ? [mapped] : attachmentNoteToUIParts(part);
         }
         if (part.type === "reasoning") {
           return [{
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
           }];
         }
         if (part.type === "file") {
@@ -192,7 +220,7 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
             type: "text",
             text: part.name ? `@${part.name}` : "@agent",
             state: "done",
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...(part.name ? { agentMention: part.name } : {}) } },
           }];
         }
         if (part.type === "step-start") {

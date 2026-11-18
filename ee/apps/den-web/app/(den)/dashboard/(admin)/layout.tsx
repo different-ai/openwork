@@ -2,8 +2,10 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Loader2, ShieldCheck } from "lucide-react";
-import { getApiKeysRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { Loader2, LockKeyhole, ShieldCheck } from "lucide-react";
+import { getDiagnosticsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { DenNotice } from "../../_components/ui/notice";
+import { adminRouteLockedMessage, canOpenAdminRoute } from "../_lib/admin-route-access";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export default function AdminDashboardLayout({
@@ -13,19 +15,27 @@ export default function AdminDashboardLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { orgContext, orgBusy } = useOrgDashboard();
+  const { orgContext, orgBusy, orgError } = useOrgDashboard();
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canUseAdminRoute = access.isAdmin || (pathname === getApiKeysRoute() && access.canManageApiKeys);
+  const canManageDeploymentServices = orgContext?.canManageDeploymentServices === true;
+  // Any organization permission opens the admin area; installation administrators
+  // also open Diagnostics for its Installation section, whatever their role.
+  const canUseAdminArea = access.canViewSettings || (pathname === getDiagnosticsRoute() && canManageDeploymentServices);
+  const canUseAdminRoute = canOpenAdminRoute(pathname, access, canManageDeploymentServices);
 
   useEffect(() => {
-    if (orgContext && !canUseAdminRoute) {
+    if (!orgBusy && !orgError && orgContext && !canUseAdminArea) {
       router.replace("/dashboard");
     }
-  }, [canUseAdminRoute, orgContext, router]);
+  }, [canUseAdminArea, orgBusy, orgContext, orgError, router]);
+
+  if (orgError && !orgBusy) {
+    return <DenNotice tone="error" message={orgError} />;
+  }
 
   if (orgBusy || !orgContext) {
     return (
@@ -41,6 +51,14 @@ export default function AdminDashboardLayout({
             </div>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (canUseAdminArea && !canUseAdminRoute) {
+    return (
+      <div className="mx-auto w-full max-w-[960px] px-4 py-8 sm:px-6" data-testid="admin-access-state" data-access-state="locked">
+        <DenNotice tone="neutral" icon={LockKeyhole} message={adminRouteLockedMessage(pathname)} />
       </div>
     );
   }

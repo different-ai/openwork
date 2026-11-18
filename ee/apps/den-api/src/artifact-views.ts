@@ -1,12 +1,23 @@
-import { and, desc, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNull, isNotNull, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { ArtifactViewRevisionTable, ArtifactViewTable, DashboardAppTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { GeneratedArtifactView, GeneratedArtifactViewRevision } from "@openwork/types/workflows"
 import { db } from "./db.js"
-import { getWorkflowDetail } from "./workflows.js"
+import { env } from "./env.js"
+import { getWorkflowAccess, getWorkflowDetail } from "./workflows.js"
 import { buildGeneratedArtifactView } from "./generated-artifact-view-builder.js"
 import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
 import { artifactViewResourceUri } from "./artifact-view-resource.js"
+
+/**
+ * Workflow-bound views are read-only wherever the deployment lets organizations
+ * build their own Apps as MCP servers (DEN_APP_MCP_SERVERS_ENABLED). They keep
+ * rendering, running live data, and can be retired, but are not created,
+ * edited, or re-activated.
+ */
+function legacyArtifactViewsReadOnly(): boolean {
+  return env.appMcpServersEnabled
+}
 
 const ARTIFACT_VIEW_LIST_LIMIT = 50
 const ARTIFACT_VIEW_REVISION_LIST_LIMIT = 50
@@ -16,6 +27,26 @@ type ArtifactViewRevisionId = DenTypeId<"artifactViewRevision">
 type ArtifactViewRow = typeof ArtifactViewTable.$inferSelect
 type ArtifactViewRevisionRow = typeof ArtifactViewRevisionTable.$inferSelect
 
+// Catalogs never need the encrypted authoring source, schema or compiled HTML.
+const revisionMetadata = {
+  id: ArtifactViewRevisionTable.id,
+  artifact_view_id: ArtifactViewRevisionTable.artifact_view_id,
+  build_status: ArtifactViewRevisionTable.build_status,
+  source_digest: ArtifactViewRevisionTable.source_digest,
+  resource_digest: ArtifactViewRevisionTable.resource_digest,
+  output_schema_digest: ArtifactViewRevisionTable.output_schema_digest,
+  csp: ArtifactViewRevisionTable.csp,
+  build_diagnostics: ArtifactViewRevisionTable.build_diagnostics,
+  compiler_name: ArtifactViewRevisionTable.compiler_name,
+  compiler_version: ArtifactViewRevisionTable.compiler_version,
+  react_version: ArtifactViewRevisionTable.react_version,
+  compiled_html_bytes: ArtifactViewRevisionTable.compiled_html_bytes,
+  retired_at: ArtifactViewRevisionTable.retired_at,
+  created_at: ArtifactViewRevisionTable.created_at,
+}
+type RevisionMetadata = Pick<ArtifactViewRevisionRow, keyof typeof revisionMetadata>
+const CATALOG_BATCH_SIZE = 10
+
 function parseViewId(value: string): ArtifactViewId {
   return normalizeDenTypeId("artifactView", value)
 }
@@ -24,7 +55,7 @@ function parseRevisionId(value: string): ArtifactViewRevisionId {
   return normalizeDenTypeId("artifactViewRevision", value)
 }
 
-function serializeRevision(row: ArtifactViewRevisionRow): GeneratedArtifactViewRevision {
+function serializeRevision(row: RevisionMetadata): GeneratedArtifactViewRevision {
   return {
     id: row.id,
     artifactViewId: row.artifact_view_id,
@@ -44,7 +75,7 @@ function serializeRevision(row: ArtifactViewRevisionRow): GeneratedArtifactViewR
   }
 }
 
-function serializeView(row: ArtifactViewRow, revisions: ArtifactViewRevisionRow[]): GeneratedArtifactView {
+function serializeView(row: ArtifactViewRow, revisions: RevisionMetadata[]): GeneratedArtifactView {
   return {
     id: row.id,
     configObjectId: row.config_object_id,
@@ -53,6 +84,7 @@ function serializeView(row: ArtifactViewRow, revisions: ArtifactViewRevisionRow[
     status: row.status,
     activeRevisionId: row.active_revision_id,
     useInWorkflow: row.use_in_workflow,
+    dataMode: row.data_mode ?? "snapshot",
     revisions: revisions.map(serializeRevision),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -71,24 +103,60 @@ async function accessibleView(input: {
   )).limit(1)
   const row = rows[0]
   if (!row) throw new Error("artifact_view_not_found")
-  const script = await getWorkflowDetail({ context: input.context, configObjectId: row.config_object_id })
+  const script = await getWorkflowAccess({ context: input.context, configObjectId: row.config_object_id })
   if (input.role === "manager" && !script.canManage) throw new Error("artifact_view_not_found")
   return row
 }
 
-async function revisionRows(artifactViewId: ArtifactViewId): Promise<ArtifactViewRevisionRow[]> {
-  return db.select().from(ArtifactViewRevisionTable).where(eq(
+async function revisionRows(artifactViewId: ArtifactViewId, activeRevisionId: ArtifactViewRevisionId | null = null, database: typeof db.$primary = db): Promise<RevisionMetadata[]> {
+  const revisions = await database.select(revisionMetadata).from(ArtifactViewRevisionTable).where(eq(
     ArtifactViewRevisionTable.artifact_view_id,
     artifactViewId,
   )).orderBy(desc(ArtifactViewRevisionTable.created_at), desc(ArtifactViewRevisionTable.id))
     .limit(ARTIFACT_VIEW_REVISION_LIST_LIMIT)
+  // Published clients select the active revision from this array. A rollback
+  // must remain renderable even when its revision is outside the history page.
+  if (activeRevisionId && !revisions.some((revision) => revision.id === activeRevisionId)) {
+    const [active] = await database.select(revisionMetadata).from(ArtifactViewRevisionTable).where(and(
+      eq(ArtifactViewRevisionTable.artifact_view_id, artifactViewId),
+      eq(ArtifactViewRevisionTable.id, activeRevisionId),
+    )).limit(1)
+    if (active) revisions.push(active)
+  }
+  return revisions
 }
 
-export async function listArtifactViews(input: {
+async function batchedRevisionRows(views: Pick<ArtifactViewRow, "id" | "active_revision_id">[]) {
+  const result = new Map<ArtifactViewId, RevisionMetadata[]>()
+  for (let offset = 0; offset < views.length; offset += CATALOG_BATCH_SIZE) {
+    const batch = views.slice(offset, offset + CATALOG_BATCH_SIZE)
+    const ranked = db.select({
+      ...revisionMetadata,
+      rank: sql<number>`row_number() over (partition by ${ArtifactViewRevisionTable.artifact_view_id} order by ${ArtifactViewRevisionTable.created_at} desc, ${ArtifactViewRevisionTable.id} desc)`.as("revision_rank"),
+    }).from(ArtifactViewRevisionTable)
+      .where(inArray(ArtifactViewRevisionTable.artifact_view_id, batch.map((view) => view.id)))
+      .as("ranked_revisions")
+    // At most 50 history rows plus one pinned active row per view. Match both
+    // IDs so a malformed pointer cannot borrow a different view's revision.
+    const active = batch.flatMap((view) => view.active_revision_id ? [and(
+      eq(ranked.artifact_view_id, view.id), eq(ranked.id, view.active_revision_id),
+    )] : [])
+    const rows = await db.select().from(ranked).where(or(lte(ranked.rank, ARTIFACT_VIEW_REVISION_LIST_LIMIT), ...active))
+      .orderBy(desc(ranked.created_at), desc(ranked.id))
+    for (const row of rows) {
+      const revisions = result.get(row.artifact_view_id) ?? []
+      revisions.push(row)
+      result.set(row.artifact_view_id, revisions)
+    }
+  }
+  return result
+}
+
+export async function listArtifactViewsWithWorkflowAccess(input: {
   context: PluginArchActorContext
   activeOnly?: boolean
   savedOnly?: boolean
-}): Promise<GeneratedArtifactView[]> {
+}) {
   const conditions = [eq(ArtifactViewTable.organization_id, input.context.organizationContext.organization.id)]
   if (input.activeOnly) {
     conditions.push(eq(ArtifactViewTable.status, "active"))
@@ -98,27 +166,60 @@ export async function listArtifactViews(input: {
     .where(and(...conditions))
     .orderBy(desc(ArtifactViewTable.updated_at), desc(ArtifactViewTable.id))
     .limit(ARTIFACT_VIEW_LIST_LIMIT)
-  const accessible = await Promise.all(rows.map(async (row) => {
-    try {
-      await getWorkflowDetail({ context: input.context, configObjectId: row.config_object_id })
-      return serializeView(row, await revisionRows(row.id))
-    } catch {
-      return null
-    }
-  }))
-  return accessible.filter((view): view is GeneratedArtifactView => view !== null)
+  const access = new Map<string, Awaited<ReturnType<typeof getWorkflowAccess>>>()
+  const workflowIds = [...new Set(rows.map((row) => row.config_object_id))]
+  for (let offset = 0; offset < workflowIds.length; offset += CATALOG_BATCH_SIZE) {
+    await Promise.all(workflowIds.slice(offset, offset + CATALOG_BATCH_SIZE).map(async (configObjectId) => {
+      try {
+        access.set(configObjectId, await getWorkflowAccess({ context: input.context, configObjectId }))
+      } catch {
+        // Match the listing's existing fail-closed behavior.
+      }
+    }))
+  }
+  const accessible = rows.filter((row) => access.has(row.config_object_id))
+  const revisions = await batchedRevisionRows(accessible)
+  return accessible.flatMap((row) => {
+    const workflow = access.get(row.config_object_id)
+    return workflow ? [{ view: serializeView(row, revisions.get(row.id) ?? []), workflow }] : []
+  })
+}
+
+export async function listArtifactViews(input: Parameters<typeof listArtifactViewsWithWorkflowAccess>[0]): Promise<GeneratedArtifactView[]> {
+  return (await listArtifactViewsWithWorkflowAccess(input)).map((entry) => entry.view)
 }
 
 export async function listArtifactViewsForScript(input: {
   context: PluginArchActorContext
   configObjectId: string
 }): Promise<GeneratedArtifactView[]> {
-  const script = await getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId })
+  const script = await getWorkflowAccess({ context: input.context, configObjectId: input.configObjectId })
   const rows = await db.select().from(ArtifactViewTable).where(and(
     eq(ArtifactViewTable.organization_id, input.context.organizationContext.organization.id),
     eq(ArtifactViewTable.config_object_id, normalizeDenTypeId("configObject", script.configObjectId)),
   )).orderBy(desc(ArtifactViewTable.updated_at), desc(ArtifactViewTable.id))
-  return Promise.all(rows.map(async (row) => serializeView(row, await revisionRows(row.id))))
+  const revisions = await batchedRevisionRows(rows)
+  return rows.map((row) => serializeView(row, revisions.get(row.id) ?? []))
+}
+
+/** listArtifactViewsForScript for many Workflows the caller can already read, keyed by Workflow. */
+export async function listArtifactViewsForScripts(input: {
+  context: PluginArchActorContext
+  configObjectIds: DenTypeId<"configObject">[]
+}): Promise<Map<string, GeneratedArtifactView[]>> {
+  const views = new Map<string, GeneratedArtifactView[]>()
+  if (input.configObjectIds.length === 0) return views
+  const rows = await db.select().from(ArtifactViewTable).where(and(
+    eq(ArtifactViewTable.organization_id, input.context.organizationContext.organization.id),
+    inArray(ArtifactViewTable.config_object_id, input.configObjectIds),
+  )).orderBy(desc(ArtifactViewTable.updated_at), desc(ArtifactViewTable.id))
+  const revisions = await batchedRevisionRows(rows)
+  for (const row of rows) {
+    const workflowViews = views.get(row.config_object_id) ?? []
+    workflowViews.push(serializeView(row, revisions.get(row.id) ?? []))
+    views.set(row.config_object_id, workflowViews)
+  }
+  return views
 }
 
 export async function loadArtifactViewRevision(input: {
@@ -161,7 +262,9 @@ export async function saveArtifactViewRevision(input: {
   description?: string
   reactSource: string
   cssSource?: string
+  dataMode?: "live" | "snapshot"
 }): Promise<GeneratedArtifactView> {
+  if (legacyArtifactViewsReadOnly()) throw new Error("legacy_view_read_only")
   const script = await getWorkflowDetail({ context: input.context, configObjectId: input.configObjectId })
   if (!script.canManage) throw new Error("artifact_view_not_found")
   if (!script.currentVersion.outputSchema || !script.currentVersion.outputSchemaDigest) {
@@ -174,6 +277,12 @@ export async function saveArtifactViewRevision(input: {
     : null
   if (existing && existing.config_object_id !== script.configObjectId) {
     throw new Error("artifact_view_script_binding_immutable")
+  }
+
+  const dataMode = input.dataMode ?? existing?.data_mode ?? "live"
+  if (existing && dataMode !== existing.data_mode) throw new Error("artifact_view_data_mode_immutable")
+  if (!existing && dataMode === "snapshot" && script.currentVersion.requiredCapabilities.length > 0) {
+    throw new Error("artifact_view_snapshot_personal_data_denied")
   }
 
   const artifactViewId = existing?.id ?? createDenTypeId("artifactView")
@@ -207,6 +316,7 @@ export async function saveArtifactViewRevision(input: {
         status: "active",
         active_revision_id: null,
         use_in_workflow: false,
+        data_mode: dataMode,
       })
     }
     await tx.insert(ArtifactViewRevisionTable).values({
@@ -231,10 +341,11 @@ export async function saveArtifactViewRevision(input: {
     })
   })
 
-  const rows = await db.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.id, artifactViewId)).limit(1)
+  // primary: reads back the view and revision saved above.
+  const rows = await db.$primary.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.id, artifactViewId)).limit(1)
   const view = rows[0]
   if (!view) throw new Error("artifact_view_not_found")
-  return serializeView(view, await revisionRows(view.id))
+  return serializeView(view, await revisionRows(view.id, view.active_revision_id, db.$primary))
 }
 
 export async function activateArtifactViewRevision(input: {
@@ -243,6 +354,7 @@ export async function activateArtifactViewRevision(input: {
   revisionId: string
   save?: { title: string; useInWorkflow: boolean; expectedActiveRevisionId: string | null }
 }): Promise<GeneratedArtifactView> {
+  if (legacyArtifactViewsReadOnly()) throw new Error("legacy_view_read_only")
   const view = await accessibleView({ context: input.context, artifactViewId: input.artifactViewId, role: "manager" })
   const revisionId = parseRevisionId(input.revisionId)
   const revisions = await db.select().from(ArtifactViewRevisionTable).where(and(
@@ -282,7 +394,7 @@ export async function activateArtifactViewRevision(input: {
     }
     return { ...current, ...patch, updated_at: new Date() }
   })
-  return serializeView(updated, await revisionRows(view.id))
+  return serializeView(updated, await revisionRows(updated.id, updated.active_revision_id))
 }
 
 export async function retireArtifactView(input: {
@@ -304,13 +416,16 @@ export async function retireArtifactView(input: {
 
 export async function getArtifactView(input: { context: PluginArchActorContext; artifactViewId: string }) {
   const view = await accessibleView({ ...input, role: "viewer" })
-  return serializeView(view, await revisionRows(view.id))
+  return serializeView(view, await revisionRows(view.id, view.active_revision_id))
 }
 
 export async function readArtifactViewSource(input: { context: PluginArchActorContext; artifactViewId: string }) {
   const view = await accessibleView({ ...input, role: "manager" })
-  const revisions = await revisionRows(view.id)
+  const revisions = await revisionRows(view.id, view.active_revision_id)
   const latest = revisions[0]
   if (!latest) throw new Error("artifact_view_revision_not_found")
-  return { view: serializeView(view, revisions), reactSource: latest.react_source, cssSource: latest.css_source }
+  const [source] = await db.select({ reactSource: ArtifactViewRevisionTable.react_source, cssSource: ArtifactViewRevisionTable.css_source })
+    .from(ArtifactViewRevisionTable).where(eq(ArtifactViewRevisionTable.id, latest.id)).limit(1)
+  if (!source) throw new Error("artifact_view_revision_not_found")
+  return { view: serializeView(view, revisions), ...source }
 }

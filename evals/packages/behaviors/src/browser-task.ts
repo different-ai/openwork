@@ -12,8 +12,25 @@ export interface BrowserTaskInput {
     observationId?: string;
     toolId?: string;
     input?: unknown;
-    action?: { type: "click" | "fill" | "key" | "scroll"; ref?: string; text?: string; key?: string; x?: number; y?: number; deltaY?: number };
+    action?: { type: "click" | "fill" | "select" | "set_checked" | "key" | "scroll"; ref?: string; text?: string; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number };
   };
+}
+
+export interface BrowserControl {
+  name: string;
+  tag?: string;
+  type?: string;
+  role?: string | null;
+  value?: string;
+  valueTruncated?: boolean;
+  disabled?: boolean;
+  readOnly?: boolean;
+  required?: boolean;
+  checked?: boolean | "mixed";
+  selectedValues?: string[];
+  options?: Array<{ value: string; label: string; selected: boolean; disabled: boolean }>;
+  valid?: boolean;
+  validationMessage?: string;
 }
 
 export interface BrowserTaskReply {
@@ -30,8 +47,10 @@ export interface BrowserTaskReply {
   outcome?: string;
   trust?: string;
   image?: { data: string };
+  scroll?: { x: number; y: number };
   tools?: Array<{ toolId: string; name: string; origin: string }>;
-  elements?: Array<{ ref: string; name: string }>;
+  elements?: Array<BrowserControl & { ref: string }>;
+  control?: BrowserControl;
   result?: unknown;
 }
 
@@ -39,9 +58,11 @@ export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
   visibleWindowCount: number;
+  backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
-  tabs: Array<{ id: string; label: string; ownerSessionId: string | null }>;
-  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+  popOutAboveOthers: boolean;
+  tabs: Array<{ id: string; label: string; url: string; ownerSessionId: string | null }>;
+  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; poppedOut: boolean; focused: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -55,6 +76,13 @@ function string(value: unknown): string {
 
 export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
   if (!record(value) || typeof value.ok !== "boolean") throw new Error("The browser returned no result.");
+  let scroll: BrowserTaskReply["scroll"];
+  if (value.scroll !== undefined) {
+    const position = value.scroll;
+    if (!record(position) || typeof position.x !== "number" || !Number.isFinite(position.x)
+      || typeof position.y !== "number" || !Number.isFinite(position.y)) throw new Error("Invalid browser scroll position.");
+    scroll = { x: position.x, y: position.y };
+  }
   return {
     // Retain unknown fields so disclosure assertions cannot hide a leaked payload.
     ...value,
@@ -70,14 +98,16 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
     ...(typeof value.outcome === "string" ? { outcome: value.outcome } : {}),
     ...(typeof value.trust === "string" ? { trust: value.trust } : {}),
     ...(record(value.image) ? { image: { data: string(value.image.data) } } : {}),
+    ...(scroll ? { scroll: { x: scroll.x, y: scroll.y } } : {}),
     ...(Array.isArray(value.tools) ? { tools: value.tools.map((tool: unknown) => {
       if (!record(tool)) throw new Error("Invalid website tool.");
       return { toolId: string(tool.toolId), name: string(tool.name), origin: string(tool.origin) };
     }) } : {}),
     ...(Array.isArray(value.elements) ? { elements: value.elements.map((element: unknown) => {
       if (!record(element)) throw new Error("Invalid page control.");
-      return { ref: string(element.ref), name: string(element.name) };
+      return { ...element, ref: string(element.ref), name: string(element.name) };
     }) } : {}),
+    ...(record(value.control) ? { control: { ...value.control, name: string(value.control.name) } } : {}),
     ...(Object.hasOwn(value, "result") ? { result: value.result } : {}),
   };
 }
@@ -86,22 +116,25 @@ export function parseBrowserTaskReply(value: unknown): BrowserTaskReply {
 export async function readBrowserState(app: Surface): Promise<BrowserState> {
   const value = await evaluateOnSurface(app, () => window.__OPENWORK_ELECTRON__.browser.getState(), { awaitPromise: true });
   if (!record(value) || !Array.isArray(value.tabs) || !Array.isArray(value.nativeViews)
-    || typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") throw new Error("Missing native browser state.");
+    || typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowCount !== "number"
+    || typeof value.backgroundWindowVisible !== "boolean") throw new Error("Missing native browser state.");
   return {
     activeTabId: typeof value.activeTabId === "string" ? value.activeTabId : null,
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
     visibleWindowCount: value.visibleWindowCount,
+    backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
+    popOutAboveOthers: value.popOutAboveOthers === true,
     tabs: value.tabs.map((tab: unknown) => {
       if (!record(tab)) throw new Error("Invalid browser tab.");
-      return { id: string(tab.id), label: string(tab.label), ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };
+      return { id: string(tab.id), label: string(tab.label), url: typeof tab.url === "string" ? tab.url : "", ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };
     }),
     nativeViews: value.nativeViews.map((view: unknown) => {
-      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || typeof view.visible !== "boolean" || !record(view.bounds)
+      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || typeof view.poppedOut !== "boolean" || typeof view.focused !== "boolean" || typeof view.visible !== "boolean" || !record(view.bounds)
         || typeof view.bounds.x !== "number" || typeof view.bounds.y !== "number" || typeof view.bounds.width !== "number" || typeof view.bounds.height !== "number") {
         throw new Error("Invalid native browser view.");
       }
-      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp, visible: view.visible,
+      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp, poppedOut: view.poppedOut, focused: view.focused, visible: view.visible,
         bounds: { x: view.bounds.x, y: view.bounds.y, width: view.bounds.width, height: view.bounds.height } };
     }),
   };

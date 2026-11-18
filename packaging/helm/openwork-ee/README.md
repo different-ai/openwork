@@ -4,10 +4,222 @@ Initial Helm chart for the OpenWork EE Den stack:
 
 - `den-api` control plane on port `8788`
 - `den-web` web app on port `3005`
-- optional `inference` service on port `8791`
+- optional OpenWork Gateway service on port `8791` (`gateway.enabled`)
+
+Gateway retains the chart's legacy `inference.*` aliases, secret keys, image
+repository, resource names and selectors for upgrade safety. Only explicit
+`gateway.enabled: true` advertises the new capability; legacy service enablement
+alone does not. Gateway here means `ee/apps/gateway`, not the separate
+`den-gateway` web edge application.
+See [Gateway configuration and stable contracts](../../../ee/apps/gateway/README.md).
 - shared ConfigMap and Secret templating
 - optional Ingress for web and API hosts
 - pre-install/pre-upgrade migration Job scaffold
+
+## Gateway Compatibility (Chart 0.2.0)
+
+`gateway: {}` is intentionally sparse, with **no canonical defaults** that could
+mask an existing `inference.enabled: true`. An absent root (including old
+`--reuse-values` releases) is treated as `{}`; an explicitly supplied non-map is
+rejected. Supported structural overrides are
+`enabled`, `replicaCount`, `image`, `service`, `containerPort`, `env`,
+`podAnnotations`, `podLabels`, `resources`, `probes`, and `retention`.
+
+| Configuration | Service | `GATEWAY_ENABLED` in Den API / Gateway |
+| --- | --- | --- |
+| Defaults | Absent | `false` / absent |
+| `inference.enabled: true`, no canonical enablement | Retained | `false` / `false` |
+| `gateway.enabled: false`, even with legacy true | Absent | `false` / absent |
+| `gateway.enabled: true` with valid configuration | Present | `true` / `true` |
+
+For every structural key, canonical **presence** wins, not truthiness. Nonempty
+maps merge recursively; `{}`, `[]`, `false`, `0`, and `""` replace the inherited
+value. For example, `gateway.env: {}` clears all inherited env overrides,
+`gateway.service.annotations: {}` clears legacy annotations, and
+`gateway.replicaCount: 0` scales down without disabling capability intent.
+`gateway.probes: {}` removes both probes. Clearing a required field (such as
+`gateway.image: {}` or service port `0`) fails with a configuration error when
+the service is enabled. An empty image **tag** clears a legacy tag and uses
+`image.tag`, then `Chart.appVersion`, for both the Deployment and retention job.
+These clear semantics apply to the canonical-over-legacy merge **after Helm has
+coalesced its values**. They work when migrating reused legacy `inference.*`
+configuration: for example, a new `gateway.env: {}` clears old `inference.env`.
+The root `gateway: {}` itself means no overrides, not removal of the legacy service.
+
+Helm can refill an empty map with saved **canonical** values before any chart
+template runs. After a release has saved `gateway.env.SAVED`, a later
+`--reuse-values --set-json 'gateway.env={}'` retains that entry; the chart cannot
+recover the original empty-map intent. The same limitation applies to nested
+maps from earlier values files. To clear previously canonical maps, use
+`--reset-values` with a complete, reviewed values file that omits the old entries
+and explicitly includes the desired empty maps. Preserve all other deployment
+configuration and Secret references in that file. Do not rely on a final empty
+override file or `--reset-then-reuse-values` to discard saved maps. `null` is
+Helm's deletion operator, not a supported chart clear value here.
+
+The `*-inference` Service, Deployment, container name, selectors and default
+`ghcr.io/different-ai/openwork-inference` repository are unchanged. Existing Den
+web/API ingress hosts and resource names are untouched. This chart does not
+create Gateway ingress automatically: provision a desktop-reachable TLS endpoint
+using your existing ingress/mesh or `gateway.service` load balancer settings.
+
+Explicit enablement with an existing Secret:
+
+```yaml
+gateway:
+  enabled: true
+config:
+  internal:
+    gatewayProxyBaseUrl: http://openwork-ee-inference:8791
+    inferenceProxyBaseUrl: https://existing-models.example.com # Keep your existing Models endpoint.
+  public:
+    gatewayPublicBaseUrl: https://gateway.example.com
+secret:
+  create: false
+  existingSecret: openwork-ee-secrets
+```
+
+Set the internal hostname to your release's retained Service name. Both URLs
+must be explicit origins without credentials, non-root paths, queries, or
+fragments. Public origins must use HTTPS and a qualified, non-local hostname;
+internal origins may use HTTP. Loopback origins are rejected. A trailing `/`
+is permitted. Helm performs static validation; the application's shared Gateway
+environment parser performs final URL, database and encryption validation at
+startup. Rendering cannot verify DNS, TLS, Secret contents, or reachability.
+
+`config.internal.gatewayProxyBaseUrl` overrides legacy
+`config.internal.inferenceProxyBaseUrl` **by presence**, including `""`. An empty
+canonical URL clears the legacy one and fails validation if Gateway is enabled.
+Without the canonical key, an explicitly configured legacy URL satisfies the
+internal origin requirement. The generated in-cluster URL remains available for
+legacy service-only installations, but is not sufficient for new opt-in.
+`config.public.gatewayPublicBaseUrl` has no inferred public fallback. Legacy
+Models retain a valid desktop origin from `INFERENCE_PROXY_BASE_URL`, otherwise
+use the configured public Gateway origin, never its internal Service address.
+When a canonical proxy or public destination is configured, Helm emits the nonempty existing `config.internal.inferenceProxyBaseUrl`
+as that legacy variable, or the public origin if unset/empty; keep your existing
+Models endpoint in this legacy setting despite its `internal` name. Gateway's
+canonical internal URL still wins for internal resolution, including empty clears.
+Public destinations survive management disable: runtime Models selection prefers a
+valid legacy Models public origin, then a valid Gateway public origin, regardless
+of the flag. The chart retains shared public configuration on disabled deployments;
+existing per-app public URL overrides remain honored there. Without a usable public
+destination, historical disabled Models fallback remains and may be private/loopback.
+Optional malformed Gateway settings do not add disabled-mode startup requirements.
+`config.inference.*` Models billing and upstream settings remain unchanged.
+
+The enabled Den API and Gateway receive required `secretKeyRef` entries for the
+same `DEN_DB_ENCRYPTION_KEY` and database credentials. `config.databaseMode: mysql`
+uses `secret.keys.databaseUrl`; `planetscale` uses `databaseHost`,
+`databaseUsername`, and `databasePassword`. Key remapping is supported. The
+existing Secret must contain nonempty credentials and an encryption key of at
+least 32 characters; it is never read by Helm. Chart-created Secrets use
+`secret.values` and reject missing/placeholder Gateway credentials early.
+Pre-install migration hooks keep their existing inline-secret behavior for
+chart-created Secrets; use an existing Secret to avoid inline hook credentials.
+Regardless of runtime mode, enabled migration Jobs also require the existing
+`secret.keys.databaseUrl` / `secret.values.databaseUrl` TCP configuration described
+under [Migration TCP configuration](#migration-tcp-configuration).
+
+Admin and webhook endpoints are independently opt-in for canonical deployments:
+
+```yaml
+gateway:
+  enabled: true
+  admin:
+    enabled: true
+  webhook:
+    enabled: true
+secret:
+  keys:
+    gatewayAdminToken: GATEWAY_ADMIN_TOKEN
+    gatewayWebhookSecret: GATEWAY_WEBHOOK_SECRET
+```
+
+These optional `secret.keys.gateway*` and `secret.values.gateway*` keys override
+their `inference*` aliases by presence. Defaults retain the old Secret keys.
+Only enabled features require token references; disabled features explicitly
+clear both token env aliases so `envFrom` cannot accidentally turn them on.
+Shared deployment flags, origins, database keys, and tokens must not be overridden
+through per-app `env` when enabled; Helm rejects conflicting configuration.
+
+The Smart Model Router asks Jev, through TypeSafe's
+API, how well each Smart request fits each task of the member's Smart Router
+and how much thinking it needs. Give the gateway a TypeSafe API key; without
+one, Smart is off and Den refuses to save Smart Routers:
+
+```yaml
+secret:
+  keys:
+    typesafeApiKey: TYPESAFE_API_KEY # key name in the Secret
+  values:
+    typesafeApiKey: "<TypeSafe API key>" # or add it to secret.existingSecret
+```
+
+The gateway reads it as `TYPESAFE_API_KEY` (optional). `AUTO_ROUTER_JEV_MODEL`
+and `AUTO_ROUTER_JEV_TIMEOUT_MS` can be set through `gateway.env`. The feature
+is cloud-only, so it also needs `config.deployment: cloud`.
+
+Retention is separate from member Automations and remains opt-in after the
+accounting migration:
+
+```yaml
+gateway:
+  retention:
+    enabled: true
+    adminTokenSecret: gateway-retention
+    adminTokenKey: GATEWAY_ADMIN_TOKEN
+```
+
+Set service enablement as well (`gateway.enabled` or legacy `inference.enabled`).
+Retention's reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and
+`INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret
+contains different tokens. It enables admin access without requiring
+`gateway.admin.enabled`. Do not set token env overrides. Moving from legacy
+`inference.*` to canonical `gateway.*` values does not rename the CronJob or
+change its internal Service target.
+
+The CronJob runs hourly, like the hosted deployment. Each run calls the Gateway's
+`POST /internal/rollups/run`, folds closed request-log hours older than two days
+into hourly usage rollups, and deletes the raw rows it folded in the same
+transaction. Hourly rollups older than 90 days fold into daily rollups the same
+way. The usage dashboard reads raw rows and rollups together, so totals are
+correct whether or not a run has happened yet.
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `schedule` | `5 * * * *` | Five minutes past every hour. Older charts defaulted to nightly `0 3 * * *`; an install that set `schedule` explicitly keeps its value. |
+| `timeZone` | `Etc/UTC` | |
+| `maxBucketsPerRun` | `48` | Hours (and days) handled per run. Gateway accepts 1 to 1000. |
+| `maxSourceRowsPerBucket` | `5000` | Rows consumed per hour per run, in one transaction. Gateway accepts 1 to 5000. |
+
+One run consumes at most `maxBucketsPerRun x maxSourceRowsPerBucket` rows
+(240,000 by default). An hour with more rows than `maxSourceRowsPerBucket` is
+finished over the following runs, so hourly runs keep up with up to about
+240,000 requests per hour. The previous defaults (nightly, 1,000 rows) kept up
+with only about 48,000 requests per day. The job logs a summary such as
+`{"hourBuckets":1,"dayBuckets":0,"rawRowsDeleted":1253,...}`. `hourBuckets`
+staying above 1 for several runs means the job is catching up; raise
+`maxSourceRowsPerBucket` toward 5000 before running it more often.
+
+Non-Helm deployments need their own hourly caller with the same body:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"maxBucketsPerRun":48,"maxSourceRowsPerBucket":5000}' \
+  http://<gateway>:8791/internal/rollups/run
+```
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/gateway.sh`.
+This does not deploy resources, run migrations, or invoke the retention endpoint.
+`bash packaging/helm/openwork-ee/tests/upgrade-and-migration.sh` additionally
+simulates reused computed chart values without the new Gateway defaults and
+checks the rendered migration environment against the real bootstrap connection
+parser functions in isolation. It never executes the bootstrap entrypoint or
+opens a database connection. Run this contract test from a repository checkout
+with Node.js and Helm available; it reads the backend parser source, not a deployed
+application or a database.
 
 ## Install
 
@@ -27,6 +239,48 @@ published before this default (0.18.46 and earlier) ship `image.tag: latest`,
 which floats to the newest release on every pull; check with
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee --version X | grep -A1 '^image:'`
 and, when it prints `tag: latest`, also pass `--set image.tag=X`.
+
+OpenCode v2 history migration is automatic; no Helm feature value or admin
+switch is required. Upgrade the desktop application as well as the chart/server.
+Old `config.features.engineV2ForceUpgrade` entries are accepted but ignored and
+can be removed. Migration keeps backups, waits for idle, and respects explicit
+manual engine choices. See [engine migration](../../../docs/opencode-engine-migration.md).
+
+### Node.js security baseline and image upgrades
+
+Deploy newly published OpenWork application images built with **stable Node.js
+24.x >=24.22.1**. Re-rendering or upgrading only the chart does not patch the
+runtime inside an existing image. Pin the new OpenWork application release with
+`image.tag` (or upgrade to its matching published chart), and review any
+per-component image tag overrides, including legacy `inference.image.tag` and
+canonical `gateway.image.tag`, so they do not retain older images. Update mirrored
+images to the newly built release as well; do not merely retag an old image.
+
+`Chart.appVersion` is the **OpenWork application release**, not the Node.js
+version. Do not set it or `image.tag` to `24.22.1` to request a runtime upgrade.
+
+After upgrading, run the existing test hook:
+
+```sh
+helm test openwork-ee --logs
+```
+
+The `env-probe` Job uses the configured Den API image and reports its actual
+Node.js version, platform, and architecture. It fails for older runtimes,
+prereleases, or other Node.js major versions, in addition to its existing
+environment and custom-CA checks. This is an operator-invoked post-deployment
+check, not an install/upgrade admission gate. It proves the runtime in the probe's
+Den API image only: separately verify the Den web, Gateway/inference, and any other
+application images you deploy, especially with per-component overrides. Helm
+rendering cannot inspect an image's runtime or prove that running pods have
+pulled the new image.
+
+Local regression checks (no cluster required):
+
+```sh
+node --test packaging/helm/openwork-ee/tests/node-runtime.mjs
+bash packaging/helm/openwork-ee/tests/image-tag-and-migration-hook.sh
+```
 
 Create a values file for the target environment:
 
@@ -56,8 +310,6 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: "admin@example.com"
-    # Self-hosted default: every organization gets install downloads.
-    installLinksGatingEnabled: "false"
     authCallbackUrl: "https://openwork.example.com"
   githubConnector:
     appId: ""
@@ -139,27 +391,69 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
   -f values.prod.yaml
 ```
 
-### Automations rollout
+### Features
 
-The Helm chart advertises Automations as unavailable by default for self-hosted
-and customer-managed deployments. Availability and server shutdown are
-separate so a Den upgrade cannot remove routes beneath an older published
-Desktop:
+OpenWork features are declared once, one file each under `packages/features/src/flags`,
+and rolled out along several dimensions: which products a feature exists on,
+on or off for everyone, per-organization overrides, and a kill switch.
+Platform admins change these in `/admin` without a redeploy. As the operator,
+you can also lock a feature for the whole install under `config.features`:
+
+```yaml
+config:
+  features:
+    permissions: "true"            # on for everyone on this install
+    computerUse: "false" # off for everyone on this install
+```
+
+- `""` (the default) follows `/admin`, which starts from the default listed
+  in `values.yaml`.
+- `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
+  deployment config" for it. The `/admin` kill switch still turns it off.
+
+Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
+of self-hosted installs have no key, so they can't be turned on here. With the
+published chart, a key that isn't a feature fails `helm install`. A chart
+installed from a checkout accepts any key, and den-api ignores the ones it
+does not know with a warning in its log.
+
+`config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
+OpenWork Cloud. Don't change it on a customer install.
+
+For supported keys, defaults and descriptions, run
+`helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
+`config.features`. The [feature registry](../../../packages/features/src/flags)
+is the source of truth.
+
+The chart in git lists no feature keys, so adding a feature never changes it.
+The publish workflow writes every key into `values.yaml` and
+`values.schema.json` before packaging. To see the same in a checkout, run
+`node scripts/features-sync.mjs --chart` and do not commit the result.
+
+### Automations settings
+
+Automations are on by default. Organization admins choose in **Settings ›
+Automations** whether members can use Desktop Automations (run on a member's
+signed-in desktop) and Cloud Automations (run headlessly in OpenWork Cloud;
+these also need the headless runner, `DEN_HEADLESS_RUNNER_URL`). These settings
+are generally available on cloud and self-hosted deployments.
+
+Availability and server shutdown remain separate so a Den upgrade cannot remove
+routes beneath an older published Desktop:
 
 | `automationsEnabled` | `automationsRuntimeEnabled` | Behavior |
 | --- | --- | --- |
+| `"true"` (default) | `"true"` (default) | Automations are available and execute normally. |
 | `"false"` | `"true"` | New Desktops hide Automations; legacy routes and scheduling remain available during the upgrade window. |
 | `"false"` | `"false"` | Automations are hard-disabled: routes, MCP resources, and scheduler startup are omitted. |
-| `"true"` | `"true"` | Automations are available and execute normally. |
 | `"true"` | `"false"` | The runtime shutdown wins and Desktop receives `automationsEnabled: false`. |
 
-Set both values explicitly when the deployment is ready to run Automations:
+To turn Automations off for the whole install:
 
 ```yaml
 config:
   public:
-    automationsEnabled: "true"
-    automationsRuntimeEnabled: "true"
+    automationsEnabled: "false"
 ```
 
 These render `DEN_AUTOMATIONS_ENABLED=true` and
@@ -192,7 +486,7 @@ immediately by setting both values to false.
 
 ### Dashboards rollout
 
-The organization-managed Dashboard is unavailable by default. Enable it for a
+The personal desktop Dashboard is unavailable by default. Enable it for a
 self-hosted or customer-managed deployment with:
 
 ```yaml
@@ -280,7 +574,7 @@ The existing Secret must contain the keys listed under `secret.keys`, especially
 - `BETTER_AUTH_SECRET`
 - `DEN_DB_ENCRYPTION_KEY`
 
-Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `POLAR_ACCESS_TOKEN` when Polar feature gating is enabled. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
+Set optional `DATABASE_REDIS_URL` to enable Den API Redis-backed session and query caching. Set `DAYTONA_API_KEY` when `config.provisioner.mode` is `daytona`. Set `OPENROUTER_MANAGEMENT_API_KEY` when enabling OpenWork Models management.
 
 Redis cache examples:
 
@@ -303,6 +597,78 @@ secret:
   values:
     databaseRedisUrl: "redis://red-...:6379"
 ```
+
+## Audit usage refresh
+
+Audit writes never update an organization's audit usage totals (retained
+operations, events, logical bytes). That keeps each audit write independent, so
+writes never queue behind each other on a shared row. A daily CronJob recomputes
+the totals instead by calling den-api's `POST /internal/audit/usage/refresh`
+with a maintenance token. The audit usage screen shows when the totals were last
+measured. The CronJob is off by default. Turn it on with a token of 24 or more
+characters, either in the chart Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+secret:
+  values:
+    maintenanceToken: "<random 32+ character string>"
+```
+
+or from your own Secret:
+
+```yaml
+denApi:
+  auditUsage:
+    enabled: true
+    tokenSecret: den-maintenance
+    tokenKey: token
+```
+
+The same token is passed to den-api as `DEN_MAINTENANCE_TOKEN`; den-api answers
+404 on `/internal/*` when it is unset. `schedule` (default `30 3 * * *`) and
+`timeZone` (default `Etc/UTC`) are configurable. Non-Helm deployments need their
+own scheduled caller, for example:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $DEN_MAINTENANCE_TOKEN" \
+  http://<den-api>/internal/audit/usage/refresh
+```
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/den-audit-usage.sh`.
+
+## GitHub connector reconcile
+
+GitHub connectors sync on push webhooks. As a backstop for missed webhooks,
+den-api also checks each GitHub connector's branch head every few hours and
+queues a resync when it moved. Each run reads due connectors in small pages from
+an index, so it stays cheap however many connectors exist.
+
+The check runs only when something calls den-api's
+`POST /internal/github/reconcile/run`; den-api does not run it on its own. Turn
+on the CronJob to call it every five minutes. Without it, pushes still sync
+through webhooks, but a push whose webhook never arrived is not picked up until
+the next one:
+
+```yaml
+denApi:
+  githubReconcile:
+    enabled: true
+secret:
+  values:
+    maintenanceToken: "<random 32+ character string>"
+```
+
+It uses the same maintenance token as the audit usage refresh: the chart Secret,
+or `tokenSecret` and `tokenKey` under either `denApi.githubReconcile` or
+`denApi.auditUsage` (set them in one place, or the same in both).
+`schedule` (default `*/5 * * * *`) and `timeZone` (default `Etc/UTC`) are
+configurable. A run is safe to overlap with another: each connector is
+claimed by one run.
+
+Render-only verification: `bash packaging/helm/openwork-ee/tests/den-github-reconcile.sh`.
 
 ## Custom CA certificates
 
@@ -685,6 +1051,17 @@ If `secret.create=false`, add those keys to the existing Secret referenced by
 `SMTP_HOST`; leave `smtpHost` blank only when SMTP-backed transactional email
 should be disabled.
 
+Invitation emails tell people to reply for help and include a "Report abuse"
+link. Set `config.email.supportAddress` (rendered as `EMAIL_SUPPORT_ADDRESS`)
+to send both to your help desk; when it is blank, replies go to the person who
+sent the invitation and the email omits the report link:
+
+```yaml
+config:
+  email:
+    supportAddress: "it-help@example.com"
+```
+
 ## Tenancy Mode
 
 The chart defaults to a private single-org deployment:
@@ -826,7 +1203,7 @@ install an ingress controller.
 
 ## Config Rollouts
 
-Den API, Den Web, and inference pods include checksums for the chart-managed
+Den API, Den Web, and Gateway pods include checksums for the chart-managed
 ConfigMap and Secret. Helm upgrades that change runtime config or secrets roll
 the pods automatically so environment variables such as public origins, CORS
 origins, and database URLs are refreshed.
@@ -847,6 +1224,18 @@ config:
 ```
 
 Local sign-in lockout protections stay enabled either way.
+
+Each organization API key can make 600 requests a minute by default. To change
+that, set `config.auth.apiKeyRateLimitMax` (renders `DEN_API_KEY_RATE_LIMIT_MAX`):
+
+```yaml
+config:
+  auth:
+    apiKeyRateLimitMax: 1200
+```
+
+The limit is saved on each key when it is created, so it applies to keys created
+after the change. Existing keys keep their limit until they are replaced.
 
 Den API also protects External MCP connection URLs with an SSRF guard. On a
 hosted multi-tenant deployment, someone who can add an MCP connection could
@@ -870,7 +1259,56 @@ This disables SSRF protection for external MCP connection URLs. Enable it only
 on a deployment where Den's network position and the set of people who can add
 MCP connections are both trusted.
 
+### Config import secrets from environment variables
+
+An imported config file can ask Den API to fill a secret from one of its own
+environment variables (`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
+whose names start with `OPENWORK_IMPORT_` can ever be read, and none is allowed
+until you list them, by exact name or with a trailing `*` prefix that itself
+starts with `OPENWORK_IMPORT_`:
+
+```yaml
+denApi:
+  env:
+    DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*"
+```
+
+Provide the variables themselves to the Den API container as well (from a
+Secret you manage; `denApi.env` writes plain values into the pod spec, so keep
+it for test keys). Entries outside the `OPENWORK_IMPORT_` namespace (an exact
+name such as `DATABASE_URL`, a bare `*`, or a prefix such as `D*` or
+`OPENWORK_*`) are ignored and logged as a warning when Den API starts. Den API's
+own settings (`DATABASE_*`, `DEN_*`, `BETTER_AUTH_*` and other credentials it
+reads) are refused even if listed, so they can never be read this way. Cloud
+deployments ignore the allowlist.
+
 ## Migrations
+
+### Migration TCP configuration
+
+The bootstrap script requires a TCP MySQL connection even when the application
+runtime uses the PlanetScale HTTP driver. The chart always gives the migration
+Job `DATABASE_URL` through the existing `secret.keys.databaseUrl` mapping,
+independently of `config.databaseMode`. This preserves the legacy URL path and
+its TLS options. No new migration values are required.
+
+For chart-created Secrets, set `secret.values.databaseUrl` to an explicit
+`mysql://user:password@tcp-host:3306/database?sslmode=verify-full` URL for the
+**same database** used by the application. For an existing Secret, put that URL
+in its mapped `DATABASE_URL` key. Runtime `DATABASE_HOST`, `DATABASE_USERNAME`
+and `DATABASE_PASSWORD` alone are not sufficient for bootstrap's TCP phase;
+the application database mode must not determine the migration environment.
+The chart does not expose bootstrap's alternative `DATABASE_NAME`/`DATABASE_PORT`
+configuration: specify the database name and TCP port in the URL instead.
+
+When migrations are enabled, Helm validates the required key mappings and, for
+chart-created Secrets, a nonempty MySQL URL with username, host, database and a
+valid TCP port. PlanetScale mode also rejects the chart's placeholder URL rather
+than silently targeting the default MySQL host. Existing Secret contents cannot
+be checked at render time; the required key reference and bootstrap parser enforce
+them at startup. TCP connectivity, TLS trust, DDL privileges, and matching the
+runtime database remain operator responsibilities. With `migrations.enabled:
+false`, no migration TCP configuration is required by this chart validation.
 
 The migration Job runs as a Helm `pre-install,pre-upgrade` hook by default:
 
@@ -932,6 +1370,198 @@ the Job environment when `secret.create=true`, because pre-install hooks run
 before normal chart resources. Avoid sharing `kubectl describe job` output
 without redacting secrets.
 
+## Admin-team permission recovery
+
+### Quick example — dummy installation
+
+**Prerequisite:** complete the normal application/database upgrade with the
+recovery feature disabled first. This example is synthetic: namespace
+`my-openwork`, release `openwork`, one organization **Example Corp**, and its
+only designated, non-SCIM Admin team `admins`. Keep your usual `values.yaml`
+untouched; add a separate **recovery.yaml** overlay:
+
+```yaml
+config:
+  features:
+    administratorRecovery: "true"
+  administratorRecovery:
+    mode: apply
+    team: admins
+    expectedMembers: 4
+```
+
+#### 1. Run the repair and read the Job log
+
+First find the release name and chart version:
+
+```sh
+helm list --namespace my-openwork
+```
+
+Use that release name in the upgrade command. This example uses `openwork`:
+
+```sh
+helm upgrade openwork <chart> --namespace my-openwork -f values.yaml -f recovery.yaml
+```
+
+The Job always uses the normal `migrations.hookDeletePolicy` in both Secret
+modes (default: delete after success). Capture the result **during the upgrade
+in a second terminal**, before successful-hook cleanup removes it. Replace the
+Job placeholder with `<release fullname>-migrate`, including any fullname override:
+
+```sh
+umask 077
+until kubectl --namespace my-openwork logs -f job/<release-fullname>-migrate > recovery.log 2>/dev/null; do
+  sleep 2
+done
+```
+
+This explicit loop retries startup errors without relying on the kubectl client's
+own retry behavior. Start it promptly for the new migration Job. When retrying a
+failed upgrade, wait until Helm has replaced the previous failed Job so you do
+not capture its old log. If the loop does not finish, inspect the Job's status
+and your access rather than leaving it unattended.
+
+Keep `recovery.log` privately; it contains the full member roster. A refused run
+(for example, an `expectedMembers` mismatch) makes Helm report **`UPGRADE FAILED`**.
+That failure is expected for a refusal: in this single-organization example, no
+repair changes are written and the existing Den workloads keep running. It is
+not a successful upgrade. Under the normal default policy, the failed Job and
+its log stay readable until the next upgrade:
+
+```sh
+kubectl --namespace my-openwork logs job/<release-fullname>-migrate
+```
+
+Read that log, correct the reported configuration, and only then retry.
+
+With the default `migrations.hook: true`, this is a **pre-upgrade** Job: a
+recovery refusal or SQL error makes bootstrap exit nonzero and, once the Job
+fails, **blocks `helm upgrade` before the new application resources are applied**.
+Existing application resources are not replaced by that failed hook. Correct the
+reported configuration or disable the recovery overlay before retrying; disabling
+it does not revoke a previously committed repair. If hooks are disabled, the
+migration Job is an ordinary resource and does not provide this pre-upgrade gate.
+
+Apply is transactional **per organization**. A failed organization's set, grants,
+team link and membership revision roll back together, leaving no consumed repair
+fence. An earlier organization in a multi-organization `teams` map may already
+have committed; the whole map is not one transaction. Retrying skips those
+committed repairs. Recovery never converts existing table charsets or collations.
+
+**Illustrative REFUSED output**, generated by the real compiled checker on lab
+Example Corp data, with random IDs normalized to obvious dummy placeholders.
+The lab initially had an extra fifth member. These are not real people or IDs:
+
+```text
+ADMIN RECOVERY REFUSED — nothing was changed. Expected 4 members in team admins (tem_00000000000000000000000001), found 5.
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000001","name":"Example Owner","role":"owner","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":true}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000002","name":"Example Admin","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000003","name":"Example Teammate","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000004","name":"Example Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000005","name":"Example Extra Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+Next step 1: If this list is right, set expectedMembers to 5 and run again.
+Next step 2: Otherwise, ask the owner to remove the person from the team first, then run again.
+```
+
+Approve the **whole list**, not just its count. If five is correct, change the
+overlay's count to five. Otherwise ask the owner to remove the unexpected person
+before retrying. The synthetic owner removed the fifth member, so the same
+four-member overlay then produced this **real-output-derived illustrative log**:
+
+```text
+APPLIED — these 4 members now have the 14 permissions
+{"event":"administrator_recovery_applied","organization":{"id":"org_00000000000000000000000001","slug":"org_00000000000000000000000001","name":"Example Corp"},"team":{"id":"tem_00000000000000000000000001","name":"admins"},"role":{"id":"pms_00000000000000000000000001","name":"Restored administrator permissions"},"peopleCount":4}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000001","name":"Example Owner","role":"owner","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":true}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000002","name":"Example Admin","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000003","name":"Example Teammate","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+{"event":"administrator_recovery_recipient","memberId":"mem_00000000000000000000000004","name":"Example Member","role":"member","viaTeam":true,"connected":true,"setupAgent":false,"ownerUnchanged":false}
+UNDO — Members > Roles: unlink or delete Restored administrator permissions (pms_00000000000000000000000001). Disabling or removing the recovery setting stops future runs; it does not revoke these permissions.
+Existing Admin-role user decisions remain in force; owners already had all permissions.
+```
+
+`role` is the direct role; `viaTeam: true` shows that the recovery is through
+this team. Owners are listed but already had all permissions. Do not copy the
+illustrative IDs into a real installation.
+
+#### 2. Verify in Den
+
+Open **Members > Roles**, find **Restored administrator permissions** and inspect
+its team and 13-key policy. As an intended recipient, test changing a different
+non-owner test member's role, then restore that test member's role. If undo is
+needed, the owner can unlink or delete this custom role in **Members > Roles**.
+The repair does not undo unrelated actions performed while access was granted.
+
+#### 3. Drop the overlay on the next upgrade
+
+```sh
+helm upgrade openwork <chart> --namespace my-openwork -f values.yaml
+```
+
+Do not pass `recovery.yaml` or `--reuse-values`. The feature returns to its
+disabled default; the granted role stays. Disabling/removing the setting stops
+future runs, **not existing access**. Re-running an already-consumed repair
+prints `ALREADY APPLIED` and does not recreate access the owner removed.
+
+### Optional: preview first
+
+Use the same overlay with `mode: check` (the default mode when the flag is on),
+then run the same two-file Helm command and read the migrate Job log. It prints
+the resolved organization/team, existing custom roles and full active roster,
+plus what apply would do, without database changes. Change only the overlay to
+`mode: apply` after approval. A count mismatch refuses in check mode too.
+
+### Multiple Admin teams and multiple organizations
+
+A **name** is accepted only when the organization has exactly one designated,
+non-SCIM Admin team. With several Admin teams, name selection refuses and prints
+the candidate IDs/names. Use the intended team's ID, even if its name is unique.
+Ordinary admins can rename teams; they cannot use renaming to get past this
+multiple-Admin-team refusal. IDs remain stable and still require designation,
+same-org scope and no SCIM mappings/projections.
+
+When more than one organization exists, add its ID or exact slug:
+
+```yaml
+config:
+  administratorRecovery:
+    organization: "<organization-id-or-slug>"
+    team: "<designated-admin-team-id>"
+```
+
+The alternative `teams` map also accepts org IDs/slugs and team IDs/names. Use it
+**instead of** the single `organization`/`team` fields, never both. Duplicate org
+aliases and ambiguous matches refuse rather than choosing a first row.
+
+### Detailed behavior and caveats
+
+- The **explicit feature flag** is the ON/OFF switch. Flag off is a silent
+  recovery no-op: no target resolution, preview or repair writes. Ordinary
+  database upgrades continue normally. Neither the chart nor bootstrap enables
+  the flag automatically. Global kill and an explicit org override false win
+  even over an installation-level enable. Hosted Cloud uses only its existing
+  per-org override, not a new operator tool.
+- `check` and `apply` are maintenance operations on an already-upgraded database.
+  They refuse missing migration receipts or pending migrations instead of running
+  migration, schema-repair or default-reconciliation writes first. Check is a
+  read-only transaction; apply validates the count before any repair write.
+- Logs list every active team membership with ID, display name, direct role and
+  via-team/connection/setup-agent status. Email columns are not selected/logged;
+  address-like labels are redacted. Restrict log access, capture the result during
+  the upgrade before normal Job cleanup, and keep the reviewed log privately.
+  The chart still passes database credentials as literal Job values when it
+  creates the Secret itself; that pre-existing injection behavior is unchanged.
+- Existing Admin-role user decisions remain in force. The roster output is not a
+  complete effective-access difference against every other role. Existing custom
+  roles are not merged or replaced; review them separately.
+- **Expected count is not exact roster binding.** A same-size swap is not caught;
+  fingerprint/roster binding remains a follow-up. An authorized change before apply
+  is included. Later authorized additions inherit the team's role.
+- Apply uses existing permission storage and does not change direct member roles,
+  built-in Admin defaults or ownership. A permanent fence prevents replay after
+  owner key revocation, roster removal or role deletion. API-pod restart is not a
+  repair trigger. Physical deletion of all repair history is outside this fence.
+
 ## Install links
 
 The migration Job creates the `install_link` and `desktop_connect_grant` tables
@@ -959,48 +1589,20 @@ installerArtifacts:
 Use either `installerArtifacts.existingClaim` or `installerArtifacts.hostPath`,
 not both.
 
-### Guided desktop setup
+### Desktop downloads
 
-The organization download page hands the normal OpenWork app its Den
-configuration in an explicit second step. The default is a short-lived,
-single-use HTTPS exchange and needs no key configuration:
-
-```yaml
-config:
-  public:
-    connectLinkMode: exchange
-```
-
-Den validates the install token and then either:
+The install page (`/install`) asks people to sign in, then downloads the
+standard OpenWork app approved for their organization. Den either:
 
 - streams the standard installer already mounted at
   `installerArtifacts.mountPath`; or
 - redirects the browser directly to the exact configured GitHub release asset.
 
-Den does not download, cache, wrap, or ZIP GitHub artifacts. The organization
-setup stays in the **Open OpenWork** deep-link step after installation.
-
-For an optional signed handoff, explicitly select signed mode and configure a
-dedicated Ed25519 key whose public key is already trusted by the desktop build:
-
-```yaml
-config:
-  public:
-    connectLinkMode: signed
-    connectLinkKeyId: "owc-2026-07"
-
-secret:
-  values:
-    connectLinkPrivateKey: |-
-      -----BEGIN PRIVATE KEY-----
-      ...
-      -----END PRIVATE KEY-----
-```
-
-For an existing Secret, put the private key under the key named by
-`secret.keys.connectLinkPrivateKey` (default `DEN_CONNECT_LINK_PRIVATE_KEY`).
-`scripts/generate-connect-link-keypair.mjs` can generate a pair, but a standard
-desktop build will reject it until the matching public key ships in that build.
+Den does not download, cache, wrap, or ZIP GitHub artifacts. After installing,
+people sign in to the desktop app with the same account. Older
+`/install?token=…` links still open the install page; the token is ignored.
+The former `connectLinkMode`, `connectLinkKeyId` and `connectLinkPrivateKey`
+values are no longer used and can be removed.
 
 For a semi-air-gapped deployment, mount these normal release filenames (where
 `<version>` is `installerReleaseTag` without its leading `v`):

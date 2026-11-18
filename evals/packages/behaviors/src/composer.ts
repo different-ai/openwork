@@ -16,7 +16,10 @@ export interface ComposerState {
 
 export interface AssistantReplyFacts {
   text: string;
+  /** Mounted assistant messages only; long transcripts are windowed, so prefer latestMessageId. */
   assistantMessageCount: number;
+  /** Stable id of the latest assistant message; the latest transcript group is always mounted. */
+  latestMessageId: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,7 +49,9 @@ export async function readComposerState(app: Surface): Promise<ComposerState> {
     const model = document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]');
     return {
       composerEditable: Boolean(editor),
-      draftText: editor?.innerText ?? "",
+      // An empty Lexical editor keeps one empty paragraph, which innerText
+      // reports as "\n"; the person sees no draft, so neither does the probe.
+      draftText: (editor?.innerText ?? "").replace(/\n$/, ""),
       route: location.hash,
       runTaskVisible: Boolean(run),
       runTaskEnabled: Boolean(run && !run.disabled),
@@ -173,6 +178,12 @@ export async function writeComposerText(
 
 export async function sendComposerMessage(app: Surface, text: string): Promise<ComposerState> {
   const before = await waitForComposerReady(app, 60_000);
+  // Long transcripts are windowed: older messages unmount as new ones mount, so a
+  // count alone can stall. The latest group always stays mounted, so a new id on
+  // the last user message also proves the send.
+  const mounted = await evalIn(app, () => [...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')]
+    .map((message) => message.getAttribute("data-message-id") ?? ""));
+  const mountedUserIds = Array.isArray(mounted) ? mounted.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
   await writeComposerText(app, text);
   await waitFor(app, () => (Boolean([...document.querySelectorAll("button")]
     .find((button) => (button.textContent ?? "").trim() === "Run task" && !button.disabled))), {
@@ -189,7 +200,12 @@ export async function sendComposerMessage(app: Surface, text: string): Promise<C
     return false;
   });
   if (clicked !== true) throw new Error("Run task was no longer clickable; composer.send was not substituted.");
-  await waitFor(app, browserScript((userMessageCount) => (document.querySelectorAll<HTMLElement>('[data-message-role="user"]').length > userMessageCount), [before.userMessageCount]), {
+  await waitFor(app, browserScript((userMessageCount, mountedIds) => {
+    const users = [...document.querySelectorAll<HTMLElement>('[data-message-role="user"]')];
+    if (users.length > userMessageCount) return true;
+    const latestId = users[users.length - 1]?.getAttribute("data-message-id");
+    return Boolean(latestId && !mountedIds.includes(latestId));
+  }, [before.userMessageCount, mountedUserIds]), {
     timeoutMs: 60_000,
     label: "sent user message",
   });
@@ -207,11 +223,12 @@ export async function waitForAssistantReply(
   const value = await evalIn(app, () => {
     const messages = [...document.querySelectorAll<HTMLElement>('[data-message-role="assistant"]')];
     const latest = messages[messages.length - 1];
-    return { text: latest?.innerText?.trim() ?? "", assistantMessageCount: messages.length };
+    return { text: latest?.innerText?.trim() ?? "", assistantMessageCount: messages.length, latestMessageId: latest?.getAttribute("data-message-id") ?? "" };
   });
   if (!isRecord(value)) throw new Error("Assistant reply facts were not an object.");
   return {
     text: stringField(value.text),
     assistantMessageCount: numberField(value.assistantMessageCount),
+    latestMessageId: stringField(value.latestMessageId),
   };
 }

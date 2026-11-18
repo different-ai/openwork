@@ -6,7 +6,6 @@ import type { AgentContextDiagnosticsReport } from "@openwork/types/agent-contex
 import { serializeAgentContextDiagnosticsReport } from "@/app/lib/agent-context-diagnostics";
 import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
-import { SettingsNotice } from "../settings-section";
 import {
   AgentContextDiagnosticsErrorNotice,
   AgentContextDiagnosticsReportView,
@@ -21,7 +20,6 @@ const cardClass =
 export type AgentContextDiagnosticsSectionProps = {
   scopeKey: object;
   available: boolean;
-  unavailableReason: "direct-remote-opencode" | null;
   onRun: () => Promise<AgentContextDiagnosticsReport>;
 };
 
@@ -272,11 +270,6 @@ export function AgentContextDiagnosticsSection(props: AgentContextDiagnosticsSec
           {diagnosticsState.busy ? t("connect.diagnostics_running") : t("connect.diagnostics_run")}
         </Button>
       </div>
-      {props.unavailableReason === "direct-remote-opencode" ? (
-        <div data-testid="agent-diagnostics-unavailable-direct-opencode">
-          <SettingsNotice>{t("connect.diagnostics_unavailable_direct_opencode")}</SettingsNotice>
-        </div>
-      ) : null}
       {diagnosticsState.error ? <AgentContextDiagnosticsErrorNotice message={diagnosticsState.error} /> : null}
       {diagnosticsState.report ? (
         <AgentContextDiagnosticsReportView

@@ -2,23 +2,13 @@ import { createHash } from "node:crypto"
 import { and, asc, eq, gte, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ModelsAnalyticsSettingsTable as Settings, ModelsAnalyticsEventTable as Event } from "@openwork-ee/den-db/schema"
 import { modelsAnalyticsEventSchema, readModelsAnalyticsSettings } from "@openwork-ee/telemetry"
-import type { Hono } from "hono"
 import { z } from "zod"
 import { db } from "./db.js"
 import { postModelsAnalytics } from "./models-analytics-egress.js"
-import { jsonValidator, orgRoleRoute } from "./middleware/index.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus, type OrgRouteVariables } from "./routes/org/shared.js"
 
-const configSchema = z.object({
-  host: z.url().max(512).refine((value) => {
-    const url = new URL(value)
-    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash && url.pathname === "/"
-  }, "Use the HTTPS address of your Langfuse instance, without a path"),
-  publicKey: z.string().trim().min(1).max(512),
-  secretKey: z.string().trim().min(1).max(512),
-}).strict()
+type LangfuseDestination = { host: string; publicKey: string; secretKey: string }
 
-async function send(config: z.infer<typeof configSchema>, spans: unknown[]) {
+async function send(config: LangfuseDestination, spans: unknown[]) {
   const response = await postModelsAnalytics(new URL("/api/public/otel/v1/traces", config.host), {
     "Content-Type": "application/json", "x-langfuse-ingestion-version": "4",
     Authorization: `Basic ${Buffer.from(`${config.publicKey}:${config.secretKey}`).toString("base64")}`,
@@ -62,43 +52,10 @@ export function modelsAnalyticsSpan(row: typeof Event.$inferSelect) {
   }
 }
 
-export function registerModelsAnalyticsExportRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  for (const action of ["test", "connect"]) {
-    app.post(`/v1/inference/analytics/langfuse/${action}`, orgRoleRoute(["admin"]), jsonValidator(configSchema), async (c) => {
-      const permission = ensureOrganizationAdmin(c, "Only workspace admins can configure analytics exports.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      const orgId = c.get("organizationContext").organization.id
-      if (!(await readModelsAnalyticsSettings(db, orgId)).enabled) return c.json({ error: "models_analytics_unavailable" }, 403)
-      const config = c.req.valid("json")
-      try { await send(config, []) } catch { return c.json({ error: "langfuse_connection_failed", message: "Could not connect. Check the Langfuse address and project keys." }, 400) }
-      if (action === "connect") {
-        // Recheck consent after the network request. No exports of earlier data.
-        if (!(await readModelsAnalyticsSettings(db, orgId)).enabled) return c.json({ error: "models_analytics_unavailable" }, 403)
-        const connected = await db.transaction(async (tx) => {
-          const [current] = await tx.select({ enabled: Settings.enabled }).from(Settings).where(eq(Settings.org_id, orgId)).limit(1).for("update")
-          if (!current?.enabled) return false
-          await tx.update(Settings).set({ langfuse_host: new URL(config.host).origin,
-            langfuse_public_key: config.publicKey, langfuse_secret_key: config.secretKey,
-            export_enabled: true, export_enabled_at: new Date(),
-          }).where(eq(Settings.org_id, orgId))
-          return true
-        })
-        if (!connected) return c.json({ error: "models_analytics_unavailable" }, 403)
-      }
-      return c.json({ ok: true })
-    })
-  }
-  app.delete("/v1/inference/analytics/langfuse", orgRoleRoute(["admin"]), async (c) => {
-    const permission = ensureOrganizationAdmin(c, "Only workspace admins can disconnect analytics exports.")
-    if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-    await db.update(Settings).set({ export_enabled: false, langfuse_public_key: null, langfuse_secret_key: null, langfuse_host: null, export_enabled_at: null })
-      .where(eq(Settings.org_id, c.get("organizationContext").organization.id))
-    return c.json({ ok: true })
-  })
-}
-
 // The event store is the outbox. Stable span IDs make retries idempotent;
 // failures never run on the chat request path. Recheck access on every batch.
+// Connecting a destination was part of the retired Task analytics screen; an
+// existing destination keeps exporting while consent holds.
 export function startModelsAnalyticsExportLoop() {
   let running = false
   const timer = setInterval(async () => {

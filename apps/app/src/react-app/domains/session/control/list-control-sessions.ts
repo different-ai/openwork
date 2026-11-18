@@ -1,4 +1,9 @@
+import type { SessionLink } from "@openwork/types/session-link";
+import { labelOpenworkSessionModel, type OpenworkCatalogModel, type OpenworkSessionActivityInventory, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
+import type { SessionActivityStatus } from "../status/session-activity-store";
+import { selectSessionAttention, type SessionAttention } from "../status/session-attention";
 
 export type ControlSessionWorkspace = {
   id: string;
@@ -7,28 +12,71 @@ export type ControlSessionWorkspace = {
   displayName?: string | null;
 };
 
+/**
+ * The engine's session-level model as it arrives on the session record:
+ * bound at creation or by the last prompt, `variant` being the reasoning
+ * effort. The pinned SDK types predate this field, so it is declared here.
+ */
+export type ControlSessionEngineModel = {
+  id?: string;
+  providerID?: string;
+  variant?: string | null;
+};
+
 export type ControlSessionLike = {
   id?: string;
   title?: string;
+  /** Set on delegated (sub-agent) sessions; their pending requests roll up to this parent. */
+  parentID?: string | null;
   time?: {
     updated?: number;
     created?: number;
+    archived?: number;
   };
+  model?: ControlSessionEngineModel | null;
+  /** The session this one was started from, as a side chat or by its agent. */
+  openworkSessionLink?: SessionLink | null;
 };
 
-export type ListedControlSession = {
+export type ListedControlSession = OpenworkSessionActivityInventory & {
   sessionId: string;
   title: string;
   workspace: string;
   updatedAt: number;
   pinned: boolean;
+  /** Live activity, the same source as the sidebar indicator. */
+  status: SessionActivityStatus;
+  /** Model and reasoning effort the session is bound to; null before any model is bound. */
+  model: OpenworkSessionModel | null;
 };
 
 export type ListControlSessionsState = {
   workspaces: ControlSessionWorkspace[];
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
+  modelCatalogByWorkspaceId?: Record<string, readonly OpenworkCatalogModel[]>;
+  statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
+  attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
 };
+
+/** Anything but a finished or failed turn still needs Stop before archive. */
+export function isWorkingStatus(status: SessionActivityStatus): boolean {
+  return status !== "idle" && status !== "error";
+}
+
+/**
+ * Session-level model from the engine record, or null when none was ever
+ * bound. The engine writes the literal variant "default" for a turn that
+ * named none; agents read null for that, the composer pill's value.
+ */
+export function controlSessionModel(session: ControlSessionLike): OpenworkSessionModel | null {
+  const model = session.model;
+  const providerId = model?.providerID?.trim();
+  const modelId = model?.id?.trim();
+  if (!providerId || !modelId) return null;
+  const variant = model?.variant?.trim();
+  return { providerId, modelId, variant: variant && variant !== "default" ? variant : null };
+}
 
 export function controlWorkspaceLabel(workspace: ControlSessionWorkspace) {
   return workspace.displayName?.trim() || workspace.name?.trim() || workspace.path?.trim() || "workspace";
@@ -57,15 +105,28 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
   const out: ListedControlSession[] = [];
   for (const workspace of state.workspaces) {
     if (workspaceQuery && !matchesWorkspace(workspace, workspaceQuery)) continue;
-    for (const session of state.sessionsByWorkspaceId[workspace.id] ?? []) {
+    const sessions = state.sessionsByWorkspaceId[workspace.id] ?? [];
+    const attention = state.attentionFor ? undefined : selectSessionAttention(
+      sessions.flatMap((session) => session.id ? [{ ...session, id: session.id }] : []),
+      (id) => state.statusFor(workspace.id, id),
+      () => undefined,
+    );
+    for (const session of sessions) {
       const sessionId = session.id?.trim() ?? "";
       if (!sessionId) continue;
+      const activity = state.attentionFor?.(workspace.id, sessionId) ?? attention?.get(sessionId);
+      if (!activity) continue;
       out.push({
         sessionId,
         title: getDisplaySessionTitle(session.title ?? ""),
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
+        status: activity.status,
+        working: activity.working,
+        descendantActivity: activity.descendantActivity,
+        inventoryComplete: activity.inventoryComplete,
+        model: labelOpenworkSessionModel(controlSessionModel(session), state.modelCatalogByWorkspaceId?.[workspace.id] ?? []),
       });
     }
   }

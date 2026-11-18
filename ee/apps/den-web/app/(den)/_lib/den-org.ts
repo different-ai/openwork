@@ -1,3 +1,10 @@
+import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
+import type { SsoSettings } from "./sso-settings";
+import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
+import { mapFeatures, type FeatureMap } from "@openwork/features";
+import { BUILT_IN_ROLES } from "./role-catalog";
+import { PERMISSION_KEYS, getPermissionDefinition, isPermissionKey, isPermissionOwnerOnlyByDefault, permissionDefaultKeys, type PermissionKey } from "@openwork/types/den/permissions";
+
 export type DenOrgSummary = {
   id: string;
   name: string;
@@ -8,6 +15,9 @@ export type DenOrgSummary = {
   orgMemberId: string;
   membershipId: string;
   memberCount: number;
+  /** Null when an older server does not report the plan; never inferred from the member's role. */
+  planTier: BillingPlanTier | null;
+  isSandbox: boolean;
   createdAt: string | null;
   updatedAt: string | null;
   isActive: boolean;
@@ -23,6 +33,8 @@ export type DenOrgMember = {
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
+  /** Whether this member has OpenWork Web; admins choose. */
+  openworkWeb: boolean;
   user: {
     id: string;
     email: string;
@@ -38,7 +50,6 @@ export type DenOrgInvitation = {
   status: string;
   expiresAt: string | null;
   createdAt: string | null;
-  inviteToken: string | null;
 };
 
 export type DenOrgTeam = {
@@ -81,39 +92,148 @@ export type DenInvitationPreview = {
   };
 };
 
-export type DenOrgRole = {
-  id: string;
-  role: string;
-  permission: Record<string, string[]>;
-  builtIn: boolean;
-  protected: boolean;
-  createdAt: string | null;
-  updatedAt: string | null;
-};
+export type DenCanonicalRole = "owner" | "admin" | "member";
 
-export type DenCanonicalRole = "owner" | "super-admin" | "admin" | "member";
+/** Roles the member pickers offer. Owner moves only by ownership transfer. */
+export const ASSIGNABLE_ORG_ROLES = ["member", "admin", "super-admin"] as const;
 
+/**
+ * What the signed-in member can do in the dashboard. Each `can*` flag is the
+ * catalog permission the matching Den API route requires (see
+ * docs/permissions/route-inventory.md), so the UI never offers an action the
+ * API will refuse. `isOwner`, `isAdmin` and `isMember` describe the role.
+ */
 export type DenOrgAccessFlags = {
   canonicalRole: DenCanonicalRole;
   isOwner: boolean;
+  /**
+   * Super-admin role (never the owner): can make, change and remove
+   * super-admins, and gets the Super admin permission set, which starts with
+   * every permission the owner has. Only deleting the organization and
+   * transferring ownership stay with the owner.
+   */
   isSuperAdmin: boolean;
-  isAdminRole: boolean;
   isMember: boolean;
+  /** Owner, admin or super-admin role, or member of an Admin team. Role-derived; prefer a permission flag for gating an action. */
   isAdmin: boolean;
+  /**
+   * Holds at least one organization permission, so some admin page has
+   * something to show. Opens the admin area; each page then checks its own flag.
+   */
   canViewSettings: boolean;
+  /** `organization.update` */
   canManageSettings: boolean;
+  /** `sso.manage` or `scim.manage` */
   canManageSecurityConfiguration: boolean;
+  /** `invitations.manage` */
   canInviteMembers: boolean;
+  /** `invitations.manage` */
   canCancelInvitations: boolean;
+  /** `members.update` */
   canManageMembers: boolean;
+  /** `members.delete` */
   canRemoveMembers: boolean;
+  /** `members.update`: assign the Member or Admin role (also on invitations). */
   canManageRoles: boolean;
+  /** `teams.view`: open any team's details. */
+  canViewTeams: boolean;
+  /** `teams.manage` */
   canManageTeams: boolean;
+  /** `teams.manage_admin`: mark a team Admin, or change who is in an Admin team. */
+  canManageAdminTeams: boolean;
+  /** `permissions.view`: Member, Admin and team permissions and their history. */
+  canViewPermissions: boolean;
+  /** `permissions.manage`: change Member, Admin and team permissions. */
+  canManagePermissions: boolean;
+  /** `agent_permissions.view`: what agents can do on members' computers. */
+  canViewAgentPermissions: boolean;
+  /** `agent_permissions.manage`: change what agents can do on members' computers. */
+  canManageAgentPermissions: boolean;
+  /** `prompts.view`: see the system prompts that steer members' agents. */
+  canViewPrompts: boolean;
+  /** `prompts.manage`: change the system prompts that steer members' agents. */
+  canManagePrompts: boolean;
+  /** `api_keys.view` */
+  canViewApiKeys: boolean;
+  /** `api_keys.manage` */
   canManageApiKeys: boolean;
+  /** `scim.view` */
+  canViewScim: boolean;
+  /** `scim.manage` */
   canManageScim: boolean;
+  /** `sso.view` */
+  canViewSso: boolean;
+  /** `sso.manage` */
   canManageSso: boolean;
+  /** `branding.update` */
+  canManageBranding: boolean;
+  /** `web_origins.view` */
+  canViewWebOrigins: boolean;
+  /** `web_origins.manage` */
+  canManageWebOrigins: boolean;
+  /** `computers.view`: inspect every member's registered computers. */
+  canViewComputers: boolean;
+  /** `computers.disconnect`: disconnect a member's signed-in computer and remove computers from the team list. */
+  canDisconnectComputers: boolean;
+  /** `desktop_policies.view` */
+  canViewDesktopPolicies: boolean;
+  /** `desktop_policies.manage` */
+  canManageDesktopPolicies: boolean;
+  canViewDeployments: boolean;
+  canViewUsageAnalytics: boolean;
+  canManageDeployments: boolean;
+  /** `billing.view` */
+  canViewBilling: boolean;
+  /** `billing.manage`: start a subscription in checkout. */
+  canManageBilling: boolean;
+  /** `billing_portal.use`: payment details, invoices, change or cancel the subscription. */
+  canOpenBillingPortal: boolean;
+  canViewInvoices: boolean;
+  /** `audit.view` */
+  canViewAuditLogs: boolean;
+  /** `audit.manage`: turn audit capture on or off. */
+  canManageAuditCapture: boolean;
+  /** `inference.view`: OpenWork Models settings. */
+  canViewModelsSettings: boolean;
+  /** `inference.manage`: turn OpenWork Models on or off. */
+  canManageModelsSettings: boolean;
+  /** `llm_providers.view`: every provider, not only your own. */
+  canViewAllLlmProviders: boolean;
+  /** `gateway_providers.view` */
+  canViewGatewayProviders: boolean;
+  /** `gateway_providers.manage` */
+  canManageGatewayProviders: boolean;
+  /** `gateway_usage.view` */
+  canViewGatewayUsage: boolean;
+  /** `gateway_limits.view` */
+  canViewGatewayLimits: boolean;
+  /** `gateway_limits.manage` */
+  canManageGatewayLimits: boolean;
+  /** `connections.view`: every connection, its tools and tool policy. */
+  canViewAllConnections: boolean;
+  /** `connections.manage`: organization connections, who can use any connection, tool policies, shared accounts. */
+  canManageConnections: boolean;
+  /** `connections.update`: edit any connection's settings. */
+  canEditAnyConnection: boolean;
+  /** `connections.disconnect`: sign everyone out of any connection. */
+  canDisconnectAnyConnection: boolean;
+  /** `connections.delete`: remove any connection. */
+  canRemoveAnyConnection: boolean;
+  /** `marketplaces.manage` */
+  canManageMarketplaces: boolean;
+  /** `plugins.import` */
+  canImportPlugins: boolean;
+  /** `connectors.manage`: GitHub sync sources. */
+  canManageSyncSources: boolean;
+  /** `sharing.manage_all`: manager on every plugin, marketplace, skill and connector. */
+  canManageAllShared: boolean;
+  /** `sharing.share_org_wide` */
+  canShareWithEveryone: boolean;
+  /** Owner only. */
   canTransferOwnership: boolean;
+  /** Owner only. */
   canDeleteOrganization: boolean;
+  /** `billing.manage` */
   canStartSeatCheckout: boolean;
 };
 
@@ -131,6 +251,11 @@ export type DenOrgApiKey = {
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  /** `config`: a config token with scopes and an optional area limit. */
+  type: DenOrgApiKeyType;
+  scopes: DenConfigTokenScope[];
+  /** Config tokens: the areas it may touch; null = every area. */
+  areas: string[] | null;
   owner: {
     userId: string;
     memberId: string;
@@ -139,6 +264,14 @@ export type DenOrgApiKey = {
     image: string | null;
   };
 };
+
+export type DenOrgApiKeyType = "standard" | "config";
+export const DEN_CONFIG_TOKEN_SCOPES = ["config:export", "config:submit", "config:apply"] as const;
+export type DenConfigTokenScope = (typeof DEN_CONFIG_TOKEN_SCOPES)[number];
+
+function isConfigTokenScope(value: unknown): value is DenConfigTokenScope {
+  return typeof value === "string" && (DEN_CONFIG_TOKEN_SCOPES as readonly string[]).includes(value);
+}
 
 export type DenOrgScimConnection = {
   id: string;
@@ -161,9 +294,15 @@ export type DenOrgScimHealth = {
 export type DenOrgSsoConnection = {
   id: string;
   providerId: string;
+  /** The saved name, or null. */
+  name: string | null;
+  /** What sign-in buttons show: the saved name, else one derived from the issuer. */
+  displayName: string;
   kind: "oidc" | "saml";
   issuer: string;
+  /** Every domain, comma separated; `domains` lists them. */
   domain: string;
+  domains: string[];
   status: "disabled" | "enabled";
   testStatus: "untested" | "testing" | "succeeded" | "failed";
   testExpiresAt: string | null;
@@ -175,6 +314,8 @@ export type DenOrgSsoConnection = {
   domainVerified: boolean;
   domainVerificationHost: string;
   domainVerificationDnsName: string;
+  /** One TXT record name per domain. */
+  domainVerificationDnsNames: Array<{ domain: string; dnsName: string }>;
   oidc: {
     clientId: string | null;
     scopes: string[];
@@ -222,15 +363,22 @@ export type DenOrgContext = {
     isOwner: boolean;
     directRole: string;
     adminTeams: { id: string; name: string }[];
+    /** Effective permission keys from GET /v1/org. Null when an older server does not send them. */
+    permissions: PermissionKey[] | null;
   };
   members: DenOrgMember[];
   invitations: DenOrgInvitation[];
-  roles: DenOrgRole[];
   teams: DenOrgTeam[];
   currentMemberTeams: DenCurrentMemberTeam[];
   entitlements: DenOrgEntitlements;
   authMethods: DenOrgAuthMethods;
+  /** Frozen for published screens; new code reads `features` through orgFeatureEnabled(). */
   capabilities: DenOrgCapabilities;
+  /** Effective on/off per registry feature (packages/features/src/registry.ts). Missing from older servers means off. */
+  features: FeatureMap;
+  deploymentCapabilities: DeploymentCapabilities;
+  /** Server-verified installation operator capability; never inferred from organization role. */
+  canManageDeploymentServices: boolean;
 };
 
 export type DenOrgAuthMethods = {
@@ -243,23 +391,35 @@ export type DenOrgEntitlements = {
   desktopPolicies: boolean;
   orgControls: boolean;
   analytics: boolean;
+  auditLogs: boolean;
+  /** SCIM provisioning (Enterprise). */
+  scim: boolean;
 };
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
-  orgManagedDashboards: boolean;
+  /** Effective organization rollout and deployment visibility, separate from capture entitlement. */
+  auditLogs: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
+  /** Apps built in OpenWork are served as their own MCP servers; absent (off) on older servers. */
+  appMcpServers?: boolean;
   /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
   workflows: boolean;
   /** Effective Web offer; true for the global switch or this organization's complimentary admin grant. */
   openworkWeb: boolean;
   cloud: boolean;
+  /** The organization's one-chat assistant; absent (off) on older servers. */
+  workbot?: boolean;
 };
 
 export type DenOrganizationMetadata = {
   allowedDesktopVersions?: string[];
   requireSso?: boolean;
+  restrictDomainToSso?: boolean;
+  sessionLengthHours?: number;
+  maxSessionLengthDays?: number;
+  adminReauthMinutes?: number;
   brandAppName?: string;
   brandLogoUrl?: string;
   brandIconUrl?: string;
@@ -280,15 +440,6 @@ export type DenManagedBrandAsset = {
   originalName: string;
   uploadedAt: string;
 };
-
-export const DEN_ROLE_PERMISSION_OPTIONS = {
-  organization: ["update", "delete"],
-  member: ["create", "update", "delete"],
-  invitation: ["create", "cancel"],
-  team: ["create", "update", "delete"],
-  ac: ["create", "read", "update", "delete"],
-  security_configuration: ["manage"],
-} as const;
 
 export const PENDING_ORG_INVITATION_STORAGE_KEY = "openwork:web:pending-org-invitation";
 export const PENDING_WORKSPACE_CLAIM_STORAGE_KEY = "openwork:web:pending-workspace-claim";
@@ -360,6 +511,66 @@ export function getRequireSsoFromMetadata(metadata: string | null): boolean {
   return parsed?.requireSso === true;
 }
 
+/** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
+export function getRestrictDomainToSsoFromMetadata(metadata: string | null): boolean {
+  const parsed = parseOrganizationMetadata(metadata);
+  return parsed?.restrictDomainToSso === true;
+}
+
+/** The organization's stored SSO requirement settings. */
+export function getSsoSettingsFromMetadata(metadata: string | null): SsoSettings {
+  return {
+    requireSso: getRequireSsoFromMetadata(metadata),
+    restrictDomainToSso: getRestrictDomainToSsoFromMetadata(metadata),
+  };
+}
+
+/**
+ * Auth & Security › General: "Session length"
+ * choices in hours, matching den-api SESSION_LENGTH_HOURS.
+ */
+export const SESSION_LENGTH_HOURS = [12, 24, 72, 168] as const;
+export type SessionLengthHours = (typeof SESSION_LENGTH_HOURS)[number];
+export const DEFAULT_SESSION_LENGTH_HOURS: SessionLengthHours = 168;
+
+/** "Maximum Session Length" choices in days, matching den-api MAX_SESSION_LENGTH_DAYS. */
+export const MAX_SESSION_LENGTH_DAYS = [1, 7, 14, 30, 60, 90] as const;
+export type MaxSessionLengthDays = (typeof MAX_SESSION_LENGTH_DAYS)[number];
+export const DEFAULT_MAX_SESSION_LENGTH_DAYS: MaxSessionLengthDays = 30;
+
+/** "Enforce fresh Admin sessions" choices in minutes, matching den-api ADMIN_REAUTH_MINUTES; 0 is Disabled. */
+export const ADMIN_REAUTH_MINUTES = [15, 60, 240, 480, 1440, 0] as const;
+export type AdminReauthMinutes = (typeof ADMIN_REAUTH_MINUTES)[number];
+export const DEFAULT_ADMIN_REAUTH_MINUTES: AdminReauthMinutes = 15;
+
+export function isSessionLengthHours(value: unknown): value is SessionLengthHours {
+  return SESSION_LENGTH_HOURS.some((hours) => hours === value);
+}
+
+export function isMaxSessionLengthDays(value: unknown): value is MaxSessionLengthDays {
+  return MAX_SESSION_LENGTH_DAYS.some((days) => days === value);
+}
+
+export function isAdminReauthMinutes(value: unknown): value is AdminReauthMinutes {
+  return ADMIN_REAUTH_MINUTES.some((minutes) => minutes === value);
+}
+
+export type SessionSecuritySettings = {
+  sessionLengthHours: SessionLengthHours;
+  maxSessionLengthDays: MaxSessionLengthDays;
+  adminReauthMinutes: AdminReauthMinutes;
+};
+
+/** The organization's saved session settings, with the defaults for anything unset. */
+export function getSessionSecuritySettingsFromMetadata(metadata: string | null): SessionSecuritySettings {
+  const parsed = parseOrganizationMetadata(metadata);
+  return {
+    sessionLengthHours: isSessionLengthHours(parsed?.sessionLengthHours) ? parsed.sessionLengthHours : DEFAULT_SESSION_LENGTH_HOURS,
+    maxSessionLengthDays: isMaxSessionLengthDays(parsed?.maxSessionLengthDays) ? parsed.maxSessionLengthDays : DEFAULT_MAX_SESSION_LENGTH_DAYS,
+    adminReauthMinutes: isAdminReauthMinutes(parsed?.adminReauthMinutes) ? parsed.adminReauthMinutes : DEFAULT_ADMIN_REAUTH_MINUTES,
+  };
+}
+
 export function getManagedBrandAssetFromMetadata(
   metadata: string | null,
   kind: "logo" | "icon",
@@ -400,19 +611,11 @@ export function getManagedBrandIconUrl(metadata: string | null): string | null {
   return getManagedBrandAssetFromMetadata(metadata, "icon")?.url ?? null;
 }
 
-function parsePermissionRecord(value: unknown): Record<string, string[]> {
-  if (!isRecord(value)) {
-    return {};
+function parsePermissionKeys(value: unknown): PermissionKey[] | null {
+  if (!Array.isArray(value)) {
+    return null;
   }
-
-  return Object.fromEntries(
-    Object.entries(value)
-      .filter((entry): entry is [string, unknown[]] => Array.isArray(entry[1]))
-      .map(([resource, actions]) => [
-        resource,
-        actions.filter((entry: unknown): entry is string => typeof entry === "string"),
-      ])
-  );
+  return value.filter((entry): entry is PermissionKey => typeof entry === "string" && isPermissionKey(entry));
 }
 
 export function splitRoleString(value: string): string[] {
@@ -422,11 +625,21 @@ export function splitRoleString(value: string): string[] {
     .filter(Boolean);
 }
 
+function normalizeRoleSlug(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+/** The role value names super-admin and not owner. */
+export function isSuperAdminRole(roleValue: string): boolean {
+  const roles = splitRoleString(roleValue).map(normalizeRoleSlug);
+  return roles.includes("super-admin") && !roles.includes("owner");
+}
+
 function normalizeCanonicalRole(value: string): DenCanonicalRole | null {
-  const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  const normalized = normalizeRoleSlug(value);
   if (normalized === "owner") return "owner";
-  if (normalized === "super-admin") return "super-admin";
-  if (normalized === "admin") return "admin";
+  // A super-admin is also an admin; isSuperAdminRole tells them apart.
+  if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
 }
@@ -449,53 +662,122 @@ export function roleIncludesCanonicalRole(roleValue: string, role: DenCanonicalR
 export function getHighestCanonicalRole(roleValue: string, isOwner: boolean): DenCanonicalRole {
   const canonicalRoles = getCanonicalRoleSet(roleValue);
   if (isOwner || canonicalRoles.has("owner")) return "owner";
-  if (canonicalRoles.has("super-admin")) return "super-admin";
   if (canonicalRoles.has("admin")) return "admin";
   return "member";
 }
 
-export function isAssignableOrgRole(role: DenOrgRole): boolean {
-  return !roleIncludesCanonicalRole(role.role, "owner") && (role.builtIn || !role.protected);
+/** The picker value for a stored role: super-admin or admin when it names one, else member. */
+export function assignableOrgRole(roleValue: string): (typeof ASSIGNABLE_ORG_ROLES)[number] {
+  if (isSuperAdminRole(roleValue)) return "super-admin";
+  return getHighestCanonicalRole(roleValue, false) === "admin" ? "admin" : "member";
 }
 
 export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccessFlags, "canInviteMembers" | "canManageRoles">): boolean {
-  return access.canInviteMembers && (access.canManageRoles || role === "member");
+  return access.canInviteMembers && (access.canManageRoles || getHighestCanonicalRole(role, false) === "member");
 }
 
-export function getOrgAccessFlags(roleValue: string, isOwner: boolean, _roleDefinitions: readonly DenOrgRole[] = []): DenOrgAccessFlags {
+/**
+ * Access flags for a member. Pass `permissions` (`currentMember.permissions`
+ * from GET /v1/org) for the signed-in member. Without it, as for other members
+ * or an older server, flags follow the default permissions of the role, which
+ * is what the API applies while the Permissions feature is off. Only the owner
+ * always holds every key; a super-admin holds what their Super admin set allows.
+ */
+export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissions?: readonly PermissionKey[] | null): DenOrgAccessFlags {
   const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
   const resolvedIsOwner = canonicalRole === "owner";
-  const isSuperAdmin = canonicalRole === "super-admin";
-  const isAdminRole = canonicalRole === "admin";
-  const isAdmin = resolvedIsOwner || isSuperAdmin || isAdminRole;
-  const canManageSettings = resolvedIsOwner || isSuperAdmin;
+  const isSuperAdmin = !resolvedIsOwner && isSuperAdminRole(roleValue);
+  const isAdmin = resolvedIsOwner || canonicalRole === "admin";
+  const held = new Set<PermissionKey>(
+    resolvedIsOwner
+      ? PERMISSION_KEYS
+      : permissions ?? [
+        ...permissionDefaultKeys("member"),
+        ...(isAdmin ? permissionDefaultKeys("admin") : []),
+        ...(isSuperAdmin ? permissionDefaultKeys("super-admin") : []),
+      ],
+  );
+  const can = (key: PermissionKey) => held.has(key);
 
   return {
     canonicalRole,
     isOwner: resolvedIsOwner,
     isSuperAdmin,
-    isAdminRole,
     isMember: canonicalRole === "member",
     isAdmin,
-    canViewSettings: isAdmin,
-    canManageSettings,
-    canManageSecurityConfiguration: canManageSettings,
-    canInviteMembers: isAdmin,
-    canCancelInvitations: isAdmin,
-    canManageMembers: isAdmin,
-    canRemoveMembers: isAdmin,
-    canManageRoles: canManageSettings,
-    canManageTeams: isAdmin,
-    canManageApiKeys: canManageSettings,
-    canManageScim: canManageSettings,
-    canManageSso: canManageSettings,
+    canViewSettings: isAdmin || held.size > 0,
+    canManageSettings: can("organization.update"),
+    canManageSecurityConfiguration: can("sso.manage") || can("scim.manage"),
+    canInviteMembers: can("invitations.manage"),
+    canCancelInvitations: can("invitations.manage"),
+    canManageMembers: can("members.update"),
+    canRemoveMembers: can("members.delete"),
+    canManageRoles: can("members.update"),
+    canViewTeams: can("teams.view"),
+    canManageTeams: can("teams.manage"),
+    canManageAdminTeams: can("teams.manage_admin"),
+    canViewPermissions: can("permissions.view"),
+    canManagePermissions: can("permissions.manage"),
+    canViewAgentPermissions: can("agent_permissions.view"),
+    canManageAgentPermissions: can("agent_permissions.manage"),
+    canViewPrompts: can("prompts.view"),
+    canManagePrompts: can("prompts.manage"),
+    canViewApiKeys: can("api_keys.view"),
+    canManageApiKeys: can("api_keys.manage"),
+    canViewScim: can("scim.view"),
+    canManageScim: can("scim.manage"),
+    canViewSso: can("sso.view"),
+    canManageSso: can("sso.manage"),
+    canManageBranding: can("branding.update"),
+    canViewWebOrigins: can("web_origins.view"),
+    canManageWebOrigins: can("web_origins.manage"),
+    canViewComputers: can("computers.view"),
+    canDisconnectComputers: can("computers.disconnect"),
+    canViewDesktopPolicies: can("desktop_policies.view"),
+    canManageDesktopPolicies: can("desktop_policies.manage"),
+    canViewDeployments: can("deployments.view"),
+    canViewUsageAnalytics: can("usage_analytics.view"),
+    canManageDeployments: can("deployments.manage"),
+    canViewBilling: can("billing.view"),
+    canManageBilling: can("billing.manage"),
+    canOpenBillingPortal: can("billing_portal.use"),
+    canViewInvoices: can("billing_invoices.view"),
+    canViewAuditLogs: can("audit.view"),
+    canManageAuditCapture: can("audit.manage"),
+    canViewModelsSettings: can("inference.view"),
+    canManageModelsSettings: can("inference.manage"),
+    canViewAllLlmProviders: can("llm_providers.view"),
+    canViewGatewayProviders: can("gateway_providers.view"),
+    canManageGatewayProviders: can("gateway_providers.manage"),
+    canViewGatewayUsage: can("gateway_usage.view"),
+    canViewGatewayLimits: can("gateway_limits.view"),
+    canManageGatewayLimits: can("gateway_limits.manage"),
+    canViewAllConnections: can("connections.view"),
+    canManageConnections: can("connections.manage"),
+    canEditAnyConnection: can("connections.update"),
+    canDisconnectAnyConnection: can("connections.disconnect"),
+    canRemoveAnyConnection: can("connections.delete"),
+    canManageMarketplaces: can("marketplaces.manage"),
+    canImportPlugins: can("plugins.import"),
+    canManageSyncSources: can("connectors.manage"),
+    canManageAllShared: can("sharing.manage_all"),
+    canShareWithEveryone: can("sharing.share_org_wide"),
     canTransferOwnership: resolvedIsOwner,
     canDeleteOrganization: resolvedIsOwner,
-    canStartSeatCheckout: isAdmin,
+    canStartSeatCheckout: can("billing.manage"),
   };
 }
 
+/** Plain reason for a control locked by a missing permission (DESIGN.md P4). */
+export function permissionLockReason(key: PermissionKey): string {
+  const needs = `Needs the “${getPermissionDefinition(key).label}” permission.`;
+  return isPermissionOwnerOnlyByDefault(key) ? `${needs} Ask the organization owner.` : `${needs} Ask an organization owner or admin for access.`;
+}
+
 export function formatRoleLabel(role: string): string {
+  if (normalizeRoleSlug(role) === "super-admin") return BUILT_IN_ROLES["super-admin"].label;
+  const canonicalRole = normalizeCanonicalRole(role);
+  if (canonicalRole === "admin") return BUILT_IN_ROLES.admin.label;
   return role
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -527,16 +809,25 @@ export function getWorkspaceClaimRoute(token: string): string {
   return `/workspace-claim?token=${encodeURIComponent(token)}`;
 }
 
+export function getAuditLogsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/audit-logs`;
+}
+
 export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
 }
 
-export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
-  return `${getAnalyticsRoute(orgSlug)}/models`;
+/** Any member's own AI Gateway usage, limits and model prices. */
+export function getMyUsageRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-usage`;
 }
 
-export function getManageMembersRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
+export function getLibraryUsageRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/library`;
+}
+
+export function getWorkbotUsageRoute(orgSlug?: string | null): string {
+  return `${getAnalyticsRoute(orgSlug)}/workbot`;
 }
 
 export function getMembersRoute(orgSlug?: string | null): string {
@@ -547,8 +838,31 @@ export function getTeamRoute(orgSlug: string | null | undefined, teamId: string)
   return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
 }
 
-export function getBackgroundAgentsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/background-agents`;
+/** A team's Agents tab: what agents can do for people in the team. */
+export function getTeamAgentsRoute(orgSlug: string | null | undefined, teamId: string): string {
+  return `${getTeamRoute(orgSlug, teamId)}?tab=agents`;
+}
+
+/** Members › Teams › Everyone: every member, including people in no team. */
+export function getEveryoneRoute(orgSlug?: string | null): string {
+  return `${getMembersRoute(orgSlug)}/teams/everyone`;
+}
+
+export function getEveryoneAgentsRoute(orgSlug?: string | null): string {
+  return `${getEveryoneRoute(orgSlug)}?tab=agents`;
+}
+
+/** Everyone's Browser tab: the pages agents and the built-in browser can open, for every member. */
+export function getEveryoneBrowserRoute(orgSlug?: string | null): string {
+  return `${getEveryoneRoute(orgSlug)}?tab=browser`;
+}
+
+export function getMembersTeamsRoute(orgSlug?: string | null): string {
+  return `${getMembersRoute(orgSlug)}?tab=teams`;
+}
+
+export function getNewRoleRoute(orgSlug?: string | null): string {
+  return `${getMembersRoute(orgSlug)}/roles/new`;
 }
 
 export function getWorkflowRunsRoute(orgSlug?: string | null): string {
@@ -564,27 +878,56 @@ export function getCustomLlmProvidersRoute(orgSlug?: string | null): string {
 }
 
 export function getInferenceRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/inference`;
+  return `${getAiGatewayRoute(orgSlug)}?tab=openwork-models`;
 }
 
 export function getWebRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/web`;
 }
 
+export function getLibraryLlmProviderRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/model-providers/${encodeURIComponent(providerId)}`;
+}
+
 export function getLlmProvidersRoute(orgSlug?: string | null): string {
   return getCustomLlmProvidersRoute(orgSlug);
 }
 
-export function getManagedDashboardsRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/dashboards`;
+export function getComputersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/computers`;
 }
 
-export function getManagedDashboardRoute(orgSlug: string | null | undefined, dashboardId: string): string {
-  return `${getManagedDashboardsRoute(orgSlug)}/${encodeURIComponent(dashboardId)}`;
+/** Every member's own and shared computers; the team-wide list is `getComputersRoute`. */
+export function getMyComputersRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-computers`;
 }
 
 export function getDesktopPoliciesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/desktop-policies`;
+}
+
+export function getWorkbotSettingsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/workbot-settings`;
+}
+
+export function getPermissionsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/permissions`;
+}
+
+export function getNewTeamPermissionsRoute(orgSlug?: string | null): string {
+  return `${getPermissionsRoute(orgSlug)}/new`;
+}
+
+export function getPermissionSetRoute(orgSlug: string | null | undefined, permissionSetId: string): string {
+  return `${getPermissionsRoute(orgSlug)}/${encodeURIComponent(permissionSetId)}`;
+}
+
+export function getPermissionKeysRoute(orgSlug?: string | null): string {
+  return `${getPermissionsRoute(orgSlug)}/keys`;
+}
+
+export function getPermissionKeyRoute(orgSlug: string | null | undefined, permissionKey: string): string {
+  return `${getPermissionKeysRoute(orgSlug)}/${encodeURIComponent(permissionKey)}`;
 }
 
 export function getNewDesktopPolicyRoute(orgSlug?: string | null): string {
@@ -607,12 +950,88 @@ export function getNewLlmProviderRoute(orgSlug?: string | null): string {
   return `${getLlmProvidersRoute(orgSlug)}/new`;
 }
 
+export function getAiGatewayRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/ai-gateway`;
+}
+
+export function getAiGatewayProvidersRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=ai-providers`;
+}
+
+export function getAiGatewayAutoRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}?tab=auto-router`;
+}
+
+export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/providers/new`;
+  return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
+}
+
+/** The four-step wizard for a custom OpenAI-compatible provider. */
+export function getNewAiGatewayCustomProviderRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/new/custom`;
+}
+
+export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
+}
+
+/** Step one of a new Smart Router: its name, models and tasks. */
+export function getNewAiGatewaySmartRouterRoute(orgSlug?: string | null): string {
+  return `${getAiGatewayRoute(orgSlug)}/smart-routers/new`;
+}
+
+/** A Smart Router's page; `step: "access"` is step two of creating one: who it applies to. */
+export function getAiGatewaySmartRouterRoute(orgSlug: string | null | undefined, routerId: string, step?: "access"): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/smart-routers/${encodeURIComponent(routerId)}`;
+  return step ? `${base}?step=${step}` : base;
+}
+
+export function getEditAiGatewayProviderRoute(orgSlug: string | null | undefined, inferenceProviderId: string): string {
+  return `${getAiGatewayProviderRoute(orgSlug, inferenceProviderId)}/edit`;
+}
+
+export function getAiGatewayLimitsRoute(orgSlug?: string | null, deletedPolicyId?: string): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=limits`;
+  return deletedPolicyId ? `${base}&deleted=${encodeURIComponent(deletedPolicyId)}` : base;
+}
+
+export function getNewAiGatewayLimitRoute(orgSlug?: string | null, target?: { memberId: string } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}/limits/new`;
+  if (!target) return base;
+  return "memberId" in target
+    ? `${base}?memberId=${encodeURIComponent(target.memberId)}`
+    : `${base}?teamId=${encodeURIComponent(target.teamId)}`;
+}
+
+export function getAiGatewayLimitRoute(orgSlug: string | null | undefined, policyId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/limits/${encodeURIComponent(policyId)}`;
+}
+
+export function getAiGatewayUsersTeamsRoute(orgSlug?: string | null, filter?: { view: "teams" } | { teamId: string }): string {
+  const base = `${getAiGatewayRoute(orgSlug)}?tab=users-and-teams`;
+  if (!filter) return base;
+  return "teamId" in filter ? `${base}&team=${encodeURIComponent(filter.teamId)}` : `${base}&view=teams`;
+}
+
+export function getAiGatewayPersonRoute(orgSlug: string | null | undefined, memberId: string): string {
+  return `${getAiGatewayRoute(orgSlug)}/people/${encodeURIComponent(memberId)}`;
+}
+
 export function getBillingRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/billing`;
 }
 
+export function getBillingInvoicesRoute(orgSlug?: string | null): string {
+  return `${getBillingRoute(orgSlug)}/invoices`;
+}
+
 export function getOrgSettingsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/org-settings`;
+}
+
+export function getDeploymentsRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/deployments`;
 }
 
 export function getDiagnosticsRoute(orgSlug?: string | null): string {
@@ -627,12 +1046,38 @@ export function getApiKeysRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/api-keys`;
 }
 
-export function getScimRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/scim`;
+export type AuthSecurityTab = "general" | "sso" | "scim";
+
+/**
+ * Settings › Auth & Security: General, SSO and SCIM as tabs. The old
+ * `/sso` and `/scim` pages redirect to their tab. `setup` opens the tab's setup form directly instead of its intro.
+ */
+export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurityTab, options: { setup?: boolean } = {}): string {
+  const base = `${getOrgDashboardRoute(orgSlug)}/auth-security`;
+  const params = new URLSearchParams();
+  if (tab) params.set("tab", tab);
+  if (options.setup) params.set("setup", "1");
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
-export function getSsoRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/sso`;
+
+export const CONFIG_TABS = ["overview", "import", "export", "changes", "history"] as const;
+export type ConfigTab = (typeof CONFIG_TABS)[number];
+
+/** The tab named by `?tab=`; an unknown or retired value opens Overview. */
+export function readConfigTab(value: string | null | undefined): ConfigTab {
+  return CONFIG_TABS.find((tab) => tab === value) ?? "overview";
+}
+
+/** Settings › Config: overview, import, export, open changes and history. */
+export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string {
+  const base = `${getOrgDashboardRoute(orgSlug)}/config`;
+  return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
+}
+
+export function getConfigChangeRequestRoute(orgSlug: string | null | undefined, changeRequestId: string): string {
+  return `${getConfigRoute(orgSlug)}/changes/${encodeURIComponent(changeRequestId)}`;
 }
 
 export function getPluginsRoute(orgSlug?: string | null): string {
@@ -653,6 +1098,11 @@ export function getNewPluginSkillRoute(orgSlug: string | null | undefined, plugi
 
 export function getEditPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
   return `${getPluginSkillRoute(orgSlug, pluginId, skillId)}/edit`;
+}
+
+/** The full plugin editor: hooks, agents, marketplaces and skill files. */
+export function getPluginDetailsRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getPluginRoute(orgSlug, pluginId)}/details`;
 }
 
 export function getNewPluginRoute(orgSlug?: string | null): string {
@@ -687,16 +1137,7 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
-export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
-  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
-  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
-}
-
-/**
- * Detail page for one connector. `connectorId` is a configured connection id
- * or, for connectors nobody has added yet, the catalog id (`gmail`, `notion`,
- * `microsoft-365`) so the page can explain the connector and start setup.
- */
+/** A configured connector's page in Manage, Google Workspace and Microsoft 365 included. */
 export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
   return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
 }
@@ -715,6 +1156,49 @@ export function getLibraryRoute(orgSlug?: string | null): string {
 
 export function getLibraryPluginRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
+}
+
+/** A skill inside a plugin, viewed from My Library (no admin area needed). */
+export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
+}
+
+export function getLibraryPluginShareRoute(orgSlug: string | null | undefined, pluginId: string): string {
+  return `${getLibraryPluginRoute(orgSlug, pluginId)}/share`;
+}
+
+export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill"): string {
+  return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
+}
+
+/** The member's own agent (My bot), in the sidebar's Work section. */
+export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
+}
+
+export function getLibraryModelsRoute(orgSlug?: string | null): string {
+  return `${getLibraryRoute(orgSlug)}?show=models`;
+}
+
+export function getLibraryModelRoute(orgSlug: string | null | undefined, providerId: string): string {
+  return `${getLibraryRoute(orgSlug)}/models/${encodeURIComponent(providerId)}`;
+}
+
+export function getLibraryConnectorRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/${encodeURIComponent(connectionId)}`;
+}
+
+export function getLibraryConnectorShareRoute(orgSlug: string | null | undefined, connectionId: string): string {
+  return `${getLibraryConnectorRoute(orgSlug, connectionId)}/share`;
+}
+
+/** The connector catalog, or one entry's setup checks when a catalog id is given. */
+export function getLibraryAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getLibraryRoute(orgSlug)}/connectors/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
+}
+
+export function getAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
 }
 
 export function getGithubIntegrationSetupRoute(orgSlug: string | null | undefined, connectorInstanceId: string): string {
@@ -760,6 +1244,8 @@ export function parseOrgListPayload(payload: unknown): {
         orgMemberId,
         membershipId,
         memberCount: typeof entry.memberCount === "number" ? entry.memberCount : 0,
+        planTier: entry.planTier === "free" || entry.planTier === "team" || entry.planTier === "enterprise" ? entry.planTier : null,
+        isSandbox: asBoolean(entry.isSandbox),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
         isActive: asBoolean(entry.isActive),
@@ -809,7 +1295,7 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
           const userEmail = asString(user.email);
           const userName = asString(user.name);
           const userIdentity = asString(user.id);
-          if (!id || !role || !userEmail || !userName || !userIdentity) {
+          if (!id || !role || !userEmail || !userIdentity) {
             return null;
           }
 
@@ -823,10 +1309,12 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
+            // Older Den deployments omit it: every member had Web then.
+            openworkWeb: entry.openworkWeb !== false,
             user: {
               id: userIdentity,
               email: userEmail,
-              name: userName,
+              name: userName?.trim() ? userName : userEmail,
               image: asString(user.image),
             },
           } satisfies DenOrgMember;
@@ -856,36 +1344,9 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             status,
             expiresAt: asIsoString(entry.expiresAt),
             createdAt: asIsoString(entry.createdAt),
-            inviteToken: asString(entry.inviteToken),
           } satisfies DenOrgInvitation;
         })
         .filter((entry): entry is DenOrgInvitation => entry !== null)
-    : [];
-
-  const roles = Array.isArray(payload.roles)
-    ? payload.roles
-        .map((entry) => {
-          if (!isRecord(entry)) {
-            return null;
-          }
-
-          const id = asString(entry.id);
-          const role = asString(entry.role);
-          if (!id || !role) {
-            return null;
-          }
-
-          return {
-            id,
-            role,
-            permission: parsePermissionRecord(entry.permission),
-            builtIn: asBoolean(entry.builtIn),
-            protected: asBoolean(entry.protected),
-            createdAt: asIsoString(entry.createdAt),
-            updatedAt: asIsoString(entry.updatedAt),
-          } satisfies DenOrgRole;
-        })
-        .filter((entry): entry is DenOrgRole => entry !== null)
     : [];
 
   const teams = Array.isArray(payload.teams)
@@ -965,15 +1426,18 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
       adminTeams: parseAdminTeams(currentMember.adminTeams),
       createdAt: asIsoString(currentMember.createdAt),
       isOwner: asBoolean(currentMember.isOwner),
+      permissions: parsePermissionKeys(currentMember.permissions),
     },
     members,
     invitations,
-    roles,
     teams,
     currentMemberTeams,
     entitlements: parseOrgEntitlements(payload.entitlements),
     authMethods: parseOrgAuthMethods(payload.authMethods),
     capabilities: parseOrgCapabilities(payload.capabilities),
+    features: parseOrgFeatures(payload.features),
+    deploymentCapabilities: parseDeploymentCapabilities(payload.deploymentCapabilities),
+    canManageDeploymentServices: payload.canManageDeploymentServices === true,
   };
 }
 
@@ -988,28 +1452,39 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
   };
 }
 
+/** Fail closed: a feature the server did not report (older server) is off. */
+function parseOrgFeatures(value: unknown): FeatureMap {
+  const reported = isRecord(value) ? value : {};
+  return mapFeatures((key) => reported[key] === true);
+}
+
+/** Whether a registry feature is on for the active organization. Use this for every new feature gate. */
+export function orgFeatureEnabled(orgContext: Pick<DenOrgContext, "features"> | null | undefined, key: keyof FeatureMap): boolean {
+  return orgContext?.features[key] === true;
+}
+
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { auditLogs: false, installLinks: false, mcpConnections: false, appMcpServers: false, workflows: true, openworkWeb: false, cloud: false, workbot: false };
   }
 
   return {
-    orgManagedDashboards: value.orgManagedDashboards === true,
+    auditLogs: value.auditLogs === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
+    appMcpServers: value.appMcpServers === true,
     // Workflows are enabled everywhere on current servers; only an explicit
     // false from an older server still hides the surface.
     workflows: value.workflows !== false,
     openworkWeb: value.openworkWeb === true,
     cloud: value.cloud === true,
+    workbot: value.workbot === true,
   };
 }
 
 function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
-  // Older servers do not return entitlements; treat everything as available
-  // so gating only applies when the API explicitly reports it.
   if (!isRecord(value)) {
-    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true };
+    return { sso: true, desktopPolicies: true, orgControls: true, analytics: true, auditLogs: false, scim: true };
   }
 
   return {
@@ -1017,6 +1492,8 @@ function parseOrgEntitlements(value: unknown): DenOrgEntitlements {
     desktopPolicies: value.desktopPolicies !== false,
     orgControls: value.orgControls !== false,
     analytics: value.analytics !== false,
+    auditLogs: value.auditLogs === true,
+    scim: value.scim !== false,
   };
 }
 
@@ -1114,6 +1591,9 @@ export function parseOrgApiKeysPayload(payload: unknown): DenOrgApiKey[] {
         expiresAt: asIsoString(entry.expiresAt),
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
+        type: entry.type === "config" ? "config" : "standard",
+        scopes: Array.isArray(entry.scopes) ? entry.scopes.filter(isConfigTokenScope) : [],
+        areas: Array.isArray(entry.areas) ? entry.areas.filter((area): area is string => typeof area === "string") : null,
         owner: {
           userId: ownerUserId,
           memberId: ownerMemberId,
@@ -1196,6 +1676,85 @@ export function parseOrgScimPayload(payload: unknown): {
   };
 }
 
+function parseOrgSsoConnection(raw: Record<string, unknown>): DenOrgSsoConnection | null {
+  const id = asString(raw.id);
+  const providerId = asString(raw.providerId);
+  const kind = asString(raw.kind);
+  const issuer = asString(raw.issuer);
+  const domain = asString(raw.domain);
+  const status = asString(raw.status);
+  const testStatus = asString(raw.testStatus);
+  const signInPath = asString(raw.signInPath);
+  const signInUrl = asString(raw.signInUrl);
+  const redirectUrl = asString(raw.redirectUrl);
+  const domainVerificationHost = asString(raw.domainVerificationHost);
+  const domainVerificationDnsName = asString(raw.domainVerificationDnsName);
+  const rawOidc = isRecord(raw.oidc) ? raw.oidc : null;
+  const rawSaml = isRecord(raw.saml) ? raw.saml : null;
+  const tokenEndpointAuthentication = asString(rawOidc?.tokenEndpointAuthentication);
+
+  if (!id || !providerId || !issuer || !domain || (status !== "disabled" && status !== "enabled") || (testStatus !== "untested" && testStatus !== "testing" && testStatus !== "succeeded" && testStatus !== "failed") || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
+    return null;
+  }
+
+  const domains = asStringArray(raw.domains) ?? domain.split(",").map((entry) => entry.trim()).filter(Boolean);
+  const dnsNames = Array.isArray(raw.domainVerificationDnsNames)
+    ? raw.domainVerificationDnsNames.flatMap((entry) => {
+        if (!isRecord(entry)) return [];
+        const entryDomain = asString(entry.domain);
+        const dnsName = asString(entry.dnsName);
+        return entryDomain && dnsName ? [{ domain: entryDomain, dnsName }] : [];
+      })
+    : [];
+  return {
+    id,
+    providerId,
+    name: asString(raw.name),
+    displayName: asString(raw.displayName) ?? asString(raw.name) ?? issuer,
+    kind,
+    issuer,
+    domain,
+    domains,
+    status,
+    testStatus,
+    testExpiresAt: asIsoString(raw.testExpiresAt),
+    signInPath,
+    signInUrl,
+    redirectUrl,
+    acsUrl: asString(raw.acsUrl),
+    metadataUrl: asString(raw.metadataUrl),
+    domainVerified: asBoolean(raw.domainVerified),
+    domainVerificationHost,
+    domainVerificationDnsName,
+    domainVerificationDnsNames: dnsNames.length > 0 ? dnsNames : [{ domain: domains[0] ?? domain, dnsName: domainVerificationDnsName }],
+    oidc: rawOidc
+      ? {
+          clientId: asString(rawOidc.clientId),
+          scopes: asStringArray(rawOidc.scopes) ?? [],
+          skipDiscovery: asBoolean(rawOidc.skipDiscovery),
+          authorizationEndpoint: asString(rawOidc.authorizationEndpoint),
+          tokenEndpoint: asString(rawOidc.tokenEndpoint),
+          jwksEndpoint: asString(rawOidc.jwksEndpoint),
+          userInfoEndpoint: asString(rawOidc.userInfoEndpoint),
+          tokenEndpointAuthentication: tokenEndpointAuthentication === "client_secret_basic" || tokenEndpointAuthentication === "client_secret_post"
+            ? tokenEndpointAuthentication
+            : null,
+        }
+      : null,
+    saml: rawSaml
+      ? {
+          entryPoint: asString(rawSaml.entryPoint),
+          audience: asString(rawSaml.audience),
+          wantAssertionsSigned: asBoolean(rawSaml.wantAssertionsSigned),
+        }
+      : null,
+    lastTestedAt: asIsoString(raw.lastTestedAt),
+    lastError: asString(raw.lastError),
+    createdAt: asIsoString(raw.createdAt),
+    updatedAt: asIsoString(raw.updatedAt),
+  } satisfies DenOrgSsoConnection;
+}
+
 export function parseOrgSsoPayload(payload: unknown): {
   connection: DenOrgSsoConnection | null;
   domainVerificationToken: string | null;
@@ -1204,74 +1763,15 @@ export function parseOrgSsoPayload(payload: unknown): {
     return { connection: null, domainVerificationToken: null };
   }
 
-  const rawConnection = isRecord(payload.connection) ? payload.connection : null;
-  const connection = rawConnection
-    ? (() => {
-        const id = asString(rawConnection.id);
-        const providerId = asString(rawConnection.providerId);
-        const kind = asString(rawConnection.kind);
-        const issuer = asString(rawConnection.issuer);
-        const domain = asString(rawConnection.domain);
-        const status = asString(rawConnection.status);
-        const testStatus = asString(rawConnection.testStatus);
-        const signInPath = asString(rawConnection.signInPath);
-        const signInUrl = asString(rawConnection.signInUrl);
-        const redirectUrl = asString(rawConnection.redirectUrl);
-        const domainVerificationHost = asString(rawConnection.domainVerificationHost);
-        const domainVerificationDnsName = asString(rawConnection.domainVerificationDnsName);
-        const rawOidc = isRecord(rawConnection.oidc) ? rawConnection.oidc : null;
-        const rawSaml = isRecord(rawConnection.saml) ? rawConnection.saml : null;
-        const tokenEndpointAuthentication = asString(rawOidc?.tokenEndpointAuthentication);
-
-        if (!id || !providerId || !issuer || !domain || (status !== "disabled" && status !== "enabled") || (testStatus !== "untested" && testStatus !== "testing" && testStatus !== "succeeded" && testStatus !== "failed") || !signInPath || !signInUrl || !redirectUrl || !domainVerificationHost || !domainVerificationDnsName || (kind !== "oidc" && kind !== "saml")) {
-          return null;
-        }
-
-        return {
-          id,
-          providerId,
-          kind,
-          issuer,
-          domain,
-          status,
-          testStatus,
-          testExpiresAt: asIsoString(rawConnection.testExpiresAt),
-          signInPath,
-          signInUrl,
-          redirectUrl,
-          acsUrl: asString(rawConnection.acsUrl),
-          metadataUrl: asString(rawConnection.metadataUrl),
-          domainVerified: asBoolean(rawConnection.domainVerified),
-          domainVerificationHost,
-          domainVerificationDnsName,
-          oidc: rawOidc
-            ? {
-                clientId: asString(rawOidc.clientId),
-                scopes: asStringArray(rawOidc.scopes) ?? [],
-                skipDiscovery: asBoolean(rawOidc.skipDiscovery),
-                authorizationEndpoint: asString(rawOidc.authorizationEndpoint),
-                tokenEndpoint: asString(rawOidc.tokenEndpoint),
-                jwksEndpoint: asString(rawOidc.jwksEndpoint),
-                userInfoEndpoint: asString(rawOidc.userInfoEndpoint),
-                tokenEndpointAuthentication: tokenEndpointAuthentication === "client_secret_basic" || tokenEndpointAuthentication === "client_secret_post"
-                  ? tokenEndpointAuthentication
-                  : null,
-              }
-            : null,
-          saml: rawSaml
-            ? {
-                entryPoint: asString(rawSaml.entryPoint),
-                audience: asString(rawSaml.audience),
-                wantAssertionsSigned: asBoolean(rawSaml.wantAssertionsSigned),
-              }
-            : null,
-          lastTestedAt: asIsoString(rawConnection.lastTestedAt),
-          lastError: asString(rawConnection.lastError),
-          createdAt: asIsoString(rawConnection.createdAt),
-          updatedAt: asIsoString(rawConnection.updatedAt),
-        } satisfies DenOrgSsoConnection;
-      })()
-    : null;
-
+  const connection = isRecord(payload.connection) ? parseOrgSsoConnection(payload.connection) : null;
   return { connection, domainVerificationToken: asString(payload.domainVerificationToken) };
+}
+
+/** GET /v1/sso/connections. */
+export function parseOrgSsoConnectionsPayload(payload: unknown): DenOrgSsoConnection[] {
+  if (!isRecord(payload) || !Array.isArray(payload.connections)) return [];
+  return payload.connections.flatMap((entry) => {
+    const connection = isRecord(entry) ? parseOrgSsoConnection(entry) : null;
+    return connection ? [connection] : [];
+  });
 }

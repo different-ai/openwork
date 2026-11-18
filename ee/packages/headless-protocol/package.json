@@ -1,0 +1,39 @@
+{
+  "name": "@openwork-ee/headless-protocol",
+  "private": true,
+  "type": "module",
+  "description": "The headless runner's client: routes, response schemas, live events and step labels, shared by Den, Slack, Automations and Workbot.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./workbot-routing": {
+      "types": {
+        "openwork-build": "./dist/types/src/workbot-routing.d.ts",
+        "default": "./src/workbot-routing.ts"
+      },
+      "development": "./src/workbot-routing.ts",
+      "default": "./dist/workbot-routing.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.6.6",
+    "@openwork/types": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,14 +1,40 @@
-import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dirnameHere = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(dirnameHere, "..");
-const requiredRoots = [{
+export const requiredRoots = [{
+  name: "@openwork/computer-use", resolveTarget: "@openwork/computer-use/computer-control",
+}, {
   name: "@modelcontextprotocol/sdk",
   resolveTarget: "@modelcontextprotocol/sdk/validation/ajv",
+}, {
+  // Imported by Electron's feature-gated session adapter; ensure plain-node
+  // ESM is included even when pnpm's workspace collector skips a symlink.
+  name: "@openwork/remote-sessions",
+}, {
+  // The server and the Electron main process import this as plain Node.
+  name: "@openwork/types",
+}, {
+  // local-sandbox-runtime.js imports this lazily; workspace collection alone
+  // does not preserve it in the packaged server's resolution tree.
+  name: "@openwork/sandbox-microsandbox",
+  fromPackageJson: resolve(desktopRoot, "../server/package.json"),
 }];
+
+export function microsandboxPlatformPackage(platform = process.platform, arch = process.arch) {
+  const triples = {
+    "darwin-arm64": "darwin-arm64",
+    "linux-x64": "linux-x64-gnu",
+    "linux-arm64": "linux-arm64-gnu",
+    "win32-x64": "win32-x64-msvc",
+    "win32-arm64": "win32-arm64-msvc",
+  };
+  const triple = triples[`${platform}-${arch}`];
+  return triple ? `@superradcompany/microsandbox-${triple}` : null;
+}
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
   const requireFromPackage = createRequire(pathToFileURL(fromPackageJson));
@@ -16,12 +42,16 @@ function packageRoot(name, fromPackageJson, resolveTarget = name) {
   try {
     current = dirname(requireFromPackage.resolve(resolveTarget));
   } catch (error) {
-    const linkedPackageRoot = resolve(dirname(dirname(fromPackageJson)), name);
-    try {
-      const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
-      if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
-    } catch {
-      // Preserve the original module-resolution error below.
+    // A dependency may export only subpaths. Find its manifest through Node's
+    // normal search directories without requiring a nonexistent root export.
+    for (const searchDirectory of requireFromPackage.resolve.paths(name) ?? []) {
+      const linkedPackageRoot = resolve(searchDirectory, name);
+      try {
+        const linkedPackageJson = JSON.parse(readFileSync(join(linkedPackageRoot, "package.json"), "utf8"));
+        if (linkedPackageJson.name === name) return { root: linkedPackageRoot, packageJson: linkedPackageJson };
+      } catch {
+        // Preserve the original module-resolution error if no package matches.
+      }
     }
     throw error;
   }
@@ -37,7 +67,30 @@ function packageRoot(name, fromPackageJson, resolveTarget = name) {
   throw new Error(`Could not resolve runtime package root for ${name}.`);
 }
 
-export function stageRuntimeNodeModules(outdir) {
+/**
+ * Where the packaged copy of @openwork/types serves one export from. In the
+ * checkout most exports resolve to TypeScript source, which Node refuses to
+ * run from node_modules, so there every export points at its compiled file.
+ */
+export function compiledTypesExports(exports) {
+  return Object.fromEntries(Object.entries(exports).map(([subpath, target]) => {
+    const source = target.development;
+    if (typeof source !== "string" || !/^\.\/src\/.+\.ts$/.test(source)) {
+      throw new Error(`@openwork/types export ${subpath} has no TypeScript source under "development".`);
+    }
+    return [subpath, source.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js")];
+  }));
+}
+
+export function packagedMicrosandboxResolver(source) {
+  const original = 'return root ? join(root, "bin", msbFileName()) : null;';
+  if (source.split(original).length !== 2) throw new Error("microsandbox binary resolver changed; review ASAR native path handling.");
+  // Electron resolves unpacked files through virtual app.asar paths. Rust's
+  // process launcher needs the corresponding real directory, not that alias.
+  return source.replace(original, 'return root ? join(root.replace(/([\\\\/])app\\.asar([\\\\/])/, "$1app.asar.unpacked$2"), "bin", msbFileName()) : null;');
+}
+
+export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platform = process.platform, arch = process.arch } = {}) {
   const output = resolve(outdir);
   const desktopPackageJson = resolve(desktopRoot, "package.json");
   const staged = [];
@@ -59,14 +112,45 @@ export function stageRuntimeNodeModules(outdir) {
     if (placements.has(placementKey)) return;
     placements.add(placementKey);
     mkdirSync(dirname(destination), { recursive: true });
+    if (name === "@openwork/types") {
+      stageCompiledTypes(resolvedPackage, destination);
+      return;
+    }
     cpSync(resolvedPackage.root, destination, {
       recursive: true,
       dereference: true,
-      filter: (source) => source === resolvedPackage.root
-        || !relative(resolvedPackage.root, source).split(sep).includes("node_modules"),
+      filter: (source) => {
+        if (source === resolvedPackage.root) return true;
+        const parts = relative(resolvedPackage.root, source).split(sep);
+        if (parts.includes("node_modules")) return false;
+        if (name === "@openwork/sandbox-microsandbox" || name === "@openwork/sandbox") return ["dist", "package.json"].includes(parts[0]);
+        // The core's published entrypoints are dist (Node) and src (Bun/dev).
+        // Do not ship checkout-only tests, tooling or incidental local links.
+        if (name === "@openwork/remote-sessions") return ["dist", "src", "package.json"].includes(parts[0]);
+        // Native builds ship as a separate helper. Copying this workspace's
+        // Swift .build cache into asar would duplicate the compiler artifacts.
+        if (name === "@openwork/computer-use") return ["dist", "package.json"].includes(parts[0]) || parts.length === 1 && /\.(?:mjs|d\.mts|py)$/.test(parts[0]) && !parts[0].endsWith(".test.mjs");
+        return true;
+      },
     });
+    if (name === "microsandbox") {
+      const resolver = resolve(destination, "dist/internal/resolve-binary.js");
+      writeFileSync(resolver, packagedMicrosandboxResolver(readFileSync(resolver, "utf8")));
+    }
     staged.push(destination.slice(output.length + 1));
-    const dependencies = resolvedPackage.packageJson.dependencies ?? {};
+    const dependencies = { ...resolvedPackage.packageJson.dependencies };
+    if (name === "microsandbox") {
+      const platformPackage = microsandboxPlatformPackage(platform, arch);
+      if (platformPackage) {
+        const version = resolvedPackage.packageJson.optionalDependencies?.[platformPackage];
+        if (version !== resolvedPackage.packageJson.version) {
+          throw new Error(`microsandbox must pin ${platformPackage} to its SDK version.`);
+        }
+        const native = packageRoot(platformPackage, resolve(resolvedPackage.root, "package.json"));
+        if (native.packageJson.version !== version) throw new Error(`microsandbox native version mismatch: ${platformPackage}`);
+        dependencies[platformPackage] = version;
+      }
+    }
     for (const dependencyName of Object.keys(dependencies)) {
       stagePackage(
         { name: dependencyName, fromPackageJson: resolve(resolvedPackage.root, "package.json") },
@@ -75,8 +159,28 @@ export function stageRuntimeNodeModules(outdir) {
     }
   }
 
-  for (const item of requiredRoots) {
-    stagePackage({ ...item, fromPackageJson: desktopPackageJson }, output, true);
+  // Ship compiled JavaScript for every @openwork/types export, so no import
+  // of it can reach a TypeScript file whichever export it names.
+  function stageCompiledTypes({ root, packageJson }, destination) {
+    const exports = compiledTypesExports(packageJson.exports);
+    const missing = Object.values(exports).filter((target) => !existsSync(resolve(root, target)));
+    if (missing.length > 0) {
+      throw new Error(`@openwork/types is not built (run pnpm --filter @openwork/types build). Missing: ${missing.join(", ")}`);
+    }
+    cpSync(resolve(root, "dist"), resolve(destination, "dist"), {
+      recursive: true,
+      // Declarations are for the compiler, not the running app.
+      filter: (source) => relative(resolve(root, "dist"), source).split(sep)[0] !== "types",
+    });
+    // The build compiles workspace packages in; only zod stays an import.
+    const manifest = { name: packageJson.name, version: packageJson.version, private: true, type: "module", exports, dependencies: { zod: packageJson.dependencies.zod } };
+    writeFileSync(resolve(destination, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+    staged.push(destination.slice(output.length + 1));
+    stagePackage({ name: "zod", fromPackageJson: resolve(root, "package.json") }, destination);
+  }
+
+  for (const item of roots) {
+    stagePackage({ fromPackageJson: desktopPackageJson, ...item }, output, true);
   }
 
   return staged.sort();

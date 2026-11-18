@@ -9,7 +9,43 @@ npm install -g openwork-server
 openwork-server --workspace /path/to/workspace --approval auto
 ```
 
-`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+The npm package requires stable Node.js 24.x, version 24.22.1 or newer within that major, on macOS, Linux, and Windows (arm64 or x64); Bun is not required at runtime. Older Node releases and other majors (including 25+) are rejected by the runtime gate. This security baseline also replaces the previous Node.js 22.13 minimum.
+
+### Self-hosted web UI
+
+```bash
+npm install -g openwork-server
+cd /path/to/workspace
+openwork-server web --open
+```
+
+`openwork-server web` serves the OpenWork web UI and API from one origin and
+runs a server-managed OpenCode engine. The npm package bundles the UI and the
+OpenCode plugins; on first run it downloads the exact OpenCode version this
+release was tested with into `~/.openwork/openwork-server/engines/` and reuses
+it afterwards. Updating is `npm i -g openwork-server@latest`; the server prints
+a hint on boot when a newer release exists (`OPENWORK_NO_UPDATE_CHECK=1` to
+silence).
+
+Defaults in `web` mode: bind `127.0.0.1`, approval `auto`, workspace = current
+directory, and the browser is signed in automatically via a bootstrap token
+(pass `--no-bootstrap-token` to require pasting the client token). Tokens are
+persisted in `~/.openwork/openwork-server/web-tokens.json` so they survive
+restarts; `--token`/`--host-token` or `OPENWORK_TOKEN`/`OPENWORK_HOST_TOKEN`
+override them.
+
+In `web` mode the UI's pages never carry CORS headers, and the server only
+answers requests addressed to `localhost`, an IP address or the `--host` name.
+Add other names with `--allowed-hosts` (or `OPENWORK_ALLOWED_HOSTS`,
+comma-separated; `*` allows any).
+
+To reach it from other machines, keep the server on `127.0.0.1` and put a TLS
+proxy in front (e.g. `tailscale serve --bg --https=8787 http://127.0.0.1:8787`),
+then allow the proxy's name (e.g. `--allowed-hosts my-machine.tailnet.ts.net`).
+Browsers require a secure context for the UI on any non-localhost origin.
+Set `OPENWORK_OPENCODE_BIN` to use your own OpenCode install instead of the
+managed download; `/health` reports both the pinned `opencodeVersion` and the
+`opencodeInstalledVersion` actually running.
 
 Or from source:
 
@@ -26,8 +62,8 @@ Add `--verbose` to print resolved config details on startup. Use `--version` to 
 ## Desktop task recovery
 
 The desktop enables `resumeInterruptedTasks` when embedding a server that owns
-its local engines. Standalone servers, attached engines, remote workspaces, and
-read-only servers do not opt in. Recovery works with both OpenCode v1 and v2 and
+its local engines. Standalone servers, attached engines, and read-only
+servers do not opt in. Recovery works with both OpenCode v1 and v2 and
 does not depend on an open conversation tab.
 
 The `desktop_task_recovery` table in the existing runtime SQLite database stores
@@ -61,6 +97,58 @@ Desktop Automation and remote-command requests opt out with
 Runtime journey verification for actual Electron restarts on both engines remains
 separate from the focused coordinator and mocked-proxy tests.
 
+## MCP App launch ownership
+
+An interactive host sends `context: { sessionId, readOnly, engine? }` with
+`POST /workspace/:id/mcp-apps/resolve`. `sessionId` is the originating conversation
+or `null` for a dashboard; `engine` is `v1` (default) or `v2`, never a provider URL.
+An actionable response includes an opaque `app.launchId`. The host keeps the
+server endpoint and workspace that resolved it, rather than the currently
+selected workspace. No credential, configuration, or fingerprint is returned.
+
+`POST /workspace/:id/mcp-apps/call` requires that `launchId`, the same `sessionId`
+and `engine`, and the existing `serverName`, `resourceUri`, `name`, `arguments`,
+and optional `approved` fields. The server binds the lease to its own instance,
+workspace path, conversation, original native launch tool, resource URI, and
+private configuration fingerprint. It rechecks the original tool's App visibility,
+resource binding and availability, original and requested tool policy, current
+session ownership/archive state, and configuration before dispatch. Existing
+helper audience and approval rules are unchanged.
+
+Leases are process-local, expire after 30 minutes, and are capped at 256 per
+server (oldest first eviction). `POST /workspace/:id/mcp-apps/release` with
+`{ launchId }` closes one workspace-owned lease. Closing/replacing a conversation
+view releases it; the renderer also invalidates its bridge synchronously and
+checks liveness before and after approval. A release failure is bounded by lease
+expiry. Already-dispatched provider operations cannot be recalled.
+
+The private fingerprint includes effective configuration (including headers),
+workspace/global runtime generations of the relevant MCP entry, private Connect authorization
+generation, and local managed gateway connection/credential/registration
+revisions. Named-entry generations are process-local, like the leases, and track
+host runtime writes including removal/restoration. Unrelated provider, plugin,
+and other MCP edits do not invalidate a lease. Private Connect hosts track the
+`openwork-cloud` runtime entry as well as their private authorization generation.
+File-backed configuration is compared by its
+observed values; edits restored between observations are not observable history.
+Provider-side account changes that leave all host-visible credentials and
+configuration unchanged are not detectable by this contract.
+
+Compatibility is intentionally fail-closed: older clients may still resolve HTML,
+but calls without a lease return `missing_launch_context`; stale leases return
+`stale_launch_context` with reopening guidance. New clients on old servers do not
+dispatch unbound calls. Generated read-only previews and archived result views
+still render and support local interactions without acquiring a lease. Dashboard
+HTML/result caches never persist a launch ID and remain read-only until refreshed.
+
+The renderer contract is `McpAppOrigin` and `createMcpAppActions` in
+`apps/app/src/components/chat/mcp-app-origin.ts`; `MessageListProvider` receives
+it from the owning `SessionSurface`. `McpAppLaunchContext`, resolution, validation,
+and release are owned by `src/mcp-app-host.ts`, with HTTP/session checks in
+`src/server.ts`.
+Internal callers of `callMcpAppTool` must supply `assertSessionActive` for a
+conversation lease; omitting the guard fails closed.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).
@@ -93,6 +181,7 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `OPENWORK_APPROVAL_TIMEOUT_MS`
 - `OPENWORK_WORKSPACES` (JSON array or comma-separated list of paths)
 - `OPENWORK_CORS_ORIGINS` (comma-separated list or `*`)
+- `OPENWORK_ALLOWED_HOSTS` (comma-separated host names or `*`; `web` mode always checks the Host)
 - `OPENWORK_OPENCODE_BASE_URL`
 - `OPENWORK_OPENCODE_DIRECTORY`
 - `OPENWORK_OPENCODE_USERNAME`
@@ -105,7 +194,7 @@ Token management (scoped tokens):
 File injection / artifacts:
 
 - `OPENWORK_INBOX_ENABLED` (`1` | `0`)
-- `OPENWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
+- `OPENWORK_INBOX_MAX_BYTES` (default: 10GB)
 - `OPENWORK_OUTBOX_ENABLED` (`1` | `0`)
 
 Sandbox advertisement (for capability discovery):
@@ -146,7 +235,7 @@ Token management (collaborator or owner bearer token):
 
 Inbox/outbox:
 
-- `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
+- `POST /workspace/:id/inbox?path=<path>` (streams the raw body into `.opencode/openwork/inbox/`; multipart is also accepted, up to 250MB)
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
 - `POST /workspace/:id/files/sessions`

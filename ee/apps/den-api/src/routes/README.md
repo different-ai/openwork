@@ -9,7 +9,7 @@ This folder groups Den API endpoints by product surface instead of keeping one l
 - `org/`: organization routes split into focused files by concern
 - `admin/`: admin-only operational endpoints
 - `version/`: public app version metadata for desktop update checks
-- `workers/`: worker lifecycle, runtime, billing, and heartbeat routes
+- `workers/`: worker list, delete, and activity heartbeat routes
 
 ## Conventions
 

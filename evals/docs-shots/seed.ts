@@ -8,8 +8,8 @@ import {
   ACME_DOCS_ORGANIZATION_NAME,
   ACME_DOCS_PROMPT_CARDS,
   bootAcmeDocs,
-} from "../../worlds/acme-docs.ts";
-import type { AcmeDocsWorld } from "../../worlds/acme-docs.ts";
+} from "./world.ts";
+import type { AcmeDocsWorld } from "./world.ts";
 import { provider } from "./ctx.ts";
 
 export const DOCS_ORGANIZATION_NAME = ACME_DOCS_ORGANIZATION_NAME;

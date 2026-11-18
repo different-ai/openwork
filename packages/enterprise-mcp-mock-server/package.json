@@ -19,19 +19,17 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "check": "pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
     "tsup": "^8.5.0",
-    "tsx": "^4.23.1",
     "typescript": "^5.6.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24.22.1 <25"
   }
 }

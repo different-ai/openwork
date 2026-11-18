@@ -1,5 +1,7 @@
 import fuzzysort from "fuzzysort";
 
+import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advanced-sections";
+
 export type PaletteGroup = "recent" | "actions" | "settings" | "sessions";
 
 export type PaletteItem = {
@@ -23,6 +25,9 @@ export type PaletteResultGroup = {
 };
 
 const GROUP_ORDER: PaletteGroup[] = ["recent", "actions", "settings", "sessions"];
+// The empty palette previews only a few settings. Developer mode lists the Advanced
+// sections first, so the preview must be wide enough to show every one of them.
+const SETTINGS_PREVIEW_LIMIT = Math.max(6, ADVANCED_SETTINGS_SECTIONS.length);
 const GROUP_LABELS: Record<PaletteGroup, string> = {
   recent: "Recent",
   actions: "Actions",
@@ -71,7 +76,7 @@ export function rankPaletteItems(
     const groups = [
       resultGroup("recent", recent),
       resultGroup("actions", nonRecentItems.filter((item) => itemGroup(item) === "actions")),
-      resultGroup("settings", nonRecentItems.filter((item) => itemGroup(item) === "settings").slice(0, 6)),
+      resultGroup("settings", nonRecentItems.filter((item) => itemGroup(item) === "settings").slice(0, SETTINGS_PREVIEW_LIMIT)),
       resultGroup("sessions", nonRecentItems.filter((item) => itemGroup(item) === "sessions").slice(0, 5)),
     ];
     return groups.filter((group) => group.items.length > 0);

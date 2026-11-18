@@ -1,12 +1,6 @@
-import { PluginDetailScreen } from "../../../_components/plugin-detail-screen";
-import { getLibraryRoute } from "../../../../_lib/den-org";
+import { PluginPageScreen } from "../../../_components/plugin-page-screen";
 
-export default async function LibraryPluginPage({
-  params,
-}: {
-  params: Promise<{ pluginId: string }>;
-}) {
+export default async function LibraryPluginPage({ params }: { params: Promise<{ pluginId: string }> }) {
   const { pluginId } = await params;
-
-  return <PluginDetailScreen pluginId={pluginId} backHref={getLibraryRoute()} />;
+  return <PluginPageScreen pluginId={decodeURIComponent(pluginId)} mode="member" />;
 }

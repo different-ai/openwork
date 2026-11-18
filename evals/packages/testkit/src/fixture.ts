@@ -18,9 +18,13 @@ interface WrappedContext {
   agent?: unknown;
   probe?: unknown;
   step?: unknown;
-  specRuntimeContext?: { step: unknown };
+  specRuntimeContext?: { step: unknown; checkpointStart?: () => Promise<void>; checkpointEnd?: () => Promise<void> };
+  task?: { tags?: string[] };
   skip(note?: string): never;
 }
+
+/** Vitest tag: this test's world is worth reopening at its start and end states (see User.checkpoint). */
+export const CHECKPOINTS_TAG = "checkpoints";
 
 function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -34,7 +38,7 @@ export function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T 
       const args = [...argArray];
       const callback = args.at(-1);
       if (typeof callback === "function") {
-        args[args.length - 1] = async ({ place, evidence, world, seed, user, agent, probe, step, specRuntimeContext, skip }: WrappedContext) => {
+        args[args.length - 1] = async ({ place, evidence, world, seed, user, agent, probe, step, specRuntimeContext, task, skip }: WrappedContext) => {
           let skipping = false;
           const wrappedSkip = (note?: string): never => {
             skipping = true;
@@ -42,6 +46,9 @@ export function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T 
             return skip(note);
           };
           try {
+            const tagged = task?.tags?.includes(CHECKPOINTS_TAG) === true;
+            // The world as launched for this commit, before the body changes it.
+            if (tagged) await specRuntimeContext?.checkpointStart?.();
             const result = await Reflect.apply(callback, undefined, [{
               place,
               evidence,
@@ -53,6 +60,8 @@ export function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T 
               step: typeof step === "function" ? step : specRuntimeContext?.step,
               skip: wrappedSkip,
             }]);
+            // Only a passing body reaches here, so the end state is the verified state.
+            if (tagged) await specRuntimeContext?.checkpointEnd?.();
             evidence.setOutcome("passed");
             return result;
           } catch (error) {

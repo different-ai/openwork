@@ -1,5 +1,9 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, LOCAL_MODEL_PROVIDER_IDS, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
+import { isLegacyBrowserPlugin } from "./workspace-init.js";
+import { ORGANIZATION_PROVIDER_ID, organizationAllowlistsProviders, organizationProviderGate } from "./organization-provider-gate.js";
 /**
  * Runtime OpenCode configuration injected via a server-managed config file
  * passed to the engine as OPENCODE_CONFIG.
@@ -23,9 +27,11 @@ import {
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
   openworkTitleRecoveryPluginPath,
+  openworkGatewayQuotaPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
   openworkChromeDevtoolsPluginPath,
+  openworkComputerUsePluginPath,
   openworkPdfAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
@@ -41,7 +47,7 @@ import {
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
-import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+import { appendOrganizationPrompts, OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
 
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
@@ -58,15 +64,26 @@ export async function buildOpenworkRuntimeConfigObject(
 export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
+  if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
+    // Only model access (the AI Gateway's "Who can use models") is enforced: keep allowCustomProviders from the verified
+    // policy (cleared on sign-out) and drop execution rules and every other desktop policy.
+    const { managedPolicy, ...localConfig } = runtimeConfig;
+    runtimeConfig = managedPolicy ? { ...localConfig, managedPolicy: desktopCapabilityConfig(managedPolicy) } : localConfig;
+  }
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
   const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
-  const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
-  const provider = runtimeProviderMap(runtimeConfig);
+  const { managedPolicy: _managedPolicy, managedPrompt, ...engineConfig } = runtimeConfig;
+  const provider = materializeLegacyFastProviders(runtimeProviderMap(runtimeConfig));
+  const allowsProvider = organizationProviderGate(runtimeConfig.managedPolicy);
+  const allowlist = allowsProvider && organizationAllowlistsProviders(runtimeConfig.managedPolicy);
+  // Local models off on their own: v1 keeps every provider but those.
+  const blockedLocal = allowsProvider && !allowlist ? LOCAL_MODEL_PROVIDER_IDS.filter((id) => !allowsProvider(id)) : [];
   return {
     ...engineConfig,
-    ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
-      ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
-      ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
+    ...(allowlist ? { enabled_providers: [
+      ...Object.keys(provider).filter((id) => ORGANIZATION_PROVIDER_ID.test(id)),
+      ...(allowsProvider("opencode") ? ["opencode"] : []),
+      ...LOCAL_MODEL_PROVIDER_IDS.filter((id) => allowsProvider(id)),
     ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },
     default_agent: runtimeConfig.default_agent ?? "openwork",
@@ -75,7 +92,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         description: "OpenWork default agent",
         mode: "primary",
         temperature: 0.2,
-        prompt: OPENWORK_AGENT_PROMPT,
+        prompt: appendOrganizationPrompts(OPENWORK_AGENT_PROMPT, managedPrompt),
         permission: {
           ...permissions,
           skill: {
@@ -92,6 +109,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
     },
     plugin: [
       openworkChromeDevtoolsPluginPath(),
+      openworkComputerUsePluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control
       // mechanics, live Connect steering, and the remote skill and Automation
@@ -104,9 +122,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
       openworkTitleRecoveryPluginPath(),
-      ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin)),
+      openworkGatewayQuotaPluginPath(),
+      ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin) && !isLegacyBrowserPlugin(plugin)),
     ],
-    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
+    ...(disabledProviders.length || blockedLocal.length ? { disabled_providers: [...new Set([...disabledProviders, ...blockedLocal])] } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))
       .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))),
     ...(Object.keys(provider).length ? { provider } : {}),

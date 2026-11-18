@@ -2,12 +2,25 @@ import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/des
 import { existsSync } from "node:fs";
 import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
+import {
+  createWorkspaceKvStore,
+  isRecord,
+  SAFE_UPDATED_AT_SQL,
+  UNSAFE_UPDATED_AT_RAW_SQL,
+  warnUnsafeUpdatedAt,
+} from "./workspace-kv-store.js";
 
 export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
 export type RuntimeOpencodeConfig = {
   managedPolicy?: DesktopConfig;
+  /**
+   * The organization's Prompts for the signed-in member, already in order and
+   * joined, appended to OpenWork's agent instructions. Den-owned like
+   * managedPolicy: written only by the cloud provider sync and never sent to
+   * the engine as a config key.
+   */
+  managedPrompt?: string;
   default_agent?: string;
   plugin?: string[];
   disabled_providers?: string[];
@@ -38,9 +51,11 @@ function normalizeRuntimeOpencodeConfig(value: unknown): RuntimeOpencodeConfig {
   const permission = isRecord(value.permission) ? value.permission : undefined;
   const externalDirectory = permission && isRecord(permission.external_directory) ? permission.external_directory : undefined;
   const provider = isRecord(value.provider) ? value.provider : undefined;
+  const managedPrompt = typeof value.managedPrompt === "string" && value.managedPrompt.trim() ? value.managedPrompt : undefined;
   return {
     ...(defaultAgent ? { default_agent: defaultAgent } : {}),
     ...(value.managedPolicy !== undefined ? { managedPolicy: desktopConfigSchema.parse(value.managedPolicy) } : {}),
+    ...(managedPrompt ? { managedPrompt } : {}),
     ...(plugin ? { plugin } : {}),
     ...(disabledProviders ? { disabled_providers: disabledProviders } : {}),
     ...(mcp ? { mcp } : {}),
@@ -64,7 +79,7 @@ const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>
   serialize: (value) => JSON.stringify(value),
 });
 
-export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
+export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string, snapshot: RuntimeOpencodeConfig) => void;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
 
@@ -128,17 +143,26 @@ export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<
  * provider, explicit `null` deletes it (so clients can remove runtime-managed
  * providers, e.g. cloud imports, without racing a read-modify-write of the
  * whole map). Returns undefined when the resulting map is empty.
+ *
+ * Providers named in `mergeModelsFor` keep the models they already have: the
+ * update's models are added or replace same-ID entries, and the rest of the
+ * provider is replaced as usual. Adding one more local model (e.g. Ollama)
+ * must not drop the ones added before it.
  */
 export function mergeRuntimeProviderUpdate(
   current: unknown,
   update: Record<string, unknown>,
+  mergeModelsFor: ReadonlySet<string> = new Set(),
 ): Record<string, unknown> | undefined {
   const next: Record<string, unknown> = { ...(isRecord(current) ? current : {}) };
   for (const [providerId, value] of Object.entries(update)) {
     if (value === null) {
       delete next[providerId];
     } else if (isRecord(value)) {
-      next[providerId] = value;
+      const existing = next[providerId];
+      next[providerId] = mergeModelsFor.has(providerId) && isRecord(existing) && isRecord(existing.models)
+        ? { ...value, models: { ...existing.models, ...(isRecord(value.models) ? value.models : {}) } }
+        : value;
     }
   }
   return Object.keys(next).length ? next : undefined;
@@ -146,6 +170,16 @@ export function mergeRuntimeProviderUpdate(
 
 export async function readRuntimeOpencodeConfig(config: ServerConfig, workspaceId: string): Promise<RuntimeOpencodeConfig> {
   return await runtimeOpencodeConfigStore.get(config, workspaceId) ?? {};
+}
+
+// App leases are process-local too. Retain entry tombstones so removal and
+// restoration cannot resurrect a lease; unrelated runtime writes do not touch it.
+const runtimeMcpRevisions = new WeakMap<ServerConfig, Map<string, Map<string, number>>>();
+
+/** Private generations for one named MCP's global and workspace runtime entries. */
+export function readRuntimeMcpConfigRevisions(config: ServerConfig, workspaceId: string, name: string): Array<number | null> {
+  const revisions = runtimeMcpRevisions.get(config);
+  return [ENGINE_GLOBAL_RUNTIME_CONFIG_ID, workspaceId].map(id => revisions?.get(id)?.get(name) ?? null);
 }
 
 export async function readGlobalRuntimeOpencodeConfig(config: ServerConfig): Promise<RuntimeOpencodeConfig> {
@@ -177,7 +211,11 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
   const path = runtimeDbPath(config);
   if (!existsSync(path)) return [];
   const sql = `
-    SELECT workspace_id AS workspaceId, config_json AS configJson, updated_at AS updatedAt
+    SELECT
+      workspace_id AS workspaceId,
+      config_json AS configJson,
+      ${SAFE_UPDATED_AT_SQL} AS updatedAt,
+      ${UNSAFE_UPDATED_AT_RAW_SQL} AS unsafeUpdatedAt
     FROM runtime_opencode_configs
   `;
   try {
@@ -200,6 +238,13 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
       }
     }
     return rows.flatMap((row) => {
+      if (isRecord(row)) {
+        warnUnsafeUpdatedAt(
+          "runtime_opencode_configs",
+          typeof row.workspaceId === "string" ? row.workspaceId : undefined,
+          row.unsafeUpdatedAt,
+        );
+      }
       const parsed = runtimeOpencodeConfigRow(row);
       return parsed ? [parsed] : [];
     });
@@ -209,9 +254,12 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
   }
 }
 
+/** What ordinary runtime writers may change: Den-owned fields are kept as they are. */
+export type EditableRuntimeOpencodeConfig = Omit<RuntimeOpencodeConfig, "managedPolicy" | "managedPrompt">;
+
 export async function writeGlobalRuntimeOpencodeConfig(
   config: ServerConfig,
-  updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
+  updater: (current: EditableRuntimeOpencodeConfig) => EditableRuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   return await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, updater);
 }
@@ -259,6 +307,7 @@ export function mergeRuntimeOpencodeConfigLayers(
 
   return normalizeRuntimeOpencodeConfig({
     ...(base.managedPolicy ? { managedPolicy: base.managedPolicy } : {}),
+    ...(base.managedPrompt ? { managedPrompt: base.managedPrompt } : {}),
     ...(base.default_agent || overlay.default_agent ? { default_agent: overlay.default_agent ?? base.default_agent } : {}),
     ...(plugin.length ? { plugin } : {}),
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
@@ -359,7 +408,7 @@ export async function migrateWorkspaceRuntimeConfigToEngineGlobal(
 }
 
 export type RuntimeOpencodeConfigInspection = {
-  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row" | "remote-workspace";
+  status: "available" | "database-missing" | "row-missing" | "table-missing" | "unreadable" | "invalid-row";
   config: RuntimeOpencodeConfig;
 };
 
@@ -531,8 +580,27 @@ function updateRuntimeConfig(
     const next = normalizeRuntimeOpencodeConfig(updater(row?.value ?? {}));
     const configJson = runtimeOpencodeConfigStore.serialize(next);
     if (row?.valueJson === configJson) return { config: next, changed: false };
-    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, Date.now());
-    for (const listener of writeListeners) listener(config, workspaceId);
+    const updatedAt = Math.max(Date.now(), (row?.updatedAt ?? 0) + 1);
+    await runtimeOpencodeConfigStore.setSerialized(config, workspaceId, configJson, updatedAt);
+    // Compare persisted bytes rather than row.value: an updater may mutate its input.
+    const previousMcp = runtimeMcpMap(parseRuntimeOpencodeConfig(row?.valueJson ?? "{}"));
+    const nextMcp = runtimeMcpMap(next);
+    const changedMcpNames = [...new Set([...Object.keys(previousMcp), ...Object.keys(nextMcp)])]
+      .filter(name => JSON.stringify(previousMcp[name]) !== JSON.stringify(nextMcp[name]));
+    if (changedMcpNames.length) {
+      let workspaces = runtimeMcpRevisions.get(config);
+      if (!workspaces) {
+        workspaces = new Map();
+        runtimeMcpRevisions.set(config, workspaces);
+      }
+      let revisions = workspaces.get(workspaceId);
+      if (!revisions) {
+        revisions = new Map();
+        workspaces.set(workspaceId, revisions);
+      }
+      for (const name of changedMcpNames) revisions.set(name, updatedAt);
+    }
+    for (const listener of writeListeners) listener(config, workspaceId, next);
     return { config: next, changed: true };
   });
   runtimeWrites.set(config, result);
@@ -542,11 +610,30 @@ function updateRuntimeConfig(
 export function writeRuntimeOpencodeConfig(
   config: ServerConfig,
   workspaceId: string,
-  updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
+  updater: (current: EditableRuntimeOpencodeConfig) => EditableRuntimeOpencodeConfig,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   return updateRuntimeConfig(config, workspaceId, (current) => {
-    const { managedPolicy, ...editable } = current;
-    return { ...updater(editable), managedPolicy };
+    const { managedPolicy, managedPrompt, ...editable } = current;
+    return { ...updater(editable), managedPolicy, managedPrompt };
+  });
+}
+
+/**
+ * Sets the member's organization Prompts text, or clears it with "". Only the
+ * cloud provider sync, at the verified Den-session boundary, calls this.
+ */
+export function writeManagedPrompt(config: ServerConfig, prompt: string) {
+  return updateRuntimeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, (current) => {
+    const { managedPrompt: _previous, ...rest } = current;
+    return prompt.trim() ? { ...rest, managedPrompt: prompt } : rest;
+  });
+}
+
+/** Signing out ends enforcement: a cached policy is not device enrollment (#5131). */
+export function clearManagedDesktopPolicy(config: ServerConfig) {
+  return updateRuntimeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, (current) => {
+    const { managedPolicy: _cleared, ...rest } = current;
+    return rest;
   });
 }
 

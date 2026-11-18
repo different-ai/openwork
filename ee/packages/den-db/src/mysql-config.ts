@@ -4,6 +4,7 @@ type ParsedMySqlConfig = {
   user: string
   password: string
   database: string
+  socketPath?: string
   ssl?: {
     rejectUnauthorized: boolean
   }
@@ -37,12 +38,15 @@ export function parseMySqlConnectionConfig(databaseUrl: string): ParsedMySqlConf
     throw new Error("DATABASE_URL must include host, username, and database for mysql mode")
   }
 
+  const socketPath = parsed.searchParams.get("socket")?.trim()
+
   return {
     host: parsed.hostname,
     port: Number(parsed.port || "3306"),
     user: decodeURIComponent(parsed.username),
     password: decodeURIComponent(parsed.password),
     database,
+    ...(socketPath ? { socketPath } : {}),
     ssl: readSslSettings(parsed),
   }
 }

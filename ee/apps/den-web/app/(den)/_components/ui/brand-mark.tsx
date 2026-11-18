@@ -30,8 +30,8 @@ export function DenBrandMark({
     () => brandIconCandidates({ iconUrl, simpleIconSlug, serviceUrl }),
     [iconUrl, simpleIconSlug, serviceUrl],
   );
-  const [failedCount, setFailedCount] = useState(0);
-  const src = candidates[failedCount];
+  const [failedUrls, setFailedUrls] = useState<string[]>([]);
+  const src = candidates.find((candidate) => !failedUrls.includes(candidate));
   const monogram = name.trim().charAt(0).toUpperCase();
 
   return (
@@ -43,7 +43,7 @@ export function DenBrandMark({
           alt=""
           aria-hidden
           loading="lazy"
-          onError={() => setFailedCount((count) => count + 1)}
+          onError={() => setFailedUrls((urls) => urls.includes(src) ? urls : [...urls, src])}
           className={`object-contain ${imageClassName}`}
         />
       ) : (

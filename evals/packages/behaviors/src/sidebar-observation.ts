@@ -5,12 +5,15 @@ export function readSidebarOverflow(surface: Surface, title = "") {
   return callFunctionOnSurface(surface, title => {
     const list = document.querySelector<HTMLElement>('[data-sidebar="content"]');
     const rail = document.querySelector<HTMLElement>('[data-sidebar="rail"]')?.getBoundingClientRect();
+    const titles = [...document.querySelectorAll<HTMLElement>("[data-session-title-text]")].map(node => node.textContent?.trim() ?? "");
     const text = [...document.querySelectorAll<HTMLElement>("[data-session-title-text]")]
       .find(node => node.textContent?.trim() === title);
     const viewport = text?.parentElement;
     return {
       list: list ? { clientWidth: list.clientWidth, scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth } : null,
       rail: rail ? { x: rail.left + rail.width / 2, y: rail.top + rail.height / 2 } : null,
+      // Every rendered title, so a missing `title` names what the sidebar showed instead.
+      titles,
       title: text && viewport ? { clientWidth: viewport.clientWidth, scrollWidth: text.scrollWidth,
         hiddenEdges: viewport.dataset.sessionTitleHiddenEdges ?? "", maskImage: getComputedStyle(viewport).maskImage } : null,
       rows: [...document.querySelectorAll<HTMLElement>("[data-sidebar-session-id]")].map(row => {
@@ -28,6 +31,8 @@ interface SidebarGeometry {
   at: number;
   scrollTop: number;
   viewport: { top: number; bottom: number };
+  /** The "Workspaces" heading lane above the first workspace row. */
+  lane: { top: number; bottom: number } | null;
   hash: string;
   selected: string[];
   management: string | null;
@@ -42,12 +47,19 @@ interface ExpansionFrames {
   complete: boolean;
 }
 
+/** A native HTML drag that started on a session row, with the payload types it carries. */
+interface SessionDragStart {
+  sessionId: string;
+  types: string[];
+}
+
 declare global {
   interface Window {
     [key: `sidebar-observation-${string}`]: {
       snapshot(): SidebarGeometry;
       expansion: ExpansionFrames | null;
       clicks: number;
+      drags: SessionDragStart[];
       stop(): void;
     } | undefined;
   }
@@ -61,6 +73,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       const content = document.querySelector<HTMLElement>('[data-sidebar="content"]');
       if (!content) throw new Error("Sidebar scroller is unavailable");
       const viewport = content.getBoundingClientRect();
+      const lane = content.querySelector<HTMLElement>(".group\\/workspaces-header")?.getBoundingClientRect();
       const rows = [...content.querySelectorAll<HTMLElement>(
         '[data-sidebar-session-id], [data-sidebar-workspace-title], [data-session-group], [role="button"][aria-expanded]',
       )].filter(row => row.getClientRects().length && getComputedStyle(row).visibility !== "hidden")
@@ -83,7 +96,8 @@ export async function observeSidebarExpansion(surface: Surface) {
         });
       return {
         at: performance.now(), scrollTop: content.scrollTop,
-        viewport: { top: viewport.top, bottom: viewport.bottom }, rows,
+        viewport: { top: viewport.top, bottom: viewport.bottom },
+        lane: lane ? { top: lane.top, bottom: lane.bottom } : null, rows,
         hash: location.hash,
         selected: [...document.querySelectorAll<HTMLElement>('[data-session-tab-active="true"]')]
           .map(row => row.dataset.sessionTabId ?? ""),
@@ -93,8 +107,20 @@ export async function observeSidebarExpansion(surface: Surface) {
     let frame = 0;
     let timer: ReturnType<typeof setTimeout>;
     const observer: NonNullable<Window[typeof key]> = {
-      snapshot, expansion: null, clicks: 0,
-      stop() { cancelAnimationFrame(frame); clearTimeout(timer); document.removeEventListener("click", onClick, true); },
+      snapshot, expansion: null, clicks: 0, drags: [],
+      stop() {
+        cancelAnimationFrame(frame);
+        clearTimeout(timer);
+        document.removeEventListener("click", onClick, true);
+        document.removeEventListener("dragstart", onDragStart);
+      },
+    };
+    // Bubble phase: the row's own dragstart handler has filled the payload by then.
+    const onDragStart = (event: DragEvent) => {
+      if (!event.isTrusted || !(event.target instanceof Element)) return;
+      const row = event.target.closest<HTMLElement>("[data-sidebar-session-id]");
+      if (!row) return;
+      observer.drags.push({ sessionId: row.dataset.sidebarSessionId ?? "", types: [...(event.dataTransfer?.types ?? [])] });
     };
     const onClick = (event: MouseEvent) => {
       if (!event.isTrusted || !(event.target instanceof Element)) return;
@@ -117,6 +143,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       timer = setTimeout(() => cancelAnimationFrame(frame), 5_000);
     };
     document.addEventListener("click", onClick, true);
+    document.addEventListener("dragstart", onDragStart);
     window[key] = observer;
   }, [key]);
   return {
@@ -124,7 +151,7 @@ export async function observeSidebarExpansion(surface: Surface) {
       return callFunctionOnSurface(surface, (key: `sidebar-observation-${string}`) => {
         const observer = window[key];
         if (!observer) throw new Error("Sidebar frame observation was lost");
-        return { current: observer.snapshot(), expansion: observer.expansion, clicks: observer.clicks };
+        return { current: observer.snapshot(), expansion: observer.expansion, clicks: observer.clicks, drags: observer.drags };
       }, [key]);
     },
     async [Symbol.asyncDispose]() {

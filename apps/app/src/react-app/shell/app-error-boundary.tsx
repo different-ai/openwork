@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 
 import * as React from "react";
+import { formatCrashDiagnostic } from "@/app/lib/crash-diagnostics";
 import { openworkServerInfo, readDesktopDistributionInfo, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { reportCaughtWebError } from "@/app/lib/error-monitoring";
 import { getOpenWorkDeployment } from "@/app/lib/openwork-deployment";
@@ -22,35 +23,12 @@ interface AppErrorBoundaryState {
   crash: CrashDetails | null;
 }
 
-const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
-const SECRET_PAIR_PATTERN = /(token|grant|code|secret|key)=[^&\s]+/gi;
+export { redactCrashText } from "@/app/lib/crash-diagnostics";
 
-/**
- * Messages and stacks can quote URLs whose query strings carry sign-in grants
- * or deep-link tokens. Same rule as the web error beacon (origin + path only:
- * no userinfo, query or fragment), plus a mask for bare `token=…` pairs.
- * file:// asset paths stay intact.
- */
-export function redactCrashText(text: string): string {
-  return text
-    .replace(SECRET_PAIR_PATTERN, "$1=[redacted]")
-    .replace(URL_PATTERN, (url) => {
-      if (/^file:/i.test(url)) return url;
-      const withoutUserinfo = url.replace(/^([^/]*\/\/)[^/@]*@/, "$1");
-      const cut = withoutUserinfo.search(/[?#]/);
-      if (cut === -1) return withoutUserinfo;
-      // Keep the `:line:col` a stack frame appends after a dev-server URL.
-      const position = /(:\d+){1,2}$/.exec(withoutUserinfo)?.[0] ?? "";
-      return withoutUserinfo.slice(0, cut) + position;
-    });
-}
-
-/** React hands the boundary whatever was thrown; only Error carries a stack. */
+/** React may throw any value, including one that cannot safely be inspected. */
 export function describeCrash(thrown: unknown): CrashDetails {
-  if (thrown instanceof Error) {
-    return { message: redactCrashText(thrown.message), stack: redactCrashText(thrown.stack ?? "") };
-  }
-  return { message: redactCrashText(String(thrown)), stack: "" };
+  const { message, stack } = formatCrashDiagnostic(thrown);
+  return { message, stack };
 }
 
 /** Clipboard payload: message, stack, app version and distribution flavor. */
@@ -83,6 +61,7 @@ async function resolveLogFilePath(): Promise<string | null> {
 function RecoveryScreen({ crash }: { crash: CrashDetails }) {
   const [open, setOpen] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  const [copyError, setCopyError] = React.useState(false);
   const [logFilePath, setLogFilePath] = React.useState<string | null>(null);
   const [logsError, setLogsError] = React.useState<string | null>(null);
 
@@ -96,14 +75,23 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
     };
   }, []);
 
-  const copy = () => {
-    void navigator.clipboard.writeText(buildCrashReport(crash, readCrashContext())).then(() => setCopied(true));
+  const copy = async () => {
+    setCopied(false);
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(buildCrashReport(crash, readCrashContext()));
+      setCopied(true);
+    } catch {
+      setCopyError(true);
+    }
   };
 
-  const openLogs = (path: string) => {
-    revealDesktopItemInDir(path).catch((error: unknown) => {
-      setLogsError(error instanceof Error ? error.message : String(error));
-    });
+  const openLogs = async (path: string) => {
+    try {
+      await revealDesktopItemInDir(path);
+    } catch {
+      setLogsError("Could not open the logs folder.");
+    }
   };
 
   return (
@@ -162,6 +150,7 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
                   </button>
                 ) : null}
               </div>
+              {copyError ? <p role="status" className="text-muted-foreground">Could not copy details. You can select and copy the text above.</p> : null}
               {logsError ? <p className="text-muted-foreground">{logsError}</p> : null}
             </div>
           ) : null}
@@ -184,7 +173,8 @@ function RecoveryScreen({ crash }: { crash: CrashDetails }) {
  * React context. It deliberately renders plain elements and does not call
  * `t()`: locale initialization runs before the tree mounts and has itself been
  * a source of startup failures, so the screen that reports a crash must not
- * depend on it. No network is needed: the report is copied, never sent.
+ * depend on it. Recovery needs no network; optional web reporting keeps its
+ * existing monitoring and analytics gates.
  */
 export class AppErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -196,12 +186,11 @@ export class AppErrorBoundary extends React.Component<
     return { crash: describeCrash(thrown) };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error("[app] render failed", error, info.componentStack);
+  componentDidCatch(error: unknown, _info: React.ErrorInfo) {
     // A caught render throw never reaches the window "error" listener, so the
     // web deployment's monitor is told directly, with the same redacted text
     // the screen shows. Inert on desktop.
-    reportCaughtWebError({ name: error.name, ...describeCrash(error) });
+    reportCaughtWebError(error);
   }
 
   render() {

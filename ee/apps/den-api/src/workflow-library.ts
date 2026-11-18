@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -8,9 +8,10 @@ import {
 import type { GeneratedArtifactView } from "@openwork/types/workflows"
 import { db } from "./db.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { getWorkflowDetail } from "./workflows.js"
-import { listArtifactViewsForScript } from "./artifact-views.js"
+import { getWorkflowDetail, listWorkflowCardFacts } from "./workflows.js"
+import { listArtifactViewsForScript, listArtifactViewsForScripts } from "./artifact-views.js"
 import {
+  resolvePluginArchConfigObjectRoles,
   resolvePluginArchResourceRole,
   type PluginArchActorContext,
   type PluginArchRole,
@@ -35,6 +36,8 @@ export type WorkflowLibraryItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup"
   resultState: "never_run" | "fresh" | "stale" | "needs_attention"
   latestSuccessfulAt: string | null
+  /** Why the latest run failed, when resultState is needs_attention. */
+  failureReason: string | null
   viewState: "default" | "custom_active" | "build_failed" | "retired"
   activeViewTitle: string | null
   automationCount: number
@@ -128,11 +131,69 @@ function workflowReadiness(input: {
   return state
 }
 
-async function workflowItem(input: {
-  context: PluginArchActorContext
+type WorkflowCard = {
   row: typeof ConfigObjectTable.$inferSelect
   plugin: { id: string; name: string } | null
   inheritedEdges: MePluginAccessEdge[]
+}
+
+type ConfigObjectGrant = typeof ConfigObjectAccessGrantTable.$inferSelect
+
+function workflowLibraryItem(input: WorkflowCard & {
+  context: PluginArchActorContext
+  connections: MemberUsableConnectionFacts[]
+  role: PluginArchRole
+  grants: ConfigObjectGrant[]
+  requiredCapabilities: Array<{ capabilityName: string }>
+  resultState: WorkflowLibraryItem["resultState"]
+  failureReason: string | null
+  latestSuccessfulAt: string | null
+  views: GeneratedArtifactView[]
+  automationCount: number
+}): WorkflowLibraryItem {
+  return {
+    type: "workflow",
+    id: input.row.id,
+    plugin: input.plugin,
+    name: input.row.title,
+    description: input.row.description,
+    role: input.role,
+    edges: accessEdges({
+      context: input.context,
+      createdByOrgMembershipId: input.row.createdByOrgMembershipId,
+      grants: input.grants,
+      inheritedEdges: input.inheritedEdges,
+    }),
+    state: workflowReadiness({
+      connections: input.connections,
+      requiredCapabilities: input.requiredCapabilities,
+    }),
+    resultState: input.resultState,
+    failureReason: input.resultState === "needs_attention" ? input.failureReason : null,
+    latestSuccessfulAt: input.latestSuccessfulAt,
+    ...viewLifecycle(input.views),
+    automationCount: input.automationCount,
+    source: { kind: "created" },
+  }
+}
+
+async function workflowGrants(context: PluginArchActorContext, configObjectIds: ConfigObjectGrant["configObjectId"][]) {
+  const grants = new Map<string, ConfigObjectGrant[]>()
+  if (configObjectIds.length === 0) return grants
+  const rows = await db.select().from(ConfigObjectAccessGrantTable).where(and(
+    eq(ConfigObjectAccessGrantTable.organizationId, context.organizationContext.organization.id),
+    inArray(ConfigObjectAccessGrantTable.configObjectId, configObjectIds),
+  ))
+  for (const row of rows) {
+    const forWorkflow = grants.get(row.configObjectId) ?? []
+    forWorkflow.push(row)
+    grants.set(row.configObjectId, forWorkflow)
+  }
+  return grants
+}
+
+async function workflowItem(input: WorkflowCard & {
+  context: PluginArchActorContext
   connections: MemberUsableConnectionFacts[]
 }): Promise<WorkflowLibraryItem | null> {
   const role = await resolvePluginArchResourceRole({
@@ -145,39 +206,56 @@ async function workflowItem(input: {
     const [script, views, grants] = await Promise.all([
       getWorkflowDetail({ context: input.context, configObjectId: input.row.id }),
       listArtifactViewsForScript({ context: input.context, configObjectId: input.row.id }),
-      db.select().from(ConfigObjectAccessGrantTable).where(and(
-        eq(ConfigObjectAccessGrantTable.organizationId, input.context.organizationContext.organization.id),
-        eq(ConfigObjectAccessGrantTable.configObjectId, input.row.id),
-      )),
+      workflowGrants(input.context, [input.row.id]),
     ])
-    const automationIds = new Set(script.versions.flatMap((version) => version.automationReferences.map((reference) => reference.id)))
-    const latestSuccessfulAt = script.latestSuccessfulSnapshot?.finishedAt ?? null
-    return {
-      type: "workflow",
-      id: script.configObjectId,
-      plugin: input.plugin,
-      name: script.title,
-      description: script.description,
+    return workflowLibraryItem({
+      ...input,
       role,
-      edges: accessEdges({
-        context: input.context,
-        createdByOrgMembershipId: input.row.createdByOrgMembershipId,
-        grants,
-        inheritedEdges: input.inheritedEdges,
-      }),
-      state: workflowReadiness({
-        connections: input.connections,
-        requiredCapabilities: script.currentVersion.requiredCapabilities,
-      }),
+      grants: grants.get(input.row.id) ?? [],
+      requiredCapabilities: script.currentVersion.requiredCapabilities,
       resultState: script.freshness.state,
-      latestSuccessfulAt,
-      ...viewLifecycle(views),
-      automationCount: automationIds.size,
-      source: { kind: "created" },
-    }
+      failureReason: script.freshness.state === "needs_attention" ? script.freshness.reason : null,
+      latestSuccessfulAt: script.latestSuccessfulSnapshot?.finishedAt ?? null,
+      views,
+      automationCount: new Set(script.versions.flatMap((version) => version.automationReferences.map((reference) => reference.id))).size,
+    })
   } catch {
     return null
   }
+}
+
+/** Library cards for many Workflows, read in batches instead of one detail load per Workflow. */
+async function workflowLibraryItems(input: {
+  context: PluginArchActorContext
+  connections: MemberUsableConnectionFacts[]
+  workflows: WorkflowCard[]
+}): Promise<WorkflowLibraryItem[]> {
+  const roles = await resolvePluginArchConfigObjectRoles(input.context, input.workflows.map((workflow) => workflow.row.id))
+  const readable = input.workflows.filter((workflow) => roles.has(workflow.row.id))
+  const readableIds = readable.map((workflow) => workflow.row.id)
+  const [facts, views, grants] = await Promise.all([
+    listWorkflowCardFacts(input.context, readableIds),
+    listArtifactViewsForScripts({ context: input.context, configObjectIds: readableIds }),
+    workflowGrants(input.context, readableIds),
+  ])
+  return readable.flatMap((workflow) => {
+    const role = roles.get(workflow.row.id)
+    const card = facts.get(workflow.row.id)
+    if (!role || !card) return []
+    return [workflowLibraryItem({
+      ...workflow,
+      context: input.context,
+      connections: input.connections,
+      role,
+      grants: grants.get(workflow.row.id) ?? [],
+      requiredCapabilities: card.requiredCapabilities,
+      resultState: card.freshness.state,
+      failureReason: card.freshness.state === "needs_attention" ? card.freshness.reason : null,
+      latestSuccessfulAt: card.latestSuccessfulAt,
+      views: views.get(workflow.row.id) ?? [],
+      automationCount: card.automationCount,
+    })]
+  })
 }
 
 export async function listWorkflowLibraryItems(input: { context: PluginArchActorContext }) {
@@ -214,11 +292,7 @@ export async function listWorkflowLibraryItems(input: { context: PluginArchActor
     listMemberUsableConnectionFacts({ context: input.context }),
   ])
   const pluginEdges = new Map(effectiveAccess.items.map((item) => [item.plugin.id, item.edges]))
-  const workflows = new Map<string, {
-    row: typeof ConfigObjectTable.$inferSelect
-    plugin: { id: string; name: string } | null
-    inheritedEdges: MePluginAccessEdge[]
-  }>()
+  const workflows = new Map<string, WorkflowCard>()
   for (const { configObject, pluginId, pluginName } of rows) {
     const pluginIsVisible = pluginEdges.has(pluginId)
     const workflow = workflows.get(configObject.id) ?? {
@@ -232,9 +306,7 @@ export async function listWorkflowLibraryItems(input: { context: PluginArchActor
     workflow.inheritedEdges.push(...(pluginEdges.get(pluginId) ?? []))
     workflows.set(configObject.id, workflow)
   }
-  const items = await Promise.all([...workflows.values()].map(({ row, plugin, inheritedEdges }) =>
-    workflowItem({ context: input.context, row, plugin, inheritedEdges, connections })))
-  return items.filter((item): item is WorkflowLibraryItem => item !== null)
+  return workflowLibraryItems({ context: input.context, connections, workflows: [...workflows.values()] })
 }
 
 export async function getWorkflowLibraryDetail(input: {
@@ -275,5 +347,8 @@ export async function getWorkflowLibraryDetail(input: {
     connections,
   })
   if (!workflow) throw new Error("workflow_not_found")
-  return { workflow, script, views }
+  // A readable Workflow already permits manual REST/MCP execution using the
+  // caller's live tools. Do not project the stricter scheduling permission onto
+  // this library action; scheduling and manager-only editing keep their checks.
+  return { workflow, script: { ...script, canRun: true }, views }
 }

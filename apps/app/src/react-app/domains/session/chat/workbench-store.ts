@@ -1,10 +1,14 @@
 import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
+import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { NewSessionDestination } from "./new-session-destination";
 
 export type WorkbenchPane = "primary" | "secondary";
 export type WorkbenchSessionTab = OpenworkSessionRef & {
   workspaceTitle?: string;
+  draftDestination?: NewSessionDestination;
+  pendingConversationId?: string;
 };
 
 export type WorkbenchSnapshot = {
@@ -22,6 +26,8 @@ export type SyncWorkbenchInput = {
   primarySessionId: string | null;
   sessions: OpenworkSessionRef[];
   sessionsKnown: boolean;
+  /** Explicit archive metadata for this workspace, not sessions missing from its engine index. */
+  archivedSessionIds?: string[];
 };
 
 const initialWorkbenchSnapshot: WorkbenchSnapshot = {
@@ -96,28 +102,30 @@ export function syncWorkbenchSnapshot(
   input: SyncWorkbenchInput,
 ): WorkbenchSnapshot {
   const workspaceTitle = input.workspaceTitle?.trim() || input.workspaceId;
-  const available = input.sessions.map((session) => ({ ...session, workspaceTitle }));
-  // The index can be partial, or briefly show the previous engine during boot.
-  // Saved pairs are durable navigation state; only an explicit close removes them.
-  const pairedSessions = new Set(Object.entries(current.sideChats).flatMap(([owner, chat]) =>
-    [owner, workbenchSessionKey(chat)]));
+  const available = new Map<string, WorkbenchSessionTab>();
+  for (const session of input.sessions) {
+    const key = workbenchSessionKey(session);
+    if (!available.has(key)) available.set(key, { ...session, workspaceTitle });
+  }
+  const archivedSessionIds = new Set(input.archivedSessionIds);
+  // An index only covers one engine. Absence is not evidence of deletion:
+  // retained tabs, like saved pairs, require an explicit close or archive.
   let tabs = current.tabs
     .filter((tab) => (
       tab.workspaceId !== input.workspaceId
-      || !input.sessionsKnown
-      || available.some((session) => isSameWorkbenchSession(session, tab))
+      || !archivedSessionIds.has(tab.sessionId)
+      // Keep the routed archived primary viewable until navigation leaves it.
       || tab.sessionId === input.primarySessionId
-      || pairedSessions.has(workbenchSessionKey(tab))
     ))
     .map((tab) => {
-      const fresh = available.find((session) => isSameWorkbenchSession(session, tab));
+      const fresh = available.get(workbenchSessionKey(tab));
       return fresh ? { ...tab, ...fresh } : tab;
     });
 
   let primary: WorkbenchSessionTab | null = null;
   if (input.primarySessionId) {
     const ref = { workspaceId: input.workspaceId, sessionId: input.primarySessionId };
-    primary = findTab(available, ref) ?? findTab(tabs, ref) ?? { ...ref, workspaceTitle };
+    primary = available.get(workbenchSessionKey(ref)) ?? findTab(tabs, ref) ?? { ...ref, workspaceTitle };
     tabs = replaceOrAppendTab(tabs, primary);
   }
 
@@ -135,6 +143,16 @@ export function syncWorkbenchSnapshot(
     secondary,
     focusedPane: secondary && isSameWorkbenchSession(primary, current.primary) ? current.focusedPane : "primary",
   });
+}
+
+export function useRouteWorkbench(input: SyncWorkbenchInput): WorkbenchSnapshot {
+  const current = useWorkbenchStore();
+  const snapshot = useMemo(() => syncWorkbenchSnapshot(current, input), [current, input]);
+  const sync = current.sync;
+  useEffect(() => {
+    sync(input);
+  }, [sync, input]);
+  return snapshot;
 }
 
 export function openWorkbenchTab(

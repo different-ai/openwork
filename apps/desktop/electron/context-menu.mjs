@@ -47,8 +47,53 @@ export function editingMenuTemplate(contents, params) {
   return items;
 }
 
-export function createNativeContextMenus({ Menu, getWindow }) {
+// Native popups are invisible to the renderer and to CDP. Describe a template
+// with plain data only: no callbacks, and no renderer-supplied fields beyond
+// the ones the template builder already whitelisted.
+function describeTemplate(template) {
+  return template.map((entry) => {
+    if (entry.type === "separator") return { type: "separator" };
+    return {
+      type: "item",
+      id: typeof entry.id === "string" ? entry.id : null,
+      label: typeof entry.label === "string" ? entry.label : null,
+      role: typeof entry.role === "string" ? entry.role : null,
+      enabled: entry.enabled !== false,
+      ...(Array.isArray(entry.submenu) ? { submenu: describeTemplate(entry.submenu) } : {}),
+    };
+  });
+}
+
+function findTemplateItem(template, id) {
+  for (const entry of template) {
+    if (entry.type === "separator") continue;
+    if (entry.id === id) return entry;
+    if (Array.isArray(entry.submenu)) {
+      const nested = findTemplateItem(entry.submenu, id);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+export function contentMenuTemplate(contents, params, clipboard) {
+  const items = editingMenuTemplate(contents, params);
+  if (params.mediaType === "image" && params.hasImageContents) {
+    // Copy Chromium's decoded pixels. Never fetch a renderer-supplied URL.
+    items.push({ label: "Copy Image", click: () => contents.copyImageAt(params.x, params.y) });
+  }
+  if (params.mediaType === "image" && params.srcURL) {
+    items.push({ label: "Copy Image Address", click: () => clipboard.writeText(params.srcURL) });
+  }
+  if (params.linkURL) {
+    items.push({ label: "Copy Link Address", click: () => clipboard.writeText(params.linkURL) });
+  }
+  return items;
+}
+
+export function createNativeContextMenus({ Menu, getWindow, clipboard }) {
   let active = null;
+  let last = null;
   const close = () => active?.close();
 
   /** @returns {Promise<string | null>} */
@@ -58,6 +103,7 @@ export function createNativeContextMenus({ Menu, getWindow }) {
     return new Promise((resolve, reject) => {
       let settled = false;
       let menu;
+      let shown = null;
       const cleanup = () => {
         window.removeListener("closed", dismiss);
         window.removeListener("blur", dismiss);
@@ -69,6 +115,7 @@ export function createNativeContextMenus({ Menu, getWindow }) {
         if (settled) return;
         settled = true;
         cleanup();
+        if (shown) last = { ...shown, selectedId: id };
         resolve(id);
       };
       const dismiss = () => {
@@ -82,7 +129,8 @@ export function createNativeContextMenus({ Menu, getWindow }) {
         const template = build(finish);
         if (!template.length) { finish(null); return; }
         menu = Menu.buildFromTemplate(template);
-        active = { menu, requestId, close: dismiss };
+        shown = { requestId: requestId ?? null, items: describeTemplate(template), point: { x: options.x ?? null, y: options.y ?? null } };
+        active = { menu, requestId, close: dismiss, shown, template };
         window.once("closed", dismiss);
         window.once("blur", dismiss);
         contents.once("destroyed", dismiss);
@@ -96,8 +144,7 @@ export function createNativeContextMenus({ Menu, getWindow }) {
     });
   }
 
-  function show(request) {
-    const window = getWindow();
+  function show(request, window = getWindow()) {
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(null);
     if (!request || !Number.isFinite(request.point?.x) || !Number.isFinite(request.point?.y)
       || Math.abs(request.point.x) > 100_000 || Math.abs(request.point.y) > 100_000
@@ -126,6 +173,21 @@ export function createNativeContextMenus({ Menu, getWindow }) {
   return {
     show,
     close,
+    /** Dev-mode observation: the popup on screen and the last one that closed, as plain data. */
+    inspect() {
+      return { open: active !== null, current: active?.shown ?? null, last };
+    },
+    /** Dev-mode stand-in for the OS delivering a click on one enabled leaf of the open popup. */
+    choose(id) {
+      if (!active || typeof id !== "string") return false;
+      const item = findTemplateItem(active.template, id);
+      if (!item || item.enabled === false || Array.isArray(item.submenu) || typeof item.click !== "function") return false;
+      const { close: dismiss } = active;
+      item.click();
+      // The OS closes the popup after a choice; the selection already settled, so this only tears the menu down.
+      dismiss();
+      return true;
+    },
     showFromRenderer(event, request) {
       if (!isMainFrame(event)) {
         return Promise.reject(new Error("Context menus require the app's main frame."));
@@ -143,7 +205,7 @@ export function createNativeContextMenus({ Menu, getWindow }) {
     showEditing(params) {
       const window = getWindow();
       if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return Promise.resolve(null);
-      return popup(window, () => editingMenuTemplate(window.webContents, params), {
+      return popup(window, () => contentMenuTemplate(window.webContents, params, clipboard), {
         ...(params.frame ? { frame: params.frame } : {}),
         sourceType: params.menuSourceType,
       });

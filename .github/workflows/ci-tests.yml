@@ -1,135 +1,25 @@
-name: Build and core checks
-run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
+name: Nightly regression
 
+# Nightly and manual runs only. Nothing here gates a merge, a deploy or a
+# release: the checks that do are the quick check (quick-check.yml), which
+# runs on every PR and every dev push.
 on:
-  pull_request:
-    branches:
-      - dev
-  push:
-    branches:
-      - dev
-
   schedule:
     - cron: "37 7 * * *"
   workflow_dispatch:
-
-concurrency:
-  group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
-  classify-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      lane: ${{ steps.classify.outputs.lane }}
-    steps:
-      - name: Classify changed files
-        id: classify
-        uses: actions/github-script@v8
-        with:
-          script: |
-            if (context.eventName !== "pull_request") {
-              core.setOutput("lane", "full")
-              core.info("Selected lane: full")
-              return
-            }
-
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            })
-            const snapshotOnly = files.length === 1
-              && files[0].filename === "ee/apps/inference/src/models/base.json"
-            const docsOnly = files.length > 0
-              && files.every((file) => file.filename.startsWith("packages/docs/"))
-            const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
-            core.setOutput("lane", lane)
-            core.info(`Selected lane: ${lane}`)
-
-  openwork-tests-core:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      - name: Run core product regressions
-        run: pnpm test:core
-      - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
-
-  openwork-tests-build:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Cache Electron and pinned sidecars
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-            apps/desktop/resources/sidecars
-          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      - name: Check outbound access manifest
-        run: pnpm check:outbound-access
-      # Test source resolution differs from packaged Node plugin resolution.
-      - name: Bundle the server plugins the way packaged builds do
-        run: |
-          rm -rf packages/types/dist
-          pnpm --filter openwork-server build
-      - name: Typecheck Electron main against the IPC contract
-        run: pnpm --filter @openwork/desktop typecheck:electron
-      - name: Prepare virtual display
-        run: |
-          if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y xvfb x11-utils
-          fi
-      - name: Package and smoke-test the installed desktop
-        timeout-minutes: 7
-        env:
-          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
-      - name: Upload packaged smoke evidence and timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-desktop-smoke-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
-            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
-            evals/results/test-runs/**
-          retention-days: 7
-
-  # Broad tests, source-layout guards, and test-framework checks remain visible
-  # here without blocking unrelated PRs. No retries or ignored failures.
+  # Broad journeys, source-layout guards and test-framework checks. No retries
+  # or ignored failures.
   openwork-tests-extended:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -140,27 +30,28 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Run all app tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/app test
-      - name: Run all server tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter openwork-server test
-      - name: Run Den API tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork-ee/den-api test
-      - name: Run all desktop tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/desktop test
-      - name: Run release script tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: node --test scripts/release/*.test.mjs
+      # The test framework and its PR lane run on Linux only: some specs boot a
+      # local Den, which needs MySQL in Docker, and the desktop's bundled
+      # OpenCode binary. macOS keeps the platform builds below.
       - name: Run test-framework checks
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm test:eval-runner
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm evals:check
+      - name: Start MySQL and prepare the bundled OpenCode binary
+        id: lane
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm ci:den:mysql
+          pnpm --filter @openwork/desktop prepare:sidecar
+      # One file at a time: every local Den boot resets den-web's shared .next/dev
+      # build directory, so parallel Den specs crash each other's Den web.
       - name: Run all PR specs
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm sdk:build && pnpm evals:pr
+        if: (success() || failure()) && steps.lane.outcome == 'success'
+        run: pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
@@ -171,9 +62,50 @@ jobs:
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter @openwork/desktop typecheck:electron
 
+  # The Linux packaged smoke boots an unpacked directory, which cannot install
+  # an update. This lane builds real signed enterprise .app bundles so
+  # packaged-update-install proves download -> install on quit -> relaunch.
+  packaged-desktop-macos:
+    name: Packaged desktop on macOS
+    runs-on: blacksmith-12vcpu-macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Package, sign, and run the macOS packaged update journey
+        timeout-minutes: 30
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke-macos
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke-macos.mjs --server-built
+      - name: Upload macOS packaged evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-macos-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/profiles/**/electron.log
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
+
   validate-models-snapshot:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'snapshot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -182,7 +114,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Validate models snapshot
         run: |
@@ -190,7 +122,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from "node:fs/promises"
 
-          const path = "ee/apps/inference/src/models/base.json"
+          const path = "ee/apps/gateway/src/models/base.json"
           const fail = (message) => { throw new Error(`${path}: ${message}`) }
           const isRecord = (value) => Boolean(value)
             && typeof value === "object"
@@ -235,12 +167,20 @@ jobs:
           }
           NODE
 
-  # Docs never reach a runtime path, so a docs-only PR only needs to prove the
-  # Mintlify site still builds and has no broken pages, anchors, or images.
+      # Builds both published catalogs (v1 /api.json and v2
+      # /experimental/v2.0/api.json) from the snapshots with plain Node: it
+      # checks base-v2.json and that the custom and OpenWork providers convert
+      # to valid v2 entries.
+      - name: Build v1 and v2 catalogs
+        run: node ee/apps/gateway/scripts/build-models.mjs
+
+  # Validate docs independently of the desktop smoke: images are site-only,
+  # while MD/MDX and docs.json also feed the desktop's embedded agent docs.
   validate-docs:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'docs'
     runs-on: ubuntu-latest
+    env:
+      # Uses native fetch instead of the old is-online/got cancellation probe.
+      MINT_VERSION: "4.2.1126"
     defaults:
       run:
         working-directory: packages/docs
@@ -250,51 +190,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
       - name: Validate the docs build
-        run: npx -y mint@4.2.868 validate
+        run: pnpm dlx "mint@$MINT_VERSION" validate
       - name: Check for broken links and images
-        run: npx -y mint@4.2.868 broken-links
-
-  # Single stable context for branch rulesets to require. Green only when
-  # the lane selected by classification succeeds; always reports.
-  openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the selected test lane to pass
-        env:
-          CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
-          LANE: ${{ needs.classify-changes.outputs.lane }}
-          CORE_RESULT: ${{ needs.openwork-tests-core.result }}
-          BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
-          SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
-          DOCS_RESULT: ${{ needs.validate-docs.result }}
-        run: |
-          echo "classification: $CLASSIFY_RESULT ($LANE)"
-          echo "core product regressions: $CORE_RESULT"
-          echo "packaging and IPC contract: $BUILD_RESULT"
-          echo "snapshot validation: $SNAPSHOT_RESULT"
-          echo "docs validation: $DOCS_RESULT"
-
-          if [ "$CLASSIFY_RESULT" != "success" ]; then
-            echo "Changed-file classification did not succeed; blocking merge." >&2
-            exit 1
-          fi
-
-          case "$LANE" in
-            full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
-              ;;
-            *)
-              echo "Changed-file classification returned an unexpected value; blocking merge." >&2
-              exit 1
-              ;;
-          esac
+        run: pnpm dlx "mint@$MINT_VERSION" broken-links

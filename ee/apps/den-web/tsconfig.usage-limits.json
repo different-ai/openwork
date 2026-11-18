@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "app/(den)/dashboard/_components/gateway-usage-limits-data.ts",
+    "app/(den)/dashboard/_components/gateway-usage-limits-section.tsx",
+    "app/(den)/dashboard/_components/gateway-usage-reset-requests.tsx",
+    "app/(den)/dashboard/_components/gateway-limit-editor-screen.tsx",
+    "app/(den)/dashboard/_components/gateway-spend-breakdown.tsx",
+    "app/(den)/dashboard/_components/gateway-person-screen.tsx",
+    "app/(den)/dashboard/_components/gateway-directory-data.ts",
+    "app/(den)/dashboard/_components/gateway-users-teams-section.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests"
+  ]
+}

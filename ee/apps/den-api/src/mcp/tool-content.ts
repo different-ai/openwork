@@ -1,8 +1,10 @@
 import sharp from "sharp"
+import { ContentBlockSchema, type ContentBlock } from "@modelcontextprotocol/sdk/types.js"
 
 export type AgentToolContentPart =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
+  | { type: "resource_link"; uri: string; name: string; mimeType?: string; size?: number }
 
 const MAX_INLINE_IMAGE_BYTES = 1024 * 1024
 const MAX_IMAGE_DIMENSION = 1568
@@ -10,7 +12,6 @@ const MAX_MODEL_VISIBLE_BINARY_BYTES = 64 * 1024
 const MAX_MODEL_VISIBLE_TEXT_CHARACTERS = 20_000
 const PRETTY_JSON_MAX_BYTES = 2 * 1024
 const BASE64_FIELD_PATTERN = /^(?:content|data)Base64$/i
-const TRUNCATION_MARKER = "\n[truncated]"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -30,9 +31,21 @@ function base64ByteSize(value: string): number {
   return Buffer.byteLength(value, "base64")
 }
 
+function truncationMarker(shownCharacters: number, totalCharacters: number): string {
+  return `\n[truncated: showing ${shownCharacters} of ${totalCharacters} characters. `
+    + "Call this capability from execute_capability_script to read the full value and return the part you need.]"
+}
+
+/**
+ * Keeps one model-visible string within budget. The cut is always announced
+ * with the real size, because Code Mode scripts receive the untruncated
+ * payload (see invoke.ts `includePayload`) and can read the rest.
+ */
 function truncateModelString(value: string): string {
   if (value.length <= MAX_MODEL_VISIBLE_TEXT_CHARACTERS) return value
-  return `${value.slice(0, MAX_MODEL_VISIBLE_TEXT_CHARACTERS - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`
+  const markerLength = truncationMarker(MAX_MODEL_VISIBLE_TEXT_CHARACTERS, value.length).length
+  const shownCharacters = MAX_MODEL_VISIBLE_TEXT_CHARACTERS - markerLength
+  return `${value.slice(0, shownCharacters)}${truncationMarker(shownCharacters, value.length)}`
 }
 
 function sanitizeModelPayload(value: unknown): unknown {
@@ -80,6 +93,18 @@ function stringifyModelPayload(value: unknown): string {
   return JSON.stringify(value, null, 2)!
 }
 
+/** A route that returns a top-level `resourceLink` also gets the standard MCP `resource_link` content part. */
+function findResourceLink(payload: unknown): AgentToolContentPart | undefined {
+  if (!isRecord(payload) || !isRecord(payload.resourceLink)) return undefined
+  const link = payload.resourceLink
+  if (link.type !== "resource_link" || typeof link.uri !== "string" || typeof link.name !== "string") return undefined
+  return {
+    type: "resource_link", uri: link.uri, name: link.name,
+    ...(typeof link.mimeType === "string" ? { mimeType: link.mimeType } : {}),
+    ...(typeof link.size === "number" ? { size: link.size } : {}),
+  }
+}
+
 function findImagePayload(value: unknown, seen = new WeakSet<object>()): (Record<string, unknown> & {
   contentBase64: string
   mimeType: string
@@ -95,20 +120,15 @@ function findImagePayload(value: unknown, seen = new WeakSet<object>()): (Record
   return undefined
 }
 
-export function isKnownToolContentPart(value: unknown): value is AgentToolContentPart {
-  if (!isRecord(value) || typeof value.type !== "string") return false
-  if (value.type === "text") return typeof value.text === "string"
-  if (value.type === "image") {
-    return typeof value.data === "string" && typeof value.mimeType === "string"
-  }
-  return false
+export function isKnownToolContentPart(value: unknown): value is ContentBlock {
+  return ContentBlockSchema.safeParse(value).success
 }
 
-export function externalToolContent(result: unknown): AgentToolContentPart[] {
+export function externalToolContent(result: unknown): ContentBlock[] {
   if (isRecord(result) && Array.isArray(result.content) && result.content.every(isKnownToolContentPart)) {
     return result.content
   }
-  return [{ type: "text", text: JSON.stringify(result) }]
+  return [{ type: "text", text: JSON.stringify(result, (key, value) => key === "_meta" ? undefined : value) }]
 }
 
 export async function buildRestToolContent(payload: unknown): Promise<AgentToolContentPart[]> {
@@ -120,7 +140,8 @@ export async function buildRestToolContent(payload: unknown): Promise<AgentToolC
     type: "text",
     text: stringifyModelPayload(sanitizeModelPayload(payload)),
   }
-  if (!imagePayload) return [textPart]
+  const resourceLink = findResourceLink(payload)
+  if (!imagePayload) return resourceLink ? [textPart, resourceLink] : [textPart]
 
   const byteSize = Buffer.byteLength(imagePayload.contentBase64, "base64")
 

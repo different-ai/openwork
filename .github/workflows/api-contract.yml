@@ -1,0 +1,107 @@
+name: API Contract
+
+# Generates the public Den API contract from route source and validates it
+# with Spectral; no generated files are committed. The ruleset and the
+# warning baseline are documented in docs/api-style.md.
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Select API contract inputs
+    runs-on: ubuntu-latest
+    outputs:
+      affected: ${{ steps.inputs.outcome == 'success' && steps.inputs.outputs.fingerprint != '' && steps.inputs.outputs.affected || 'true' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Compare API contract inputs
+        id: inputs
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/build-inputs.mjs --target den-contract --base "$BASE_SHA" --head "$HEAD_SHA"
+
+  openapi-snapshot-and-lint:
+    name: Generate and validate the API contract
+    needs: scope
+    # A failed selector is not permission to drop contract/audit coverage.
+    if: ${{ !cancelled() && needs.scope.outputs.affected != 'false' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    # Importing the live app initializes Better Auth's OAuth resource registry,
+    # which needs a reachable database even though the snapshot itself never
+    # reads one (same pattern as ci-sdk.yml).
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_api_contract_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_api_contract_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-api..." --filter "@different-ai/openwork-workspace" --filter "@openwork/sdk"
+
+      - name: Generate the OpenAPI document and SDK from source
+        run: pnpm den:contract
+
+      - name: Upload generated API contract
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: den-api-contract
+          path: |
+            packages/docs/openapi.json
+            packages/sdk/src/gen/**/*.ts
+          if-no-files-found: error
+
+      - name: Prepare the audit route introspection database
+        run: pnpm --filter @openwork-ee/den-db exec node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
+
+      - name: Check audit route coverage
+        run: pnpm --filter @openwork-ee/den-api audit:coverage
+
+      - name: Lint the regenerated document with Spectral
+        if: ${{ !cancelled() }}
+        run: pnpm api:lint --json tmp/spectral-report.json
+
+      - name: Upload Spectral report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: spectral-report
+          path: tmp/spectral-report.json
+          if-no-files-found: warn

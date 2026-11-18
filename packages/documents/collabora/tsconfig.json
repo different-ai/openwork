@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "lib": ["DOM", "ES2022"], "module": "None", "types": [],
+    "strict": true, "skipLibCheck": true, "outFile": "dist/branding.js"
+  },
+  "files": ["branding.ts"]
+}

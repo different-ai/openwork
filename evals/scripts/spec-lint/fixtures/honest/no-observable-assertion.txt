@@ -1,0 +1,7 @@
+// path: proofs/org-default-model.proof.test.ts
+import { spec } from "@openwork/testkit";
+import { core } from "../worlds/core-web.ts";
+const test = spec.world(core);
+test("an owner sets the default model", async ({ user }) => {
+  await user.click({ role: "button", label: "Save" });
+});

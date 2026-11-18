@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +8,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
 const repoRoot = resolve(desktopRoot, "../..");
 const packagePath = resolve(repoRoot, "packages", "computer-use", "native");
-const iconPath = resolve(desktopRoot, "resources", "icons", "icon.icns");
+// A pointer drawn in the OpenWork logo's 3D line style: System Settings lists
+// this helper right next to OpenWork, so the two rows must not look the same.
+const iconPath = resolve(desktopRoot, "resources", "icons", "computer-use.icns");
 const productName = "ComputerUse";
 const helperExecutableName = "ComputerUse";
 const helperAppName = "OpenWork Computer Use.app";
@@ -113,18 +116,84 @@ function infoPlist() {
 `;
 }
 
-if (process.platform !== "darwin") {
-  process.stdout.write(JSON.stringify({ ok: true, skipped: true, reason: "computer-use-helper-is-macos-only" }, null, 2) + "\n");
+/** This PC: the Windows helper, built with the .NET Framework compiler every
+ * Windows 10/11 install carries, so it needs no SDK. electron-builder signs it
+ * with OpenWork's identity like openwork-dictation.exe. A missing compiler is
+ * not fatal: This PC then reports the helper missing. */
+function prepareWindowsHelper() {
+  const source = resolve(repoRoot, "packages", "computer-use", "windows", "ComputerUse.cs");
+  const executable = join(outDir, "openwork-computer-use.exe");
+  const fingerprintPath = join(outDir, "openwork-computer-use.sha256");
+  const sourceHash = createHash("sha256").update(readFileSync(source)).update(readFileSync(fileURLToPath(import.meta.url))).digest("hex");
+  if (!force && existsSync(executable) && existsSync(fingerprintPath) && readFileSync(fingerprintPath, "utf8").trim() === sourceHash) {
+    process.stdout.write(JSON.stringify({ ok: true, skipped: true, executable }, null, 2) + "\n");
+    return;
+  }
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const framework = ["Framework64", "Framework"].map((dir) => join(systemRoot, "Microsoft.NET", dir, "v4.0.30319"))
+    .find((dir) => existsSync(join(dir, "csc.exe")));
+  const result = framework
+    ? spawnSync(join(framework, "csc.exe"), [
+      "/nologo", "/optimize+", "/target:exe", "/platform:anycpu", `/out:${executable}`,
+      ...["System.Core.dll", "System.Drawing.dll", "System.Web.Extensions.dll"].map((name) => `/reference:${join(framework, name)}`), source,
+    ], { stdio: "inherit" })
+    : { error: { message: "The .NET Framework compiler is missing" } };
+  if (result.error || result.status !== 0) {
+    const message = `Windows computer use helper was not built (${result.error?.message ?? `status ${result.status}`}); This PC will report it missing.`;
+    process.stderr.write(process.env.GITHUB_ACTIONS ? `::warning::${message}\n` : `${message}\n`);
+    return;
+  }
+  writeFileSync(fingerprintPath, sourceHash, "utf8");
+  process.stdout.write(JSON.stringify({ ok: true, executable }, null, 2) + "\n");
+}
+
+if (process.platform === "win32") {
+  mkdirSync(outDir, { recursive: true });
+  prepareWindowsHelper();
   process.exit(0);
 }
 
-if (!force && existsSync(join(appPath, "Contents", "MacOS", helperExecutableName))) {
+if (process.platform !== "darwin") {
+  process.stdout.write(JSON.stringify({ ok: true, skipped: true, reason: "computer-use-helper-is-macos-and-windows-only" }, null, 2) + "\n");
+  process.exit(0);
+}
+
+// A cached helper is usable only for these exact native sources and target.
+// SwiftPM handles incremental compilation when the fingerprint changes.
+const fingerprint = createHash("sha256").update(process.arch);
+function hashSources(directory) {
+  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const source = join(directory, entry.name);
+    fingerprint.update(source.slice(packagePath.length));
+    if (entry.isDirectory()) hashSources(source);
+    else fingerprint.update(readFileSync(source));
+  }
+}
+hashSources(join(packagePath, "Sources"));
+for (const source of [join(packagePath, "Package.swift"), join(packagePath, "Package.resolved"), fileURLToPath(import.meta.url), iconPath]) {
+  if (existsSync(source)) fingerprint.update(readFileSync(source));
+}
+const sourceHash = fingerprint.digest("hex");
+const fingerprintPath = join(appPath, "Contents", "Resources", "source.sha256");
+const cachedHash = existsSync(fingerprintPath) ? readFileSync(fingerprintPath, "utf8").trim() : "";
+if (!force && cachedHash === sourceHash && existsSync(join(appPath, "Contents", "MacOS", helperExecutableName))) {
   process.stdout.write(JSON.stringify({ ok: true, skipped: true, appPath }, null, 2) + "\n");
   process.exit(0);
 }
 
-run("swift", ["build", "--package-path", packagePath, "-c", "release", "--product", productName], { stdio: "inherit" });
-const binPathResult = run("swift", ["build", "--package-path", packagePath, "-c", "release", "--show-bin-path"]);
+const baseBuildArgs = ["build", "--package-path", packagePath, "-c", "release"];
+let buildArgs = baseBuildArgs;
+const defaultBuild = spawnSync("swift", [...buildArgs, "--product", productName], { encoding: "utf8", stdio: ["inherit", "inherit", "pipe"] });
+if (defaultBuild.error) throw defaultBuild.error;
+if (defaultBuild.status !== 0) {
+  // SwiftPM 6.4+ defaults to the swiftbuild system, which fails to initialise
+  // on Command Line Tools-only machines ("Unknown error parsing property list").
+  // The native build system still works there, so retry with it once.
+  process.stderr.write(`${defaultBuild.stderr ?? ""}\nswift build failed with the default build system; retrying with --build-system native.\n`);
+  buildArgs = [...baseBuildArgs, "--build-system", "native"];
+  run("swift", [...buildArgs, "--product", productName], { stdio: "inherit" });
+}
+const binPathResult = run("swift", [...buildArgs, "--show-bin-path"]);
 const binDir = binPathResult.stdout.trim();
 const builtExecutable = join(binDir, productName);
 if (!existsSync(builtExecutable)) {
@@ -140,6 +209,7 @@ copyFileSync(builtExecutable, join(appPath, "Contents", "MacOS", helperExecutabl
 if (existsSync(iconPath)) {
   copyFileSync(iconPath, join(appPath, "Contents", "Resources", "AppIcon.icns"));
 }
+writeFileSync(fingerprintPath, sourceHash, "utf8");
 chmodSync(join(appPath, "Contents", "MacOS", helperExecutableName), 0o755);
 signHelperApp();
 

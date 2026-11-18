@@ -1,6 +1,234 @@
 ---
 title: "Changelog"
+description: "OpenWork release notes: new features, improvements, and bug fixes."
+"og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 18th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.68](https://github.com/different-ai/openwork/compare/v0.18.67...v0.18.68): Chat and cloud work recover more reliably
+
+  - **Chat stays readable and recoverable.** Conversations no longer jump as earlier messages load, long agent questions scroll in their own space, and replies recovered after a dropped connection render as one answer. Sign-in requests show a Connect card, and background helpers stay visible in the Agents list.
+  - **Workbot and cloud computer tasks recover faster.** Slack tasks retry brief runner interruptions; Workbot replaces stuck computers sooner, keeps command results through service restarts, and moves large files directly between Files and a computer. Its Android message box also stays above the keyboard.
+  - **Admins get clearer oversight and usage controls.** New Computer fleet and Runner fleet pages show cloud capacity and computers; members can review their own AI Gateway usage, limits, and model prices. Admins can choose TrueFoundry models and assign spend limits to invited people before they join.
+  - **Organization setup and connected work are more dependable.** Configuration imports now handle a whole organization in one run, reuse prior answers, and carry built-in connections. For self-hosters, API-key limits are configurable and Terraform deployments can opt into an AI Gateway. Connection sign-ins, provider permissions, and SCIM account changes are more carefully checked.
+  - **Everyday desktop work gets useful fixes.** Right-click file paths in chat for file actions, see web images inline, open installed Windows apps through the agent, and read Japanese Excel cell text without phonetic readings. Diagnostics is simpler, disk-full saves explain the problem, and the installed desktop app is smaller.
+  - **Some familiar controls have moved or changed.** Ollama setup now lives under AI Providers; the Network check and Settings' Discord link are gone. Packaged desktop builds keep the debugging port closed by default, and team settings now use horizontal tabs.
+
+</Update>
+
+<Update label="November 13th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.67](https://github.com/different-ai/openwork/compare/v0.18.66...v0.18.67): AI Gateway capabilities are now available to every organization
+
+  - **More AI Gateway features are available to every organization.** Auth & Security, config import and export, AI Gateway API keys for other tools, custom OpenAI-compatible providers, and Smart Routers are now available to every organization, including self-hosted deployments; their completed-rollout switches are gone. TrueFoundry is also available directly in the provider picker. Organizations that had not enabled Auth & Security now have 30-day session limits and admins confirm their identity after 15 minutes for sensitive changes. Claude prompt caching also lowers the cost of long sessions through AI Gateway.
+  - **Admins have clearer controls for roles and computers.** Admins can assign built-in or custom roles to people or teams, and members can disconnect signed-in computers and set what other devices may do on each one. New sandbox organizations make joiners super admins by default. The My Sessions pages have been removed from Den, and a member's Workbot cloud computers are deleted when they leave an organization.
+  - **Workbot and remote tasks recover more cleanly.** Workbot can hand over apps as cards, recovered tasks no longer show as failed, and remote tasks can bring questions and computer-use approvals back to the chat that started them. Unresponsive cloud computers can be replaced, and idle ones pause again.
+  - **Desktop chats and setup are more dependable.** File actions find files inside project subfolders, OpenCode v2 web search cards show their results, OpenWork Models no longer appear missing from the model catalog, and remotely launched chats keep their model choice. Claude Code sign-in can continue in your browser, and desktop Automations run with models that have no variant.
+  - **Workbot Documents can play audio and video.** Admins no longer configure a Workbot step limit or separate mail and chat sources; access follows the Google Workspace, Microsoft 365, or Slack connector they allow. OpenWork-built interactive views are now called Artifacts throughout chat, the library, and sharing.
+  - **Website visitors and admins have new setup guidance.** The website adds an EU sovereignty guide and checklist, and the docs add a knowledge-work cost benchmark and an OIDC sign-in guide. Connector setup also shows the callback URL needed by OAuth providers.
+
+</Update>
+
+<Update label="November 10th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.66](https://github.com/different-ai/openwork/compare/v0.18.65...v0.18.66): Workbot is easier to follow on desktop and phone
+
+  - **Workbot is simpler to navigate.** Chats stay within reach in the desktop sidebar and phone drawer. Documents has one navigation, Apps opens a simple app list, and the chat no longer covers other pages; an open document has an **Ask Workbot** action to bring it into your next message. The Tasks tab and the phone assistant profile are gone.
+  - **Workbot keeps tasks and results easier to follow.** Browser work stays in one chat card from start to finish, with a full preview only when you open it. Files Workbot makes appear as preview cards that open beside chat or full screen on phones. Remote tasks show their real state, the newest messages stay visible, and the chat stays responsive in longer conversations.
+  - **Workbot chat feels better on phones.** On iPhone, the chat now uses the full screen with a softly blurred header and message box; typing no longer makes the conversation jump. Connector activity is easier to recognize, and replies have a softer look and warmer wording. Add to Home Screen opens Workbot full screen.
+  - **Desktop chats and computer work are more dependable.** In Settings › Preferences, choose whether Enter sends a follow-up immediately or queues it until the agent finishes; you can also dismiss an agent's question and find more session actions in Cmd+K (the Settle action is no longer there). Saved images now show inline, the Feed opens faster and keeps today's work under Today, and browser tabs are no longer capped at 12. Mac computer use handles file panels and windows on other desktops more reliably, and screen recordings can include its cursor and controls.
+  - **For admins and teams connecting other tools: billing and connected work are clearer.** Admins can view invoices without granting access to the billing portal, and can start custom roles from a Billing manager permission set. CompactifAI is available as an AI Gateway provider, identity-provider provisioning can restore removed members, and Workbot now respects an admin's blocked connections in chat. When standard tools are enabled, Claude Code and other supported MCP clients can again reach OpenWork's own operations.
+  - **The guides explain setup and recovery more clearly.** New documentation covers setting up an app once for an organization, native Google Workspace and Microsoft 365 integrations, per-member TrueFoundry keys, and backing up desktop conversation history. Shared App pages and public App links are also kept out of search results.
+
+</Update>
+
+<Update label="November 5th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.65](https://github.com/different-ai/openwork/compare/v0.18.64...v0.18.65): Mac computer use can work across apps and hand files back
+
+  - **Mac computer use can work across apps and return your files.** Agents can use real mouse and keyboard input in more apps, keep several apps open, move or copy files between them, and save exports or screenshots. The computer session card lists the files made for you. File moves and copy/paste are allowed without a prompt by default; admins can require approval or block them.
+  - **Computer work is easier to follow and recover.** The live computer view is now a compact picture-in-picture with controls on hover. Mac computer use handles more app shortcuts, fields, dialogs, changing windows, and interruptions, and can wait while you answer a macOS prompt. Once computer use is on in a chat, canvas typing and app scripts no longer need repeated approval unless organization rules require it. Browser activity appears as simple “Used browser” steps instead of a computer session card, and the developer-only “Reset notifications” button is gone.
+  - **Apps and Workflows load and recover more smoothly.** Reopened Apps can show saved data right away, slow reads are not needlessly repeated, and reads from several sources can run together. Stored App data clears when you lose access to a connection or plugin. Asking for an artifact now creates a reusable App instead of a local HTML page. You can save Workflows with a name, find them in My Library, and see failures explained in plain language.
+  - **Chat and connected work are more dependable.** Agent-created conversations with a chosen model start correctly, organization models appear before you create a workspace, chat file links find files using their surrounding context, and pinned conversations survive desktop crashes. OpenCode v2 now migrates chat history at startup; the old history-copy progress controls are gone.
+  - **For admins: clearer organization controls.** Owners can assign a Super admin, SSO sign-in works across organizations more reliably, the Control Center shows skill and connector sharing numbers, and newly created sandbox organizations get the current included model choices.
+
+</Update>
+
+<Update label="November 3rd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.64](https://github.com/different-ai/openwork/compare/v0.18.63...v0.18.64): Make agent work smoother across chat, browser, and Apps
+
+  - **Your agent can do more in the browser and with files.** Agents can use a website's own tools and upload larger files to chats. When computer use is available, an agent can type a password or code you provide after you confirm where it goes. Browser work is less disruptive, and file-sharing approvals no longer time out while you decide.
+  - **Apps and Artifacts get quicker to open and easier to manage.** Apps can show saved data while they load, reopen without a loading flash, and stop waiting on Apps you have left. The Artifacts page makes it easier to browse and keep your place, and people who manage an artifact can delete it there.
+  - **Remote tasks and helpers are easier to follow.** Tasks sent to your desktop start sooner, stay in the Agents list after follow-ups, and work with the title-bar Back and Forward buttons. Chat also makes helper questions, approvals, and finished work easier to find.
+  - **For admins: more control over connected work.** When enabled, admins can manage browser upload permissions and control computer use, scripting, and folder access; members can remember consent for a website and folder. Members can add a personal MCP server from the desktop Library when that option is enabled, and admins can add Grafana Cloud as a connector.
+  - **Workbot and connected services handle more everyday tasks.** When enabled, Workbot can read PDFs and Office files from Drive, and agents can read text from Google Drive PDFs up to 50 MB. When enabled, agents can also create recurring Google Calendar meetings and work with Outlook attachments; they can book Teams meetings and create formatted Gmail and Outlook drafts.
+  - **Some familiar behavior has changed.** The desktop Calendar is no longer available (Automations and Workbot's Calendar remain); the popped-out browser is now a real resizable window, and the sidebar opens on Workspaces by default.
+
+</Update>
+
+<Update label="October 26th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.63](https://github.com/different-ai/openwork/compare/v0.18.62...v0.18.63): Bring Claude conversations into OpenWork
+
+  - **Bring your Claude history with you.** Import Claude chats and Claude Code sessions into a workspace from Settings → Import, where they become regular OpenWork chats.
+  - **Work with connected files on OpenCode v2.** Bring Google Drive, OneDrive, and SharePoint files into your workspace and save edits back; attach workspace files to Gmail drafts and replies, or upload them to Google Drive. OpenWork asks you to approve each transfer.
+  - **Use computer use on Windows and set it up once.** Windows desktop users can use computer use with apps on This PC. Set it up in Settings → Computer use; chats no longer have a computer status button, and the browser has one button in the side rail.
+  - **Desktop work keeps its place and gets easier to start.** The window reopens at its previous size and position, Cmd+N (Ctrl+N) starts a session even while you type, and organization switching refreshes your skills, connected apps, and models. Verified sign-in no longer waits for organization discovery to finish. Show model reasoning now starts off; turn it on in Settings → Preferences to see readable reasoning.
+  - **For admins: completed features are now available by default, with clearer controls.** Local AI providers, Automation settings, agent-assisted connection removal, Workbot search, improved usage-limit cards, task-preserving sign-in, Claude imports, and organization Prompts are available without a special setup; retired OpenCode Zen models are no longer offered. Automations are on by default, with separate Desktop and Cloud controls for organizations; sandbox join links add admins by default, with a choice to add members instead.
+  - **Workbot, models, and self-hosted setups are more dependable.** Workbot handles brief sign-in interruptions and rebuilds outdated computers when resumed. OpenWork Models adds GPT-6.1 Terra, Kimi K3.1 Pro, and DeepSeek V4.1 Flash; self-hosted desktops no longer update beyond the server's supported release.
+
+</Update>
+
+<Update label="October 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.62](https://github.com/different-ai/openwork/compare/v0.18.61...v0.18.62): Work with OneDrive and SharePoint files in OpenWork
+
+  - **Work with OneDrive and SharePoint files.** Agents can search, open, edit, and save Word, Excel, and PowerPoint files, including files shared with you, once an admin enables the required permission.
+  - **Workbot's Browser and Computer views connect again.** If a computer needs an update, Workbot rebuilds it when you open the view; it avoids rebuilding while a task is running.
+  - **Sign-in and connected admin tools are safer.** The desktop app now blocks unsafe non-web links from remote MCP sign-in requests. For teams connecting OpenWork to other AI tools, Den admin changes require write access, scripts cannot call admin tools, and credential data cannot be read through `den_query`.
+  - **For admins and self-hosters: Den gets security and recovery fixes.** Self-hosted Den deployments should update for recent Next.js security fixes, and opt-in administrator permission recovery now works with common database encodings. Operators can also enable hashed sign-in session tokens without signing anyone out.
+
+</Update>
+
+<Update label="October 23rd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.61](https://github.com/different-ai/openwork/compare/v0.18.60...v0.18.61): Keep agent work in view while you work elsewhere
+
+  - **Keep agent work in view while you work elsewhere.** Desktop users can pop the computer view and floating browser into their own windows above other apps, and browser full screen now fills the display.
+  - **Dictate messages and use workspace commands again.** On macOS and Windows, dictation shows your words as you speak, stops when you click the mic again, and keeps words across pauses. On OpenCode v2, `/` lists workspace commands and skills, and picking one runs it.
+  - **Follow Workbot's browser work and longer tasks.** Workbot shows browser activity live and links to pages it opened. Background tasks can pass files and read just the part they need, while longer scripts and documents can finish without a cut-off reply being mistaken for completed work.
+  - **Invitations and connections take clearer paths.** Invited teammates can join their workspace during sign-in, invitation emails explain who invited them and where to get help, and completed MCP sign-ins no longer appear to fail. Teams messages and Outlook meeting invitations now wait for your confirmation.
+  - **For admins: organization and billing details are clearer.** Compact organization rows, recent organizations, and week-over-week summaries make admin pages easier to scan. The Free plan covers up to five users, and pending invitations count until they expire.
+  - **For self-hosters: web access and standalone installs are more predictable.** `openwork-server web` answers only its own host names unless you add proxy names with `--allowed-hosts`. Standalone server and bootstrap installs require Node.js 24.x (24.22.1 or newer), and the bootstrap installer downloads a supported runtime when needed.
+
+</Update>
+
+<Update label="October 22nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.60](https://github.com/different-ai/openwork/compare/v0.18.59...v0.18.60): Move older OpenWork installs to OpenCode v2 in the background
+
+  - **Older installs move to OpenCode v2 in the background.** Existing installs still using OpenCode v1 are moved over automatically, with a backup made first so your chats are kept. Windows installers also carry less duplicate engine data, and Windows can identify OpenWork's signed app files.
+  - **Computer use is more capable and predictable.** For Mac users, the agent can script apps directly and keeps working while you use your computer; Take over and Stop return control, and Continue resumes the task. Workbot can also script supported desktop apps. Browser pages keep a steady desktop, tablet, or phone size while the panel changes, and forms take fewer steps. When available, you can dictate into OpenWork or Workbot.
+  - **Chat can work with more of your existing tasks and connections.** Type `#` to add another task as context, ask the agent to create or move sidebar groups, and find connected actions with everyday wording. You can finish or repair an API-key connection in chat without sharing the key with the agent, and OpenWork Cloud tools work again in older desktop versions.
+  - **Documents and first launches are more dependable.** Closing an edited document now gives clear save, discard, or cancel choices, and reloading or reopening it preserves your editing session and unsaved work. Workbot can open a requested document beside chat, explain why a file could not open, and show or rebuild a computer that will not connect. Fresh desktop installs can load built-in tools even if the package registry is unavailable; slow Windows sign-in and first launch no longer hide recovery options.
+  - **For admins: team and organization controls are clearer.** Platform administrators can manage feature access per organization member and, when enabled, grant organizations Web access or extra Free Auto usage. Admins can finish connector setup after a check fails, remove connectors, and save team-role changes reliably; Workbot settings show one default model and its availability. When available, Workbot can guide eligible people from free Auto to paid Luna without losing the conversation.
+  - **Website visitors can find practical AI governance guidance.** The expanded enterprise pages explain governing employee AI and planning an OpenWork rollout.
+
+</Update>
+
+<Update label="October 20th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.59](https://github.com/different-ai/openwork/compare/v0.18.58...v0.18.59): Read, edit, and discuss documents in Workbot
+
+  - **Work on documents without leaving Workbot.** When Documents is enabled for your workspace, preview Drive files before choosing Edit when editing is enabled, keep chat open beside a document, and continue your conversation with the file in view. Google Docs, Sheets, and Slides stay in Google and save to the original; on OpenWork Cloud, Office files can use an editor in your own workspace when enabled.
+  - **AI models and providers work more smoothly across OpenWork.** Desktop users can use existing Azure Foundry and custom OpenAI-compatible providers on OpenCode v2, see organization model changes in the picker when enabled, and find the same available models in Settings and shortcuts. When AI Gateway access is enabled, cloud agents can use supported models assigned by their organization.
+  - **Admins can check setup before work gets stuck.** Settings › Diagnostics brings desktop startup, AI provider, connector, and deployment-service checks together. Google Workspace settings can also identify APIs an admin needs to turn on, and Workbot explains when an organization needs an AI provider before it can answer.
+  - **Chat keeps files, prompts, and agent work on track.** Files saved from chat go to the opened folder, including files created in a conversation's own folder; links with spaces open correctly, failed writes are labeled as failed, and messages in side chats are easier to start. OpenCode v2 history copies can resume after restart; if a chat is too large to copy whole, its largest outputs or attachments stay in the original history.
+  - **Team and Workbot tasks have clearer paths.** When enabled, members can connect assigned accounts in Workbot; members with team-management access can open the right team's settings, and teams can follow tasks started on another computer. When available, admins can set team or organization defaults for new desktop chats and provider-specific spend limits, and inspect Library use and free Auto conversion insights. Workbot's link-only sharing is gone; authorized invitation emails remain available in Den.
+  - **Self-hosting and connected tools get practical fixes.** Self-hosters get updated AWS, Google Cloud, and Azure deployment options and clearer service checks. MCP clients can identify OpenWork and receive clearer tool guidance, and the website's Trust Center links now lead to the hosted Trust Center.
+
+</Update>
+
+<Update label="October 13th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.58](https://github.com/different-ai/openwork/compare/v0.18.57...v0.18.58): Run OpenWork Web on your own self-hosted deployment
+
+  - **Self-host OpenWork Web and team tools on AWS.** For self-hosters: run OpenWork Web with sandboxed browser workspaces, and deploy Slack, Workbot, and Automations that run without a desktop. AWS deployments can use existing networks and load balancers, and can connect to an existing cluster or runner fleet.
+  - **Connect OpenCode 2 to your organization.** If you use OpenWork from OpenCode: the `opencode-openwork` plugin brings in your organization's AI Gateway models, tools, and skills after sign-in, without the desktop app. You can also upgrade desktop chats to OpenCode 2 with a backup first; its conversations can use the built-in browser and discover connected tools reliably.
+  - **Admins get clearer controls and reporting.** Organization Analytics is back, with restored usage and workflow history where available. When enabled, admins can also report on skills, plugins, and connectors, set member, admin, and team permissions, and choose a default model for cloud agents; Audit Logs now cover more organization activity.
+  - **Chat and daily work recover more smoothly.** Pasted text and images stay at the cursor, reopened Apps load their data, migrated chats with a missing agent can answer again, and OpenWork keeps the Working status visible during quiet stretches. Ollama keeps multiple selected models and their thinking choices; Drive uploads respect your chosen Google account.
+  - **Calendar, Workbot, and connections do more.** When Calendar features are enabled, add or edit Automations alongside meetings; Workbot can recover stopped tasks. When enabled, admins can check when connections were last verified, and compatible MCP clients can subscribe to remote-session updates.
+  - **Some familiar pages and searches have changed.** Organization dashboards and admin-assigned dashboards in Desktop are gone, while personal dashboards remain. “Search sessions” now searches session titles and workspace names, not message text; for organizations with OpenWork Models, Auto is replaced in the model picker by GPT-6 Luna.
+
+</Update>
+
+<Update label="October 7th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.57](https://github.com/different-ai/openwork/compare/v0.18.56...v0.18.57): Move your Claude Cowork setup to OpenWork with one prompt
+
+  - **Move your Cowork setup with one prompt.** Ask the agent you already use to follow `openworklabs.com/migrate.md` to bring your Claude Cowork and Claude Code plugins and skills into OpenWork. Re-running picks up changes without duplicates, reuses connections your organization already has, and explains when a connection still needs setup.
+  - **Give each teammate their own connector key.** For admins: external connections can use individual keys instead of one shared key. Members can add or replace their key from the Library or Den, using a masked entry form; desktop chat can guide them to add one when needed. For admins who use LiteLLM, connecting your own proxy is also available as a preview on request.
+  - **Auto and Apps are available to more organizations.** Free Auto no longer needs an organization-by-organization rollout, and every organization can build Apps without a platform admin enabling them. Auto can also read images you attach or that tools return, and signed-out Linux desktops no longer need a system keyring to use it.
+  - **Self-hosting gains a Google Cloud Run starting point.** For self-hosters: starter deployment files and instructions cover the Den API, Den web app, and migration job on Cloud Run. Old self-hosted Den settings that had no effect are no longer read.
+  - **Everyday work is clearer and more dependable.** Your first organization message now gets an answer before you have a workspace; videos made in a conversation's work folder play in chat; and stopping a run no longer leaves a bold “Step interrupted” row. Agent-led installs open on Setup complete without requiring Node first, and teammate invites survive workspace claiming. Model names and provider details are clearer. Workbot uses one quiet activity line and can react with emoji, while Slack runs wait for slow desktop work instead of reporting that they are stuck.
+  - **Some desktop options have changed or are gone.** Workspace sharing and remote-workspace connections have been removed. Organization Analytics is gone, while usage reporting remains in AI Gateway. Plugins now come from your organization's Library instead of being installed into workspaces, and the “From GitHub” plugin import is gone. The Library no longer has a card view. Automation choices now say Desktop or Cloud, and computer use has been removed from that editor.
+
+</Update>
+
+<Update label="October 3rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.56](https://github.com/different-ai/openwork/compare/v0.18.55...v0.18.56): Find shared connectors that still need your sign-in
+
+  - **Shared connectors are easier to find.** The Library now has a “Needs sign-in” filter for connectors shared with you that still need your sign-in. In Den, a sidebar dot also points out when something is waiting on you.
+  - **Self-hosted first runs are faster.** For self-hosters: `openwork-server web` opens your first folder in about a second on a fresh install, instead of taking 10+ seconds on Windows. It also no longer fails with “resource busy or locked” while installing the engine.
+  - **Side chats no longer crowd the sidebar.** Their chips have been removed from session rows, leaving more room for session names. Open a session to see its side chat.
+
+</Update>
+
+<Update label="October 3rd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.55](https://github.com/different-ai/openwork/compare/v0.18.54...v0.18.55): Workflows and artifacts can use your connected tools
+
+  - **Connected tools work in Workflows and artifacts.** Live artifacts, on-demand Workflows, and scheduled Automations can now use connection tools and perform write actions. Large tool inputs, such as Notion database queries, also work.
+  - **Work sent to your desktop reports back.** If you use OpenWork from Slack or another connected app, you can now follow a desktop task's progress, read its conversation, send a follow-up, or stop it. Slack reports the result in the original thread, and tasks appear as normal chats using your chosen model.
+  - **Auto works in more situations.** Eligible organization members can use Auto alongside other models, and signed-out Auto is available to OpenWork builds and compatible clients. Deployments can disable Auto while keeping other models available.
+  - **Chat and the built-in browser are clearer and more dependable.** Model choices explain why a model is unavailable; OpenCode v2 now shows a Connect card when a service needs sign-in. The browser explains when a page cannot connect and offers Reload, and HTML file previews are isolated from the rest of OpenWork.
+  - **For admins and self-hosters:** Admins can choose “Only models you provide,” enable Slack progress updates, and review free Auto usage. Self-hosters can deploy with draft Terraform modules for AWS ECS Fargate or Kubernetes, including an existing ECS cluster.
+  - **Other changes:** OpenWork-built items are now called artifacts. Browser login sync and its setup controls are gone; sign in directly in the built-in browser. Organization-managed Dashboards are disabled by default and must be enabled per organization.
+
+</Update>
+
+<Update label="September 25th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.54](https://github.com/different-ai/openwork/compare/v0.18.52...v0.18.54): Enterprise sign-in and version pinning are back, plus Amazon Bedrock and model shortcuts
+
+  - **Organization sign-in and allowed versions work again.** OpenWork Enterprise and OpenWork Cloud desktops once again ask people to sign in to their organization before they start working, and desktop updates skip any version an admin removed from **Allowed desktop versions**. Other desktop policies stay saved but are not enforced on the desktop while they are redesigned.
+  - **Amazon Bedrock in AI Gateway.** For admins: add Amazon Bedrock and Amazon Bedrock (OpenAI) with an AWS region and access keys, and reuse the saved keys for the second one. Anthropic effort choices are kept through the gateway.
+  - **Switch models with a key.** In Settings › Keyboard shortcuts you can bind a key to a saved model with its reasoning level and Fast. ⌃⇧F (Ctrl+Alt+F on Windows and Linux) turns Fast on or off, and the model name shows "· Fast" while it's on.
+  - **Chat keeps its place.** Editing a message while a reply is running replaces it instead of queueing the edit. Conversations stay in their folder when an agent changes directory, and questions and approvals no longer disappear. You can switch between OpenCode engines from the command palette and choose whether to copy older chats across. Agent tool work is summarized by what it did instead of raw tool names.
+  - **Simpler connector setup.** For admins in OpenWork Cloud: API-key, custom sign-in, Google Workspace and Microsoft 365 connectors use the new setup flow and can be edited in place, and Plugins has clearer filters. Apps like Claude Code, Codex and Cursor can connect to OpenWork Connect without registering first, failed sign-ins explain what to do next, and the MCP docs have one-click Cursor and VS Code install links.
+  - **Also in this release.** Windows installers are published again. Updating no longer fails with a checksum error after a release is re-run. Update controls in Settings are more compact, a second OpenWork profile no longer stops the first one's engine, and the website shows OpenWork's completed SOC 2 Type II audit.
+
+</Update>
+
+<Update label="September 24th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.52](https://github.com/different-ai/openwork/compare/v0.18.50...v0.18.52): Manage your Library from the desktop, find anything from one + menu, and a rebuilt AI Gateway
+
+  - **Your Library works fully on the desktop.** You can now add, share, edit and delete skills, connectors and plugins without leaving the app. A new Connectors tab lists your connectors, adding one starts from a catalog with service logos, and an MCP server's address is checked before it's saved. Each item's page has **Chat**, which starts a task with that item ready to use, and **Share** on items you own. When a skill shapes an answer, chat names the skill. Signed out, the Library shows one clear **Sign in to OpenWork Cloud** button instead of an "Add to library" button that did nothing. Lists also load faster.
+  - **One + menu in the composer finds everything.** The paperclip and tools buttons are now a single **+** menu that opens on a search across your files, skills, connectors, plugins and commands. It still finds what you meant when you make a typo ("hubsopt" finds HubSpot). Attaching a file is the first option, or press ⌘U (Ctrl+U on Windows and Linux).
+  - **Usage limits are clearer.** When you reach your organization's usage limit, the chat says which limit you hit and when it resets, and you can ask for more right there. The account menu shows how much of each limit you have left, and the new Settings › Usage page has the details. The chat no longer also shows a misleading "too many requests" error under the limit.
+  - **AI Gateway is rebuilt and available to every organization.** For admins: AI Gateway is now a regular page in the sidebar. Add a provider from a catalog, then set its key, who can use it and which models in one form. Overview shows who spends what and on which models, with a page for each person. Limits lets you cap spend per day, week or month for everyone, a team or one person, and you can undo a deleted limit. Users & Teams shows everyone's providers, limits and last 31 days of spend. Mistral is now supported. Members can sign in to Gemini and Claude on Google Cloud with their own Google account from the new Models section of My Library, which replaces the old My Model Connections page.
+  - **Connectors and plugins are simpler to manage.** For admins in OpenWork Cloud: add a connector in a few steps, choose whether each person signs in or one account is shared by everyone, and pick which teams get it. **Add any MCP** adds a server that isn't in the catalog, or you can paste its address into the search. Manage › Plugins lists every plugin with who has it. You can create one and give it to teams right there, then search by name or filter by team or person. Removing a connector or plugin now asks first, and switching a connector to one shared account warns you before it signs you out. Owners can also approve their self-hosted OpenWork web address in Org settings so members can sign in there, even if they belong to several organizations.
+  - **Also in this release.** The first time you click a link, OpenWork asks whether to open it in OpenWork or your usual browser and can remember your choice. You can change it later in Settings › Preferences › Browser, or right-click a link to choose once. Session search and notifications sit next to the OpenWork name at the top of the sidebar, and window controls look native on macOS, Windows and Linux. The built-in browser no longer has a Suspend button. After you sign in, Settings › AI providers works right away, even before you create your first workspace. If you use OpenWork from Claude Code, Cursor or Codex, agents can update shared skills. When a long document or email is cut short, they're told the full length and how to read the rest.
+
+</Update>
+
+<Update label="September 22nd" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.50](https://github.com/different-ai/openwork/compare/v0.18.49...v0.18.50): Run OpenWork on your own server with one command
+
+  - **Self-host OpenWork with one command.** For self-hosters: `npm i -g openwork-server && openwork-server web` now runs the full OpenWork web app on a home server or VPS. It downloads the matching engine on first run and keeps its access tokens across restarts, and `npm i -g openwork-server@latest` updates it. Before, you had to clone and build the repo, install the engine yourself, and recreate tokens after every restart.
+  - **Connecting an account in chat no longer gets stuck.** When the agent needs you to connect a service, you now always get a clear card to connect or skip, with **Try again** if sign-in doesn't finish. Before, chat could wait forever on "Checking connection request…".
+  - **Chat replies are simpler.** Creating or sharing a skill, asking for a mockup, being asked for an environment variable, and browsing connectors now reply in plain text instead of embedded cards. The connection card is the only one that stays.
+  - **Your email stays out of the sidebar.** The account row now shows your name and "OpenWork Cloud" instead of your email address. Your email is still at the top of the account menu.
+  - **If you use OpenWork from Claude Code, Cursor, or Codex:** agents can now list your organization's skills and open any of them directly. Before, they had to guess search keywords, so organization skills often went unused.
+  - **Clearer pricing everywhere.** The website, docs, and sign-up now all show the same plans: Free, Team at $10 per seat per month, and Enterprise at $40 per user billed annually, with Cloud Computer and OpenWork models as add-ons. The website and docs also have refreshed branding.
+
+</Update>
+
+<Update label="September 21st" tags={["🐛 Bug Fixes", "🚀 New Features", "🏗️ Refactoring"]}>
+
+  ## [v0.18.49](https://github.com/different-ai/openwork/compare/v0.18.48...v0.18.49): Agent sessions recover more reliably and provider connections stay consistent
+
+  - Conversations now reopen and continue more reliably, with history pages filling correctly and background streaming preserved.
+  - Mobile chat is easier to use, with steadier submission, scrolling, keyboard, composer, and sidebar behavior.
+  - Provider connections and cloud workspace startup now handle credentials, readiness, and recovery more reliably.
+  - Removed custom agents and added clearer linked task references and alpha build information.
+
+</Update>
+
 <Update label="September 9th" tags={["🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.44](https://github.com/different-ai/openwork/compare/v0.18.43...v0.18.44): Sessions preserve live progress and drafts
@@ -42,7 +270,7 @@ title: "Changelog"
   - The Working indicator now tells the truth: it stops when a run errors or the engine is unreachable, and shows minutes once a run passes the first hour.
   - Sessions reconcile more cleanly — completions are detected while you're working elsewhere, queued messages send even when the session is out of view, and archiving works from any workspace.
   - Cloud providers now connect using the credentials saved on your desktop, and Google Workspace retrieval is more resilient.
-  - OpenWork is SOC 2 Type I — the landing page now shows the badge and live status.
+  - Published the SOC 2 badge and compliance status on the landing page.
   - Hardened security by fixing static-analysis findings and isolating provider sync contexts, alongside internal test and release tooling improvements.
 
 </Update>

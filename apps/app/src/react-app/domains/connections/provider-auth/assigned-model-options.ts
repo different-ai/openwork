@@ -1,4 +1,4 @@
-import type { DenOrgLlmProvider } from "@/app/lib/den";
+import type { DenOrgLlmProvider, DenOrgUsableGatewayProvider } from "@/app/lib/den";
 import type { ModelOption } from "@/app/types";
 import {
   getCloudManagedProviderId,
@@ -54,11 +54,35 @@ export function assignedModelOptions(
         behaviorDescription: "",
         behaviorValue: null,
         isFree: false,
-        source: "cloud",
+        source: providerID.startsWith("ipr_") ? "gateway" : "cloud",
+        organizationPinOrder: provider.pinnedModelIds?.includes(modelID) ? provider.pinnedModelIds.indexOf(modelID) : undefined,
       };
       return [option];
     });
   });
+}
+
+/** Only models in the ready list are selectable; pending sign-ins stay separate. */
+export function assignedGatewayModelOptions(
+  providers: readonly DenOrgUsableGatewayProvider[],
+): ModelOption[] {
+  return providers.flatMap((provider) => provider.models.map((model) => ({
+    providerID: provider.id,
+    modelID: model.id,
+    title: model.name,
+    description: provider.name,
+    behaviorTitle: "Reasoning",
+    behaviorLabel: "Default",
+    behaviorDescription: "",
+    behaviorValue: null,
+    isFree: false,
+    source: "gateway",
+  })));
+}
+
+export function markDisabledModelOptions(options: readonly ModelOption[], disabledProviderIds: readonly string[]): ModelOption[] {
+  const disabled = new Set(disabledProviderIds);
+  return options.map((option) => disabled.has(option.providerID) ? { ...option, disabled: true } : option);
 }
 
 export function mergeModelOptions(
@@ -70,7 +94,12 @@ export function mergeModelOptions(
     merged.set(`${option.providerID}:${option.modelID}`, option);
   }
   for (const option of primary) {
-    merged.set(`${option.providerID}:${option.modelID}`, option);
+    const key = `${option.providerID}:${option.modelID}`;
+    const assigned = merged.get(key);
+    merged.set(key, { ...assigned, ...option,
+      source: option.source ?? assigned?.source,
+      organizationPinOrder: assigned?.organizationPinOrder ?? option.organizationPinOrder,
+    });
   }
   return [...merged.values()];
 }

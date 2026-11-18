@@ -1,41 +1,38 @@
-## Summary
--
+<!-- Keep the whole body under ~250 words. Plain language, no jargon.
+     Details belong in commit messages and the evidence report, not here.
+     See .opencode/skills/open-a-pr/SKILL.md -->
 
-## Why
--
+## What is this about?
 
-## Issue
-- Closes #
 
-## Scope
--
+## What problem does it solve?
 
-## Out of scope
--
 
-## Testing
-### Ran
-- `...`
+## What was the situation before?
 
-### Result
-- pass/fail:
-- if fail, exact files/errors:
+<!-- A chain of cause, a changed path between parts, or several cases? Show it: one short
+     Mermaid flowchart or a small before / after table here, in place of the prose. -->
 
-## CI status
-- pass:
-- code-related failures:
-- external/env/auth blockers:
 
-## Manual verification
-1.
-2.
-3.
+## How is this implemented?
+
+<!-- A few bullets for the reviewer: the main pieces that changed and how they fit.
+     This is the one section where file paths, tool names and flags belong. -->
+
+
+## What else changed?
+
+<!-- Changes in this PR that are not part of the main task: drive-by fixes, refactors,
+     renames, dependency bumps, test or tooling tweaks. One bullet each. Write "none" if nothing. -->
+
+
+## Release note
+
+<!-- One sentence for people who use OpenWork, e.g. "You can now run OpenWork on your own server with `openwork-server web`."
+     Write "none" if users will not notice (CI, tests, review tooling). -->
+
 
 ## Evidence
-- video/screenshot link, or `N/A (docs-only)`
 
-## Risk
--
-
-## Rollback
+<!-- One line per proof, phrased before → after. Link the report. Say plainly if it is red. -->
 -

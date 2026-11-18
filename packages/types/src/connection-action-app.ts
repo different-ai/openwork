@@ -50,7 +50,15 @@ export const connectionActionPayloadSchema = z.object({
 
 export type ConnectionActionPayload = z.infer<typeof connectionActionPayloadSchema>
 
-/** Curated setup suggestions, distinct from connected/executable capabilities. */
+export const connectionActionAppResourceUri = "ui://openwork/connection-action/v2/view.html"
+export const connectionActionIntentSchema = z.object({
+  schemaVersion: z.literal("1"),
+  kind: z.literal("connection_action_intent"),
+  action: z.enum(["authenticate", "skip"]),
+  connection: connectionActionPayloadSchema,
+})
+export type ConnectionActionIntent = z.infer<typeof connectionActionIntentSchema>
+
 export const connectorCatalogSchema = z.object({
   version: z.literal(1),
   selectedIds: z.array(z.string()),

@@ -7,8 +7,10 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export async function startInferenceWitness() {
+export async function startInferenceWitness(options: { reportedCostUsd?: number } = {}) {
+  if (options.reportedCostUsd !== undefined && (!Number.isFinite(options.reportedCostUsd) || options.reportedCostUsd < 0)) throw new Error("Invalid fixture reported cost");
   let mode: InferenceFixtureMode = "success";
+  let headerDelayMs = 0;
   let toolFile = "";
   const requests: InferenceWitness[] = [];
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -22,6 +24,14 @@ export async function startInferenceWitness() {
       requests.push(witness);
       response.once("close", () => { witness.cancelled = !response.writableFinished; });
       if (mode === "header-stall") return;
+      if (headerDelayMs > 0) {
+        // A provider that accepts the request but takes a while to start answering.
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(() => { timers.delete(timer); resolve(); }, headerDelayMs);
+          timers.add(timer);
+        });
+        if (response.destroyed) return;
+      }
       if (mode === "rate-limit" || mode === "access-denied" || mode === "capability-400" || mode === "capability-422") {
         const status = mode === "rate-limit" ? 429 : mode === "access-denied" ? 401 : mode === "capability-400" ? 400 : 422;
         response.writeHead(status, { "content-type": "application/json", "retry-after": "7" });
@@ -41,7 +51,7 @@ export async function startInferenceWitness() {
       }
       if (mode === "json" || mode === "unfinished-json" || mode === "two-json") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ choices: Array.from({ length: mode === "two-json" ? 2 : 1 }, (_, index) => ({ index, message: { role: "assistant", content: mode === "two-json" ? `Choice ${index}` : "Complete", tool_calls: null }, finish_reason: mode === "unfinished-json" ? null : "stop" })), usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24 } }));
+        response.end(JSON.stringify({ choices: Array.from({ length: mode === "two-json" ? 2 : 1 }, (_, index) => ({ index, message: { role: "assistant", content: mode === "two-json" ? `Choice ${index}` : "Complete", tool_calls: null }, finish_reason: mode === "unfinished-json" ? null : "stop" })), usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24, ...(options.reportedCostUsd === undefined ? {} : { cost: options.reportedCostUsd }) } }));
         return;
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -124,7 +134,7 @@ export async function startInferenceWitness() {
         return;
       }
       // Keep the original heartbeat-backed UTF-8 fragmentation coverage too.
-      const content = Buffer.from(frame({ content: "Complete café" }) + frame({}, "stop") + `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "", role: "assistant", tool_calls: [], reasoning_details: [] }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 3 } } })}\n\ndata: [DONE]\n\n`);
+      const content = Buffer.from(frame({ content: "Complete café" }) + frame({}, "stop") + `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "", role: "assistant", tool_calls: [], reasoning_details: [] }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 3 }, ...(options.reportedCostUsd === undefined ? {} : { cost: options.reportedCostUsd }) } })}\n\ndata: [DONE]\n\n`);
       const split = content.indexOf(Buffer.from("é")) + 1;
       response.write(content.subarray(0, split));
       const timer = setTimeout(() => { timers.delete(timer); response.end(content.subarray(split)); }, 5);
@@ -140,6 +150,8 @@ export async function startInferenceWitness() {
   return {
     url: `http://127.0.0.1:${address.port}/api/v1`, requests,
     mode(next: InferenceFixtureMode) { mode = next; },
+    /** Wait this long before sending response headers, for every mode except header-stall. */
+    delayHeaders(ms: number) { headerDelayMs = ms; },
     readToolFile(path: string) { toolFile = path; },
     async [Symbol.asyncDispose]() {
       for (const timer of timers) clearTimeout(timer);

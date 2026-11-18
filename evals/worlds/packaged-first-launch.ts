@@ -1,6 +1,5 @@
 import { allocateFreePort, attachSurface, evaluateOnSurface } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
-import { SkipError } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { localHost } from "@openwork/hosts";
 import type { ElectronSurfaceOptions } from "@openwork/hosts";
@@ -96,11 +95,14 @@ function exceptionFrom(params: unknown): RendererException | null {
  * second session on the same page target. Enabling the Runtime domain replays
  * exceptions recorded before the session attached.
  */
-async function observeRendererExceptions(surface: AttachedSurface) {
-  const debuggerUrl = surface.client.webSocketDebuggerUrl;
+export async function observeRendererExceptions(debuggerUrl: string | null | undefined) {
   if (!debuggerUrl) throw new Error("Renderer exception witness needs a page debugger URL");
   const socket = new WebSocket(debuggerUrl);
   const exceptions: RendererException[] = [];
+  const bootFailures: string[] = [];
+  let disconnected = false;
+  socket.addEventListener("close", () => { disconnected = true; });
+  socket.addEventListener("error", () => { disconnected = true; });
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Renderer exception witness did not attach")), 15_000);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} })));
@@ -116,6 +118,17 @@ async function observeRendererExceptions(surface: AttachedSurface) {
         if (message.error) reject(new Error("Runtime.enable failed for the exception witness"));
         else resolve();
       }
+      if (message.method === "Runtime.consoleAPICalled" && isRecord(message.params)
+        && Array.isArray(message.params.args) && bootFailures.length < 5) {
+        const args = message.params.args.filter(isRecord);
+        if (typeof args[0]?.value === "string" && args[0].value.startsWith("[desktop-boot]")) {
+          let detail = args.map(arg => readString(arg.description) || readString(arg.value)).join(" ");
+          for (const [name, value] of Object.entries(process.env)) {
+            if (/token|secret|password|api_?key|authorization/i.test(name) && value && value.length > 3) detail = detail.replaceAll(value, "[redacted]");
+          }
+          bootFailures.push(detail.replace(/https?:\/\/\S+/g, "[url]").slice(0, 8000));
+        }
+      }
       if (message.method !== "Runtime.exceptionThrown") return;
       const exception = exceptionFrom(message.params);
       if (exception) exceptions.push(exception);
@@ -123,6 +136,12 @@ async function observeRendererExceptions(surface: AttachedSurface) {
   });
   return {
     exceptions,
+    bootFailures,
+    assertConnected() {
+      if (disconnected || socket.readyState !== WebSocket.OPEN) {
+        throw new Error("Renderer exception witness disconnected during startup");
+      }
+    },
     close() {
       socket.close();
     },
@@ -131,7 +150,7 @@ async function observeRendererExceptions(surface: AttachedSurface) {
 
 async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptions["bootstrap"]) {
   if (!process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim()) {
-    throw new SkipError("OPENWORK_EVAL_ELECTRON_BINARY points at a packaged desktop binary");
+    throw new Error("OPENWORK_EVAL_ELECTRON_BINARY must point at a packaged desktop binary");
   }
   const host = localHost();
   const handle = await host.spawnElectron(name, {
@@ -143,6 +162,17 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
   let app: AttachedSurface | null = null;
   let witness: Awaited<ReturnType<typeof observeRendererExceptions>> | null = null;
   const dispose = async () => {
+    // A caught runtime bootstrap error is not a Runtime.exceptionThrown event.
+    // Preserve the recovery screen's collapsed technical details before the
+    // isolated profile is removed, without reading credentials or retrying boot.
+    if (app) {
+      const recovery = await evaluateOnSurface(app, () => {
+        const root = document.getElementById("root");
+        if (!/OpenWork couldn't start|OpenWork hit an unexpected error/.test(root?.innerText ?? "")) return null;
+        return { text: root?.textContent, details: [...document.querySelectorAll("details")].map(element => element.textContent) };
+      }, { timeoutMs: 5_000, reattachAttempts: 0 }).catch(() => null);
+      if (recovery) console.error("[packaged-startup-recovery]", JSON.stringify({ ...recovery, failures: witness?.bootFailures }));
+    }
     witness?.close();
     try {
       await app?.stop();
@@ -152,7 +182,7 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
   };
   try {
     app = await attachSurface(handle, { timeoutMs: 60_000 });
-    witness = await observeRendererExceptions(app);
+    witness = await observeRendererExceptions(app.client.webSocketDebuggerUrl);
   } catch (error) {
     await dispose().catch(() => undefined);
     throw error;
@@ -174,7 +204,37 @@ async function packagedLaunchWorld(name: string, bootstrap: ElectronSurfaceOptio
     }),
     /** Text React actually mounted, as opposed to the body chrome. */
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
-    exceptions: () => [...observed.exceptions],
+    /** The boot overlay's collapsed Technical details, which innerText skips. */
+    bootError: () => evaluateOnSurface(attached, () => document.querySelector('[data-testid="boot-error-detail"]')?.textContent?.trim() || null),
+    /** One fresh final observation; never heal a lost observer into a green run. */
+    async health() {
+      observed.assertConnected();
+      if (!handle.pid) throw new Error("Packaged startup has no process liveness witness");
+      process.kill(handle.pid, 0);
+      const state = await evaluateOnSurface(attached, () => {
+        const root = document.getElementById("root");
+        return {
+          rootText: root?.innerText ?? "",
+          controls: Array.from(root?.querySelectorAll("input, button, [contenteditable]") ?? [], (control) => ({
+            tag: control.tagName.toLowerCase(),
+            text: control.textContent?.trim() ?? "",
+            testId: control.getAttribute("data-testid"),
+            editable: control instanceof HTMLElement && control.isContentEditable,
+            visible: control.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+              && control.getBoundingClientRect().width > 0 && control.getBoundingClientRect().height > 0,
+            enabled: !control.matches(":disabled") && control.getAttribute("aria-disabled") !== "true"
+              && !control.closest("[inert]"),
+          })),
+        };
+      }, { timeoutMs: 5_000, reattachAttempts: 0 });
+      observed.assertConnected();
+      process.kill(handle.pid, 0);
+      return state;
+    },
+    exceptions: () => {
+      observed.assertConnected();
+      return [...observed.exceptions];
+    },
     [Symbol.asyncDispose]: dispose,
   };
 }

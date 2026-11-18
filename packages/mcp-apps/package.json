@@ -4,13 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./skill-created": {
-      "types": "./dist/skill-created.d.ts",
-      "default": "./dist/skill-created.js"
-    },
-    "./plugin-flow": {
-      "types": "./dist/plugin-flow.d.ts",
-      "default": "./dist/plugin-flow.js"
+    "./connection-action": {
+      "types": "./dist/connection-action.d.ts",
+      "default": "./dist/connection-action.js"
     }
   },
   "files": [
@@ -25,14 +21,14 @@
     "@openwork/types": "workspace:*",
     "react": "catalog:",
     "react-dom": "catalog:",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "^5.0.4",
     "typescript": "^5.9.0",
-    "vite": "^6.4.3",
+    "vite": "^6.4.5",
     "vite-plugin-singlefile": "^2.3.0"
   }
 }

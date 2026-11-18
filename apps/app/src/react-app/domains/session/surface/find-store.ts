@@ -1,14 +1,7 @@
 import { create } from "zustand";
 
-export type SessionFindTarget = {
-  sessionId: string;
-  messageId?: string;
-};
-
 type OpenFindOptions = {
   sessionId: string;
-  query?: string;
-  target?: SessionFindTarget;
 };
 
 type SessionFindStore = {
@@ -17,7 +10,6 @@ type SessionFindStore = {
   lastFocusedSessionId: string | null;
   query: string;
   appliedQuery: string;
-  target: SessionFindTarget | null;
   focusNonce: number;
   openFind: (opts: OpenFindOptions) => void;
   setLastFocused: (sessionId: string) => void;
@@ -32,19 +24,13 @@ export const useSessionFindStore = create<SessionFindStore>((set) => ({
   lastFocusedSessionId: null,
   query: "",
   appliedQuery: "",
-  target: null,
   focusNonce: 0,
-  openFind: (opts) => set((state) => {
-    const query = opts.query ?? state.query;
-    return {
-      open: true,
-      sessionId: opts.sessionId,
-      query,
-      appliedQuery: query,
-      target: opts.target ?? null,
-      focusNonce: state.focusNonce + 1,
-    };
-  }),
+  openFind: (opts) => set((state) => ({
+    open: true,
+    sessionId: opts.sessionId,
+    appliedQuery: state.query,
+    focusNonce: state.focusNonce + 1,
+  })),
   setLastFocused: (lastFocusedSessionId) => set((state) => (
     state.lastFocusedSessionId === lastFocusedSessionId ? state : { lastFocusedSessionId }
   )),
@@ -59,6 +45,5 @@ export const useSessionFindStore = create<SessionFindStore>((set) => ({
     sessionId: null,
     query: "",
     appliedQuery: "",
-    target: null,
   }),
 }));

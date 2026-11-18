@@ -42,6 +42,7 @@ type SurfaceObservation = {
 
 declare global {
   interface Window {
+    __chatEngineCut?: () => void;
     __chatContinuity?: { state: SurfaceObservation; stop(): void };
     __chatCreation?: {
       workspaceLists: number; creates: number; reblocked: boolean; expired: boolean;
@@ -53,8 +54,30 @@ declare global {
       text: string;
       errors: number;
       promptPosts: Record<string, number>;
+      historyReads: Array<{ sessionId: string; at: number; limit: string | null }>;
+      textDeltas: Record<string, { sessionId: string; messageId: string; partId: string; count: number; characters: number; lastAt: number }>;
     };
   }
+}
+
+export function normalizeContinuityText(text: string): string {
+  return text.normalize("NFKC")
+    .replace(/[*_`]/g, "")
+    .replace(/^\s*(?:\d+[.)]|[-+]|#{1,6})\s+/gm, "")
+    .replace(/\s+/g, " ").trim();
+}
+
+type HeldHistoryRequest = { networkId: string; startedAt: number; snapshot: boolean; sessionId: string };
+
+export function historyRequestState(
+  held: ReadonlyMap<string, HeldHistoryRequest>, ended: ReadonlySet<string>, sessionId: string, released: boolean, now: number,
+) {
+  const outstanding = [...held.values()].filter((item) => item.sessionId === sessionId && !ended.has(item.networkId));
+  const snapshots = outstanding.filter((item) => item.snapshot);
+  return {
+    held: held.size, outstanding: outstanding.length, pending: !released && snapshots.length > 0,
+    elapsedMs: snapshots.length ? Math.max(...snapshots.map((item) => now - item.startedAt)) : 0,
+  };
 }
 
 function deferred() {
@@ -70,6 +93,23 @@ function deferred() {
 /** Faults and observers only; navigation and creation remain trusted user actions. */
 export function chatContinuity(app: Surface, workspaceId: string) {
   return {
+    async reconnectEvents() {
+      await evaluate(app.client, () => {
+        if (!window.__chatEngineCut) throw new Error("Event transport fault is not installed");
+        window.__chatEngineCut();
+      });
+    },
+    async assistantText(sessionId: string, messageId: string) {
+      return evaluate(app.client, browserScript((workspaceId, sessionId, messageId) => {
+        const pane = document.querySelector('[data-workbench-pane="primary"]');
+        const surface = pane?.querySelector<HTMLElement>('[data-session-surface-id]');
+        if (surface?.dataset.sessionSurfaceId !== sessionId || surface.dataset.sessionSurfaceWorkspaceId !== workspaceId) return [];
+        return [...surface.querySelectorAll<HTMLElement>('[data-message-role="assistant"][data-message-id]')]
+          .filter((node) => node.dataset.messageId === messageId && node.getClientRects().length > 0)
+          .map((node) => node.innerText);
+      }, [workspaceId, sessionId, messageId]));
+    },
+
     /** Read-only tee of real app event-stream responses, installed before a fixture reload. */
     async observeEngineHttpEvents() {
       const registration = await addInitScript(app.client, () => {
@@ -79,8 +119,46 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           text: "",
           errors: 0,
           promptPosts: {},
+          historyReads: [],
+          textDeltas: {},
+        };
+        const textParts = new Set<string>();
+        const record = (value: unknown): value is Record<string, unknown> =>
+          typeof value === "object" && value !== null && !Array.isArray(value);
+        const receive = (frame: string) => {
+          for (const line of frame.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            let parsed: unknown;
+            try { parsed = JSON.parse(line.slice(5).trim()); } catch { continue; }
+            if (!record(parsed)) continue;
+            const event = record(parsed.payload) ? parsed.payload : parsed;
+            if (!record(event.properties)) continue;
+            const props = event.properties;
+            if (event.type === "message.part.updated" && record(props.part) && props.part.type === "text") {
+              const part = props.part;
+              textParts.add(JSON.stringify([part.sessionID, part.messageID, part.id]));
+            }
+            if (event.type !== "message.part.delta" || typeof props.sessionID !== "string"
+              || typeof props.messageID !== "string" || typeof props.partID !== "string"
+              || typeof props.delta !== "string" || props.field !== "text") continue;
+            const key = JSON.stringify([props.sessionID, props.messageID, props.partID]);
+            if (!textParts.has(key)) continue;
+            const item = state.textDeltas[key] ??= {
+              sessionId: props.sessionID, messageId: props.messageID, partId: props.partID,
+              count: 0, characters: 0, lastAt: 0,
+            };
+            item.count++;
+            item.characters += props.delta.length;
+            item.lastAt = Date.now();
+          }
         };
         const originalFetch = window.fetch.bind(window);
+        const connections = new Set<AbortController>();
+        window.__chatEngineCut = () => {
+          if (connections.size === 0) throw new Error("No event connection was interrupted");
+          for (const controller of connections) controller.abort();
+          connections.clear();
+        };
         window.__chatEngineHttp = state;
         window.fetch = async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
@@ -93,7 +171,20 @@ export function chatContinuity(app: Surface, workspaceId: string) {
             const sessionId = decodeURIComponent(prompt[1]);
             state.promptPosts[sessionId] = (state.promptPosts[sessionId] ?? 0) + 1;
           }
-          const response = await originalFetch(input, init);
+          const history = method === "GET"
+            ? path.match(/\/(?:opencode|opencode2\/api)\/session\/([^/]+)\/message$/) : null;
+          if (history?.[1]) state.historyReads.push({
+            sessionId: decodeURIComponent(history[1]), at: Date.now(), limit: new URL(url, location.href).searchParams.get("limit"),
+          });
+          const controller = method === "GET" && /\/(?:event|events)$/.test(path) ? new AbortController() : null;
+          if (controller) connections.add(controller);
+          const originalSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+          const response = await originalFetch(input, controller ? {
+            ...init, signal: AbortSignal.any([controller.signal, ...(originalSignal ? [originalSignal] : [])]),
+          } : init).catch((error: unknown) => {
+            if (controller) connections.delete(controller);
+            throw error;
+          });
           if (response.headers.get("content-type")?.includes("text/event-stream") && /\/(?:event|events)(?:\?|$)/.test(url)) {
             const body = response.clone().body;
             if (body) {
@@ -101,15 +192,23 @@ export function chatContinuity(app: Surface, workspaceId: string) {
               void (async () => {
                 const reader = body.getReader();
                 const decoder = new TextDecoder();
+                let pending = "";
                 try {
                   while (true) {
                     const item = await reader.read();
                     if (item.done) break;
                     state.chunks += 1;
-                    state.text = (state.text + decoder.decode(item.value, { stream: true })).slice(-1_000_000);
+                    const chunk = decoder.decode(item.value, { stream: true });
+                    state.text = (state.text + chunk).slice(-1_000_000);
+                    pending += chunk;
+                    const frames = pending.split(/\r?\n\r?\n/);
+                    pending = frames.pop() ?? "";
+                    for (const frame of frames) receive(frame);
                   }
                 } catch {
                   state.errors += 1;
+                } finally {
+                  if (controller) connections.delete(controller);
                 }
               })();
             }
@@ -305,7 +404,7 @@ export function chatContinuity(app: Surface, workspaceId: string) {
       const socket = new WebSocket(endpoint);
       const ready = deferred();
       const commands = new Map<number, ReturnType<typeof deferred>>();
-      const held = new Map<string, { networkId: string; startedAt: number; snapshot: boolean; sessionId: string }>();
+      const held = new Map<string, HeldHistoryRequest>();
       const ended = new Set<string>();
       let nextId = 1;
       let released = false;
@@ -348,9 +447,9 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           const path = new URL(request.url).pathname;
           const heldSessionId = sessionIds.find(id => path.endsWith(`/${encodeURIComponent(id)}/message`));
           if (!heldSessionId) { fail(); return; }
-          // Distinguish the surface snapshot (140) from background sync reads (20).
+          const limit = new URL(request.url).searchParams.get("limit");
           held.set(params.requestId, { networkId: params.networkId, startedAt: performance.now(), sessionId: heldSessionId,
-            snapshot: new URL(request.url).searchParams.get("limit") === "140" });
+            snapshot: limit === null || limit === "140" });
         } else void command("Fetch.continueRequest", { requestId: params.requestId }).catch((error: Error) => { failure = error; });
       });
       const timer = setTimeout(() => ready.reject(new Error("History fault could not connect")), 15000);
@@ -363,9 +462,7 @@ export function chatContinuity(app: Surface, workspaceId: string) {
       return {
         read(id = sessionId) {
           if (failure) throw failure;
-          const snapshots = [...held.values()].filter(item => item.sessionId === id && item.snapshot && !ended.has(item.networkId));
-          return { held: held.size, pending: !released && snapshots.length > 0,
-            elapsedMs: snapshots.length ? Math.max(...snapshots.map(item => performance.now() - item.startedAt)) : 0 };
+          return historyRequestState(held, ended, id, released, performance.now());
         },
         async release() {
           released = true;

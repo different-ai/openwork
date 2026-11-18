@@ -1,0 +1,3 @@
+// path: proofs/session-title-recovery.test.ts
+import { describe, it, expect } from "vitest";
+it("renames the session", () => { expect(1).toBe(1); });

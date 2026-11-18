@@ -1,9 +1,7 @@
 import { useMemo } from "react";
 
 import {
-  isRemoteWorkspace,
   resolveWorkspaceEndpoint,
-  workspaceServerId,
   type LocalServerHandle,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
@@ -29,18 +27,6 @@ function normalizeLocalServer(localServer: LocalServerHandle): NormalizedLocalSe
   };
 }
 
-function remoteBaseUrl(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
-  return trim(workspace.baseUrl) || trim(workspace.openworkHostUrl);
-}
-
-function remoteToken(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
-  return (
-    trim(workspace.openworkToken) ||
-    trim(workspace.openworkClientToken) ||
-    trim(workspace.openworkHostToken)
-  );
-}
-
 function cacheKey(parts: string[]): string {
   return parts.join("\u001f");
 }
@@ -50,15 +36,6 @@ export function createWorkspaceServerClientCacheKey(
   localServer: LocalServerHandle,
 ): string {
   if (!workspace) return "workspace:none";
-
-  if (isRemoteWorkspace(workspace)) {
-    return cacheKey([
-      "workspace:remote",
-      workspaceServerId(workspace),
-      remoteBaseUrl(workspace),
-      remoteToken(workspace),
-    ]);
-  }
 
   const normalizedLocalServer = normalizeLocalServer(localServer);
   return cacheKey([
@@ -95,6 +72,25 @@ export function createWorkspaceServerClientResolver(
   };
 }
 
+/** Keep a route's client identities stable across equivalent connection refreshes. */
+export function createWorkspaceServerClientResolverState(localServer: LocalServerHandle) {
+  let current = normalizeLocalServer(localServer);
+  let resolver = createWorkspaceServerClientResolver(current);
+  return {
+    resolve(workspace: WorkspaceServerClientWorkspace) {
+      return resolver(workspace);
+    },
+    update(nextServer: LocalServerHandle): WorkspaceServerClientResolver {
+      const next = normalizeLocalServer(nextServer);
+      if (next.baseUrl !== current.baseUrl || next.token !== current.token) {
+        current = next;
+        resolver = createWorkspaceServerClientResolver(next);
+      }
+      return resolver;
+    },
+  };
+}
+
 export function useWorkspaceServerClient(
   workspace: WorkspaceServerClientWorkspace,
   localServer: LocalServerHandle,
@@ -107,7 +103,7 @@ export function useWorkspaceServerClient(
   });
 
   // `workspaceKey` intentionally includes only fields that change endpoint
-  // behavior; remote workspaces do not churn when the local server reconnects.
+  // behavior.
   return useMemo(
     () => createWorkspaceServerClientResolver({ baseUrl: localBaseUrl, token: localToken })(workspace),
     [workspaceKey],

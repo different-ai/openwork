@@ -7,16 +7,17 @@ import { ADVANCED_SETTINGS_SECTIONS } from "../advanced-sections";
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { EngineV2PreviewStatus, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import { readDenSettings } from "@/app/lib/den";
+import type { OpenworkServerClient, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
 
+import { AdvancedDiagnosticsSection } from "./advanced-diagnostics-section";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
   AdvancedEngineV2PreviewSection,
-  AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
   AdvancedRuntimeSection,
@@ -53,9 +54,10 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
-  getEngineV2PreviewStatus: () => Promise<EngineV2PreviewStatus>;
-  setEngineV2PreviewEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
-  setEngineV2PreviewChatRouting: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+  canCheckCloudMcpHealth: boolean;
+  appVersion: string | null;
+  copyDiagnosticsReport: () => Promise<void>;
+  engineClient: OpenworkServerClient | null;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
@@ -175,6 +177,8 @@ export function AdvancedView(props: AdvancedViewProps) {
     void refreshRuntimeConfigStatus();
   }, [props.canInspectRuntimeConfig]);
 
+  const denSettings = readDenSettings();
+
   return (
     <div ref={viewRef}>
       <LayoutStack>
@@ -201,9 +205,14 @@ export function AdvancedView(props: AdvancedViewProps) {
           openworkDetailLines={openworkDetailLines}
         />
 
-        <AdvancedCloudMcpDiagnosticsSection
+        <AdvancedDiagnosticsSection
+          appVersion={props.appVersion}
+          signedIn={Boolean(denSettings.authToken)}
+          orgSelected={Boolean(denSettings.activeOrgId)}
           cloudMcpHealth={props.cloudMcpHealth}
+          canCheck={props.canCheckCloudMcpHealth}
           onRefresh={props.refreshCloudMcpHealth}
+          onCopyReport={props.copyDiagnosticsReport}
         />
 
         <AdvancedRuntimeConfigSourcesSection
@@ -215,11 +224,7 @@ export function AdvancedView(props: AdvancedViewProps) {
           onRefresh={refreshRuntimeConfigStatus}
         />
 
-        <AdvancedEngineV2PreviewSection
-          getStatus={props.getEngineV2PreviewStatus}
-          setEnabled={props.setEngineV2PreviewEnabled}
-          setChatRouting={props.setEngineV2PreviewChatRouting}
-        />
+        <AdvancedEngineV2PreviewSection client={props.engineClient} />
 
         <AdvancedWorkspaceRunModeSection />
 

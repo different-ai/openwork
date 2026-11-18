@@ -1,0 +1,119 @@
+import "./load-env.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { sql } from "@openwork-ee/den-db/drizzle";
+import { cors } from "hono/cors";
+import { Hono } from "hono";
+import { z } from "zod";
+import { db } from "./db.js";
+import { env } from "./env.js";
+import { inferenceAccessLogger, sentryInferenceReporter } from "./inference-reporting.js";
+import { registerProxyRoutes } from "./proxy.js";
+import { registerAnonymousInferenceRoutes } from "./free/index.js";
+import { registerRollupRoutes, runRollups } from "./rollups.js";
+import { registerWebhookRoutes } from "./webhooks.js";
+
+const srcDir = path.dirname(fileURLToPath(import.meta.url));
+const modelsSiteDir = path.resolve(srcDir, "..", "models-site", "models");
+const isVercelRuntime = Boolean(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
+const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !== "production" || process.env.OPENWORK_DEV_MODE === "1");
+
+const app = new Hono();
+
+// Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+// A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+app.use("*", async (c, next) => {
+  await next();
+  if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
+});
+
+function healthPath(path: string) {
+  return path === "/health" || path === "/ready";
+}
+
+app.use("*", async (c, next) => {
+  if (healthPath(c.req.path)) {
+    await next();
+    return;
+  }
+
+  return inferenceAccessLogger(c, next);
+});
+
+if (env.corsOrigins.length > 0) {
+  app.use(
+    "*",
+    cors({
+      origin: env.corsOrigins,
+      credentials: true,
+      allowHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-Api-Key",
+        "X-Goog-Api-Key",
+        "Api-Key",
+        "X-Webhook-Signature",
+        "X-Test-Connection",
+        "X-Openwork-Session-Id",
+        "X-Openwork-Task-Id",
+        "X-Openwork-Gateway-Grant-Id",
+      ],
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["X-OpenWork-Request-Id", "X-OpenWork-Error-Code", "X-OpenWork-Usage-State", "Retry-After"],
+      maxAge: 600,
+    }),
+  );
+}
+
+app.get("/health", (c) => c.json({ ok: true, service: "gateway" }));
+
+// Auto Model Routing readiness for Den: whether this gateway has its TypeSafe
+// (Jev) key. A boolean only; the key itself never leaves the gateway.
+app.get("/auto-router/status", (c) => {
+  c.header("cache-control", "no-store");
+  return c.json({ routingConfigured: Boolean(env.autoRouter.typesafeApiKey) });
+});
+
+app.get("/ready", async (c) => {
+  try {
+    await db.execute(sql`select 1`);
+    return c.json({ ok: true, service: "gateway", checks: { database: "ok" } });
+  } catch (error) {
+    console.error("[readiness] gateway database check failed");
+    return c.json({ ok: false, service: "gateway", checks: { database: "error" } }, 503);
+  }
+});
+
+if (shouldServeLocalModelCatalog) {
+  // The v1 catalog and the v2 one OpenCode v2 engines read first. Like the
+  // published static files, both ignore `?type=`.
+  const catalogFiles = {
+    "/models/api.json": path.join(modelsSiteDir, "api.json"),
+    "/models/experimental/v2.0/api.json": path.join(modelsSiteDir, "experimental", "v2.0", "api.json"),
+  };
+  for (const [route, file] of Object.entries(catalogFiles)) {
+    app.get(route, async (c) => {
+      const body = await readFile(file, "utf8");
+      c.header("Content-Type", "application/json; charset=utf-8");
+      c.header("Cache-Control", "no-store");
+      return c.body(body);
+    });
+  }
+}
+
+registerAnonymousInferenceRoutes(app);
+registerProxyRoutes(app);
+registerWebhookRoutes(app);
+registerRollupRoutes(app, { adminToken: env.adminToken, runRollups });
+
+app.onError((error, c) => {
+  if (error instanceof z.ZodError) {
+    return c.json({ error: "invalid_request" }, 400);
+  }
+  console.error("[gateway] internal_server_error");
+  sentryInferenceReporter.handledError({ reason: "internal_server_error", route: "/api/v1/*", method: c.req.method, status: 500 });
+  return c.json({ error: "internal_server_error" }, 500);
+});
+
+export default app;

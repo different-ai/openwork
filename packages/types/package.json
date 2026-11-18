@@ -4,126 +4,666 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./connector-brand": {
+      "types": {
+        "openwork-build": "./dist/types/src/connector-brand.d.ts",
+        "default": "./src/connector-brand.ts"
+      },
+      "development": "./src/connector-brand.ts",
+      "default": "./src/connector-brand.ts"
+    },
+    "./workbot-remote-jobs": {
+      "types": {
+        "openwork-build": "./dist/types/src/workbot-remote-jobs.d.ts",
+        "default": "./src/workbot-remote-jobs.ts"
+      },
+      "development": "./src/workbot-remote-jobs.ts",
+      "default": "./src/workbot-remote-jobs.ts"
+    },
+    "./workbot-context": {
+      "types": {
+        "openwork-build": "./dist/types/src/workbot-context.d.ts",
+        "default": "./src/workbot-context.ts"
+      },
+      "development": "./src/workbot-context.ts",
+      "default": "./src/workbot-context.ts"
+    },
+    "./google-drive-upload": {
+      "types": {
+        "openwork-build": "./dist/types/src/google-drive-upload.d.ts",
+        "default": "./src/google-drive-upload.ts"
+      },
+      "development": "./src/google-drive-upload.ts",
+      "bun": "./src/google-drive-upload.ts",
+      "default": "./dist/google-drive-upload.js"
+    },
+    "./microsoft-drive-transfer": {
+      "types": {
+        "openwork-build": "./dist/types/src/microsoft-drive-transfer.d.ts",
+        "default": "./src/microsoft-drive-transfer.ts"
+      },
+      "development": "./src/microsoft-drive-transfer.ts",
+      "bun": "./src/microsoft-drive-transfer.ts",
+      "default": "./dist/microsoft-drive-transfer.js"
+    },
+    "./den/managed-installer-releases": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/managed-installer-releases.d.ts",
+        "default": "./src/den/managed-installer-releases.ts"
+      },
+      "development": "./src/den/managed-installer-releases.ts",
+      "default": "./src/den/managed-installer-releases.ts"
+    },
+    "./den/managed-deployments": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/managed-deployments.d.ts",
+        "default": "./src/den/managed-deployments.ts"
+      },
+      "development": "./src/den/managed-deployments.ts",
+      "default": "./src/den/managed-deployments.ts"
+    },
+    "./cloud-model-fast": {
+      "types": {
+        "openwork-build": "./dist/types/src/cloud-model-fast.d.ts",
+        "default": "./src/cloud-model-fast.ts"
+      },
+      "development": "./src/cloud-model-fast.ts",
+      "bun": "./src/cloud-model-fast.ts",
+      "browser": "./src/cloud-model-fast.ts",
+      "default": "./dist/cloud-model-fast.js"
+    },
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./src/index.ts"
     },
     "./agent-context-diagnostics": {
-      "types": "./src/agent-context-diagnostics.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/agent-context-diagnostics.d.ts",
+        "default": "./src/agent-context-diagnostics.ts"
+      },
       "development": "./src/agent-context-diagnostics.ts",
       "default": "./src/agent-context-diagnostics.ts"
     },
     "./openwork-affordance": {
-      "types": "./src/openwork-affordance.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/openwork-affordance.d.ts",
+        "default": "./src/openwork-affordance.ts"
+      },
       "development": "./src/openwork-affordance.ts",
       "default": "./src/openwork-affordance.ts"
     },
     "./openwork-context": {
-      "types": "./src/openwork-context.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/openwork-context.d.ts",
+        "default": "./src/openwork-context.ts"
+      },
       "development": "./src/openwork-context.ts",
       "default": "./src/openwork-context.ts"
     },
     "./openwork-provider": {
-      "types": "./src/openwork-provider.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/openwork-provider.d.ts",
+        "default": "./src/openwork-provider.ts"
+      },
       "development": "./src/openwork-provider.ts",
       "default": "./src/openwork-provider.ts"
     },
     "./automations": {
-      "types": "./src/automations.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/automations.d.ts",
+        "default": "./src/automations.ts"
+      },
       "development": "./src/automations.ts",
       "default": "./src/automations.ts"
     },
+    "./automation-models": {
+      "types": {
+        "openwork-build": "./dist/types/src/automation-models.d.ts",
+        "default": "./src/automation-models.ts"
+      },
+      "development": "./src/automation-models.ts",
+      "default": "./src/automation-models.ts"
+    },
+    "./automation-schedule": {
+      "types": {
+        "openwork-build": "./dist/types/src/automation-schedule.d.ts",
+        "default": "./src/automation-schedule.ts"
+      },
+      "development": "./src/automation-schedule.ts",
+      "default": "./src/automation-schedule.ts"
+    },
     "./workflows": {
-      "types": "./src/workflows.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/workflows.d.ts",
+        "default": "./src/workflows.ts"
+      },
       "development": "./src/workflows.ts",
       "default": "./src/workflows.ts"
     },
+    "./mcp-app-timing": {
+      "types": {
+        "openwork-build": "./dist/types/src/mcp-app-timing.d.ts",
+        "default": "./src/mcp-app-timing.ts"
+      },
+      "development": "./src/mcp-app-timing.ts",
+      "bun": "./src/mcp-app-timing.ts",
+      "browser": "./src/mcp-app-timing.ts",
+      "default": "./dist/mcp-app-timing.js"
+    },
+    "./mcp-app": {
+      "types": {
+        "openwork-build": "./dist/types/src/mcp-app.d.ts",
+        "default": "./src/mcp-app.ts"
+      },
+      "development": "./src/mcp-app.ts",
+      "default": "./src/mcp-app.ts"
+    },
     "./skill-created-app": {
-      "types": "./src/skill-created-app.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/skill-created-app.d.ts",
+        "default": "./src/skill-created-app.ts"
+      },
       "development": "./src/skill-created-app.ts",
       "default": "./src/skill-created-app.ts"
     },
     "./connection-action-app": {
-      "types": "./src/connection-action-app.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/connection-action-app.d.ts",
+        "default": "./src/connection-action-app.ts"
+      },
       "development": "./src/connection-action-app.ts",
-      "default": "./src/connection-action-app.ts"
-    },
-    "./plugin-flow-app": {
-      "types": "./src/plugin-flow-app.ts",
-      "development": "./src/plugin-flow-app.ts",
-      "default": "./src/plugin-flow-app.ts"
+      "bun": "./src/connection-action-app.ts",
+      "browser": "./src/connection-action-app.ts",
+      "default": "./dist/connection-action-app.js"
     },
     "./den/desktop-app-restrictions": {
-      "types": "./src/den/desktop-app-restrictions.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/desktop-app-restrictions.d.ts",
+        "default": "./src/den/desktop-app-restrictions.ts"
+      },
       "development": "./src/den/desktop-app-restrictions.ts",
       "default": "./src/den/desktop-app-restrictions.ts"
     },
+    "./den/permissions": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/permissions.d.ts",
+        "default": "./src/den/permissions.ts"
+      },
+      "development": "./src/den/permissions.ts",
+      "default": "./src/den/permissions.ts"
+    },
+    "./den/agent-permissions": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/agent-permissions.d.ts",
+        "default": "./src/den/agent-permissions.ts"
+      },
+      "development": "./src/den/agent-permissions.ts",
+      "default": "./src/den/agent-permissions.ts"
+    },
     "./den/desktop-policies": {
-      "types": "./src/den/desktop-policies.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/desktop-policies.d.ts",
+        "default": "./src/den/desktop-policies.ts"
+      },
       "development": "./src/den/desktop-policies.ts",
       "default": "./src/den/desktop-policies.ts"
     },
-    "./den/connect-diagnostics": {
-      "types": "./src/den/connect-diagnostics.ts",
-      "development": "./src/den/connect-diagnostics.ts",
-      "default": "./src/den/connect-diagnostics.ts"
+    "./den/remote-devices": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/remote-devices.d.ts",
+        "default": "./src/den/remote-devices.ts"
+      },
+      "development": "./src/den/remote-devices.ts",
+      "default": "./src/den/remote-devices.ts"
     },
-    "./den/egress-diagnostics": {
-      "types": "./src/den/egress-diagnostics.ts",
-      "development": "./src/den/egress-diagnostics.ts",
-      "default": "./src/den/egress-diagnostics.ts"
+    "./den/remote-sessions": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/remote-sessions.d.ts",
+        "default": "./src/den/remote-sessions.ts"
+      },
+      "development": "./src/den/remote-sessions.ts",
+      "default": "./src/den/remote-sessions.ts"
     },
     "./den/managed-models-policy": {
-      "types": "./src/den/managed-models-policy.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/managed-models-policy.d.ts",
+        "default": "./src/den/managed-models-policy.ts"
+      },
       "development": "./src/den/managed-models-policy.ts",
       "default": "./src/den/managed-models-policy.ts"
     },
+    "./den/diagnostics": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/diagnostics.d.ts",
+        "default": "./src/den/diagnostics.ts"
+      },
+      "development": "./src/den/diagnostics.ts",
+      "default": "./src/den/diagnostics.ts"
+    },
+    "./den/deployment-capabilities": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/deployment-capabilities.d.ts",
+        "default": "./src/den/deployment-capabilities.ts"
+      },
+      "development": "./src/den/deployment-capabilities.ts",
+      "default": "./src/den/deployment-capabilities.ts"
+    },
+    "./den/audit": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/audit.d.ts",
+        "default": "./src/den/audit.ts"
+      },
+      "development": "./src/den/audit.ts",
+      "default": "./src/den/audit.ts"
+    },
+    "./den/gateway": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway.d.ts",
+        "default": "./src/den/gateway.ts"
+      },
+      "development": "./src/den/gateway.ts",
+      "default": "./dist/den/gateway.js"
+    },
+    "./den/gateway-usage-limits": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-usage-limits.d.ts",
+        "default": "./src/den/gateway-usage-limits.ts"
+      },
+      "development": "./src/den/gateway-usage-limits.ts",
+      "bun": "./src/den/gateway-usage-limits.ts",
+      "default": "./dist/den/gateway-usage-limits.js"
+    },
+    "./den/gateway-member-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-member-usage.d.ts",
+        "default": "./src/den/gateway-member-usage.ts"
+      },
+      "development": "./src/den/gateway-member-usage.ts",
+      "default": "./src/den/gateway-member-usage.ts"
+    },
+    "./den/gateway-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-usage.d.ts",
+        "default": "./src/den/gateway-usage.ts"
+      },
+      "development": "./src/den/gateway-usage.ts",
+      "default": "./src/den/gateway-usage.ts"
+    },
     "./den/inference": {
-      "types": "./src/den/inference.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/inference.d.ts",
+        "default": "./src/den/inference.ts"
+      },
       "development": "./src/den/inference.ts",
-      "default": "./src/den/inference.ts"
+      "bun": "./src/den/inference.ts",
+      "browser": "./src/den/inference.ts",
+      "default": "./dist/den/inference.js"
     },
     "./den/microsoft-365": {
-      "types": "./src/den/microsoft-365.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/microsoft-365.d.ts",
+        "default": "./src/den/microsoft-365.ts"
+      },
       "development": "./src/den/microsoft-365.ts",
       "default": "./src/den/microsoft-365.ts"
     },
+    "./den/organization-web-origins": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/organization-web-origins.d.ts",
+        "default": "./src/den/organization-web-origins.ts"
+      },
+      "development": "./src/den/organization-web-origins.ts",
+      "default": "./src/den/organization-web-origins.ts"
+    },
+    "./den/activation": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/activation.d.ts",
+        "default": "./src/den/activation.ts"
+      },
+      "development": "./src/den/activation.ts",
+      "default": "./src/den/activation.ts"
+    },
+    "./den/device-provider-share": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/device-provider-share.d.ts",
+        "default": "./src/den/device-provider-share.ts"
+      },
+      "development": "./src/den/device-provider-share.ts",
+      "bun": "./src/den/device-provider-share.ts",
+      "browser": "./src/den/device-provider-share.ts",
+      "default": "./dist/den/device-provider-share.js"
+    },
+    "./den/gateway-custom-providers": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-custom-providers.d.ts",
+        "default": "./src/den/gateway-custom-providers.ts"
+      },
+      "development": "./src/den/gateway-custom-providers.ts",
+      "default": "./src/den/gateway-custom-providers.ts"
+    },
+    "./den/feature-intros": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/feature-intros.d.ts",
+        "default": "./src/den/feature-intros.ts"
+      },
+      "development": "./src/den/feature-intros.ts",
+      "default": "./src/den/feature-intros.ts"
+    },
+    "./den/workbot-settings": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/workbot-settings.d.ts",
+        "default": "./src/den/workbot-settings.ts"
+      },
+      "development": "./src/den/workbot-settings.ts",
+      "default": "./src/den/workbot-settings.ts"
+    },
+    "./den/mcp-registration": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/mcp-registration.d.ts",
+        "default": "./src/den/mcp-registration.ts"
+      },
+      "development": "./src/den/mcp-registration.ts",
+      "default": "./src/den/mcp-registration.ts"
+    },
+    "./den/workbot-proactive": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/workbot-proactive.d.ts",
+        "default": "./src/den/workbot-proactive.ts"
+      },
+      "development": "./src/den/workbot-proactive.ts",
+      "default": "./src/den/workbot-proactive.ts"
+    },
+    "./den/default-model": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/default-model.d.ts",
+        "default": "./src/den/default-model.ts"
+      },
+      "development": "./src/den/default-model.ts",
+      "default": "./src/den/default-model.ts"
+    },
+    "./den/workbot-team-settings": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/workbot-team-settings.d.ts",
+        "default": "./src/den/workbot-team-settings.ts"
+      },
+      "development": "./src/den/workbot-team-settings.ts",
+      "default": "./src/den/workbot-team-settings.ts"
+    },
+    "./den/workbot-usage": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/workbot-usage.d.ts",
+        "default": "./src/den/workbot-usage.ts"
+      },
+      "development": "./src/den/workbot-usage.ts",
+      "default": "./src/den/workbot-usage.ts"
+    },
+    "./den/auto-router": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/auto-router.d.ts",
+        "default": "./src/den/auto-router.ts"
+      },
+      "development": "./src/den/auto-router.ts",
+      "bun": "./src/den/auto-router.ts",
+      "browser": "./src/den/auto-router.ts",
+      "default": "./dist/den/auto-router.js"
+    },
+    "./den/prompts": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/prompts.d.ts",
+        "default": "./src/den/prompts.ts"
+      },
+      "development": "./src/den/prompts.ts",
+      "bun": "./src/den/prompts.ts",
+      "browser": "./src/den/prompts.ts",
+      "default": "./dist/den/prompts.js"
+    },
+    "./den/credential-prompt": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/credential-prompt.d.ts",
+        "default": "./src/den/credential-prompt.ts"
+      },
+      "development": "./src/den/credential-prompt.ts",
+      "default": "./src/den/credential-prompt.ts"
+    },
     "./den/mcp-connection-action": {
-      "types": "./src/den/mcp-connection-action.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/mcp-connection-action.d.ts",
+        "default": "./src/den/mcp-connection-action.ts"
+      },
       "development": "./src/den/mcp-connection-action.ts",
       "default": "./src/den/mcp-connection-action.ts"
     },
     "./workspace": {
-      "types": "./src/workspace.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/workspace.d.ts",
+        "default": "./src/workspace.ts"
+      },
       "development": "./src/workspace.ts",
       "default": "./src/workspace.ts"
     },
     "./desktop-ipc": {
-      "types": "./src/desktop-ipc.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/desktop-ipc.d.ts",
+        "default": "./src/desktop-ipc.ts"
+      },
       "development": "./src/desktop-ipc.ts",
       "default": "./src/desktop-ipc.ts"
     },
     "./connect-link": {
-      "types": "./src/connect-link.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/connect-link.d.ts",
+        "default": "./src/connect-link.ts"
+      },
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
     },
+    "./agent-form": {
+      "types": {
+        "openwork-build": "./dist/types/src/agent-form.d.ts",
+        "default": "./src/agent-form.ts"
+      },
+      "development": "./src/agent-form.ts",
+      "bun": "./src/agent-form.ts",
+      "browser": "./src/agent-form.ts",
+      "default": "./dist/agent-form.js"
+    },
+    "./session-link": {
+      "types": {
+        "openwork-build": "./dist/types/src/session-link.d.ts",
+        "default": "./src/session-link.ts"
+      },
+      "development": "./src/session-link.ts",
+      "bun": "./src/session-link.ts",
+      "browser": "./src/session-link.ts",
+      "default": "./dist/session-link.js"
+    },
+    "./opencode-config-error": {
+      "types": {
+        "openwork-build": "./dist/types/src/opencode-config-error.d.ts",
+        "default": "./src/opencode-config-error.ts"
+      },
+      "development": "./src/opencode-config-error.ts",
+      "bun": "./src/opencode-config-error.ts",
+      "browser": "./src/opencode-config-error.ts",
+      "default": "./dist/opencode-config-error.js"
+    },
     "./url": {
-      "types": "./src/url.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/url.d.ts",
+        "default": "./src/url.ts"
+      },
       "development": "./src/url.ts",
       "default": "./src/url.ts"
     },
-    "./visualization": {
-      "types": "./src/visualization.ts",
-      "development": "./src/visualization.ts",
-      "default": "./src/visualization.ts"
-    },
     "./den/desktop-policies-runtime": {
-      "types": "./src/den/desktop-policies.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/den/desktop-policies.d.ts",
+        "default": "./src/den/desktop-policies.ts"
+      },
       "development": "./src/den/desktop-policies.ts",
       "bun": "./src/den/desktop-policies.ts",
       "default": "./dist/den/desktop-policies.js"
+    },
+    "./den/agent-permissions-runtime": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/agent-permissions.d.ts",
+        "default": "./src/den/agent-permissions.ts"
+      },
+      "development": "./src/den/agent-permissions.ts",
+      "bun": "./src/den/agent-permissions.ts",
+      "default": "./dist/den/agent-permissions.js"
+    },
+    "./den/service-health": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/service-health.d.ts",
+        "default": "./src/den/service-health.ts"
+      },
+      "development": "./src/den/service-health.ts",
+      "default": "./src/den/service-health.ts"
+    },
+    "./den/service-readiness": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/service-readiness.d.ts",
+        "default": "./src/den/service-readiness.ts"
+      },
+      "development": "./src/den/service-readiness.ts",
+      "default": "./src/den/service-readiness.ts"
+    },
+    "./den/config-blobs": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/config-blobs.d.ts",
+        "default": "./src/den/config-blobs.ts"
+      },
+      "development": "./src/den/config-blobs.ts",
+      "default": "./src/den/config-blobs.ts"
+    },
+    "./den/billing-invoices": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/billing-invoices.d.ts",
+        "default": "./src/den/billing-invoices.ts"
+      },
+      "development": "./src/den/billing-invoices.ts",
+      "default": "./src/den/billing-invoices.ts"
+    },
+    "./den/billing-plans": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/billing-plans.d.ts",
+        "default": "./src/den/billing-plans.ts"
+      },
+      "development": "./src/den/billing-plans.ts",
+      "default": "./src/den/billing-plans.ts"
+    },
+    "./den/organization-grants": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/organization-grants.d.ts",
+        "default": "./src/den/organization-grants.ts"
+      },
+      "development": "./src/den/organization-grants.ts",
+      "default": "./src/den/organization-grants.ts"
+    },
+    "./den/sandbox-organizations": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/sandbox-organizations.d.ts",
+        "default": "./src/den/sandbox-organizations.ts"
+      },
+      "development": "./src/den/sandbox-organizations.ts",
+      "default": "./src/den/sandbox-organizations.ts"
+    },
+    "./den/gateway-api-keys": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-api-keys.d.ts",
+        "default": "./src/den/gateway-api-keys.ts"
+      },
+      "development": "./src/den/gateway-api-keys.ts",
+      "default": "./src/den/gateway-api-keys.ts"
+    },
+    "./den/gateway-cursor": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/gateway-cursor.d.ts",
+        "default": "./src/den/gateway-cursor.ts"
+      },
+      "development": "./src/den/gateway-cursor.ts",
+      "default": "./src/den/gateway-cursor.ts"
+    },
+    "./den/automation-settings": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/automation-settings.d.ts",
+        "default": "./src/den/automation-settings.ts"
+      },
+      "development": "./src/den/automation-settings.ts",
+      "default": "./src/den/automation-settings.ts"
+    },
+    "./den/admin-organization": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-organization.d.ts",
+        "default": "./src/den/admin-organization.ts"
+      },
+      "development": "./src/den/admin-organization.ts",
+      "default": "./src/den/admin-organization.ts"
+    },
+    "./den/admin-control-center": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-control-center.d.ts",
+        "default": "./src/den/admin-control-center.ts"
+      },
+      "development": "./src/den/admin-control-center.ts",
+      "default": "./src/den/admin-control-center.ts"
+    },
+    "./den/admin-free-auto": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-free-auto.d.ts",
+        "default": "./src/den/admin-free-auto.ts"
+      },
+      "development": "./src/den/admin-free-auto.ts",
+      "default": "./src/den/admin-free-auto.ts"
+    },
+    "./den/admin-runner-fleet": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-runner-fleet.d.ts",
+        "default": "./src/den/admin-runner-fleet.ts"
+      },
+      "development": "./src/den/admin-runner-fleet.ts",
+      "default": "./src/den/admin-runner-fleet.ts"
+    },
+    "./den/admin-computer-fleet": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-computer-fleet.d.ts",
+        "default": "./src/den/admin-computer-fleet.ts"
+      },
+      "development": "./src/den/admin-computer-fleet.ts",
+      "default": "./src/den/admin-computer-fleet.ts"
+    },
+    "./den/connection-state": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/connection-state.d.ts",
+        "default": "./src/den/connection-state.ts"
+      },
+      "development": "./src/den/connection-state.ts",
+      "bun": "./src/den/connection-state.ts",
+      "browser": "./src/den/connection-state.ts",
+      "default": "./dist/den/connection-state.js"
+    },
+    "./managed-provider-config": {
+      "types": {
+        "openwork-build": "./dist/types/src/managed-provider-config.d.ts",
+        "default": "./src/managed-provider-config.ts"
+      },
+      "development": "./src/managed-provider-config.ts",
+      "bun": "./src/managed-provider-config.ts",
+      "browser": "./src/managed-provider-config.ts",
+      "default": "./dist/managed-provider-config.js"
+    },
+    "./browser-demonstration": {
+      "types": {
+        "openwork-build": "./dist/types/src/browser-demonstration.d.ts",
+        "default": "./src/browser-demonstration.ts"
+      },
+      "development": "./src/browser-demonstration.ts",
+      "default": "./dist/browser-demonstration.js"
     }
   },
   "files": [
@@ -131,10 +671,12 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup"
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
-    "zod": "^4.3.6"
+    "@openwork/managed-deployments": "workspace:*",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "tsup": "^8.5.0",

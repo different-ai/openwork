@@ -1,6 +1,7 @@
 .turbo/
 node_modules/
 apps/desktop/dist-electron/
+apps/desktop/electron/generated/
 apps/desktop/.electron-runtime/
 apps/desktop/dist-electron-demo-a/
 apps/desktop/dist-electron-demo-b/
@@ -16,6 +17,9 @@ packages/*/dist/
 apps/*/dist/
 ee/apps/*/dist/
 ee/packages/*/dist/
+ee/apps/gateway/models-site/models/api.json
+ee/apps/gateway/models-site/models/experimental/
+# Generated catalog left by pre-Gateway builds, not an active app path.
 ee/apps/inference/models-site/models/api.json
 tmp/
 coverage/
@@ -35,10 +39,6 @@ apps/desktop/server/
 !.env.example
 # Committed local-dev defaults (throwaway secrets) loaded by scripts/dev-local.mjs.
 !.env.dev
-# The migration-release fragment is committed only on the tagged
-# migration-release commit and removed by 03-post-migration-cleanup.mjs.
-# Allow git to see it so `cut-migration-release` can commit it.
-!.env.migration-release
 
 # Bun build artifacts
 *.bun-build
@@ -59,6 +59,8 @@ vendor/opencode/
 # OpenCode local deps
 .opencode/node_modules/
 .opencode/bun.lock
+.opencode/package.json
+.opencode/package-lock.json
 
 # OpenWork workspace-local artifacts
 .opencode/openwork/
@@ -77,5 +79,13 @@ evals/results/
 .playwright-mcp/
 .vscode/
 
-# Warden local run logs
-.warden/logs/
+
+# Local Workbot runner database (scripts/dev-workbot.sh)
+/.data/
+
+# TypeScript incremental build state
+*.tsbuildinfo
+
+# API contracts are generated from source for builds and CI.
+/packages/docs/openapi.json
+/packages/sdk/src/gen/

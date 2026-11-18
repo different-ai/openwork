@@ -49,5 +49,5 @@ export function evaluateManagedModelsPolicy(metadata: unknown): ManagedModelsPol
 
 export function assertManagedModelsAllowed(metadata: unknown): void {
   const policy = evaluateManagedModelsPolicy(metadata)
-  if (!policy.allowed) throw new ManagedModelsPolicyError(policy.code)
+  if (policy.allowed === false) throw new ManagedModelsPolicyError(policy.code)
 }

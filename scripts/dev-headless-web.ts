@@ -1,4 +1,4 @@
-import { detachDevHeadless, main } from "../worlds/dev-headless.ts";
+import { detachDevHeadless, main } from "../worlds/dev-app-web.ts";
 
 if (import.meta.main) {
   const argv = process.argv.slice(2);

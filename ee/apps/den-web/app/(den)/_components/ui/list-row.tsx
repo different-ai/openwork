@@ -44,7 +44,7 @@ export function DenListRow({
   focused = false,
   dataAttributes,
 }: DenListRowProps) {
-  const className = `flex items-center gap-3 px-6 py-4 transition ${tone === "warning" ? "bg-amber-50/40" : ""} ${href || onClick ? "cursor-pointer hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
+  const className = `flex items-center gap-3 px-6 py-4 transition ${tone === "warning" ? "bg-[var(--dls-hover)]" : ""} ${href || onClick ? "cursor-pointer hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
   const content = (
     <>
       {leading}

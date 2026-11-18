@@ -1,0 +1,715 @@
+/**
+ * Pure helpers for the Den "Gateway providers" screens: response parsing,
+ * request-body builders and label mapping. Kept free of React and fetch so
+ * the request shapes can be unit-tested against den-api's
+ * `inference-providers.ts` schemas.
+ */
+
+import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
+import type {
+  GatewayAwsSsoSettings,
+  GatewayMemberSignInMethod,
+  InferenceProviderCredentialKind,
+  InferenceProviderCredentialMode,
+  InferenceProviderStatus,
+} from "@openwork/types/den/inference";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayTrueFoundryStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { gatewayCustomProviderStatusSchema, type GatewayCustomProviderStatus } from "@openwork/types/den/gateway-custom-providers";
+import { z } from "zod";
+
+export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
+
+export type DenInferenceProviderCredential = {
+  credentialSetId: string | null;
+  subject: string;
+  orgMembershipId: string | null;
+  memberName: string | null;
+  memberEmail: string | null;
+  kind: InferenceProviderCredentialKind;
+  status: string;
+  expiresAt: string | null;
+};
+
+export type DenInferenceProvider = {
+  id: string;
+  providerId: string;
+  name: string;
+  credentialMode: InferenceProviderCredentialMode;
+  status: InferenceProviderStatus;
+  updatedAt: string | null;
+  providerConfig: Record<string, unknown>;
+  /** Empty follows the catalog; null means an older response omitted the policy. */
+  modelIds: string[] | null;
+  catalogWarning: string | null;
+  settings: Record<string, string>;
+  models: Array<{ id: string; name: string; config: Record<string, unknown> } & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>>;
+  credentialStatus: InferenceCredentialStatus;
+  access: { allMembers: boolean; memberIds: string[]; teamIds: string[] } | null;
+  credentials: DenInferenceProviderCredential[] | null;
+  /** Org-owned Google OAuth client used in member mode (manage view only). */
+  oauthClientId: string | null;
+  hasOauthClientSecret: boolean;
+  oauthCallbackUrl: string | null;
+  modelGroups: GatewayModelGroup[] | null;
+  credentialSets: GatewayCredentialSet[] | null;
+  accessGrants: GatewayAccessGrant[] | null;
+  authorizationRequests: GatewayAuthorizationRequest[];
+  /** LiteLLM providers only (manage view). */
+  litellm: GatewayLiteLlmStatus | null;
+  /** TrueFoundry providers only (manage view). */
+  truefoundry: GatewayTrueFoundryStatus | null;
+  /** Custom OpenAI-compatible providers only (manage view). */
+  custom: GatewayCustomProviderStatus | null;
+};
+
+export type DenInferenceProviderDetails = DenInferenceProvider & {
+  catalogModels: Array<{ id: string; name: string; config: Record<string, unknown> }>;
+  modelGroups: GatewayModelGroup[];
+  credentialSets: GatewayCredentialSet[];
+  accessGrants: GatewayAccessGrant[];
+};
+
+const resourceStatusSchema = z.enum(["active", "disabled"]);
+const modelGroupSchema: z.ZodType<GatewayModelGroup> = z.object({
+  id: z.string(), name: z.string(), description: z.string().nullable(),
+  status: resourceStatusSchema, modelIds: z.array(z.string()),
+});
+const credentialSetSchema: z.ZodType<GatewayCredentialSet> = z.object({
+  id: z.string(), name: z.string(), credentialMode: z.enum(["org", "member"]),
+  status: resourceStatusSchema, configured: z.boolean(),
+  credentialStatus: z.enum(["ready", "member_auth_required", "org_credential_missing"]),
+  oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional(),
+  oauthTenantId: z.string().nullable().optional(),
+  awsSso: z.object({ startUrl: z.string(), region: z.string(), accountId: z.string(), roleName: z.string() }).nullable().optional(),
+  createdAt: z.string().optional(),
+  createdBy: z.object({ id: z.string(), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional(),
+});
+const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
+  id: z.string(), modelGroupId: z.string(), credentialSetId: z.string(),
+  audience: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("organization") }),
+    z.object({ type: z.literal("team"), teamId: z.string() }),
+    z.object({ type: z.literal("member"), memberId: z.string() }),
+  ]),
+});
+const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
+  mode: z.enum(["org", "member"]),
+  keySource: z.enum(["personal", "issued", "entra"]).nullable().catch(null),
+  issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
+  mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
+  issuedMemberCount: z.number().catch(0),
+  attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_litellm", "no_key_to_mirror", "no_models", "error"]) })).catch([]),
+  baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
+  entraScope: z.string().optional().catch(undefined),
+});
+const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
+  controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
+  createMissingUsers: z.boolean().catch(false), trackUsageCosts: z.boolean().catch(false), hasAdminKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(),
+  availableModels: z.array(z.object({ id: z.string(), name: z.string() })).catch([]),
+  selectedModelIds: z.array(z.string()).nullable().catch(null),
+  activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"]), message: z.string().nullable() })).catch([]),
+});
+const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
+  credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
+});
+
+/** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
+export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
+  "@ai-sdk/anthropic",
+  "@ai-sdk/openai",
+  "@ai-sdk/mistral",
+  "@ai-sdk/azure",
+  "@ai-sdk/openai-compatible",
+  "@openrouter/ai-sdk-provider",
+  "@ai-sdk/google",
+  "@ai-sdk/google-vertex",
+  "@ai-sdk/google-vertex/anthropic",
+  "@ai-sdk/amazon-bedrock",
+  "@ai-sdk/amazon-bedrock/mantle",
+] as const;
+
+export function isSupportedGatewayNpm(npm: string | null): boolean {
+  return npm !== null && SUPPORTED_GATEWAY_NPM_PACKAGES.some((entry) => entry === npm);
+}
+
+export function isGoogleVertexNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic";
+}
+
+export function getNewInferenceProviderSettings(npm: string | null): Record<string, string> {
+  return isGoogleVertexNpm(npm) ? { location: "global" } : {};
+}
+
+export function isAzureNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/azure";
+}
+
+/** Amazon Bedrock and Amazon Bedrock (OpenAI) share the region setting and AWS keys. */
+export function isAmazonBedrockNpm(npm: string | null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
+}
+
+/** Synthetic catalog provider for Claude on Microsoft Foundry; mirrors @openwork-ee/utils/microsoft-foundry-catalog. */
+export const MICROSOFT_FOUNDRY_PROVIDER_ID = "microsoft-foundry";
+
+export function isMicrosoftFoundryProvider(providerId: string | null): boolean {
+  return providerId === MICROSOFT_FOUNDRY_PROVIDER_ID;
+}
+
+/** Providers only reachable through AI Gateway; Bring your own keys hides them. */
+export function isGatewayOnlyNpm(npm: string | null, providerId: string | null = null): boolean {
+  return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
+}
+
+/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+export function isAwsRegion(value: string): boolean {
+  return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
+}
+
+export type AwsKeysInput = { accessKeyId: string; secretAccessKey: string; sessionToken: string };
+
+/** Blank keys keep what is stored; a partial set is rejected rather than silently dropped. */
+export function getAwsKeysError(keys: AwsKeysInput): string | null {
+  const accessKeyId = keys.accessKeyId.trim();
+  const secretAccessKey = keys.secretAccessKey.trim();
+  if (!accessKeyId && !secretAccessKey && !keys.sessionToken.trim()) return null;
+  if (!accessKeyId || !secretAccessKey) return "Enter both the AWS access key ID and secret access key.";
+  if (/\s/.test(accessKeyId) || /\s/.test(secretAccessKey)) return "AWS access keys cannot contain spaces.";
+  return null;
+}
+
+/**
+ * How members sign in to a provider in credentialMode "member", mirroring den-api
+ * (`unsupported_credential_mode` otherwise).
+ */
+export function getMemberSignInMethod(providerId: string): GatewayMemberSignInMethod | null {
+  return gatewayMemberSignInMethod(providerId);
+}
+
+export function supportsMemberCredentialMode(providerId: string): boolean {
+  return getMemberSignInMethod(providerId) !== null;
+}
+
+/** The account people sign in with, in their words. */
+export function getMemberSignInBrand(method: GatewayMemberSignInMethod): string {
+  return method === "google" ? "Google" : method === "microsoft" ? "Microsoft" : "AWS";
+}
+
+export const MEMBER_SIGN_IN_DOC_URLS: Record<GatewayMemberSignInMethod, string> = {
+  google: "https://openworklabs.com/docs/ai-gateway/google-agent-platform",
+  aws_sso: "https://openworklabs.com/docs/ai-gateway/amazon-bedrock",
+  microsoft: "https://openworklabs.com/docs/ai-gateway/microsoft-foundry",
+};
+
+export type AwsSsoInput = GatewayAwsSsoSettings;
+export const EMPTY_AWS_SSO: AwsSsoInput = { startUrl: "", region: "", accountId: "", roleName: "" };
+
+/** Mirrors gatewayAwsSsoSettingsSchema in @openwork/types/den/inference. */
+export function getAwsSsoError(input: AwsSsoInput): string | null {
+  let url: URL | null = null;
+  try { url = new URL(input.startUrl.trim()); } catch { url = null; }
+  if (!url || url.protocol !== "https:" || url.search || url.hash || !/\.(?:awsapps\.com|app\.aws)$/i.test(url.hostname)) {
+    return "Enter the AWS access portal URL, for example https://d-xxxxxxxxxx.awsapps.com/start.";
+  }
+  if (!isAwsRegion(input.region.trim())) return "Enter the IAM Identity Center region, for example us-east-1.";
+  if (!/^\d{12}$/.test(input.accountId.trim())) return "Enter the 12-digit AWS account ID where Bedrock is enabled.";
+  if (!/^[\w+=,.@-]{1,32}$/.test(input.roleName.trim())) return "Enter the permission set name, for example BedrockInference.";
+  return null;
+}
+
+export function trimAwsSso(input: AwsSsoInput): AwsSsoInput {
+  return { startUrl: input.startUrl.trim(), region: input.region.trim(), accountId: input.accountId.trim(), roleName: input.roleName.trim() };
+}
+
+/** Mirrors microsoftTenantIdSchema: the directory (tenant) ID GUID. */
+export function isMicrosoftTenantId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+/** Redirect URI the org's Google OAuth client must allow; mirrors den-api's callback route. */
+export function getOauthCallbackPath() {
+  return "/v1/inference-providers/oauth/callback";
+}
+
+/** Settings den-api requires for a given provider SDK (`invalid_settings` otherwise). */
+export function getRequiredSettingKeys(npm: string | null, providerId: string | null = null): string[] {
+  if (isMicrosoftFoundryProvider(providerId)) return ["resourceName"];
+  if (isGoogleVertexNpm(npm)) return ["project", "location"];
+  if (isAzureNpm(npm)) return ["resourceName"];
+  if (isAmazonBedrockNpm(npm)) return ["region"];
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+function asJsonRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return isRecord(value) ? value : {};
+}
+
+function asCredentialMode(value: unknown): InferenceProviderCredentialMode | null {
+  return value === "org" || value === "member" ? value : null;
+}
+
+function asStatus(value: unknown): InferenceProviderStatus | null {
+  return value === "active" || value === "disabled" ? value : null;
+}
+
+function asCredentialStatus(value: unknown): InferenceCredentialStatus {
+  return value === "ready" || value === "member_auth_required" ? value : "org_credential_missing";
+}
+
+function asCredentialKind(value: unknown): InferenceProviderCredentialKind | null {
+  return value === "api_key" || value === "api_key_map" || value === "aws_keys" || value === "gcp_service_account"
+    || value === "oauth_google" || value === "oauth_azure" || value === "aws_sso"
+    ? value
+    : null;
+}
+
+function asCredential(value: unknown): DenInferenceProviderCredential | null {
+  if (!isRecord(value)) return null;
+  const subject = asString(value.subject);
+  const kind = asCredentialKind(value.kind);
+  const status = asString(value.status);
+  if (!subject || !kind || !status) return null;
+  return {
+    subject,
+    credentialSetId: asString(value.credentialSetId),
+    orgMembershipId: asString(value.orgMembershipId),
+    memberName: asString(value.memberName),
+    memberEmail: asString(value.memberEmail),
+    kind,
+    status,
+    expiresAt: asString(value.expiresAt),
+  };
+}
+
+/** A malformed custom block leaves the provider readable; the manage screen then says it can't load the settings. */
+function readCustomStatus(value: unknown): GatewayCustomProviderStatus | null {
+  if (value === undefined || value === null) return null;
+  const parsed = gatewayCustomProviderStatusSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+export function asInferenceProvider(value: unknown): DenInferenceProvider | null {
+  if (!isRecord(value)) return null;
+  const id = asString(value.id);
+  const providerId = asString(value.providerId);
+  const name = asString(value.name);
+  const credentialMode = asCredentialMode(value.credentialMode);
+  const status = asStatus(value.status);
+  if (!id || !providerId || !name || !credentialMode || !status) return null;
+
+  const settings = Object.fromEntries(
+    Object.entries(asJsonRecord(value.settings)).flatMap(([key, entry]) =>
+      typeof entry === "string" ? [[key, entry] as const] : [],
+    ),
+  );
+
+  return {
+    id,
+    providerId,
+    name,
+    credentialMode,
+    status,
+    updatedAt: asString(value.updatedAt),
+    providerConfig: asJsonRecord(value.providerConfig),
+    modelIds: value.modelIds === undefined ? null : z.array(z.string()).parse(value.modelIds),
+    catalogWarning: asString(value.catalogWarning),
+    settings,
+    models: Array.isArray(value.models)
+      ? value.models.flatMap((model) => {
+          if (!isRecord(model)) return [];
+          const modelId = asString(model.id);
+          const modelName = asString(model.name);
+          return modelId && modelName ? [{
+            id: modelId, name: modelName, config: asJsonRecord(model.config),
+            upstreamModelId: asString(model.upstreamModelId) ?? undefined,
+            modelGroupId: asString(model.modelGroupId) ?? undefined,
+            modelGroupName: asString(model.modelGroupName) ?? undefined,
+            credentialSetId: asString(model.credentialSetId) ?? undefined,
+            credentialSetName: asString(model.credentialSetName) ?? undefined,
+          }] : [];
+        })
+      : [],
+    credentialStatus: asCredentialStatus(value.credentialStatus),
+    access: isRecord(value.access)
+      ? {
+          allMembers: value.access.allMembers === true,
+          memberIds: asStringList(value.access.memberIds),
+          teamIds: asStringList(value.access.teamIds),
+        }
+      : null,
+    credentials: Array.isArray(value.credentials)
+      ? value.credentials.map(asCredential).filter((entry): entry is DenInferenceProviderCredential => entry !== null)
+      : null,
+    oauthClientId: asString(value.oauthClientId),
+    hasOauthClientSecret: value.hasOauthClientSecret === true,
+    oauthCallbackUrl: asString(value.oauthCallbackUrl),
+    modelGroups: value.modelGroups === undefined ? null : z.array(modelGroupSchema).parse(value.modelGroups),
+    credentialSets: value.credentialSets === undefined ? null : z.array(credentialSetSchema).parse(value.credentialSets),
+    accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
+    authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
+    litellm: value.litellm === undefined ? null : liteLlmStatusSchema.parse(value.litellm),
+    truefoundry: value.truefoundry === undefined ? null : trueFoundryStatusSchema.parse(value.truefoundry),
+    custom: readCustomStatus(value.custom),
+  };
+}
+
+export function readInferenceProviderFromPayload(payload: unknown): DenInferenceProvider | null {
+  return isRecord(payload) ? asInferenceProvider(payload.inferenceProvider) : null;
+}
+
+export function readInferenceProviderDetails(payload: unknown, catalogPayload: unknown): DenInferenceProviderDetails | null {
+  const provider = readInferenceProviderFromPayload(payload);
+  if (!provider?.modelGroups || !provider.credentialSets || !provider.accessGrants) return null;
+  const catalog = z.object({ catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
+  // Provider reads no longer refresh the catalog; the models endpoint does and carries the warning.
+  return { ...provider, catalogWarning: provider.catalogWarning ?? catalog.catalogWarning ?? null, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
+}
+
+export function readInferenceProvidersFromPayload(payload: unknown): DenInferenceProvider[] {
+  return isRecord(payload) && Array.isArray(payload.inferenceProviders)
+    ? payload.inferenceProviders.map(asInferenceProvider).filter((entry): entry is DenInferenceProvider => entry !== null)
+    : [];
+}
+
+// --- Labels ---
+
+export function getCredentialModeLabel(mode: InferenceProviderCredentialMode) {
+  return mode === "member" ? "Each member signs in" : "Organization key";
+}
+
+export function getCredentialStatusLabel(provider: Pick<DenInferenceProvider, "credentialMode" | "credentialStatus">) {
+  if (provider.credentialMode === "member") return "Members authorize individually";
+  return provider.credentialStatus === "ready" ? "Ready" : "Org credential missing";
+}
+
+export function getCredentialStatusTone(
+  provider: Pick<DenInferenceProvider, "credentialMode" | "credentialStatus">,
+): "success" | "warning" | "info" {
+  if (provider.credentialMode === "member") return "info";
+  return provider.credentialStatus === "ready" ? "success" : "warning";
+}
+
+export function getCredentialKindLabel(kind: InferenceProviderCredentialKind) {
+  switch (kind) {
+    case "api_key":
+      return "API key";
+    case "api_key_map":
+      return "API keys (per env)";
+    case "gcp_service_account":
+      return "Google service account";
+    case "aws_keys":
+      return "AWS keys";
+    case "oauth_google":
+      return "Google OAuth";
+    case "oauth_azure":
+      return "Microsoft sign-in";
+    case "aws_sso":
+      return "AWS sign-in";
+  }
+}
+
+export function getProviderStatusLabel(status: InferenceProviderStatus) {
+  return status === "active" ? "Active" : "Disabled";
+}
+
+export const GATEWAY_PAGE_DESCRIPTION =
+  "Your organization's provider keys stay on the server. People pick models in the app; you decide who can use which ones.";
+
+export type GatewayAudienceNames = {
+  organization: string | null;
+  teamName: (teamId: string) => string | undefined;
+  memberName: (memberId: string) => string | undefined;
+};
+
+/** One line for a list row: who this provider is shared with. */
+export function describeGatewayAccess(
+  provider: Pick<DenInferenceProvider, "accessGrants">,
+  names: GatewayAudienceNames,
+): string {
+  const { allMembers, teamIds, memberIds } = accessFromGrants(provider.accessGrants);
+  if (allMembers) return names.organization ? `Everyone in ${names.organization}` : "Everyone";
+  const labels = [
+    ...teamIds.map((id) => names.teamName(id) ?? "A team"),
+    ...memberIds.map((id) => names.memberName(id) ?? "A person"),
+  ];
+  return labels.length ? labels.join(", ") : "No one has access yet";
+}
+
+export function accessFromGrants(grants: GatewayAccessGrant[] | null | undefined): {
+  allMembers: boolean;
+  memberIds: string[];
+  teamIds: string[];
+} {
+  const list = grants ?? [];
+  return {
+    allMembers: list.some((grant) => grant.audience.type === "organization"),
+    teamIds: list.flatMap((grant) => (grant.audience.type === "team" ? [grant.audience.teamId] : [])),
+    memberIds: list.flatMap((grant) => (grant.audience.type === "member" ? [grant.audience.memberId] : [])),
+  };
+}
+
+// --- Request bodies ---
+
+export type InferenceProviderFormInput = {
+  name: string;
+  providerId: string;
+  modelIds: string[];
+  credentialMode: InferenceProviderCredentialMode;
+  status: InferenceProviderStatus;
+  /** Required-setting values keyed by setting name; blank entries are dropped. */
+  settings: Record<string, string>;
+  previousSettings?: Record<string, string>;
+  /** Env var names the provider reads (from the catalog config). */
+  envNames: string[];
+  /** Single API key when the provider reads one env var. */
+  apiKey: string;
+  /** Per-env values when the provider reads several env vars. */
+  apiKeyValues: Record<string, string>;
+  /** Pasted Google service-account JSON (Vertex org mode). */
+  serviceAccountJson: string;
+  /** AWS access keys (Amazon Bedrock only); blank keeps the stored keys. */
+  awsKeys?: AwsKeysInput;
+  /** Amazon Bedrock only: copy another Bedrock provider's saved keys server-side instead of entering keys. */
+  reuseCredentialFrom?: string | null;
+  /** Org-owned Google OAuth client or Entra ID app registration (member mode). Blank secret keeps the stored one. */
+  oauthClientId: string;
+  oauthClientSecret: string;
+  /** Microsoft Foundry member mode: the Entra ID directory (tenant) ID. */
+  oauthTenantId?: string;
+  /** Amazon Bedrock member mode: IAM Identity Center settings. */
+  awsSso?: AwsSsoInput;
+  access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
+};
+
+export type InferenceProviderRequestBody = {
+  name: string;
+  providerId: string;
+  modelIds: string[];
+  credentialMode: InferenceProviderCredentialMode;
+  status: InferenceProviderStatus;
+  settings?: Record<string, string>;
+  credential?: { kind: InferenceProviderCredentialKind; secret: string };
+  apiKeys?: Record<string, string>;
+  reuseCredentialFrom?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthTenantId?: string;
+  awsSso?: AwsSsoInput;
+  allMembers: boolean;
+  memberIds: string[];
+  teamIds: string[];
+};
+
+function trimmedSettings(settings: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(settings).flatMap(([key, value]) => {
+      const trimmed = value.trim();
+      return trimmed ? [[key, trimmed] as const] : [];
+    }),
+  );
+}
+
+/**
+ * Builds the POST/PATCH body for `/v1/inference-providers`. The credential is
+ * only included when the admin typed one (blank = keep what is stored), and
+ * never in member mode, where each member authorizes their own account through
+ * the org's Google OAuth client (`oauthClientId` always sent, `oauthClientSecret`
+ * only when typed so a blank keeps the stored secret).
+ * `apiKeys` is used for multi-env providers exactly like the BYOK editor.
+ */
+export function buildInferenceProviderRequestBody(input: InferenceProviderFormInput): InferenceProviderRequestBody {
+  const body: InferenceProviderRequestBody = {
+    name: input.name.trim(),
+    providerId: input.providerId,
+    modelIds: [...new Set(input.modelIds)],
+    credentialMode: input.credentialMode,
+    status: input.status,
+    settings: trimmedSettings(input.settings),
+    allMembers: input.access.allMembers,
+    memberIds: input.access.allMembers ? [] : [...new Set(input.access.memberIds)],
+    teamIds: input.access.allMembers ? [] : [...new Set(input.access.teamIds)],
+  };
+  if (input.previousSettings && JSON.stringify(trimmedSettings(input.settings)) === JSON.stringify(trimmedSettings(input.previousSettings))) {
+    delete body.settings;
+  }
+
+  if (input.credentialMode === "member") {
+    const method = gatewayMemberSignInMethod(input.providerId);
+    if (method === "aws_sso") {
+      if (input.awsSso) body.awsSso = trimAwsSso(input.awsSso);
+      return body;
+    }
+    body.oauthClientId = input.oauthClientId.trim();
+    const oauthClientSecret = input.oauthClientSecret.trim();
+    if (oauthClientSecret) {
+      body.oauthClientSecret = oauthClientSecret;
+    }
+    if (method === "microsoft" && input.oauthTenantId !== undefined) body.oauthTenantId = input.oauthTenantId.trim().toLowerCase();
+    return body;
+  }
+
+  const serviceAccountJson = input.serviceAccountJson.trim();
+  if (serviceAccountJson) {
+    body.credential = { kind: "gcp_service_account", secret: serviceAccountJson };
+    return body;
+  }
+
+  if (input.reuseCredentialFrom) {
+    body.reuseCredentialFrom = input.reuseCredentialFrom;
+    return body;
+  }
+
+  if (input.awsKeys) {
+    const accessKeyId = input.awsKeys.accessKeyId.trim();
+    const secretAccessKey = input.awsKeys.secretAccessKey.trim();
+    const sessionToken = input.awsKeys.sessionToken.trim();
+    if (accessKeyId && secretAccessKey) {
+      body.credential = { kind: "aws_keys", secret: JSON.stringify({ accessKeyId, secretAccessKey, ...(sessionToken ? { sessionToken } : {}) }) };
+    }
+    return body;
+  }
+
+  if (input.envNames.length > 1) {
+    const entries = input.envNames
+      .map((envName) => [envName, (input.apiKeyValues[envName] ?? "").trim()] as const)
+      .filter(([, value]) => value.length > 0);
+    if (entries.length > 0) {
+      body.apiKeys = Object.fromEntries(entries);
+    }
+    return body;
+  }
+
+  const apiKey = input.apiKey.trim();
+  if (apiKey) {
+    body.credential = { kind: "api_key", secret: apiKey };
+  }
+  return body;
+}
+
+/**
+ * Client-side check mirroring den-api's `invalid_settings` / `unsupported_provider` /
+ * `unsupported_credential_mode` / `oauth_client_required` rules.
+ */
+export function validateInferenceProviderForm(input: {
+  npm: string | null;
+  name: string;
+  providerId: string;
+  modelIds: string[];
+  settings: Record<string, string>;
+  serviceAccountJson: string;
+  credentialMode: InferenceProviderCredentialMode;
+  oauthClientId: string;
+  oauthClientSecret: string;
+  /** True when den-api already stores a secret, so a blank field keeps it. */
+  hasOauthClientSecret: boolean;
+  awsKeys?: AwsKeysInput;
+  oauthTenantId?: string;
+  awsSso?: AwsSsoInput;
+}): string | null {
+  if (!input.providerId) return "Select a provider.";
+  if (!isSupportedGatewayNpm(input.npm)) {
+    return "This provider cannot be routed through the OpenWork gateway yet. Pick another provider, or add it under Bring your Own Keys.";
+  }
+  if (!input.name.trim()) return "Give the provider a name.";
+  if (input.modelIds.length === 0) return "Select at least one model.";
+  for (const key of getRequiredSettingKeys(input.npm, input.providerId)) {
+    if (!(input.settings[key] ?? "").trim()) {
+      return `${getSettingLabel(key, input.providerId)} is required for this provider.`;
+    }
+  }
+  if (isAmazonBedrockNpm(input.npm) && !isAwsRegion((input.settings.region ?? "").trim())) {
+    return "Enter an AWS region code such as us-east-1.";
+  }
+  const awsKeysError = input.awsKeys ? getAwsKeysError(input.awsKeys) : null;
+  if (awsKeysError) return awsKeysError;
+  if (input.credentialMode === "member") {
+    const method = getMemberSignInMethod(input.providerId);
+    if (!method) {
+      return "Each member signs in isn't available for this provider.";
+    }
+    if (method === "aws_sso") {
+      const error = getAwsSsoError(input.awsSso ?? EMPTY_AWS_SSO);
+      if (error) return error;
+    } else {
+      if (method === "microsoft" && !isMicrosoftTenantId(input.oauthTenantId ?? "")) {
+        return "Enter the Microsoft Entra directory (tenant) ID.";
+      }
+      if (!input.oauthClientId.trim() || (!input.oauthClientSecret.trim() && !input.hasOauthClientSecret)) {
+        return method === "microsoft"
+          ? "Each member signs in requires your Entra application (client) ID and client secret."
+          : "Each member signs in requires your Google OAuth client ID and client secret.";
+      }
+    }
+  }
+  const json = input.serviceAccountJson.trim();
+  if (json) {
+    try {
+      const parsed: unknown = JSON.parse(json);
+      if (!isRecord(parsed) || parsed.type !== "service_account") {
+        return "The service account JSON should be the key file downloaded from Google Cloud (type: service_account).";
+      }
+    } catch {
+      return "The service account JSON could not be parsed.";
+    }
+  }
+  return null;
+}
+
+/**
+ * Other Amazon Bedrock providers whose saved organization keys a new Bedrock
+ * provider may reuse. den-api makes the final check and copies the keys itself.
+ */
+export function getReusableAwsKeyProviders(
+  providers: Pick<DenInferenceProvider, "id" | "name" | "status" | "credentialMode" | "credentialStatus" | "providerConfig">[],
+): Array<{ id: string; name: string }> {
+  return providers
+    .filter((provider) => provider.status === "active" && provider.credentialMode === "org" && provider.credentialStatus === "ready"
+      && isAmazonBedrockNpm(typeof provider.providerConfig.npm === "string" ? provider.providerConfig.npm : null))
+    .map((provider) => ({ id: provider.id, name: provider.name }));
+}
+
+export function getSettingLabel(key: string, providerId: string | null = null) {
+  if (key === "resourceName" && isMicrosoftFoundryProvider(providerId)) return "Foundry resource name";
+  switch (key) {
+    case "project":
+      return "Google Cloud project";
+    case "location":
+      return "Region";
+    case "resourceName":
+      return "Azure resource name";
+    case "region":
+      return "AWS region";
+    default:
+      return key;
+  }
+}
+
+export function buildMigrateFromLlmProviderBody(llmProviderId: string): { llmProviderId: string } {
+  return { llmProviderId };
+}

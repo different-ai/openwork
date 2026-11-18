@@ -43,12 +43,19 @@ export function isValidEnvKey(key: string): boolean {
   return ENV_KEY_PATTERN.test(key);
 }
 
-export function isReservedEnvKey(key: string): boolean {
-  return isInternalEnvKey(key) && !PERSISTABLE_INTERNAL_KEYS.has(key);
+// Windows reads `opencode_config` as OPENCODE_CONFIG, so names compare
+// case-insensitively there: one variable per name, and no reserved bypass.
+function envName(key: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? key.toUpperCase() : key;
 }
 
-function isInternalEnvKey(key: string): boolean {
-  return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
+export function isReservedEnvKey(key: string, platform: NodeJS.Platform = process.platform): boolean {
+  return isInternalEnvKey(key, platform) && !PERSISTABLE_INTERNAL_KEYS.has(envName(key, platform));
+}
+
+function isInternalEnvKey(key: string, platform: NodeJS.Platform = process.platform): boolean {
+  const name = envName(key, platform);
+  return RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
 export function resolveDefaultEnvStorePath(): string {
@@ -166,8 +173,11 @@ export class EnvService {
     return () => { this.changeListeners.delete(listener); };
   }
 
-  constructor(options?: { path?: string }) {
+  private readonly platform: NodeJS.Platform;
+
+  constructor(options?: { path?: string; platform?: NodeJS.Platform }) {
     this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath();
+    this.platform = options?.platform ?? process.platform;
   }
 
   private async ensureLoaded(): Promise<void> {
@@ -203,15 +213,16 @@ export class EnvService {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
       const now = Date.now();
-      const next = new Map(this.variables.map((entry) => [entry.key, entry] as const));
+      // On Windows, saving `Path` replaces a saved `PATH` instead of adding a twin.
+      const next = new Map(this.variables.map((entry) => [envName(entry.key, this.platform), entry] as const));
       for (const entry of entries) {
         if (!isValidEnvKey(entry.key)) {
           throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
         }
-        if (isReservedEnvKey(entry.key)) {
+        if (isReservedEnvKey(entry.key, this.platform)) {
           throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
         }
-        next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
+        next.set(envName(entry.key, this.platform), { key: entry.key, value: entry.value, updatedAt: now });
       }
       const nextVariables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
       await writeStore(this.path, nextVariables);
@@ -224,7 +235,8 @@ export class EnvService {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
       const before = this.variables.length;
-      const nextVariables = this.variables.filter((entry) => entry.key !== key);
+      const name = envName(key, this.platform);
+      const nextVariables = this.variables.filter((entry) => envName(entry.key, this.platform) !== name);
       if (nextVariables.length === before) return false;
       await writeStore(this.path, nextVariables);
       this.variables = nextVariables;

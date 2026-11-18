@@ -175,6 +175,21 @@ export function describeMcpAuthorizationFailure(input: {
     }
   }
 
+  // The provider refused to register OpenWork as an OAuth client: its registration is limited to apps it has approved
+  // (for example Figma answers 403 to unapproved clients while accepting allowlisted ones). Retrying cannot help.
+  if (details?.phase === "AUTH_CLIENT_REGISTRATION" && (details.diagnosticCode === "MCP_HTTP_403" || details.providerStatus === 403)) {
+    return {
+      title: `${connectionName} only lets approved apps sign in`,
+      description: `${connectionName} refused to register OpenWork as a sign-in app. It only accepts apps it has approved, and OpenWork isn't on its list yet, so trying again won't help.`,
+      advice: [
+        `Ask a workspace admin whether ${connectionName} offers an OAuth app your organization can create. If it does, the admin can add its client ID to this connector.`,
+        "Otherwise, share the reference below with OpenWork support so we can follow up with the provider.",
+      ],
+      retryable: false,
+      copyable: details.diagnosticReference ? [{ label: "Reference", value: details.diagnosticReference }] : [],
+    }
+  }
+
   if (details?.errorCode === "response_unreadable") {
     return {
       title: "OpenWork couldn't read its own API's answer",

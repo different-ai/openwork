@@ -1,6 +1,7 @@
 // Pending interactions for a conversation and its descendants. Requests stay
 // owned by the session that asked; only their presentation bubbles to the parent.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { QueryObserver } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { unwrap } from "@/app/lib/opencode";
@@ -8,20 +9,307 @@ import { isOpencodeV2Client } from "@/app/lib/opencode-v2-adapter";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
+import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { createSessionChildIdsSelector, useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  seedSessionStatus,
+  seedSessionTodos,
   settleQuestionState,
   settlePermissionState,
+  statusKey,
   todoKey,
 } from "./session-sync";
 
 const emptyPendingPermissions: PendingPermission[] = [];
 const emptyPendingQuestions: PendingQuestion[] = [];
 const emptyTodos: TodoItem[] = [];
+const hydrationRetryDelaysMs = [100, 250, 500];
+const hydrationClients = new WeakMap<Client, number>();
+let nextHydrationClient = 0;
+
+function observeActivityRead(
+  client: Client,
+  key: readonly unknown[],
+  directory: string,
+  read: (signal: AbortSignal, startedAt: number) => Promise<void>,
+  recoverOnly = false,
+) {
+  let owner = hydrationClients.get(client);
+  if (owner === undefined) {
+    owner = ++nextHydrationClient;
+    hydrationClients.set(client, owner);
+  }
+  const observer = new QueryObserver(getReactQueryClient(), {
+    queryKey: [...key, "hydration", owner, directory],
+    queryFn: async ({ signal }) => {
+      for (let attempt = 0; ; attempt += 1) {
+        signal.throwIfAborted();
+        try {
+          await read(signal, Date.now());
+          return null;
+        } catch (error) {
+          signal.throwIfAborted();
+          const delay = hydrationRetryDelaysMs[attempt];
+          if (delay === undefined) throw error;
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); reject(signal.reason); };
+            const timer = setTimeout(() => {
+              signal.removeEventListener("abort", abort);
+              resolve();
+            }, delay);
+            signal.addEventListener("abort", abort, { once: true });
+          });
+        }
+      }
+    },
+    retry: false,
+    gcTime: 0,
+    networkMode: "always",
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  const refresh = () => {
+    const result = observer.getCurrentResult();
+    if (result.isFetching || (recoverOnly && !result.isError)) return;
+    void observer.refetch({ cancelRefetch: false });
+  };
+  const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
+  window.addEventListener("online", refresh);
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    unsubscribe();
+    window.removeEventListener("online", refresh);
+    window.removeEventListener("focus", refresh);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+}
+
+type PermissionSeeds = Parameters<typeof seedPermissionState>[2];
+type PermissionSnapshot = { startedAt: number; items?: PermissionSeeds };
+type PermissionHydration = {
+  controller: AbortController;
+  snapshot: PermissionSnapshot;
+  legacy?: { snapshot?: PermissionSnapshot };
+  done: boolean;
+  release?: () => void;
+};
+
+function permissionSeed(permission: PendingPermission): PermissionSeeds[number] {
+  if (permission.protocol === "v2" && permission.v2) {
+    return {
+      id: permission.id,
+      sessionID: permission.sessionID,
+      ...permission.v2,
+      metadata: permission.metadata,
+      source: permission.tool ? { type: "tool", ...permission.tool } : undefined,
+    };
+  }
+  return { ...permission, always: Array.isArray(permission.always) ? permission.always : [] };
+}
+
+function createInteractionHydration(client: Client, workspaceId: string, sessionId: string, workspaceRoot: string) {
+  const directory = workspaceRoot || undefined;
+  const children = new Map<string, PermissionHydration>();
+  const queued = new Map<string, PermissionHydration>();
+  const native = isOpencodeV2Client(client) ? client : null;
+  let disposed = false;
+  let activeReads = 0;
+  let legacy: { controller: AbortController; pending: boolean; failed?: boolean; snapshot?: PermissionSnapshot } | undefined;
+  let questions: {
+    controller: AbortController;
+    pending: boolean;
+    failed?: boolean;
+    snapshot?: { startedAt: number; items: Parameters<typeof seedQuestionState>[2] };
+  } | undefined;
+
+  const publishPermission = (id: string, child: PermissionHydration) => {
+    if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+    const snapshots = [child.legacy?.snapshot, child.snapshot].filter((snapshot) => snapshot?.items !== undefined);
+    if (snapshots.length === 0) return;
+    const current = getReactQueryClient().getQueryData<PendingPermission[]>(permissionKey(workspaceId, id)) ?? [];
+    const retained = current.filter((permission) => {
+      const snapshot = permission.protocol === "v2" ? child.snapshot : child.legacy?.snapshot;
+      return snapshot?.items === undefined || permission.receivedAt >= snapshot.startedAt;
+    });
+    const items = new Map<string, PermissionSeeds[number]>();
+    for (const snapshot of snapshots) {
+      for (const item of snapshot?.items ?? []) if (item.sessionID === id) items.set(item.id, item);
+    }
+    for (const item of retained) if (!items.has(item.id)) items.set(item.id, permissionSeed(item));
+    const snapshotStartedAt = Math.max(...snapshots.map((snapshot) => snapshot?.startedAt ?? 0));
+    seedPermissionState(workspaceId, id, [...items.values()], { snapshotStartedAt });
+  };
+
+  const publishQuestions = (id: string) => {
+    if (disposed || !children.has(id) || !questions?.snapshot) return;
+    const { items, startedAt: snapshotStartedAt } = questions.snapshot;
+    const current = getReactQueryClient().getQueryData<PendingQuestion[]>(questionKey(workspaceId, id)) ?? [];
+    const ids = new Set(items.map((item) => item.id));
+    seedQuestionState(workspaceId, id, [
+      ...items,
+      ...current.filter((item) => item.receivedAt >= snapshotStartedAt && !ids.has(item.id)),
+    ], { snapshotStartedAt });
+  };
+
+  const refreshShared = (failedOnly = false) => {
+    if (!native && !legacy?.pending && (!failedOnly || legacy?.failed)) {
+      const startedAt = Date.now();
+      const read: NonNullable<typeof legacy> = { controller: new AbortController(), pending: true, snapshot: legacy?.snapshot };
+      legacy = read;
+      for (const child of children.values()) child.legacy = read;
+      void (async () => {
+        try {
+          const items = unwrap(await client.permission.list({ directory }, { signal: read.controller.signal }));
+          if (disposed || read.controller.signal.aborted) return;
+          read.snapshot = { items, startedAt };
+          for (const [id, child] of children) if (child.legacy === read) publishPermission(id, child);
+        } catch {
+          if (!disposed && !read.controller.signal.aborted) read.failed = true;
+        } finally {
+          read.pending = false;
+        }
+      })();
+    }
+    if (!native && !questions?.pending && (!failedOnly || questions?.failed)) {
+      const startedAt = Date.now();
+      const read: NonNullable<typeof questions> = { controller: new AbortController(), pending: true, snapshot: questions?.snapshot };
+      questions = read;
+      void (async () => {
+        try {
+          const items = unwrap(await client.question.list({ directory }, { signal: read.controller.signal }));
+          if (disposed || read.controller.signal.aborted) return;
+          read.snapshot = { items, startedAt };
+          for (const id of children.keys()) publishQuestions(id);
+        } catch {
+          if (!disposed && !read.controller.signal.aborted) read.failed = true;
+        } finally {
+          read.pending = false;
+        }
+      })();
+    }
+  };
+
+  const drain = () => {
+    if (disposed) return;
+    while (activeReads < 4) {
+      const id = queued.has(sessionId) ? sessionId : queued.keys().next().value;
+      if (id === undefined) break;
+      const child = queued.get(id);
+      if (!child) break;
+      queued.delete(id);
+      activeReads += 1;
+      child.snapshot.startedAt = Date.now();
+      let released = false;
+      child.release = () => {
+        if (released) return;
+        released = true;
+        activeReads -= 1;
+      };
+      void (async () => {
+        try {
+          await Promise.allSettled([
+            (async () => {
+              const items = unwrap(await client.v2.session.permission.list({ sessionID: id }, { signal: child.controller.signal })).data;
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              child.snapshot.items = items;
+              publishPermission(id, child);
+            })(),
+            ...(native ? [(async () => {
+              const items = unwrap(await native.listSessionQuestions({ sessionID: id }, { signal: child.controller.signal }));
+              if (disposed || child.controller.signal.aborted || children.get(id) !== child) return;
+              seedQuestionState(workspaceId, id, items, { snapshotStartedAt: child.snapshot.startedAt });
+            })()] : []),
+          ]);
+        } catch {
+        } finally {
+          child.done = true;
+          child.release?.();
+          drain();
+        }
+      })();
+    }
+  };
+
+  const newChild = (): PermissionHydration => ({
+    controller: new AbortController(), snapshot: { startedAt: 0 }, legacy, done: false,
+  });
+  const refreshIds = (ids: Iterable<string>) => {
+    if (disposed) return;
+    refreshShared();
+    for (const id of ids) {
+      const child = children.get(id);
+      if (!child) continue;
+      if (child.done) {
+        const next = newChild();
+        children.set(id, next);
+        queued.set(id, next);
+      } else child.legacy = legacy;
+    }
+    drain();
+  };
+  const refresh = () => refreshIds(children.keys());
+  // A child may ask after the initial shared snapshot, while its live event
+  // is missed. Reconcile only active or blocked sessions, using the same
+  // bounded queue and snapshot fences as initial hydration and reconnect.
+  const interval = window.setInterval(() => {
+    const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId] ?? {};
+    const ids = [...children.keys()].filter(id => {
+      const record = records[id];
+      return record?.runActive || record?.waitingPermissionIds.length || record?.waitingQuestionIds.length;
+    });
+    if (ids.length) refreshIds(ids);
+  }, 5_000);
+  const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
+  refreshShared();
+  window.addEventListener("online", refresh);
+  window.addEventListener("focus", refresh);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+
+  return {
+    reconcile(ids: string[]) {
+      const active = new Set(ids);
+      for (const [id, child] of children) {
+        if (active.has(id)) continue;
+        children.delete(id);
+        queued.delete(id);
+        child.controller.abort();
+        child.release?.();
+      }
+      // A newly discovered child can already be waiting on a request whose
+      // event was missed. Recover failed shared reads, retaining successful
+      // snapshots and sharing any retry already in flight across additions.
+      if (ids.some((id) => !children.has(id))) refreshShared(true);
+      for (const id of ids) {
+        if (children.has(id)) continue;
+        const child = newChild();
+        children.set(id, child);
+        queued.set(id, child);
+        publishPermission(id, child);
+        publishQuestions(id);
+      }
+      drain();
+    },
+    dispose() {
+      disposed = true;
+      window.clearInterval(interval);
+      legacy?.controller.abort();
+      questions?.controller.abort();
+      for (const child of children.values()) child.controller.abort();
+      children.clear();
+      queued.clear();
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    },
+  };
+}
 
 export type UseSessionInteractionsInput = {
   client: Client | null;
@@ -29,10 +317,12 @@ export type UseSessionInteractionsInput = {
   sessionId: string | null;
   interactionSessionIds?: string[];
   workspaceRoot: string;
+  /** Records "Always allow" on a file-send approval with the host. */
+  rememberFileSend?: (requestID: string) => Promise<void>;
 };
 
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId, workspaceRoot, rememberFileSend } = input;
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -40,11 +330,21 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const questionReplyBusyRef = useRef(false);
 
   const requestedSessionIdsKey = (input.interactionSessionIds ?? []).join("\u0000");
+  const selectChildIds = useMemo(createSessionChildIdsSelector, []);
+  const childrenBySession = useSessionActivityStore(selectChildIds)[workspaceId ?? ""];
   const interactionSessionIds = useMemo(() => {
     if (!sessionId) return [];
     const requested = requestedSessionIdsKey ? requestedSessionIdsKey.split("\u0000") : [];
-    return Array.from(new Set([sessionId, ...requested].map((id) => id.trim()).filter(Boolean)));
-  }, [requestedSessionIdsKey, sessionId]);
+    const inventory = new Set<string>();
+    const queue = [sessionId, ...requested];
+    for (let index = 0; index < queue.length; index += 1) {
+      const id = queue[index]?.trim();
+      if (!id || inventory.has(id)) continue;
+      inventory.add(id);
+      queue.push(...(childrenBySession?.[id] ?? []));
+    }
+    return [...inventory];
+  }, [childrenBySession, requestedSessionIdsKey, sessionId]);
   const permissionQueryKeys = useMemo(
     () => workspaceId ? interactionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
     [interactionSessionIds, workspaceId],
@@ -76,88 +376,56 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const todos = useQueryCacheState<TodoItem[]>(todoQueryKey, emptyTodos);
 
   useEffect(() => {
-    if (!client || !workspaceId || interactionSessionIds.length === 0) return;
-    const controller = new AbortController();
-    const directory = workspaceRoot || undefined;
-    void (async () => {
-      const snapshotStartedAt = Date.now();
-      try {
-        let legacyPermissions: Parameters<typeof seedPermissionState>[2] = [];
-        let legacyReadSucceeded = false;
-        // The v2 compatibility list sweeps every session; the scoped reads below
-        // already return its native requests. V1 still needs both protocols.
-        if (!isOpencodeV2Client(client)) {
-          try {
-            legacyPermissions = unwrap(await client.permission.list({ directory }, { signal: controller.signal }));
-            legacyReadSucceeded = true;
-          } catch {
-            // Older/newer OpenCode permission APIs can fail independently.
-          }
-        }
-        if (controller.signal.aborted) return;
-
-        const v2Reads = await Promise.all(interactionSessionIds.map(async (permissionSessionId) => {
-          try {
-            const permissions = unwrap(
-              await client.v2.session.permission.list({ sessionID: permissionSessionId }, { signal: controller.signal }),
-            ).data;
-            return { permissionSessionId, permissions, succeeded: true };
-          } catch {
-            return { permissionSessionId, permissions: [], succeeded: false };
-          }
-        }));
-
-        if (controller.signal.aborted) return;
-        for (const read of v2Reads) {
-          if (!legacyReadSucceeded && !read.succeeded) continue;
-          seedPermissionState(
-            workspaceId,
-            read.permissionSessionId,
-            [...legacyPermissions, ...read.permissions],
-            { snapshotStartedAt },
-          );
-        }
-      } catch {
-        // Keep event-synced permission state if the snapshot read fails.
-        // Hiding a pending approval can block the running task.
-      }
-    })();
-    return () => {
-      controller.abort();
-    };
-  }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
+    if (!client || !workspaceId || !sessionId) return;
+    return observeActivityRead(client, statusKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
+      const statuses = unwrap(await client.session.status({ directory: workspaceRoot || undefined }, { signal }));
+      signal.throwIfAborted();
+      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, {
+        snapshotStartedAt,
+        engine: isOpencodeV2Client(client) ? "v2" : "v1",
+      });
+    }, true);
+  }, [client, workspaceId, sessionId, workspaceRoot]);
 
   useEffect(() => {
-    if (!client || !workspaceId || interactionSessionIds.length === 0) return;
-    const controller = new AbortController();
-    const directory = workspaceRoot || undefined;
-    void (async () => {
-      const snapshotStartedAt = Date.now();
-      try {
-        const list = unwrap(await client.question.list({ directory }, { signal: controller.signal }));
-        if (controller.signal.aborted) return;
-        for (const questionSessionId of interactionSessionIds) {
-          seedQuestionState(workspaceId, questionSessionId, list, { snapshotStartedAt });
-        }
-      } catch {
-        // Keep event-synced question state if the snapshot read fails.
-        // Hiding a pending question can block the running task.
-      }
-    })();
+    if (!client || !workspaceId || !sessionId) return;
+    return observeActivityRead(client, todoKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
+      const todos = unwrap(await client.session.todo({ sessionID: sessionId, directory: workspaceRoot || undefined }, { signal }));
+      signal.throwIfAborted();
+      seedSessionTodos(workspaceId, sessionId, todos, { snapshotStartedAt });
+    });
+  }, [client, workspaceId, sessionId, workspaceRoot]);
+
+  const hydrationRef = useRef<ReturnType<typeof createInteractionHydration> | null>(null);
+  useEffect(() => {
+    if (!client || !workspaceId || !sessionId) return;
+    const hydration = createInteractionHydration(client, workspaceId, sessionId, workspaceRoot);
+    hydrationRef.current = hydration;
     return () => {
-      controller.abort();
+      hydrationRef.current = null;
+      hydration.dispose();
     };
-  }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
+  }, [client, workspaceId, sessionId, workspaceRoot]);
+
+  useEffect(() => {
+    hydrationRef.current?.reconcile(interactionSessionIds);
+  }, [client, workspaceId, sessionId, workspaceRoot, interactionSessionIds]);
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
-    async (requestID: string, reply: "once" | "always" | "reject") => {
+    async (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => {
       if (!client || !workspaceId || !sessionId) return;
       if (permissionReplyBusyRef.current) return;
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
+        // "Always allow" on a file send: the host records the choice for this
+        // open question first, so a failure here answers nothing.
+        if (remember === "always" && reply === "always" && !pendingPermission?.evaluation) {
+          if (!rememberFileSend) throw new Error(t("session.file_send_remember_unavailable"));
+          await rememberFileSend(requestID);
+        }
         if (pendingPermission?.evaluation) {
           // A development-only proof request has no engine-side request to answer.
         } else if (pendingPermission?.protocol === "v2") {
@@ -188,32 +456,40 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot, rememberFileSend],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;
+  // `answers: null` dismisses the question without answering it.
   const respondQuestion = useCallback(
-    async (requestID: string, answers: string[][]) => {
-      if (!client || !workspaceId || !sessionId) return;
-      if (questionReplyBusyRef.current) return;
+    async (requestID: string, answers: string[][] | null) => {
+      if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");
+      if (questionReplyBusyRef.current) throw new Error("A question reply is already in progress.");
+      const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
+      if (!pendingQuestion) throw new Error("This question is no longer pending.");
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
-        unwrap(
-          await client.question.reply({
-            requestID,
-            answers,
-            directory: workspaceRoot || undefined,
-          }),
-        );
-        if (pendingQuestion) {
-          settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
+        const directory = workspaceRoot || undefined;
+        if (answers === null) {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.rejectSessionQuestion({ sessionID: pendingQuestion.sessionID, requestID })
+              : client.question.reject({ requestID, directory })),
+          );
+        } else {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
+              : client.question.reply({ requestID, answers, directory })),
+          );
         }
+        settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
         });
+        throw error;
       } finally {
         questionReplyBusyRef.current = false;
         setQuestionReplyBusy(false);

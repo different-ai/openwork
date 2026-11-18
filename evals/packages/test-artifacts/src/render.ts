@@ -214,7 +214,7 @@ export function renderPrMarkdown(
     "<!-- test-evidence -->",
     `## ${html(title)} — ${outcomeHeading(testRun)}`,
     "",
-    `SHA ${html(testRun.gitSha ?? "unknown")} · engine ${testRun.engine}`,
+    `SHA ${html(testRun.gitSha ?? "unknown")}${testRun.sandboxRef ? ` · sandbox ref ${html(testRun.sandboxRef)}` : ""} · engine ${testRun.engine}`,
     "",
     summaryLine(testRun),
   ];

@@ -4,15 +4,27 @@ import { pathToFileURL } from 'node:url';
 
 const escape = text => String(text).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 const statuses = new Set(['passed', 'failed', 'not tested']);
+const clip = (entry, key) => { if (typeof entry[key] !== 'string') throw new Error('Invalid journey result'); return entry[key].slice(0, 200); };
 export function validateReport(report) {
   if (!report || !Array.isArray(report.entries) || report.entries.length === 0 || report.entries.length > 1000) throw new Error('Missing or invalid coverage report');
+  if (report.excluded !== undefined && (!Array.isArray(report.excluded) || report.excluded.length > 1000)) throw new Error('Missing or invalid coverage report');
   const entries = report.entries.map(entry => {
-    if (typeof entry.spec !== 'string' || typeof entry.name !== 'string' || !statuses.has(entry.status)) throw new Error('Invalid journey result');
-    return { spec: entry.spec.slice(0, 200), name: entry.name.slice(0, 200), status: entry.status, critical: entry.critical === true };
+    if (!statuses.has(entry.status)) throw new Error('Invalid journey result');
+    return { spec: clip(entry, 'spec'), name: clip(entry, 'name'), status: entry.status, critical: entry.critical === true };
   });
-  if (new Set(entries.map(entry => entry.spec)).size !== entries.length) throw new Error('Duplicate journey results');
-  return { entries, counts: Object.fromEntries([...statuses].map(status => [status, entries.filter(entry => entry.status === status).length])) };
+  // Journeys the lane could not schedule travel with the report so an alert can tell reclassification from recovery.
+  const excluded = (report.excluded ?? []).map(entry => ({ spec: clip(entry, 'spec'), name: clip(entry, 'name'), reason: clip(entry, 'reason') }));
+  if (new Set([...entries, ...excluded].map(entry => entry.spec)).size !== entries.length + excluded.length) throw new Error('Duplicate journey results');
+  return { entries, excluded, counts: Object.fromEntries([...statuses].map(status => [status, entries.filter(entry => entry.status === status).length])) };
 }
+
+const excludedLine = report => report.excluded.length ? `\n${report.excluded.length} skipped (prerequisites unmet): ${report.excluded.map(entry => `${escape(entry.name)} — needs: ${escape(entry.reason)}`).join('; ')}` : '';
+
+const titles = {
+  'Nightly regression': 'Full regression — component checks',
+  'Freestyle world check': 'Nightly core journey and world check',
+  'Den DB Migrate': 'Production Den DB migrations (Den DB Migrate)',
+};
 
 export function notification(previous, run, report, teamId = '') {
   const sequence = [run.run_number, run.run_attempt];
@@ -21,14 +33,27 @@ export function notification(previous, run, report, teamId = '') {
   const failures = bad.map(entry => `${entry.spec}:${entry.status}`).sort();
   const newFailures = failures.some(key => !previous?.failures.includes(key));
   const critical = report.entries.filter(entry => entry.critical);
-  const state = { sequence, failures, thread: bad.length ? previous?.thread : undefined };
-  if (bad.length === 0 && !previous?.failures.length) return { state, message: null };
-  const title = run.name === 'Product journeys' ? 'Full regression — user journeys' : run.name === 'Build and core checks' ? 'Full regression — component checks' : 'Test reliability';
+  const excluded = report.excluded.map(entry => entry.spec).sort();
+  // A failing journey that is now excluded was not fixed; the lane stopped running it.
+  const reclassified = report.excluded.filter(entry => previous?.failures.some(key => key.startsWith(`${entry.spec}:`)));
+  // A selection change (a journey newly skipped that was not failing) is announced once, then stays quiet.
+  const newlyExcluded = previous ? report.excluded.filter(entry => !(previous.excluded ?? []).includes(entry.spec) && !reclassified.includes(entry)) : [];
+  const state = { sequence, failures, excluded, thread: bad.length ? previous?.thread : undefined };
+  if (bad.length === 0 && !previous?.failures.length && newlyExcluded.length === 0) return { state, message: null };
+  const title = titles[run.name] ?? run.name;
   const mention = bad.length && newFailures && /^[A-Z0-9]+$/.test(teamId) ? `<!subteam^${teamId}> ` : '';
-  const summary = bad.length ? `${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested` : 'Recovered — all selected checks passed';
+  const summary = bad.length ? `${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.excluded.length} skipped (prerequisites unmet)`
+    : reclassified.length ? `Executed checks passed — not a recovery: ${reclassified.length} previously failing journey(s) reclassified: prerequisite unsatisfied`
+    : previous?.failures.length ? 'Recovered — all selected checks passed'
+    : `Executed checks passed — coverage changed: ${newlyExcluded.length} journey(s) newly skipped (prerequisites unmet)`;
   const criticalText = critical.length ? `\nCritical journeys: ${critical.every(entry => entry.status === 'passed') ? 'all passed' : '*ACTION NEEDED*'}` : '';
-  const details = bad.slice(0, 30).map(entry => `• ${escape(entry.name)} — ${entry.status}`).join('\n');
-  const text = `${mention}*${title}*\n${summary}${criticalText}${details ? `\n${details}` : ''}${bad.length > 30 ? `\n…and ${bad.length - 30} more; see the run.` : ''}\n<${run.html_url}|View run and evidence>`;
+  const details = [
+    ...bad.slice(0, 30).map(entry => `• ${escape(entry.name)} — ${entry.status}`),
+    ...(bad.length > 30 ? [`…and ${bad.length - 30} more; see the run.`] : []),
+    ...reclassified.map(entry => `• ${escape(entry.name)} — reclassified: prerequisite unsatisfied (needs: ${escape(entry.reason)})`),
+    ...(bad.length ? [] : newlyExcluded.map(entry => `• ${escape(entry.name)} — newly skipped (prerequisites unmet; needs: ${escape(entry.reason)})`)),
+  ].join('\n');
+  const text = `${mention}*${title}*\n${summary}${criticalText}${details ? `\n${details}` : ''}${bad.length ? excludedLine(report) : ''}\n<${run.html_url}|View run and evidence>`;
   return { state, message: { text, ...(previous?.thread ? { thread_ts: previous.thread } : {}), unfurl_links: false, unfurl_media: false } };
 }
 
@@ -65,19 +90,15 @@ async function main() {
   const { workflow_run: run } = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, 'utf8'));
   const repo = process.env.GITHUB_REPOSITORY;
   if (run.event !== 'schedule') throw new Error('Only scheduled runs may notify the team');
-  const artifacts = api(`repos/${repo}/actions/runs/${run.id}/artifacts?per_page=100`).artifacts;
   let report;
-  if (run.name === 'Product journeys' && artifacts.some(artifact => artifact.name === 'journey-report' && !artifact.expired)) {
-    gh('run', 'download', String(run.id), '--repo', repo, '--name', 'journey-report', '--dir', 'incoming-report');
-    report = validateReport(JSON.parse(await readFile('incoming-report/journey-report.json', 'utf8')));
-  } else {
+  {
     const pages = gh('api', '--paginate', '--slurp', `repos/${repo}/actions/runs/${run.id}/jobs?per_page=100`);
     const jobs = JSON.parse(pages).flatMap(page => page.jobs);
     const entries = jobs.filter(job => job.conclusion !== 'skipped').map(job => ({
       spec: job.name, name: job.name, critical: false,
       status: job.conclusion === 'success' ? 'passed' : job.conclusion === 'failure' ? 'failed' : 'not tested',
     }));
-    if (!entries.length || run.name === 'Product journeys') entries.push({ spec: 'missing-coverage', name: 'Journey report unavailable — coverage could not be verified', critical: false, status: 'not tested' });
+    if (!entries.length) entries.push({ spec: 'missing-coverage', name: 'Journey report unavailable — coverage could not be verified', critical: false, status: 'not tested' });
     report = validateReport({ entries });
   }
   // Missing reports, upload failures and aggregate failures cannot send a recovery.
@@ -96,10 +117,14 @@ async function main() {
   await mkdir('alert-state', { recursive: true });
   if (!process.env.SLACK_BOT_TOKEN || !process.env.SLACK_TEST_ALERT_CHANNEL_ID) {
     await appendFile(process.env.GITHUB_STEP_SUMMARY, '## Slack setup required\n\nSet the SLACK_BOT_TOKEN secret and SLACK_TEST_ALERT_CHANNEL_ID variable, and invite the bot to that channel. No Slack message was sent.\n');
-    throw new Error('Slack notification credentials are not configured');
+    // Healthy runs have nothing to send, so missing credentials only fail a run that needed to alert.
+    const { state, message } = notification(previous, run, report);
+    if (message) throw new Error('Slack notification credentials are not configured');
+    await writeFile('alert-state/state.json', JSON.stringify(state));
+    return;
   }
   const state = await deliver(previous, run, report, { token: process.env.SLACK_BOT_TOKEN, channel: process.env.SLACK_TEST_ALERT_CHANNEL_ID, teamId: process.env.SLACK_TEST_ALERT_TEAM_ID });
   await writeFile('alert-state/state.json', JSON.stringify(state));
-  await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Team notification\n\n${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested. Healthy runs stay quiet; repeated failures reply in the existing incident thread.\n`);
+  await appendFile(process.env.GITHUB_STEP_SUMMARY, `## Team notification\n\n${report.counts.passed} passed · ${report.counts.failed} failed · ${report.counts['not tested']} not tested · ${report.excluded.length} skipped (prerequisites unmet). Healthy runs stay quiet; repeated failures reply in the existing incident thread; a failing journey the lane stops scheduling is reported as reclassified, not recovered.\n`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

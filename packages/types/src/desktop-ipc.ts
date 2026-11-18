@@ -95,13 +95,9 @@ export type OpenworkServerInfo = {
    * the bridge predates the field or no start completed yet.
    */
   generation: number | null;
-  remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;
   baseUrl: string | null;
-  connectUrl: string | null;
-  mdnsUrl: string | null;
-  lanUrl: string | null;
   clientToken: string | null;
   ownerToken: string | null;
   hostToken: string | null;
@@ -175,6 +171,15 @@ export type AppBuildInfo = {
   openworkDevMode?: boolean;
   os?: string | null;
   arch?: string | null;
+};
+
+/** This launch's startup milestones in epoch milliseconds; null until reached. */
+export type DesktopStartupTimings = {
+  processStartedAt: number;
+  windowShownAt: number | null;
+  engineSettledAt: number | null;
+  /** How the launch's first runtime boot settled; "skipped" means no local workspace. */
+  engine: "ready" | "failed" | "skipped" | null;
 };
 
 export type DesktopDistributionInfo = {
@@ -299,6 +304,10 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  /** Caller-owned opt-in for aborting a finite request beyond the default GET/PATCH methods. */
+  cancellable?: boolean;
+  transferId?: string;
+  redirect?: "error";
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -315,29 +324,14 @@ export type DesktopFetchResult = {
   body: string;
 };
 
-export type DesktopMultipartUploadInput = {
-  transferId: string;
-  url: string;
-  bytes: ArrayBuffer;
-  filename: string;
-  size: number;
-  contentType?: string;
-  fieldName?: string;
-  fields?: Record<string, string>;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
-
-export type DesktopBinaryDownloadInput = {
-  transferId: string;
-  url: string;
-  destinationPath: string;
-  maxBytes?: number;
-  method?: string;
-  headers?: Record<string, string>;
-  timeoutMs?: number;
-};
+/**
+ * Outcome of opening a workspace file from chat. The host resolves the file on disk and
+ * only launches it when it is a real file inside the real workspace root; a file that
+ * resolves elsewhere is shown in its folder instead of being handed to an application.
+ */
+export type DesktopWorkspaceFileOpenResult =
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
+  | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
   status: number;
@@ -354,43 +348,133 @@ export type WorkspaceCreateInput = {
   preset?: string | null;
 };
 
-export type WorkspaceCreateRemoteInput = {
-  baseUrl: string;
-  remoteType?: "openwork" | "opencode" | null;
-  directory?: string | null;
-  displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkClientToken?: string | null;
-  openworkHostToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
-  sandboxBackend?: string | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
-};
-
-export type WorkspaceUpdateRemoteInput = WorkspaceCreateRemoteInput & {
-  workspaceId: string;
-};
-
 export type UiControlBridgeInfo = {
   baseUrl?: string;
   token?: string;
 };
 
-export type ComputerUsePermissions = {
-  ok: boolean;
-  accessibility: boolean;
-  screenRecording: boolean;
-  supported?: boolean;
-  protocolVersion?: string;
-  error?: string;
+export type ComputerPermission = "accessibility" | "screenRecording";
+
+/** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
+export type ComputerRequest = {
+  id: string;
+  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive; credential: the browser is about to type a password or code on a site. */
+  reason: "setup" | "script" | "files" | "credential";
+  /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
+  computer: string;
+  placement: "local" | "remote";
+  /** What a remote computer still needs; macOS setup uses the checklist instead. */
+  detail?: string;
+  appId?: string;
+  purpose?: string;
+  /** False when organization policy requires approval of each individual script or browser upload. */
+  standing?: boolean;
+  /** The exact script that runs if the person approves it. */
+  script?: { app: "applescript" | "jxa" | "blender"; code: string };
+  /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
+  /** `save`: the one name is where the app will save a file, not a file handed to it. */
+  files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
+  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
+  credential?: { site?: string; app?: string; appId?: string };
 };
 
-export type RunningAppsResult = {
-  ok: boolean;
-  apps: string[];
+/** One chat's computer use state, as the broker reports it. */
+export type ComputerSnapshot = {
+  revision: number;
+  /** Usable right now (allowed and not paused after an automatic stop this turn). */
+  enabled: boolean;
+  /** The app macOS lists in System Settings for these permissions; `ours` when OpenWork can reset it. */
+  entry: { name: string; ours: boolean };
+  request: ComputerRequest | null;
+  /** The computer this chat uses, and every computer it could use (this Mac, connected VMs). */
+  targetId: string;
+  targets: { id: string; label: string; placement: "local" | "remote" }[];
+  placement: "local" | "remote";
+  readiness: "ready" | "setup-required" | "unsupported" | "unavailable";
+  permissions?: { accessibility: boolean; screenRecording: boolean };
+  detail: string;
+  busyElsewhere: boolean;
+  session: {
+    state: string;
+    purpose: string;
+    appName?: string;
+    windowTitle?: string;
+    phase?: string;
+    expiresAt?: string;
+    reason?: string;
+  } | null;
+  cleanupPending?: boolean;
+  /** This chat's computer steps: time spent on the computer, and waiting for the model between steps. */
+  timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
+};
+
+/** One of a chat's subagents on its computer, for the chat's crew view (`parallelComputerUse`). */
+export type ComputerCrewMember = {
+  sessionId: string;
+  /** Its cursor's name and color. */
+  name: string;
+  color: string;
+  app: string | null;
+  state: "working" | "waiting" | "paused" | "done";
+  /** Its latest step's intent, as its cursor shows it. */
+  intent: string | null;
+  /** Its app's newest frame while the crew view watches. */
+  frame?: { mimeType: "image/png"; data: string; width: number; height: number };
+};
+
+/** Settings: the computer every chat uses and whether it is set up. */
+export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
+
+/**
+ * The computers this desktop offers and how they are doing, for the organization's
+ * devices list (`remoteDevices`). Names and readiness only.
+ */
+export type ComputerDevicesSnapshot = {
+  /** Computer use is on, as the broker knows it. Off, nothing is probed. */
+  enabled: boolean;
+  /** Remote computers are verified on, so configured VMs are listed. */
+  remoteEnabled: boolean;
+  /** The computer every chat uses. */
+  selectedId: string | null;
+  /** This computer's macOS permissions, when its helper reports them. */
+  permissions: { accessibility: boolean; screenRecording: boolean } | null;
+  computers: Array<{
+    id: string;
+    label: string;
+    placement: "local" | "remote";
+    /** Null: not probed. Only this computer and the one chats use are. */
+    readiness: "ready" | "setup-required" | "unsupported" | "unavailable" | null;
+    /** What it still needs, in one sentence; null when ready or not probed. */
+    detail: string | null;
+    /** For a configured VM: who runs it and the provider's id for it. */
+    provider: "freestyle" | "daytona" | null;
+    externalId: string | null;
+  }>;
+};
+
+/** How this desktop names itself to the organization's devices list. */
+export type DesktopDeviceIdentity = {
+  /** The id this install's runner is registered with; null until the runner is configured. */
+  installId: string | null;
+  label: string;
+  platform: string;
+  appVersion: string;
+  osVersion: string | null;
+  arch: string | null;
+};
+
+/** The live watch view: recent redacted frames and dispatched input, never actionable. */
+export type ComputerPresentation = {
+  id: string;
+  phase: "working" | "paused" | "closed";
+  appName?: string;
+  windowTitle?: string;
+  task?: string;
+  mode?: string;
+  status?: string;
+  canContinue?: boolean;
+  frame?: { sequence: number; capturedAt: number; width: number; height: number; mimeType: "image/png"; data: string };
+  inputs: { sequence: number; at: number; action: string; phase: string; x?: number; y?: number }[];
 };
 
 // ---------------------------------------------------------------------------
@@ -398,22 +482,20 @@ export type RunningAppsResult = {
 // ---------------------------------------------------------------------------
 
 export type DesktopCommandMap = {
+  __startNativeDictation: { args: [requestId: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
+  __cancelNativeDictationStart: { args: [requestId: string]; result: boolean };
+  // Bundled speech helper: "local" is Apple's on-device recognizer, "online"
+  // Windows' online speech recognition. Results arrive on the dictation event channel.
+  __speechDictationMode: { args: []; result: "local" | "online" | null };
+  __startSpeechDictation: { args: [requestId: string, language: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
+  __stopSpeechDictation: { args: [requestId: string]; result: boolean };
+  __abortSpeechDictation: { args: [requestId: string]; result: boolean };
   // Workspace state
   workspaceBootstrap: { args: []; result: WorkspaceList };
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };
   workspaceSetRuntimeActive: { args: [workspaceId: string | null]; result: WorkspaceList };
   workspaceCreate: { args: [input: WorkspaceCreateInput]; result: WorkspaceList };
-  workspaceCreateRemote: { args: [input: WorkspaceCreateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateRemote: { args: [input: WorkspaceUpdateRemoteInput]; result: WorkspaceList };
-  workspaceUpdateDisplayName: {
-    args: [input: { workspaceId: string; displayName?: string | null }];
-    result: WorkspaceList;
-  };
   workspaceForget: { args: [workspaceId: string]; result: WorkspaceList };
-  workspaceAddAuthorizedRoot: {
-    args: [input: { workspacePath: string; folderPath?: string; authorizedRoot?: string }];
-    result: unknown;
-  };
   workspaceOpenworkRead: {
     args: [input: { workspacePath: string }];
     result: WorkspaceOpenworkConfig;
@@ -422,42 +504,18 @@ export type DesktopCommandMap = {
     args: [input: { workspacePath: string; config: WorkspaceOpenworkConfig }];
     result: unknown;
   };
-  workspaceExportConfig: {
-    args: [input: { workspaceId: string; outputPath: string }];
-    result: WorkspaceExportSummary;
-  };
-  workspaceImportConfig: {
-    args: [input: { archivePath: string; targetDir: string; name?: string | null }];
-    result: unknown;
-  };
-
-  // Opencode custom commands
-  opencodeCommandList: {
-    args: [input: { scope: string; projectDir?: string }];
-    result: string[];
-  };
-  opencodeCommandWrite: {
-    args: [input: { scope: string; projectDir?: string; command: OpencodeCommandDraft }];
-    result: unknown;
-  };
-  opencodeCommandDelete: {
-    args: [input: { scope: string; projectDir?: string; name: string }];
-    result: unknown;
-  };
 
   // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
-  prepareFreshRuntime: { args: []; result: unknown };
   runtimeBootstrap: { args: []; result: unknown };
   runtimeStatus: { args: []; result: unknown };
   engineStop: { args: []; result: EngineInfo };
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
   engineInfo: { args: []; result: EngineInfo };
-  engineDoctor: { args: [projectDir?: string]; result: EngineDoctorResult };
-  engineInstall: { args: []; result: unknown };
 
   // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
+  startupTimings: { args: []; result: DesktopStartupTimings };
   desktopNotificationShow: {
     args: [input: DesktopNotificationInput];
     result: DesktopNotificationResult;
@@ -467,6 +525,8 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  /** Keep the computer from sleeping while this window's agents are working. */
+  desktopSetKeepAwake: { args: [active: boolean]; result: { active: boolean } };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];
@@ -475,16 +535,44 @@ export type DesktopCommandMap = {
   desktopIntegrationRemove: { args: []; result: DesktopIntegrationResult };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
-  getComputerUseMcpCommand: { args: []; result: string[] };
-  getComputerUseState: { args: []; result: unknown };
-  computerUseAction: { args: [value: { connectionId: string; id: string; action: string; windowId?: number }]; result: void };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
-  // Computer use
-  checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };
-  listRunningApps: { args: []; result: RunningAppsResult };
-  openComputerUsePermissionSetup: { args: []; result: ComputerUsePermissions };
-  openComputerUsePermissionSettings: { args: []; result: unknown };
+  // Computer use (macOS): chat ownership, the watch view and permission setup
+  computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  /** The chat's subagents on its computer; `thumbnails` streams each app's newest frame. */
+  computerCrew: { args: [sessionId: string, thumbnails: boolean]; result: ComputerCrewMember[] };
+  computerStatus: { args: []; result: ComputerStatus };
+  /** What this desktop reports to the organization's devices list. Read-only. */
+  computerDevices: { args: []; result: ComputerDevicesSnapshot };
+  desktopDeviceIdentity: { args: []; result: DesktopDeviceIdentity };
+  computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
+  /** This chat is on screen in a visible OpenWork window: its computer work follows along in view. */
+  computerFollow: { args: [sessionId: string, watching: boolean]; result: void };
+  computerInteract: {
+    args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
+    result: void;
+  };
+  computerSetup: { args: [permission: ComputerPermission]; result: { setupId: string } };
+  computerDismissSetup: { args: [setupId?: string]; result: void };
+  computerChoose: { args: [targetId: string]; result: ComputerStatus };
+  computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
+  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string }]; result: ComputerSnapshot };
+  computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
+  /** Files in the chat's output folder, newest first, with their size and last change (ms). */
+  computerChatFiles: { args: [input: { sessionId: string }]; result: { files: Array<{ path: string; bytes: number; modifiedAt: number }> } };
+  /** An image saved in the chat's output folder, to show inline in a reply; null for anything else. */
+  computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
+  computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
+  computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
+  computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  /** Whether the agent's cursor, frame and pill on this Mac show up in screen recordings. */
+  computerRecordableOverlay: { args: []; result: boolean };
+  /** Shows them in screen recordings from the next app the agent starts using, until OpenWork quits. */
+  computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };
+  /** Compatibility-only no-op for older renderers; returns true. */
+  computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
+  computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
+  computerEndTurn: { args: [sessionId: string]; result: boolean };
 
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };
@@ -506,9 +594,6 @@ export type DesktopCommandMap = {
   };
   nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
   nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
-
-  // Sandbox
-  sandboxCleanupOpenworkContainers: { args: []; result: OpenworkDockerCleanupResult };
 
   // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
@@ -536,10 +621,6 @@ export type DesktopCommandMap = {
       },
     ];
     result: string | string[] | null;
-  };
-  saveFile: {
-    args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
-    result: string | null;
   };
 
   // Skills
@@ -573,25 +654,22 @@ export type DesktopCommandMap = {
    * whether "onboarding" should preserve desktop workspace state.
    */
   resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
-  resetOpencodeCache: { args: []; result: CacheResetResult };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
-  setWindowDecorations: { args: [decorated: boolean]; result: unknown };
 
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
+  __resolveChatFilePath: { args: [target: string]; result: string | null };
   __openPath: { args: [target: string]; result: unknown };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
-  __getFileIcon: { args: [target: string, size?: "small" | "normal" | "large"]; result: string | null };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };
   __getBrandIconState: { args: []; result: BrandIconState };
   __evalRelaunch: { args: []; result: EvalRelaunchResult };
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
-  __openWithApp: { args: [target: string, appPath: string]; result: unknown };
+  __openWithApp: { args: [target: string, appPath: string, workspaceRoot: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
-  __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
-  __downloadBinary: { args: [input: DesktopBinaryDownloadInput]; result: DesktopBinaryDownloadResult };
   __cancelTransfer: { args: [transferId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };

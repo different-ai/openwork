@@ -6,6 +6,7 @@ const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3978);
 const issuer = process.env.ISSUER || `http://${host}:${port}`;
 const extraToolCount = Number(process.env.MOCK_EXTRA_TOOL_COUNT || 0);
+const protectedResource = process.env.MOCK_PROTECTED_RESOURCE || "";
 const autoApprove = process.env.AUTO_APPROVE !== "0";
 const disableDcr = process.env.DISABLE_DCR === "1";
 const rejectDcrRedirectUris = process.env.MOCK_REJECT_DCR_REDIRECT_URIS || "";
@@ -71,18 +72,27 @@ const clients = new Map();
 const codes = new Map();
 const tokens = new Set();
 const refreshTokens = new Set();
+// Each refresh token maps to its grant's { current, previous } refresh tokens.
+const refreshFamilies = new Map();
+// "reject-reuse": a refresh token works once. "keep-latest": the grant's
+// current and previous refresh tokens both work and every refresh makes its
+// new token current, so of concurrent refreshes only the last stays usable.
+let refreshRotation = "reject-reuse";
 let holdRefreshResponses = false;
 let nextRefreshResponseId = 0;
 const pendingRefreshResponses = new Map();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let privateSentinels = [];
 let agentRequiredHeader = null;
 const agentReplyGates = new Map();
 const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
 let agentRepliesHeld = false;
 const heldAgentReplies = new Set();
 let configuredTools = [];
+let toolsConfigured = false;
+let oauthCallback = {};
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -228,10 +238,11 @@ function validateAgentWorkloads(value) {
     }
     const finalReplyInitiallyReleasedChunks = workload.finalReplyInitiallyReleasedChunks === undefined
       ? null : workload.finalReplyInitiallyReleasedChunks;
-    if (finalReplyInitiallyReleasedChunks !== null && (finalReplyChunks === null
-      || !Number.isInteger(finalReplyInitiallyReleasedChunks) || finalReplyInitiallyReleasedChunks < 1
-      || finalReplyInitiallyReleasedChunks > finalReplyChunks.length || workload.finalReplyFrom !== undefined)) {
-      throw new Error(`agent workload ${promptMarker} gated replies require exact static chunks and a valid initial release count`);
+    const gatedChunkCount = finalReplyChunks === null ? 1 : finalReplyChunks.length;
+    if (finalReplyInitiallyReleasedChunks !== null && (!Number.isInteger(finalReplyInitiallyReleasedChunks)
+      || finalReplyInitiallyReleasedChunks < 0 || finalReplyInitiallyReleasedChunks > gatedChunkCount
+      || workload.finalReplyFrom !== undefined)) {
+      throw new Error(`agent workload ${promptMarker} gated replies require a valid initial release count`);
     }
     if (workload.finalReasoning !== undefined && typeof workload.finalReasoning !== "string") {
       throw new Error(`agent workload ${promptMarker} finalReasoning must be a string`);
@@ -249,13 +260,14 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-starter", "app-read", "browser-page"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
         throw new Error(`agent workload ${promptMarker} allowUnadvertisedTool must be a boolean`);
       }
-      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
+      if (step.holdUntilReleased !== undefined && typeof step.holdUntilReleased !== "boolean") throw new Error("holdUntilReleased must be a boolean");
+      return { holdUntilReleased: step.holdUntilReleased === true, tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
         allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
     if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
@@ -266,9 +278,14 @@ function validateAgentWorkloads(value) {
     const rateLimitAttempts = workload.rateLimitAttempts ?? 0;
     if (!Number.isInteger(rateLimitAttempts) || rateLimitAttempts < 0 || rateLimitAttempts > 3)
       throw new Error("rateLimitAttempts must be between 0 and 3");
+    const serverErrorAttempts = workload.serverErrorAttempts ?? 0;
+    if (!Number.isInteger(serverErrorAttempts) || serverErrorAttempts < 0 || serverErrorAttempts > 3)
+      throw new Error("serverErrorAttempts must be between 0 and 3");
+    if (workload.terminalErrorMessage !== undefined && (typeof workload.terminalErrorMessage !== "string" || !workload.terminalErrorMessage.trim()))
+      throw new Error(`agent workload ${promptMarker} terminalErrorMessage must be a non-empty string`);
     return { promptMarker, matchAll: workload.matchAll === true, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
       finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
-      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts };
+      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts, serverErrorAttempts, terminalErrorMessage: workload.terminalErrorMessage };
   });
 }
 
@@ -326,15 +343,19 @@ function waitForAgentReplyRelease(gate) {
     const finish = (released) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
       const index = gate.waiters.indexOf(finish);
       if (index >= 0) gate.waiters.splice(index, 1);
       resolve(released);
     };
-    const timer = setTimeout(() => {
-      gate.timedOut = true;
-      finish(false);
-    }, AGENT_REPLY_GATE_TIMEOUT_MS);
+    // A 0-chunk hold is the pause surface for a later human decision; do not
+    // invent a timeout that would look like a model error mid-proof.
+    const timer = gate.releasedChunks === 0 && gate.deliveredChunks === 0
+      ? null
+      : setTimeout(() => {
+        gate.timedOut = true;
+        finish(false);
+      }, AGENT_REPLY_GATE_TIMEOUT_MS);
     gate.waiters.push(finish);
   });
 }
@@ -494,6 +515,103 @@ function capabilitySearchArguments(messages) {
   return { name: matches[0].name };
 }
 
+// App creation must use the id actually returned by prepare_app, never a guessed one.
+function appPreparationArguments(messages) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const preparationId = payload.preparationId ?? payload.structuredContent?.preparationId;
+  if (typeof preparationId !== "string" || !/^[0-9a-f-]{36}$/i.test(preparationId)) throw new Error("prepare_app did not return a preparation id");
+  return { preparationId };
+}
+
+// Code Mode uses the same actual preparation id, embedded as a JSON literal in
+// the scripted call. The marker is a fixture placeholder, never a guessed id.
+function appPreparationStepArguments(messages, argumentsValue) {
+  const prepared = appPreparationArguments(messages);
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_PREPARATION_ID__"', JSON.stringify(prepared.preparationId)) };
+  return { ...argumentsValue, ...prepared };
+}
+
+// Builds from the unchanged starter prepare_app actually returned, so the
+// starter itself is what compiles and opens. Code Mode spreads it in place of
+// a fixture marker.
+function appStarterStepArguments(messages, argumentsValue) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const prepared = payload.starter ? payload : payload.structuredContent;
+  if (typeof prepared?.preparationId !== "string" || typeof prepared?.starter?.reactSource !== "string") throw new Error("prepare_app did not return a starter");
+  const starter = { preparationId: prepared.preparationId, reactSource: prepared.starter.reactSource, cssSource: prepared.starter.cssSource };
+  // A replacer function, since source text can hold "$" patterns String#replace would expand.
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_STARTER__"', () => JSON.stringify(starter)) };
+  return { ...argumentsValue, ...starter };
+}
+
+// Optimistic updates must carry the revision the model actually read.
+function appReadStepArguments(messages, argumentsValue) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const app = payload.app ?? payload.structuredContent?.app;
+  if (typeof app?.revisionId !== "string") throw new Error("read_app did not return a revision id");
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_REVISION_ID__"', JSON.stringify(app.revisionId)) };
+  return { ...argumentsValue, expectedRevisionId: app.revisionId };
+}
+
+// Browser handoff: fixture steps name page controls; each call uses the tab,
+// observation and refs the shipped browser tools actually returned this turn.
+function browserPageArguments(messages, argumentsValue) {
+  let tabId = null, observationId = null;
+  const refs = new Map();
+  const siteTools = new Map();
+  for (const message of messages) {
+    if (message?.role !== "tool") continue;
+    let payload;
+    try {
+      payload = JSON.parse(agentContentText(message));
+      if (Array.isArray(payload?.content)) payload = JSON.parse(agentContentText(payload));
+    } catch { continue; }
+    if (!payload || typeof payload !== "object") continue;
+    if (typeof payload.tabId === "string") tabId = payload.tabId;
+    for (const tool of Array.isArray(payload.tools) ? payload.tools : []) {
+      if (typeof tool?.name === "string" && typeof tool.toolId === "string") siteTools.set(tool.name, tool.toolId);
+    }
+    for (const observation of [payload, payload.observation]) {
+      if (typeof observation?.observationId !== "string") continue;
+      observationId = observation.observationId;
+      for (const element of Array.isArray(observation.elements) ? observation.elements : []) {
+        if (typeof element?.name === "string" && typeof element.ref === "string") refs.set(element.name, element.ref);
+      }
+    }
+  }
+  const resolve = (action) => {
+    if (typeof action?.name !== "string") return action;
+    const { name, ...rest } = action;
+    if (!refs.has(name)) throw new Error(`the browser returned no control named ${name}`);
+    return { ...rest, ref: refs.get(name) };
+  };
+  const value = structuredClone(argumentsValue);
+  if (value.tabId === "__TAB__") value.tabId = tabId ?? (() => { throw new Error("the browser returned no tab"); })();
+  if (value.observationId === "__OBSERVATION__") value.observationId = observationId ?? (() => { throw new Error("the browser returned no observation"); })();
+  if (typeof value.toolName === "string") {
+    if (!siteTools.has(value.toolName)) throw new Error(`the browser listed no website tool named ${value.toolName}`);
+    value.toolId = siteTools.get(value.toolName);
+    delete value.toolName;
+  }
+  if (value.action) value.action = resolve(value.action);
+  if (Array.isArray(value.actions)) value.actions = value.actions.map(resolve);
+  return value;
+}
+
+// list_skills handoff: the next get_skill reads the one skill the catalog returned.
+function skillListArguments(messages) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const skills = payload.skills;
+  if (!Array.isArray(skills) || skills.length !== 1 || typeof skills[0]?.capability !== "string") {
+    throw new Error("skill list did not return exactly one skill with a capability");
+  }
+  return { name: skills[0].capability };
+}
+
 // Native OpenAI Responses witness for plain-text workloads. Unsupported tool
 // scripts fail explicitly instead of pretending they executed.
 async function handleAgentResponse(req, res, entry) {
@@ -502,7 +620,7 @@ async function handleAgentResponse(req, res, entry) {
   const matched = agentWorkloads.filter((workload) => text.includes(workload.promptMarker));
   const model = body.model;
   const workload = matched[0];
-  const base = { model, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
+  const base = { model, reasoningEffort: body.reasoning?.effort ?? null, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
   if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
     entry.agentCompletion = { ...base, kind: "error" };
     json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
@@ -545,7 +663,10 @@ async function handleAgentCompletion(req, res, entry) {
   const model = typeof body.model === "string" ? body.model : "mock-agent-workload-model";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const conversationText = messages.map(agentContentText).join("\n");
-  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  // Native v2 inserts catalog updates as user-role protocol messages. They
+  // must not replace the person's turn or reset its completed tool count.
+  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user"
+    && !/^<system-update>\n[\s\S]*\n<\/system-update>$/.test(agentContentText(message)));
   const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
   const matched = agentWorkloads.filter((workload) =>
     workload.matchAll || (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
@@ -553,7 +674,20 @@ async function handleAgentCompletion(req, res, entry) {
   const workload = matched[0];
   const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
   const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
-  const baseRequest = { model, matchedMarkers, completedTools };
+  const advertisedToolNames = (Array.isArray(body.tools) ? body.tools : []).map((tool) => tool?.function?.name).filter((name) => typeof name === "string");
+  const toolResultCodes = scopedMessages.filter((message) => message?.role === "tool").map((message) => {
+    const value = typeof message.content === "string" ? message.content : JSON.stringify(message.content) ?? "";
+    return {
+      codes: [...value.matchAll(/"(?:error|code)"\s*:\s*"([a-z_]{2,80})"/g)].map(match => match[1]),
+      isError: /"isError"\s*:\s*true/.test(value),
+      hasAppMetadata: value.includes("openwork/mcpApp"),
+      hasAppShownNote: value.includes("the person now sees this App right above your reply"),
+      hasDraftResult: value.includes("Draft ready for Test recipient"),
+    };
+  });
+  const bodyText = privateSentinels.length ? JSON.stringify(body) : "";
+  const privateSentinelSeen = privateSentinels.some((value) => bodyText.includes(value));
+  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, matchedMarkers, completedTools, advertisedToolNames, toolResultCodes, privateSentinelSeen };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -570,6 +704,18 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   if (!workload) throw new Error("matched agent workload disappeared");
+  if (workload.terminalErrorMessage) {
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    json(res, 400, { error: { message: workload.terminalErrorMessage, type: "invalid_request_error", code: "terminal_rejection" } });
+    return;
+  }
+  if (workload.serverErrorAttempts > 0) {
+    workload.serverErrorAttempts -= 1;
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    res.setHeader("retry-after", "5");
+    json(res, 500, { error: { message: "Internal server error", type: "server_error" } });
+    return;
+  }
   if (workload.rateLimitAttempts > 0) {
     workload.rateLimitAttempts -= 1;
     entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
@@ -579,14 +725,27 @@ async function handleAgentCompletion(req, res, entry) {
   }
   if (completedTools >= workload.steps.length) {
     if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
-    entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     const finalReply = workload.finalReplyFrom === "last-tool-text" ? lastToolText(scopedMessages)
       : workload.finalReplyFrom === "system-text" ? messages
         .filter((message) => message.role === "system" || message.role === "developer")
         .map(agentContentText).join("\n") || "No system instructions"
       : workload.finalReply;
+    const holdEntireReply = workload.finalReplyInitiallyReleasedChunks === 0;
+    if (!holdEntireReply) {
+      entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    }
     if (workload.finalReplyInitiallyReleasedChunks !== null) {
       await gatedAgentStream(res, model, workload, finalReply);
+      if (holdEntireReply) {
+        const gate = agentReplyGates.get(workload.promptMarker);
+        entry.agentCompletion = {
+          ...baseRequest,
+          kind: gate?.complete ? "final" : "error",
+          promptMarker: workload.promptMarker,
+          toolName: null,
+          arguments: {},
+        };
+      }
     } else {
       agentStream(res, model, [
         agentChunk(model, { role: "assistant" }),
@@ -606,7 +765,12 @@ async function handleAgentCompletion(req, res, entry) {
   }
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
-    : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) } : step.arguments;
+    : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) }
+    : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
+    : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "app-starter" ? appStarterStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "browser-page" ? browserPageArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),
@@ -632,7 +796,7 @@ async function handleAgentCompletion(req, res, entry) {
       }],
     }),
     agentChunk(model, {}, "tool_calls"),
-  ]);
+  ], step.holdUntilReleased && agentRepliesHeld);
 }
 
 async function readJson(req) {
@@ -646,7 +810,7 @@ async function readForm(req) {
   return Object.fromEntries(new URLSearchParams(raw));
 }
 
-function record(req, url) {
+function record(req, url, res) {
   const entry = {
     id: requests.length + 1,
     method: req.method,
@@ -655,13 +819,14 @@ function record(req, url) {
     at: new Date().toISOString(),
   };
   requests.push(entry);
+  res.once("finish", () => { entry.status = res.statusCode; });
   console.log(`[mock-oauth-mcp] ${entry.method} ${entry.path}`);
   return entry;
 }
 
 function protectedResourceMetadata() {
   return {
-    resource: `${issuer}/mcp`,
+    resource: protectedResource || `${issuer}/mcp`,
     authorization_servers: [issuer],
     scopes_supported: advertisedScopes,
     bearer_methods_supported: ["header"],
@@ -897,6 +1062,7 @@ async function issueToken(req, res, entry) {
   if (grantType === "authorization_code") {
     const grant = codes.get(form.code);
     if (!grant) {
+      entry.oauthError = "invalid_grant";
       json(res, 400, { error: "invalid_grant" });
       return;
     }
@@ -915,12 +1081,22 @@ async function issueToken(req, res, entry) {
         return;
       }
     }
+    if (oauthCallback.tokenErrorDescription !== undefined) {
+      codes.delete(form.code);
+      entry.oauthError = "invalid_grant";
+      json(res, 400, { error: "invalid_grant", error_description: oauthCallback.tokenErrorDescription });
+      return;
+    }
   } else if (grantType === "refresh_token") {
     if (!requirePreregisteredTokenClient(req, res, form, null)) {
       return;
     }
     if (strictRefreshTokens) {
-      if (!form.refresh_token || !refreshTokens.has(form.refresh_token)) {
+      const family = refreshFamilies.get(form.refresh_token);
+      const usable = refreshRotation === "keep-latest"
+        ? Boolean(family && (family.current === form.refresh_token || family.previous === form.refresh_token))
+        : Boolean(form.refresh_token && refreshTokens.has(form.refresh_token));
+      if (!usable) {
         await respond(400, { error: "invalid_grant", error_description: "unknown refresh token" });
         return;
       }
@@ -936,10 +1112,23 @@ async function issueToken(req, res, entry) {
   const accessToken = `mock-access-${randomUUID()}`;
   tokens.add(accessToken);
   const refreshToken = `mock-refresh-${randomUUID()}`;
-  refreshTokens.add(refreshToken);
+  const issueRefreshToken = oauthCallback.issueRefreshToken !== false;
+  if (issueRefreshToken) {
+    refreshTokens.add(refreshToken);
+    const family = grantType === "refresh_token" ? refreshFamilies.get(form.refresh_token) : undefined;
+    if (family) {
+      family.previous = form.refresh_token;
+      family.current = refreshToken;
+      refreshFamilies.set(refreshToken, family);
+    } else {
+      refreshFamilies.set(refreshToken, { current: refreshToken, previous: null });
+    }
+  }
+  entry.tokenId = createHash("sha256").update(accessToken).digest("hex").slice(0, 12);
+  entry.refreshTokenIssued = issueRefreshToken;
   await respond(200, {
     access_token: accessToken,
-    refresh_token: refreshToken,
+    ...(issueRefreshToken ? { refresh_token: refreshToken } : {}),
     token_type: "Bearer",
     expires_in: 3600,
     scope: grantedScope,
@@ -972,9 +1161,24 @@ function tokenFingerprint(req) {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
+/** Deep subset match: every key the tool declares in whenArguments must equal the call's. */
+function argumentsMatch(expected, actual) {
+  if (expected === undefined) return true;
+  if (expected === null || typeof expected !== "object") return Object.is(expected, actual);
+  if (!actual || typeof actual !== "object") return false;
+  return Object.entries(expected).every(([key, value]) => argumentsMatch(value, actual[key]));
+}
+
+/** The configured variant for this call: the first with that name whose whenArguments match. */
+function configuredToolFor(name, args) {
+  return configuredTools.find((candidate) => candidate.name === name && argumentsMatch(candidate.whenArguments, args ?? {}));
+}
+
 function mcpResult(message) {
-  if (configuredTools.length && message.method === "tools/list") {
-    return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
+  if (toolsConfigured && message.method === "tools/list") {
+    const seen = new Set();
+    return { tools: configuredTools.filter((tool) => !seen.has(tool.name) && seen.add(tool.name))
+      .map(({ result, delayMs, appHtml, validateRequiredArguments, whenArguments, ...tool }) => tool) };
   }
   if (message.method === "resources/read") {
     const tool = configuredTools.find((candidate) => candidate._meta?.ui?.resourceUri === message.params?.uri);
@@ -983,7 +1187,7 @@ function mcpResult(message) {
     }
   }
   if (message.method === "tools/call") {
-    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    const tool = configuredToolFor(message.params?.name, message.params?.arguments);
     if (tool) return tool.result;
   }
   switch (message.method) {
@@ -1186,6 +1390,17 @@ async function handleMcp(req, res, entry) {
     .map((message) => message.method);
 
   const authorized = isAuthorized(req);
+  entry.tokenId = tokenFingerprint(req);
+  if (tokens.has(bearerToken(req)) && oauthCallback.resourceStatus !== undefined) {
+    const error = oauthCallback.resourceStatus === 403 ? "insufficient_scope" : "invalid_token";
+    entry.oauthError = error;
+    json(res, oauthCallback.resourceStatus, { error }, {
+      "www-authenticate": oauthCallback.resourceStatus === 403
+        ? 'Bearer error="insufficient_scope", scope="mcp:read mcp:write"'
+        : `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
+    });
+    return;
+  }
   if (!authorized) {
     json(res, 401, { error: "missing_mcp_token" }, {
       "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"`,
@@ -1205,7 +1420,6 @@ async function handleMcp(req, res, entry) {
   // Arguments + a token fingerprint make the connector the AUTHORITY on who
   // called it: a spec can prove two members each invoked a tool with their own
   // credential, without trusting the app's own UI state.
-  entry.tokenId = tokenFingerprint(req);
   entry.toolCalls = messages
     .filter((message) => message && typeof message === "object" && message.method === "tools/call" && typeof message.params?.name === "string")
     .map((message) => ({
@@ -1213,8 +1427,7 @@ async function handleMcp(req, res, entry) {
       args: message.params.arguments ?? message.params.args ?? {},
       tokenId: entry.tokenId,
     }));
-  const responseDelay = Math.max(0, ...entry.toolNames.map((name) =>
-    configuredTools.find((tool) => tool.name === name)?.delayMs ?? 0));
+  const responseDelay = Math.max(0, ...entry.toolCalls.map((call) => configuredToolFor(call.name, call.args)?.delayMs ?? 0));
   if (responseDelay > 0) await new Promise((resolve) => setTimeout(resolve, responseDelay));
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];
@@ -1233,7 +1446,7 @@ async function handleMcp(req, res, entry) {
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
-    const entry = record(req, url);
+    const entry = record(req, url, res);
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});
@@ -1250,6 +1463,22 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/admin/oauth-callback" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)
+        || Object.keys(body).some((key) => !["issueRefreshToken", "resourceStatus", "tokenErrorDescription"].includes(key))
+        || (body.issueRefreshToken !== undefined && typeof body.issueRefreshToken !== "boolean")
+        || (body.resourceStatus !== undefined && ![401, 403].includes(body.resourceStatus))
+        || (body.tokenErrorDescription !== undefined && (typeof body.tokenErrorDescription !== "string"
+          || !body.tokenErrorDescription || body.tokenErrorDescription.length > 512))) {
+        json(res, 400, { error: "invalid_oauth_callback_options" });
+        return;
+      }
+      oauthCallback = body;
+      json(res, 200, { configured: true });
+      return;
+    }
+
     if (url.pathname === "/admin/tools" && req.method === "POST") {
       const body = await readJson(req);
       if (!Array.isArray(body?.tools) || body.tools.some((tool) => !tool || typeof tool.name !== "string" || !tool.inputSchema || !tool.result
@@ -1258,6 +1487,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       configuredTools = body.tools;
+      toolsConfigured = true;
       json(res, 200, { configured: configuredTools.length });
       return;
     }
@@ -1268,6 +1498,20 @@ const server = http.createServer(async (req, res) => {
       agentRepliesHeld = body.held;
       if (!agentRepliesHeld) for (const send of [...heldAgentReplies]) send();
       json(res, 200, { held: agentRepliesHeld, pending: heldAgentReplies.size });
+      return;
+    }
+
+    // Test hook: synthetic values the model must never receive. Each later
+    // completion records only whether any appeared, never the values.
+    if (url.pathname === "/admin/private-sentinels" && req.method === "POST") {
+      const body = await readJson(req);
+      const values = Array.isArray(body?.values) ? body.values : null;
+      if (!values || !values.every((value) => typeof value === "string" && value.length >= 12)) {
+        json(res, 400, { error: "values must be strings of at least 12 characters" });
+        return;
+      }
+      privateSentinels = values;
+      json(res, 200, { count: values.length });
       return;
     }
 
@@ -1390,6 +1634,8 @@ const server = http.createServer(async (req, res) => {
     // Hold completed refresh responses so a journey can commit a successful
     // rotation before delivering another request's rejection of the old grant.
     if (url.pathname === "/admin/refresh-responses" && req.method === "POST") {
+      const body = await readJson(req).catch(() => ({}));
+      refreshRotation = body?.rotation === "keep-latest" ? "keep-latest" : "reject-reuse";
       tokens.clear();
       strictRefreshTokens = true;
       holdRefreshResponses = true;
@@ -1416,6 +1662,7 @@ const server = http.createServer(async (req, res) => {
       const expiredRefreshTokens = refreshTokens.size;
       tokens.clear();
       refreshTokens.clear();
+      refreshFamilies.clear();
       strictRefreshTokens = true;
       json(res, 200, { expiredAccessTokens, expiredRefreshTokens });
       return;
