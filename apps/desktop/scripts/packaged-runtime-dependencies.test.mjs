@@ -127,7 +127,8 @@ test("packaged binary resolver maps ASAR aliases to physical files and leaves no
   const code = `import {join} from 'node:path'; ${packagedMicrosandboxResolver(source)} console.log(locate('/App/Contents/Resources/app.asar/node_modules/native')); console.log(locate('/plain/node_modules/native'));`;
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", code], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "/App/Contents/Resources/app.asar.unpacked/node_modules/native/bin/msb\n/plain/node_modules/native/bin/msb\n");
+  // The transform keeps the SDK's own path.join, so output uses host separators.
+  assert.equal(result.stdout, `${join("/App/Contents/Resources/app.asar.unpacked/node_modules/native", "bin", "msb")}\n${join("/plain/node_modules/native", "bin", "msb")}\n`);
   assert.throws(() => packagedMicrosandboxResolver("changed upstream implementation"), /resolver changed/);
 });
 

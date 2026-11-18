@@ -183,7 +183,8 @@ export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platfor
     stagePackage({ fromPackageJson: desktopPackageJson, ...item }, output, true);
   }
 
-  return staged.sort();
+  // Report package names with forward slashes on every host.
+  return staged.map((entry) => entry.split(sep).join("/")).sort();
 }
 
 const outdirIndex = process.argv.indexOf("--outdir");
