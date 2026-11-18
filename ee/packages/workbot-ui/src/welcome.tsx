@@ -155,7 +155,7 @@ function PrimaryButton({ onClick, disabled, children }: { onClick: () => void; d
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] shadow-[0_6px_16px_-8px_#01162780] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
     >
       {children}
     </button>

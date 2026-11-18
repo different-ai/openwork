@@ -52,7 +52,8 @@ describe("preserve current super-admins at deprecation", () => {
       "egress_diagnostics.manage", "desktop_policies.manage", "billing_portal.use",
       "connections.update", "connections.delete",
     ].sort())
-    for (const key of keys) expect(PERMISSION_KEYS).toContain(key)
+    // The network diagnostics key was retired with the check it guarded; the migration is history.
+    for (const key of keys.filter((key) => key !== "egress_diagnostics.manage")) expect(PERMISSION_KEYS).toContain(key)
   })
 
   test("stable SQL identifiers are valid TypeIDs, not arbitrary text ids", () => {

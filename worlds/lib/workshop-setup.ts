@@ -3,6 +3,16 @@ import type { DenSession } from "../../evals/packages/behaviors/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 
 export const WORKSHOP_MODEL = "gpt-6.1-sol";
+/** The approved default per-attendee allowance; a larger one must be asked for explicitly. */
+export const WORKSHOP_DEFAULT_ALLOWANCE_USD = 5;
+/** Hard ceiling for an explicitly requested allowance (for example a demo on a larger model). */
+export const WORKSHOP_MAX_ALLOWANCE_USD = 100;
+/** Upstreams a workshop can run on. The key is always the controller's, never an attendee's. */
+export const WORKSHOP_PROVIDERS = {
+  openai: { name: "Workshop Sol 6.1", model: WORKSHOP_MODEL, upstreamBaseUrl: "https://api.openai.com/v1", keyEnv: "OPENAI_API_KEY" },
+  anthropic: { name: "Workshop Claude Opus 5.5", model: "claude-opus-5-5", upstreamBaseUrl: "https://api.anthropic.com/v1", keyEnv: "ANTHROPIC_API_KEY" },
+} as const;
+export type WorkshopProvider = keyof typeof WORKSHOP_PROVIDERS;
 export const WORKSHOP_ATTENDEES = 20;
 /** Upper bound for one Den: seat names stay two digits (attendee01..attendee99). */
 export const WORKSHOP_MAX_ATTENDEES = 99;
@@ -19,10 +29,12 @@ export const WORKSHOP_CONNECTIONS = [
 export interface WorkshopSetupOptions {
   /** Controller-only secret: fetch in the caller, never put in a world manifest or sandbox environment. */
   upstreamKey: string;
-  provider?: "openai";
+  provider?: WorkshopProvider;
   modelId?: string;
-  /** Positive USD amount, at most the approved $5 per attendee, with at most six decimal places. */
+  /** Positive USD amount with at most six decimal places: at most $5 unless maxAllowanceUsd raises it. */
   allowanceUsd: number;
+  /** Explicitly approved ceiling, at most WORKSHOP_MAX_ALLOWANCE_USD (default $5). */
+  maxAllowanceUsd?: number;
   /** Ordinary attendee sessions expected in the organization: 1..20 (default 20). */
   attendees?: number;
 }
@@ -68,9 +80,10 @@ async function request(session: DenSession, path: string, orgId?: string, body?:
 export async function configureWorkshop(den: Den, options: WorkshopSetupOptions) {
   if (!options.upstreamKey.trim()) throw new Error("Workshop requires a controller-provided upstream key.");
   const costUsd = String(options.allowanceUsd);
-  if (!Number.isFinite(options.allowanceUsd) || options.allowanceUsd <= 0 || options.allowanceUsd > 5
+  const ceiling = Math.min(options.maxAllowanceUsd ?? WORKSHOP_DEFAULT_ALLOWANCE_USD, WORKSHOP_MAX_ALLOWANCE_USD);
+  if (!Number.isFinite(options.allowanceUsd) || options.allowanceUsd <= 0 || options.allowanceUsd > ceiling
     || !/^(0|[1-9]\d*)(\.\d{1,6})?$/.test(costUsd)) {
-    throw new Error("Workshop allowance must be positive, at most $5, and have at most six decimal places.");
+    throw new Error(`Workshop allowance must be positive, at most $${ceiling}, and have at most six decimal places.`);
   }
   if (!den.gateway?.publicUrl) throw new Error("Boot the shared Den with its real co-located Gateway before configuring the workshop.");
   const expected = options.attendees ?? WORKSHOP_ATTENDEES;
@@ -141,13 +154,14 @@ export async function configureWorkshop(den: Den, options: WorkshopSetupOptions)
     }
   }
 
-  const upstreamModelId = options.modelId ?? WORKSHOP_MODEL;
+  const provider = WORKSHOP_PROVIDERS[options.provider ?? "openai"];
+  const upstreamModelId = options.modelId ?? provider.model;
   const created = await request(den.admin, "/v1/inference-providers", orgId, {
-    name: "Workshop Sol 6.1", providerId: options.provider ?? "openai", modelIds: [upstreamModelId],
+    name: provider.name, providerId: options.provider ?? "openai", modelIds: [upstreamModelId],
     credential: { kind: "api_key", secret: options.upstreamKey },
     // Grant only the validated, budgeted attendees: a member added later gets no
     // provider access, so nobody can use the shared key outside an allowance.
-    settings: { upstreamBaseUrl: "https://api.openai.com/v1" }, memberIds: attendees.map((attendee) => attendee.memberId),
+    settings: { upstreamBaseUrl: provider.upstreamBaseUrl }, memberIds: attendees.map((attendee) => attendee.memberId),
   });
   const providerId = id(object(created, "inferenceProvider"));
   const models: { key: string; memberId: string; modelId: string; allowanceUsd: number }[] = [];

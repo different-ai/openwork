@@ -26,7 +26,7 @@ type PermissionApprovalModalProps = {
   permission: PendingPermission;
   sourceTitle?: string;
   busy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => void;
   safeStringify?: (value: unknown) => string;
 };
 
@@ -47,8 +47,38 @@ const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boo
   { key: "diff", labelKey: "session.permission_detail_diff", multiline: true },
 ];
 
+/**
+ * Set by the host on every approval that sends a local file to a connected
+ * account. All such tools share this card: the same choices and wording.
+ */
+export type FileSendPrompt = { kind: string; remember: Array<"session" | "always"> };
+
+export function permissionFileSend(permission: PendingPermission): FileSendPrompt | null {
+  const value = permission.metadata?.fileSend;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const kind = "kind" in value && typeof value.kind === "string" ? value.kind : null;
+  const remember = "remember" in value && Array.isArray(value.remember) ? value.remember : null;
+  if (!kind || !remember) return null;
+  return { kind, remember: remember.flatMap(item => item === "session" || item === "always" ? [item] : []) };
+}
+
+const fileSendTitleKeys: Record<string, string> = {
+  drive_upload_file: "session.file_send_title_drive_upload",
+  drive_push_file: "session.file_send_title_drive_push",
+  gmail_create_draft_with_attachments: "session.file_send_title_gmail_draft",
+  outlook_create_draft_with_attachments: "session.file_send_title_outlook_draft",
+};
+
+/** What a send would share and with whom: files, destination, account. */
+function fileSendScope(metadata: Record<string, unknown>): string {
+  const paths = Array.isArray(metadata.paths) ? metadata.paths.filter(path => typeof path === "string") : [];
+  const files = paths.length ? paths.join(", ") : typeof metadata.path === "string" ? metadata.path : "";
+  return [files, metadata.target, metadata.connectionId].filter(value => typeof value === "string" && value.length > 0).join(" → ");
+}
+
 function readablePermissionLabel(permission: string): string {
   if (permission === "bash") return "Bash";
+  if (permission === "drive_upload_file") return t("session.permission_kind_drive_upload");
   if (permission === "edit") return t("session.permission_kind_edit");
   if (permission === "read") return t("session.permission_kind_read");
   if (permission === "external_directory") return t("session.permission_kind_external_directory");
@@ -60,6 +90,9 @@ function readablePermissionLabel(permission: string): string {
 }
 
 function permissionCopy(permission: string): Pick<PermissionPresentation, "title" | "message"> {
+  if (permission === "drive_upload_file") {
+    return { title: t("session.permission_title_drive_upload"), message: t("session.permission_message_drive_upload") };
+  }
   if (permission === "bash") {
     return {
       title: t("session.permission_title_bash"),
@@ -166,19 +199,49 @@ function describePermissionRequest(permission: PendingPermission): PermissionPre
     };
   }
 
+  const fileSend = permissionFileSend(permission);
+  if (fileSend) {
+    const titleKey = fileSendTitleKeys[fileSend.kind];
+    return {
+      title: titleKey ? t(titleKey) : t("session.file_send_title"),
+      message: t("session.file_send_message"),
+      permissionLabel: t("session.file_send_label"),
+      scopeLabel: t("session.scope_label"),
+      scopeValue: fileSendScope(permission.metadata ?? {}) || patterns[0] || t("session.permission_scope_empty"),
+      isDoomLoop: false,
+      note: fileSend.remember.includes("always") ? t("session.file_send_note_always")
+        : fileSend.remember.includes("session") ? t("session.file_send_note_session")
+        : t("session.file_send_note_once"),
+    };
+  }
   const copy = permissionCopy(permission.permission);
+  const uploadPath = permission.permission === "drive_upload_file" && typeof permission.metadata?.path === "string"
+    ? permission.metadata.path : null;
   return {
     title: copy.title,
     message: copy.message,
     permissionLabel: readablePermissionLabel(permission.permission),
     scopeLabel: t("session.scope_label"),
-    scopeValue: patterns.join(", ") || t("session.permission_scope_empty"),
+    scopeValue: uploadPath
+      ? [uploadPath, permission.metadata?.target, permission.metadata?.connectionId].filter(value => typeof value === "string" && value.length > 0).join(" → ")
+      : (patterns.join(", ") || t("session.permission_scope_empty")),
     isDoomLoop: false,
-    note: null,
+    note: uploadPath
+      ? permissionCanRemember(permission) ? t("session.permission_drive_session_scope")
+        : typeof permission.metadata?.connectionId !== "string" ? t("session.permission_drive_default_account") : null
+      : null,
   };
 }
 
+export function permissionCanRemember(permission: PendingPermission): boolean {
+  return Array.isArray(permission.always) && permission.always.some(value => typeof value === "string" && value.length > 0);
+}
+
 export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
+  const fileSend = permissionFileSend(props.permission);
+  // A file send offers exactly what the host said it will remember.
+  const canRemember = fileSend ? fileSend.remember.includes("session") : permissionCanRemember(props.permission);
+  const canAlways = fileSend?.remember.includes("always") === true;
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);
   const metadata =
     props.permission.metadata && typeof props.permission.metadata === "object"
@@ -189,7 +252,7 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
 
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent">
-        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className={`flex flex-col gap-3 px-4 py-3 ${canAlways ? "" : "sm:flex-row sm:items-center sm:justify-between"}`}>
           <div className="flex min-w-0 items-start gap-3">
             <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
               <Icon size={16} strokeWidth={1.9} />
@@ -211,7 +274,7 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
             </div>
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <div className={`flex shrink-0 flex-wrap items-center gap-2 ${canAlways ? "" : "sm:justify-end"}`}>
             <Button
               type="button"
               variant="outline"
@@ -232,16 +295,30 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <Clock3 data-icon="inline-start" />
               {t("session.allow_once")}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => props.respondPermission?.(props.permission.id, "always")}
-              disabled={props.busy || !props.respondPermission}
-            >
-              <Check data-icon="inline-start" />
-              {t("session.allow_for_session")}
-            </Button>
+            {canRemember ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => props.respondPermission?.(props.permission.id, "always")}
+                disabled={props.busy || !props.respondPermission}
+              >
+                <Check data-icon="inline-start" />
+                {fileSend ? t("session.file_send_allow_chat") : t("session.allow_for_session")}
+              </Button>
+            ) : null}
+            {canAlways ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => props.respondPermission?.(props.permission.id, "always", "always")}
+                disabled={props.busy || !props.respondPermission}
+              >
+                <ShieldCheck data-icon="inline-start" />
+                {t("session.file_send_allow_always")}
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -259,7 +336,7 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
               <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-dls-secondary">
                 {presentation.scopeLabel}
               </div>
-              <div className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
+              <div title={presentation.scopeValue} className="mt-1 truncate rounded-lg border border-dls-border bg-dls-hover/55 px-2.5 py-1.5 font-mono text-[12px] leading-5 text-dls-text">
                 {presentation.scopeValue}
               </div>
             </div>

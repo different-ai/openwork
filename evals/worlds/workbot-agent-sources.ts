@@ -1,7 +1,7 @@
 import { denFetch } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
 import { ENCRYPTION_KEY } from "./workbot-proactive.ts";
 
@@ -13,8 +13,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Your agent's sources: Den with Workbot and Your agent on for one organization (My bot on too), a Google Workspace
  * connector the member hasn't signed in to, and three shared connections everyone can use without signing in. They
  * are created against a local MCP fixture, then pointed at Granola's, Linear's and Notion's MCP addresses: agents only
- * read services whose read tools are reviewed, recognised by that address. Nothing contacts those services and no turn
- * runs during the proof; "chat" is the Connect call Workbot makes for the member.
+ * read services whose read tools are reviewed, recognised by that address. A fourth, "Support desk", stays on the
+ * fixture: a service without reviewed reads, which can't be a source at all. Google Workspace is the one calendar app,
+ * so the calendar reads it with nothing for an admin to pick, and waits for the member to connect it. Nothing contacts
+ * the reviewed services and no turn runs during the proof; "chat" is the Connect call Workbot makes for the member.
  */
 export async function workbotAgentSourcesWorld(seed: Seed) {
   const stack = new AsyncDisposableStack();
@@ -34,7 +36,7 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true, workbotAgentLibrary: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     const enabled = await seed.api(den.admin, "/v1/org/workbot-settings/proactive", { method: "PUT", body: JSON.stringify({ enabled: true }) });
     if (!enabled.response.ok) throw new Error(`Turning on Your agent failed: ${enabled.text.slice(0, 300)}`);
     await seed.nativeConnector(den.admin, {
@@ -55,6 +57,7 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
     const notes = await connect("Granola", "https://mcp.granola.ai/mcp");
     const tracker = await connect("Linear", "https://mcp.linear.app/mcp");
     const wiki = await connect("Notion", "https://mcp.notion.com/mcp");
+    const desk = await seed.orgConnection(den.admin, { name: "Support desk", url: den.mocks.tools.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true } });
 
     const headers = { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": organizationId };
     const viewport = { width: 1280, height: 2200, deviceScaleFactor: 1 };
@@ -64,7 +67,7 @@ export async function workbotAgentSourcesWorld(seed: Seed) {
       den,
       owner,
       member,
-      connections: { notes, tracker, wiki },
+      connections: { notes, tracker, wiki, desk },
       /** What the member says in chat, as Workbot passes it to Den. */
       sayInChat: (name: string, body?: unknown) => chatAs(den.members.member, organizationId, name, body),
       /** The organization's policy per source, as Manage › Workbot shows it. */

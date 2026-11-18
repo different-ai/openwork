@@ -15,6 +15,7 @@ import {
   CloudProvidersSection,
   type CloudProviderRow,
   type CloudProviderRowStatus,
+  type OpenWorkModelsToggle,
 } from "@/react-app/domains/settings/cloud/sections";
 import {
   getCloudProviderEnv,
@@ -28,6 +29,7 @@ import type {
 } from "@/react-app/domains/connections/provider-auth/store";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
+import type { OrganizationShareEmptyState } from "@/react-app/domains/settings/provider-share/device-provider-share";
 
 /** "Everyone", the team names, or a member count; null when Den did not say. */
 export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined): string | null {
@@ -80,7 +82,6 @@ export function canRetryCloudProviderRow(status: CloudProviderRowStatus) {
 
 export type CloudProvidersViewProps = {
   runtimeWorkspaceId?: string | null;
-  credentialStatusEnabled?: boolean;
   checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   cloudOrgProviders: DenOrgLlmProvider[];
   connectCloudProvider: (cloudProviderId: string) => Promise<string | void>;
@@ -99,11 +100,14 @@ export type CloudProvidersViewProps = {
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
+  /** Device provider sharing: what to offer while nothing is shared with the organization. */
+  shareEmptyState?: OrganizationShareEmptyState;
+  /** Turn off / Turn on on the organization's OpenWork Models row. */
+  openWorkModelsToggle?: OpenWorkModelsToggle;
 };
 
 export function CloudProvidersView({
   runtimeWorkspaceId,
-  credentialStatusEnabled = false,
   checkDesktopAppRestriction,
   cloudOrgProviders,
   connectCloudProvider,
@@ -121,6 +125,8 @@ export function CloudProvidersView({
   onConnectGatewayProvider,
   onOpenDen,
   onOpenModelConnections,
+  shareEmptyState,
+  openWorkModelsToggle,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -129,9 +135,8 @@ export function CloudProvidersView({
 
   const healthEntries = useProviderCredentialHealth((state) => state.entries);
   const rows = React.useMemo<CloudProviderRow[]>(() => {
-    const providerHealth = (providerId: string): ProviderCredentialHealth | undefined => credentialStatusEnabled
-      ? (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified"
-      : undefined;
+    const providerHealth = (providerId: string): ProviderCredentialHealth =>
+      (runtimeWorkspaceId ? healthEntries[credentialHealthKey(runtimeWorkspaceId, providerId)]?.status : undefined) ?? "unverified";
     const restrictToCloud = checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
     const liveRows = cloudOrgProviders.map((provider) => {
       const imported = importedCloudProviders[provider.id] ?? null;
@@ -195,7 +200,6 @@ export function CloudProvidersView({
     return combined.filter((row) => !gatewayConnectProviders.some((provider) => provider.cloudProviderId === row.cloudProviderId)).map<CloudProviderRow>((row) => serverSync?.lastRun?.status === "failed" ? { ...row, status: "unavailable", detail: "Could not verify with Den. Sync again to check access." } : row);
   }, [
     runtimeWorkspaceId,
-    credentialStatusEnabled,
     healthEntries,
     checkDesktopAppRestriction,
     cloudOrgProviders,
@@ -281,7 +285,9 @@ export function CloudProvidersView({
       onRetry={retryProvider}
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
+      shareEmptyState={shareEmptyState}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
+      openWorkModelsToggle={openWorkModelsToggle}
       additionalCount={gatewayConnectProviders.length}
       additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}
     />

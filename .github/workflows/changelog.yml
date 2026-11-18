@@ -15,26 +15,31 @@ on:
         required: true
         type: string
 
+# The two jobs below state their own permissions. Only `changelog` can write.
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: changelog-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  changelog:
+  # The agent reads pull request descriptions, which anyone who landed a change
+  # can write and edit later, so it drafts in a job that can change nothing: a
+  # read-only token, no stored git credentials, no environment secrets, and only
+  # its model key. Its whole output is the artifact of drafted files, which the
+  # `changelog` job checks before using.
+  draft:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
-    # Only for the automation App's key (release tags and dev may use it).
-    environment: warden-clearance
+    permissions:
+      contents: read
+      pull-requests: read
     env:
-      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
-      BASE_BRANCH: dev
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
-      BRANCH_NAME: automation/changelog-${{ github.event.release.tag_name || inputs.tag }}-${{ github.run_id }}
+    outputs:
+      base_sha: ${{ steps.base.outputs.sha }}
 
     steps:
       - name: Validate tag
@@ -49,11 +54,16 @@ jobs:
 
       - name: Checkout
         if: steps.guard.outputs.stable == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: dev
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
+
+      - name: Record the drafted revision
+        if: steps.guard.outputs.stable == 'true'
+        id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Skip if already documented
         if: steps.guard.outputs.stable == 'true'
@@ -61,14 +71,14 @@ jobs:
         run: |
           if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
             echo "documented=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is already documented; skipping docs generation and only refreshing the release notes."
+            echo "$TAG is already documented; nothing to draft."
           else
             echo "documented=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Setup Node
         if: steps.guard.outputs.stable == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
@@ -122,12 +132,11 @@ jobs:
           ' "$PUBLISHED_AT")
 
           # PR descriptions, sorted by who they affect, are the agent's source of
-          # truth. The file lives under .opencode/ so the agent can read it and
-          # the churn cleanup below removes it before the output check.
+          # truth. The file lives under .opencode/ so the agent can read it; it
+          # is not one of the drafted files, so it never leaves this job.
           FACTS_MD=".opencode/release-facts/$TAG.md"
           mkdir -p .opencode/release-facts
-          node scripts/release/collect-release-prs.mjs "$PREV" "$TAG" \
-            --json /tmp/release-facts.json --markdown "$FACTS_MD"
+          node scripts/release/collect-release-prs.mjs "$PREV" "$TAG" --markdown "$FACTS_MD"
 
           cat > /tmp/changelog_prompt.txt <<PROMPT_EOF
           Document OpenWork release $TAG in the changelog. Use these facts exactly; do not invent or recompute any of them.
@@ -142,7 +151,6 @@ jobs:
           - compare url: https://github.com/different-ai/openwork/compare/$PREV...$TAG
           - release facts file (read this first): $FACTS_MD
           PROMPT_EOF
-          echo "PREV=$PREV" >> "$GITHUB_ENV"
 
       - name: Install opencode
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
@@ -164,15 +172,149 @@ jobs:
             opencode run --agent changelog -m openai/gpt-5.6-luna "$(cat /tmp/changelog_prompt.txt)"
           fi
 
-      - name: Discard opencode runtime churn
+      - name: Upload drafted files
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: changelog-draft
+          path: |
+            packages/docs/changelog.mdx
+            changelog/release-tracker-*.md
+          if-no-files-found: error
+          retention-days: 1
+
+  # Everything that can write runs here, from a fresh checkout the agent never
+  # touched: this job takes only the drafted changelog and tracker files, checks
+  # them with the repository's own copy of the verifier, and then commits, opens
+  # the pull request and updates the release.
+  changelog:
+    needs: draft
+    if: github.repository == 'different-ai/openwork'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    # Only for the automation App's key (release tags and dev may use it).
+    environment: warden-clearance
+    env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
+      BASE_BRANCH: dev
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      BRANCH_NAME: automation/changelog-${{ github.event.release.tag_name || inputs.tag }}-${{ github.run_id }}
+
+    steps:
+      - name: Validate tag
+        id: guard
         run: |
-          git checkout -- .opencode/
-          git clean -fd .opencode/
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping changelog automation because $TAG is not a stable release tag."
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.stable == 'true'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Skip if already documented
+        if: steps.guard.outputs.stable == 'true'
+        id: dedupe
+        run: |
+          if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
+            echo "documented=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG is already documented; skipping docs generation and only refreshing the release notes."
+          else
+            echo "documented=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.stable == 'true'
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+
+      # Collected again here, by this checkout's script, so the check below does
+      # not rely on anything the drafting job produced.
+      - name: Gather release facts
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          PREV="$(git tag --list | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -x -B1 "$TAG" | head -n1)"
+          if [[ -z "$PREV" || "$PREV" == "$TAG" ]]; then
+            echo "Could not determine the stable release immediately before $TAG." >&2
+            exit 1
+          fi
+
+          node scripts/release/collect-release-prs.mjs "$PREV" "$TAG" --json "$RUNNER_TEMP/release-facts.json"
+          echo "PREV=$PREV" >> "$GITHUB_ENV"
+
+      - name: Download drafted files
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: changelog-draft
+          path: ${{ runner.temp }}/changelog-draft
+
+      # The draft is data from a job this one does not trust. Take the changelog
+      # page and release tracker files as plain files and refuse anything else.
+      - name: Apply drafted files
+        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        env:
+          BASE_SHA: ${{ needs.draft.outputs.base_sha }}
+          MAX_DRAFT_BYTES: 1048576
+        run: |
+          set -euo pipefail
+
+          draft="$RUNNER_TEMP/changelog-draft"
+
+          # The draft holds whole files, so it only applies to the revision it
+          # was written against.
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "The draft does not name a commit of this repository." >&2
+            exit 1
+          fi
+          if ! git diff --quiet "$BASE_SHA" HEAD -- packages/docs/changelog.mdx changelog/; then
+            echo "The changelog on $BASE_BRANCH changed while $TAG was being drafted. Run this workflow again for $TAG." >&2
+            exit 1
+          fi
+
+          applied=0
+          while IFS= read -r -d '' entry; do
+            path="${entry#"$draft"/}"
+            if [[ -L "$entry" ]]; then
+              :
+            elif [[ -d "$entry" ]]; then
+              case "$path" in
+                packages | packages/docs | changelog) continue ;;
+              esac
+            elif [[ -f "$entry" ]] \
+              && [[ "$path" == "packages/docs/changelog.mdx" || "$path" =~ ^changelog/release-tracker-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$ ]] \
+              && (( $(wc -c < "$entry") <= MAX_DRAFT_BYTES )); then
+              cp -- "$entry" "$path"
+              applied=$((applied + 1))
+              continue
+            fi
+            printf 'Unexpected or oversized entry in the changelog draft: %q\n' "$path" >&2
+            exit 1
+          done < <(find "$draft" -mindepth 1 -print0)
+
+          if (( applied == 0 )); then
+            echo "The changelog draft is empty." >&2
+            exit 1
+          fi
 
       - name: Verify generated output
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
-        run: node scripts/check-changelog-output.mjs "$TAG" "$PREV" --facts /tmp/release-facts.json
+        run: node scripts/check-changelog-output.mjs "$TAG" "$PREV" --facts "$RUNNER_TEMP/release-facts.json"
 
       - name: Commit release notes
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'

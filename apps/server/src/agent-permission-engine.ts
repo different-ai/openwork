@@ -1,8 +1,11 @@
-// Agent permissions (packages/types/src/den/agent-permissions.ts) as OpenCode
-// v2 applies them; OpenCode v1 does not enforce them. Den delivers a member's
-// permissions as ordered rules; this module maps them onto v2's own permission
-// rules and says which tool calls, local skills and local MCP servers they
-// block. It has no engine SDK or server dependency so the v2 plugin can bundle it.
+// Engine-side agent permissions (packages/types/src/den/agent-permissions.ts)
+// apply natively on OpenCode v2, including folders outside the workspace. The
+// server refuses v1 execution when external-folder rules restrict access, since
+// v1 cannot reliably enforce them. Computer use and scripting are enforced separately
+// by the desktop host on both engines. Den delivers ordered rules; this module
+// maps them onto v2's permissions and says which tool calls, local skills and
+// local MCP servers they block. It has no engine SDK or server dependency so
+// the v2 plugin can bundle it.
 import {
   agentPermissionDenialMessage,
   agentPermissionRuleSchema,
@@ -75,10 +78,38 @@ export function agentPermissionEngineMcpDenial(
 
 export type EngineV2PermissionRule = { action: string; resource: string; effect: AgentPermissionDecision };
 
-const V2_ACTIONS: readonly AgentPermissionAction[] = ["shell", "edit", "webfetch", "websearch", "skill"];
+// Computer use and app scripting are enforced by the desktop host on both engines.
+const V2_ACTIONS: readonly AgentPermissionAction[] = ["shell", "edit", "external_directory", "webfetch", "websearch", "skill"];
 
 function v2Action(action: string): AgentPermissionAction | null {
   return V2_ACTIONS.find((entry) => entry === action) ?? null;
+}
+
+/** Native tool ids only: organization connections keep their own authorization. */
+const V2_TOOL_ACTIONS: Readonly<Record<string, AgentPermissionAction>> = {
+  shell: "shell",
+  edit: "edit",
+  write: "edit",
+  patch: "edit",
+  opencode_worktree_remove: "edit",
+  webfetch: "webfetch",
+  websearch: "websearch",
+  skill: "skill",
+};
+
+/** Hide a tool only when the ordered rules deny every use, with no later exception. */
+export function agentPermissionEngineV2ToolHidden(rules: readonly AgentPermissionRule[], tool: string): boolean {
+  const action = V2_TOOL_ACTIONS[tool];
+  if (!action) return false;
+  for (let index = rules.length - 1; index >= 0; index--) {
+    const rule = rules[index];
+    if (rule?.action !== action) continue;
+    // A later allow or ask may still permit a resource. Keep the tool and
+    // let the execution-time permission hook decide that particular call.
+    if (rule.effect !== "deny") return false;
+    if (rule.resource === "*") return true;
+  }
+  return false;
 }
 
 /**

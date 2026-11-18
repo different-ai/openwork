@@ -7,15 +7,19 @@ import {
   SANDBOX_MAX_CREDIT_USD,
   SANDBOX_MAX_DAYS,
   SANDBOX_MAX_MEMBERS,
+  SANDBOX_MAX_MODELS,
   sandboxCreatedSchema,
   sandboxJoinRoleSchema,
   sandboxListSchema,
+  sandboxModelOptionsSchema,
   type Sandbox,
   type SandboxJoinRole,
   type SandboxCreateInput,
   type SandboxList,
+  type SandboxModelOptions,
 } from "@openwork/types/den/sandbox-organizations";
 import { DenButton } from "../../../app/(den)/_components/ui/button";
+import { DenChipsCombobox } from "../../../app/(den)/_components/ui/chips-combobox";
 import { DenInput } from "../../../app/(den)/_components/ui/input";
 import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { AdminAccessScreen } from "../admin-access-screen";
@@ -23,14 +27,25 @@ import { requestAdmin, sendAdmin, type AdminAccess } from "../admin-request";
 
 const base = "/v1/admin/sandbox-orgs";
 const parseList = (value: unknown) => { const result = sandboxListSchema.safeParse(value); return result.success ? result.data : null; };
+const parseModelOptions = (value: unknown) => { const result = sandboxModelOptionsSchema.safeParse(value); return result.success ? result.data : null; };
 const date = (value: string) => new Date(value).toLocaleDateString(undefined, { dateStyle: "medium" });
 const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const;
 
-type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string };
-const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "" });
+type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string; models: string[]; modelQuery: string };
+const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "", models: [...(defaults?.gatewayModels ?? [])], modelQuery: "" });
+/** Model ids are case-sensitive catalog ids; only stray spaces are dropped. */
+const modelKey = (value: string) => value.trim();
+/** The chosen models plus an id still typed in the box, so text that was never entered is not lost. */
+const chosenModels = (draft: Draft) => [...new Set([...draft.models, modelKey(draft.modelQuery)].filter(Boolean))];
 const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 const CREDIT_STEP_USD = 25;
-const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins" };
+const roleLabel: Record<SandboxJoinRole, string> = { member: "Members", admin: "Admins", "super-admin": "Super admins" };
+const joinRoleChangedMessage = (name: string, joinRole: SandboxJoinRole) => {
+  const role = roleLabel[joinRole].toLowerCase();
+  return joinRole === "member"
+    ? `People who join ${name} now become ${role}. People who already joined keep their role.`
+    : `People who join ${name} now become ${role}. People who already joined with a lower role become ${role} too.`;
+};
 
 export function SandboxOrgsPage() {
   const [data, setData] = useState<SandboxList | null>(null);
@@ -41,6 +56,23 @@ export function SandboxOrgsPage() {
   const savingRef = useRef(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
+  // The admin picks this sandbox's AI Gateway models, starting from the deployment's list.
+  const canChooseModels = Boolean(data?.defaults?.modelChoice && data.defaults.gatewayModels.length);
+  // The models to pick from, loaded when the form first opens. null while loading; available false when it failed.
+  const [modelOptions, setModelOptions] = useState<SandboxModelOptions | null>(null);
+  const formOpen = draft !== null;
+  const providerId = data?.defaults?.gatewayProviderId ?? "";
+  useEffect(() => {
+    if (!formOpen || !canChooseModels || modelOptions) return;
+    const controller = new AbortController();
+    void requestAdmin(`${base}/models`, parseModelOptions, controller.signal)
+      .then(result => result.access === "ready" ? result.data : null)
+      .catch(() => null)
+      .then(options => {
+        if (!controller.signal.aborted) setModelOptions(options ?? { providerId, available: false, models: [] });
+      });
+    return () => controller.abort();
+  }, [formOpen, canChooseModels, modelOptions, providerId]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -80,6 +112,10 @@ export function SandboxOrgsPage() {
   async function create(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft) return;
+    const models = chosenModels(draft);
+    if (canChooseModels && models.length === 0) { setError("Choose at least one model."); return; }
+    if (canChooseModels && models.length > SANDBOX_MAX_MODELS) { setError(`Choose up to ${SANDBOX_MAX_MODELS} models.`); return; }
+    const modelsChosen = canChooseModels && models.join(",") !== (data?.defaults?.gatewayModels ?? []).join(",");
     const body: SandboxCreateInput = {
       name: draft.name.trim(),
       connectorBaseUrl: draft.connectorBaseUrl.trim() || null,
@@ -88,6 +124,8 @@ export function SandboxOrgsPage() {
       allowedEmailDomains: draft.domains.split(/[\s,]+/).map(value => value.trim().toLowerCase()).filter(Boolean),
       joinRole: draft.joinRole,
       ...(draft.creditUsd ? { creditUsd: Number(draft.creditUsd) } : {}),
+      // Sent only when the admin changed the list, so an unchanged form creates what it always did.
+      ...(modelsChosen ? { modelIds: models } : {}),
     };
     if (await mutate(base, body, `Created ${body.name}. Copy its join link below.`)) setDraft(null);
   }
@@ -120,8 +158,10 @@ export function SandboxOrgsPage() {
         {data.sandboxes.length === 0 ? <p className="border-t border-[var(--dls-border)] py-6 text-sm text-[color:var(--dls-text-secondary)]">No sandboxes yet. Create one to get a join link.</p>
           : data.sandboxes.map(sandbox => <SandboxRow key={sandbox.id} sandbox={sandbox} busy={busy}
             onRotate={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/rotate-link`, undefined, "New link ready. The old link no longer works.")}
-            onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, `People who join ${sandbox.name} now become ${joinRole === "admin" ? "admins" : "members"}. People who already joined keep their role.`)}
+            onJoinRole={(joinRole) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/join-role`, { joinRole }, joinRoleChangedMessage(sandbox.name, joinRole))}
             onAddCredit={(limitUsd) => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/credit`, { creditUsd: limitUsd + CREDIT_STEP_USD }, `${sandbox.name} can now spend up to ${dollars(limitUsd + CREDIT_STEP_USD)} on models.`)}
+            onAddMicrosoft={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/microsoft-365`, undefined, `${sandbox.name} now has sample Microsoft 365 for Workbot. Members approve it once from Workbot or their connections.`)}
+            onAddSlack={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/slack`, undefined, `${sandbox.name} now has sample Slack with the Workbot Slack app. Members connect Slack once from their connections.`)}
             onExtend={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/extend`, { days: 7 }, `${sandbox.name} is open for 7 more days.`)}
             onClose={() => void mutate(`${base}/${encodeURIComponent(sandbox.id)}/close`, undefined, `${sandbox.name} is closed. Members and data are kept.`)} />)}
       </div>
@@ -132,23 +172,30 @@ export function SandboxOrgsPage() {
           <label className="grid gap-2 text-xs">Name<DenInput aria-label="Sandbox name" required minLength={2} maxLength={120} placeholder="OpenWork Sandbox" value={draft.name} disabled={saving} onChange={event => setDraft({ ...draft, name: event.target.value })} /></label>
           <label className="grid gap-2 text-xs">Sample work apps address<DenInput aria-label="Sample work apps address" type="url" placeholder="https://workplace.example.com" value={draft.connectorBaseUrl} disabled={saving} onChange={event => setDraft({ ...draft, connectorBaseUrl: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Adds Outlook, Calendar, Drive, Jira and Confluence. Each person signs in to their own copy. Leave empty for no connectors.</span></label>
-          <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
+          {canChooseModels ? <div className="grid gap-2 text-xs" data-testid="admin-sandbox-model-choice">
+            <span>Models</span>
+            <DenChipsCombobox ariaLabel="Sandbox models" value={draft.models} options={modelOptions?.models.map(model => model.id) ?? data.defaults?.gatewayModels ?? []} query={draft.modelQuery}
+              onQueryChange={modelQuery => setDraft({ ...draft, modelQuery })} onChange={models => setDraft({ ...draft, models, modelQuery: "" })}
+              toKey={modelKey} normalize={modelKey} maxItems={SANDBOX_MAX_MODELS} maxLength={200} disabled={saving}
+              placeholder="Search models" emptyLabel="Type a model id and press Enter to add it." limitLabel={`Up to ${SANDBOX_MAX_MODELS} models`} />
+            <span className="text-[color:var(--dls-text-secondary)]">{`Everyone gets these through AI Gateway (${data.defaults?.gatewayProviderId ?? "provider"})${data.defaults?.creditUsd ? ", on the sandbox's own key" : ""}, plus included models. ${modelOptions === null ? "Loading the model list…" : modelOptions.available ? `${modelOptions.models.length} models to choose from.` : "The model list could not be loaded. Type model ids instead; they are checked when you create the sandbox."}`}</span></div>
+          : <div className="grid gap-1 text-xs" data-testid="admin-sandbox-models">
             <span>Models</span>
             <span className="text-[color:var(--dls-text-secondary)]">{data.defaults?.gatewayModels.length
               ? `Included models, plus ${data.defaults.gatewayModels.join(", ")} through AI Gateway (${data.defaults.gatewayProviderId ?? "provider"}) for everyone${data.defaults.creditUsd ? ", on the sandbox's own key" : ""}.`
               : "Included models only. Add OPENROUTER_MANAGEMENT_API_KEY (one capped key per sandbox) or DEN_SANDBOX_GATEWAY_API_KEY (one shared key) on this deployment to give every sandbox an AI Gateway provider."}</span>
-          </div>
+          </div>}
           {data.defaults?.creditUsd ? <label className="grid gap-2 text-xs">Model credit (USD)<DenInput aria-label="Model credit in US dollars" type="number" required min={1} max={SANDBOX_MAX_CREDIT_USD} step={1} value={draft.creditUsd} disabled={saving} onChange={event => setDraft({ ...draft, creditUsd: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">The sandbox's models stop when this is spent. You can add more later.</span></label> : null}
           <div className="grid grid-cols-2 gap-3">
             <label className="grid gap-2 text-xs">Open for (days)<DenInput aria-label="Days open" type="number" required min={1} max={SANDBOX_MAX_DAYS} step={1} value={draft.days} disabled={saving} onChange={event => setDraft({ ...draft, days: event.target.value })} /></label>
             <label className="grid gap-2 text-xs">Seats<DenInput aria-label="Seats" type="number" required min={1} max={SANDBOX_MAX_MEMBERS} step={1} value={draft.memberLimit} disabled={saving} onChange={event => setDraft({ ...draft, memberLimit: event.target.value })} /></label>
           </div>
-          <label className="grid gap-2 text-xs">People who join become<DenSelect aria-label="People who join become" value={draft.joinRole} disabled={saving} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success) setDraft({ ...draft, joinRole: parsed.data }); }}><option value="admin">Admins</option><option value="member">Members</option></DenSelect>
-            <span className="text-[color:var(--dls-text-secondary)]">Admins can try everything: connectors, members and settings.</span></label>
+          <label className="grid gap-2 text-xs">People who join become<DenSelect aria-label="People who join become" value={draft.joinRole} disabled={saving} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success) setDraft({ ...draft, joinRole: parsed.data }); }}><option value="super-admin">Super admins</option><option value="admin">Admins</option><option value="member">Members</option></DenSelect>
+            <span className="text-[color:var(--dls-text-secondary)]">Super admins can try everything the owner can, except deleting the organization or transferring ownership. Admins can try connectors, members and most settings.</span></label>
           <label className="grid gap-2 text-xs">Who can join<DenInput aria-label="Allowed email domains" placeholder="Anyone with the link" value={draft.domains} disabled={saving} onChange={event => setDraft({ ...draft, domains: event.target.value })} />
             <span className="text-[color:var(--dls-text-secondary)]">Optional. Email domains separated by commas, such as example.com.</span></label>
-          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner of an Enterprise organization.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {draft.joinRole === "admin" ? "admins" : "members"}, never owners. When the sandbox ends, the link, Free Auto and its models stop; members and data stay.</span></div>
+          <div className="grid gap-1 rounded-md bg-[var(--dls-hover)] p-3 text-xs"><span className="font-medium">You become the owner of an Enterprise organization.</span><span className="text-[color:var(--dls-text-secondary)]">People who join become {roleLabel[draft.joinRole].toLowerCase()}, never owners. When the sandbox ends, the link, Free Auto and its models stop; members and data stay.</span></div>
           <div className="flex flex-wrap justify-end gap-2"><DenButton type="button" variant="secondary" size="sm" disabled={saving} onClick={() => setDraft(null)}>Cancel</DenButton><DenButton type="submit" size="sm" disabled={busy} loading={saving} data-testid="admin-sandbox-create-submit">Create sandbox</DenButton></div>
         </form>
       </section> : null}
@@ -156,7 +203,7 @@ export function SandboxOrgsPage() {
   </section>;
 }
 
-function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, onAddCredit }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void; onAddCredit: (currentLimitUsd: number) => void }) {
+function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, onAddCredit, onAddMicrosoft, onAddSlack }: { sandbox: Sandbox; busy: boolean; onRotate: () => void; onExtend: () => void; onAddMicrosoft: () => void; onAddSlack: () => void; onClose: () => void; onJoinRole: (joinRole: SandboxJoinRole) => void; onAddCredit: (currentLimitUsd: number) => void }) {
   const credit = sandbox.modelCredit ?? null;
   const [copied, setCopied] = useState(false);
   async function copy() {
@@ -173,6 +220,8 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
           {" · "}{sandbox.state === "open" ? `Ends ${date(sandbox.expiresAt)}` : sandbox.closedAt ? `Closed ${date(sandbox.closedAt)}` : `Ended ${date(sandbox.expiresAt)}`}
           {" · "}<span className="tabular-nums">{sandbox.memberCount} / {sandbox.memberLimit} seats</span>
           {" · "}{sandbox.connectorCount ? `${sandbox.connectorCount} sample apps` : "No connectors"}
+          {sandbox.sampleMicrosoft365 ? <span data-testid="admin-sandbox-microsoft">{" · "}Microsoft 365 for Workbot</span> : null}
+          {sandbox.sampleSlack ? <span data-testid="admin-sandbox-slack">{" · "}Slack for Workbot</span> : null}
           {sandbox.planTier === "enterprise" ? " · Enterprise" : ""}
           {credit ? <>{" · "}<span className="tabular-nums" data-testid="admin-sandbox-credit">{credit.remainingUsd === null ? `${dollars(credit.limitUsd)} model credit` : `${dollars(credit.remainingUsd)} of ${dollars(credit.limitUsd)} left`}</span></>
             : sandbox.modelProviderCount ? ` · ${sandbox.modelProviderCount} AI Gateway provider${sandbox.modelProviderCount === 1 ? "" : "s"}` : ""}
@@ -181,8 +230,12 @@ function SandboxRow({ sandbox, busy, onRotate, onExtend, onClose, onJoinRole, on
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option></DenSelect>
+        <DenSelect aria-label={`${sandbox.name}: people who join become`} value={sandbox.joinRole} disabled={busy} onChange={event => { const parsed = sandboxJoinRoleSchema.safeParse(event.target.value); if (parsed.success && parsed.data !== sandbox.joinRole) onJoinRole(parsed.data); }}><option value="member">Join as members</option><option value="admin">Join as admins</option><option value="super-admin">Join as super admins</option></DenSelect>
         {credit ? <DenButton variant="secondary" size="sm" disabled={busy || credit.limitUsd + CREDIT_STEP_USD > SANDBOX_MAX_CREDIT_USD} onClick={() => onAddCredit(credit.limitUsd)}>Add {dollars(CREDIT_STEP_USD)}</DenButton> : null}
+        {sandbox.state === "open" && sandbox.connectorBaseUrl && sandbox.sampleMicrosoft365 === false
+          ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onAddMicrosoft} data-testid="admin-sandbox-add-microsoft">Add Microsoft 365</DenButton> : null}
+        {sandbox.state === "open" && sandbox.connectorBaseUrl && sandbox.sampleSlack === false
+          ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onAddSlack} data-testid="admin-sandbox-add-slack">Add Slack</DenButton> : null}
         <DenButton variant="secondary" size="sm" disabled={busy} onClick={onExtend}>{sandbox.state === "open" ? "Add 7 days" : "Reopen for 7 days"}</DenButton>
         {sandbox.state === "open" ? <DenButton variant="secondary" size="sm" disabled={busy} onClick={onClose}>Close</DenButton> : null}
       </div>

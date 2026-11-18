@@ -6,6 +6,9 @@ import { requestRead } from "./request-reads.js"
 
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
+/** Holds an unfinished organization deletion's progress (routes/org/delete-organization.ts). Never shown to members. */
+export const ORGANIZATION_DELETION_METADATA_KEY = "deletionInProgress"
+
 export async function updateOrganizationMetadata(
   organizationId: OrganizationId,
   transform: (metadata: Record<string, unknown>) => Record<string, unknown>,

@@ -43,7 +43,7 @@ export const GENERATED_MCP_APP_ENTRY = `
       void app.sendLog({ level: "error", logger: "generated-mcp-app", data: stage }).catch(() => {});
     }
   };
-  const renderFailure = () => React.createElement("p", { role: "alert" }, "This App could not render. Reopen it to try again.");
+  const renderFailure = () => React.createElement("p", { role: "alert" }, "This artifact could not render. Reopen it to try again.");
   class GeneratedAppErrorBoundary extends React.Component {
     constructor(props) { super(props); this.state = { failed: false, revision: props.revision }; }
     static getDerivedStateFromError() { return { failed: true }; }
@@ -67,7 +67,7 @@ export const GENERATED_MCP_APP_ENTRY = `
           React.createElement(GeneratedApp, { app, input, result, hostContext }))));
     } catch {
       reportRuntimeError("react-mount");
-      if (mount) mount.textContent = "This App could not render. Reopen it to try again.";
+      if (mount) mount.textContent = "This artifact could not render. Reopen it to try again.";
     }
   };
   app.addEventListener("toolinput", (params) => {
@@ -93,6 +93,6 @@ export const GENERATED_MCP_APP_ENTRY = `
     initialized = true;
     render();
   }).catch(() => {
-    if (!disposed && mount) mount.textContent = "This App could not initialize. Reopen it to try again.";
+    if (!disposed && mount) mount.textContent = "This artifact could not initialize. Reopen it to try again.";
   });
 `

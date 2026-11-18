@@ -19,7 +19,7 @@ function job(name: string, output: string, prompt: string, started: string, wake
  * waits until the world releases it; when it ends, the engine wakes the agent
  * with its output and the model replies.
  */
-export async function backgroundTasksShimmer(seed: Seed) {
+async function buildBackgroundTasks(seed: Seed) {
   const engine = "v2";
   const dir = seed.tmpPath("background-tasks-shimmer");
   await mkdir(join(dir, "scripts"), { recursive: true });
@@ -40,18 +40,28 @@ export async function backgroundTasksShimmer(seed: Seed) {
 
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the background tasks world");
-  const den = await seed.den({ trustedOrigins: [`http://127.0.0.1:${webPort}`] });
+  // Explicit org shape makes Daytona provision the same admin identity it bootstraps,
+  // rather than falling back to the demo owner.
+  const den = await seed.den({
+    trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    org: { name: "Background tasks workspace", admin: { name: "Background tasks owner" } },
+  });
 
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";
-  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: jobs.flatMap((item) => [
+  const stoppedReply = "The report export was stopped.";
+  const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [...jobs.flatMap((item) => [
     { promptMarker: item.prompt, latestUserTurn: true, finalReply: item.started,
       // The images turn keeps working a few seconds after starting its command, so the chat can be seen mid-turn.
       ...(item === images ? { finalReplyDelayMs: 8_000 } : {}),
       steps: [{ tool: "shell", arguments: { command: item.command, description: `Run ${item.name}`, background: true } }] },
     // The engine wakes the agent with the command's output once it ends.
     { promptMarker: item.output, latestUserTurn: true, finalReply: item.wake, steps: [] },
-  ]) });
+  ]),
+    // V2 wakes the parent with a failed shell notice after shell.remove terminates it.
+    // Handle that synthetic turn as well as successful command output.
+    { promptMarker: 'state="failed"', latestUserTurn: true, finalReply: stoppedReply, steps: [] },
+  ] });
   const app = await seed.appWeb({ name: "background-tasks-shimmer", workspacePath, webPort, den: den.ref, engine, mocks: { agent: mock } });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("Missing background shell model witness");
@@ -67,8 +77,13 @@ export async function backgroundTasksShimmer(seed: Seed) {
   const session = await seed.session(app, { title: "Background tasks" });
 
   return {
-    app, den, workspace, session, report, images,
+    app, den, workspace, session, report, images, stoppedReply,
     /** Let one command finish; it prints its output and exits 0. */
     release: (item: BackgroundJob) => writeFile(join(workspacePath, ".release", item.name), "go\n"),
   };
+}
+
+/** Running commands are listed on the generally available composer. */
+export function backgroundTasksComposer(seed: Seed) {
+  return buildBackgroundTasks(seed);
 }

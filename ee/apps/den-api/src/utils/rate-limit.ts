@@ -70,7 +70,8 @@ function changedRows(result: unknown): number | null {
 }
 
 async function readRateLimit(key: string): Promise<RateLimitRow | null> {
-  const [row] = await db
+  // primary: counters are read right after the writes of earlier, often concurrent, requests.
+  const [row] = await db.$primary
     .select({ count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))

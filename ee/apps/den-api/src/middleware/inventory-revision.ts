@@ -17,7 +17,7 @@ export const inventoryRevisionMiddleware: MiddlewareHandler<{ Variables: Partial
   } finally {
     const organizationIds = inventoryRevisionsToBump(writes, c.get("activeOrganizationId"))
     if (organizationIds.length > 0) {
-      void cache.inventory.bump(organizationIds)
+      void cache.inventory.bump(organizationIds, { providerInventory: writes.providerInventory })
       notifyInventoryChanged(organizationIds)
     }
   }

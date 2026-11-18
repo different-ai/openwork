@@ -6,7 +6,7 @@ locals {
   create_certificate = var.certificate_arn == ""
   # Keyed by hostname, known at plan time, so for_each never depends on
   # values ACM only returns after apply.
-  certificate_hosts = concat([var.domain_name, local.api_host], local.web_enabled ? [local.gateway_host] : [], local.workbot_enabled ? [local.workbot_host] : [])
+  certificate_hosts = concat([var.domain_name, local.api_host], local.web_enabled ? [local.gateway_host] : [], local.workbot_enabled ? [local.workbot_host] : [], var.ai_gateway_enabled ? [var.ai_gateway_domain_name] : [])
   certificate_arn   = local.create_certificate ? aws_acm_certificate_validation.this[0].certificate_arn : var.certificate_arn
 }
 

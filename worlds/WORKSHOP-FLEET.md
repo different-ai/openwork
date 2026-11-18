@@ -11,8 +11,7 @@ scripts/workshop/seat.sh attendee07 stop  # status|task|stop|unlock|reset|prepar
 scripts/workshop/stop.sh                  # tear everything down
 ```
 
-The `launch-workshop` skill wraps these, so "start the workshop with 30 seats"
-in OpenWork does the same. Private files (attendee links, member test logins)
+Private files (attendee links, member test logins)
 go to `~/.openwork/workshops/<stage>/` (override with `WORKSHOP_HOME`), never
 into a checkout.
 
@@ -30,6 +29,23 @@ into a checkout.
 - **Speed:** seats start ten at a time, staggered, with Daytona rate limits
   retried. Measured: 20 seats in 7–8 minutes; one seat takes about 2 minutes.
   A failed seat is reported and never tears down the others.
+
+## Model and allowance
+
+The default is the reviewed workshop model on OpenAI with the approved $5
+weekly allowance per attendee. Both are explicit when you need something else,
+for example a recorded demo on Claude Opus 5.5:
+
+```sh
+WORKSHOP_PROVIDER=anthropic WORKSHOP_ALLOWANCE_USD=60 scripts/workshop/start.sh 1 360 demo
+```
+
+`--provider openai|anthropic` picks the upstream and its controller key
+(`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`, fetched from Infisical, never sent to
+a sandbox). `--allowance-usd` is the hard per-attendee limit, at most $100;
+the seat checks verify that exact amount. Artifacts are on in the workshop Den
+(`DEN_DASHBOARDS_ENABLED=true`), as in production, so Apps attendees build
+appear under Artifacts.
 
 ## Timing
 

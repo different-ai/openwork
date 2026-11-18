@@ -21,9 +21,21 @@ import { AsyncLocalStorage } from "node:async_hooks"
  *
  * Kept free of database and environment imports so it can be unit tested.
  */
-type InventoryWrites = { wrote: boolean; organizationIds: Set<string> }
+type InventoryWrites = { wrote: boolean; providerInventory: boolean; organizationIds: Set<string> }
 
 const inventoryWrites = new AsyncLocalStorage<InventoryWrites>()
+
+/**
+ * The tables an open provider inventory stream depends on: those read by
+ * readProviderInventoryRevision, plus member so a removal ends the stream at
+ * once. Unlike the rule above, this list can miss a table, so streams also
+ * reread the database at a fixed maximum age.
+ */
+export const PROVIDER_INVENTORY_TABLES: ReadonlySet<string> = new Set([
+  "gateway_providers", "gateway_provider_models", "gateway_provider_access", "gateway_provider_credentials",
+  "gateway_model_groups", "gateway_model_group_models", "gateway_credential_sets", "gateway_keys",
+  "team", "team_member", "member",
+])
 
 export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   // Sign-in and token bookkeeping.
@@ -38,13 +50,15 @@ export const INVENTORY_IRRELEVANT_TABLES: ReadonlySet<string> = new Set([
   // Usage metering.
   "gateway_request_logs", "gateway_usage_audit", "gateway_usage_bucket", "gateway_usage_bucket_charge",
   "gateway_usage_consumption_event", "gateway_usage_rollups", "gateway_usage_tracking", "gateway_usage_subject",
-  "gateway_rollup_lock", "inference_org_usage_buckets", "inference_usage_ledger_bucket_charges",
+  "gateway_rollup_lock", "workbot_usage_day", "inference_org_usage_buckets", "inference_usage_ledger_bucket_charges",
   "inference_usage_ledger_entries", "inference_free_usage", "inference_free_usage_buckets",
   "anonymous_inference_identities", "anonymous_inference_rate_buckets", "anonymous_inference_usage",
   "anonymous_inference_usage_buckets",
   "free_auto_limit_events", "free_auto_purchases",
   // Runs, runner presence and remote sessions.
   "automation_runner", "automation_runner_notification", "automation_run", "automation_run_event", "workflow_run",
+  "computer_disconnection",
+  "mcp_event_turn", "mcp_event_subscription", "mcp_event_receipt",
   "remote_session_command", "remote_session_request", "daytona_sandbox", "cloud_runtime_instance",
   "managed_deployment_event", "managed_deployment_health", "managed_deployment_run",
   "connector_sync_event", "scim_sync_event",
@@ -60,7 +74,7 @@ export function trackInventoryWrites<T>(writes: InventoryWrites, run: () => Prom
 }
 
 export function emptyInventoryWrites(): InventoryWrites {
-  return { wrote: false, organizationIds: new Set() }
+  return { wrote: false, providerInventory: false, organizationIds: new Set() }
 }
 
 /** Drizzle logger hook. Statements arrive before they run; the bump waits for the request to finish. */
@@ -70,6 +84,7 @@ export function noteInventoryWrite(query: string, params: unknown[]) {
   const table = WRITTEN_TABLE.exec(query)?.[1]
   if (!table || INVENTORY_IRRELEVANT_TABLES.has(table)) return
   writes.wrote = true
+  if (PROVIDER_INVENTORY_TABLES.has(table)) writes.providerInventory = true
   for (const param of params) {
     if (typeof param === "string" && ORGANIZATION_ID.test(param)) writes.organizationIds.add(param)
   }

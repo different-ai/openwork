@@ -37,7 +37,6 @@ const call = (code, options = {}) => control.program({ sessionId: "proof-chat", 
 try {
   const disabled = await call('return await tools.ui.observe({});');
   assert.equal(disabled.ok, false);
-  await control.setFeatureEnabled(true);
   await control.setRemoteEnabled(true);
   await control.choose({ sessionId: "proof-chat", targetId: "proof-vm" });
   await control.execute({ sessionId: "proof-chat", name: "computer_open", args: { app_id: "desktop", mode: "control", purpose: "Save a project and open a list item" } });
@@ -91,7 +90,7 @@ try {
 
   const waiting = call('await tools.ui.waitFor({target:{name:"Never appears"},timeoutMs:15000}); return true;');
   await new Promise(resolve => setTimeout(resolve, 100));
-  await control.setFeatureEnabled(false);
+  await control.reset();
   assert.equal((await waiting).ok, false);
   console.log("flag rollback", JSON.stringify({ blocked: true }));
 

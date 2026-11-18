@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
 import { readMigrationFiles } from "drizzle-orm/migrator"
@@ -59,6 +60,7 @@ export function loadMigrationPlan(folder: string) {
     throw new MigrationSafetyError("0097_gateway_access_matrix SQL, journal entry and generated snapshot must be finalized together before local startup. No database changes made.")
   }
   if (!plan.at(-1)?.snapshot) throw new MigrationSafetyError("Missing final migration snapshot; refusing to start a partial migration plan")
+  preservedDashboardShape(plan)
   return plan
 }
 
@@ -144,6 +146,60 @@ export function snapshotShape(snapshot: Snapshot) {
     if (Object.keys(table.foreignKeys).length) throw new MigrationSafetyError("Foreign keys need explicit local migration recognition")
   }
   return shape
+}
+
+function preservedDashboardShape(plan: MigrationPlan): Map<string, string> {
+  const names = ["dashboard", "dashboard_access_grant"]
+  const definitionHash = "ab8bd253403cbebc0365a51ff354a28ae07e3a3e6efe293a1bce2c506377e656"
+  const anchors = [
+    { tag: "0078_premium_mastermind", when: 1787667476277, hash: "253f5149181ebdc8dd6aee457cf35436b6fca05380e64f8ad3a68a1178a70714" },
+    { tag: "0147_free_auto_behavior", when: 1792104699960, hash: "d800c2060cbfbc81377f70b04918627b9af901dba492fbc7ef5658a1c8635b48" },
+  ]
+  const changed = () => new MigrationSafetyError("Preserved dashboard migration definitions changed; review physical schema expectations before startup. No database changes made.")
+  for (const anchor of anchors) {
+    const entry = plan.find((migration) => migration.tag === anchor.tag)
+    if (!entry?.snapshot || entry.folderMillis !== anchor.when
+      || createHash("sha256").update(entry.sql.join("--> statement-breakpoint")).digest("hex") !== anchor.hash) throw changed()
+  }
+  const canonical = plan.find((entry) => entry.tag === "0078_premium_mastermind")?.snapshot
+  if (!canonical || !plan.find((entry) => entry.tag === "0146_gateway_provider_usage_limits")?.snapshot) throw changed()
+  for (const entry of plan) {
+    const number = Number(entry.tag.slice(0, 4))
+    if (entry.snapshot) {
+      const tables = names.map((name) => entry.snapshot?.tables[name])
+      if (number >= 78 && number < 147) {
+        if (createHash("sha256").update(JSON.stringify(tables)).digest("hex") !== definitionHash) throw changed()
+      } else if (tables.some(Boolean)) throw changed()
+    }
+    // Only 0078 owns these tables. A later SQL change needs a new, reviewed
+    // physical expectation even if a logical snapshot still omits the pair.
+    if (number !== 78 && entry.sql.some((sql) => /\b(?:dashboard|dashboard_access_grant)\b/i.test(sql.replace(/^\s*--[^\n]*$/gm, "")))) throw changed()
+  }
+  const tables: Snapshot["tables"] = {}
+  for (const name of names) tables[name] = canonical.tables[name]
+  return snapshotShape({ ...canonical, tables })
+}
+
+export type PhysicalSchemaLayout = "historical-replay" | "snapshot-bootstrap"
+
+export function physicalSchemaShape(plan: MigrationPlan, applied: number, layout: PhysicalSchemaLayout = "historical-replay") {
+  const preserved = preservedDashboardShape(plan)
+  const entry = plan[applied - 1]
+  if (!entry?.snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
+  const shape = snapshotShape(entry.snapshot)
+  // 0147 deliberately preserves the SQL tables but drops them from logical
+  // snapshots. A historical replay still requires their complete definitions.
+  // Current-schema bootstrap is a separate complete layout, not optional tables.
+  if (Number(entry.tag.slice(0, 4)) >= 147 && layout === "historical-replay") {
+    for (const [key, value] of preserved) shape.set(key, value)
+  }
+  return shape
+}
+
+export function recordedSchemaLayout(plan: MigrationPlan, applied: number, actual: Map<string, string>): PhysicalSchemaLayout {
+  if (Number(plan[applied - 1]?.tag.slice(0, 4)) >= 147
+    && schemaDifferences(physicalSchemaShape(plan, applied, "snapshot-bootstrap"), actual).length === 0) return "snapshot-bootstrap"
+  return "historical-replay"
 }
 
 export async function inspectSchema(executor: Executor) {

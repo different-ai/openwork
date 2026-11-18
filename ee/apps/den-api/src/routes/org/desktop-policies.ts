@@ -110,8 +110,8 @@ async function resolveTeamIds(input: {
   return teamIds
 }
 
-async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$inferSelect.organizationId) {
-  const policies = await db
+async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$inferSelect.organizationId, database: typeof db.$primary = db) {
+  const policies = await database
     .select()
     .from(DesktopPolicyTable)
     .where(and(eq(DesktopPolicyTable.organizationId, organizationId), isNull(DesktopPolicyTable.deletedAt)))
@@ -120,7 +120,7 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
   if (policies.length === 0) return []
 
   const policyIds = policies.map((policy) => policy.id)
-  const assignments = await db
+  const assignments = await database
     .select({
       id: DesktopPolicyMemberTable.id,
       desktopPolicyId: DesktopPolicyMemberTable.desktopPolicyId,
@@ -165,7 +165,10 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
   })
 }
 
-async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string) {
+export type DesktopPolicyWriteInput = z.infer<typeof desktopPolicyWriteSchema>
+
+/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string, preferredId?: DesktopPolicyId) {
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
     return c.json(entitlement.response, entitlement.status)
@@ -175,7 +178,7 @@ async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
     const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
     const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
     const roles = resolveRoles(input.roles)
-    const desktopPolicyId = createDenTypeId("desktopPolicy")
+    const desktopPolicyId = preferredId ?? createDenTypeId("desktopPolicy")
     const now = new Date()
 
     await db.transaction(async (tx) => {
@@ -228,7 +231,8 @@ async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
       }
     })
 
-    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
+    // primary: reads back the policy created above.
+    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id, db.$primary)
       .then((policies) => policies.filter((policy) => policy.id === desktopPolicyId))
     return c.json({ desktopPolicy }, 201)
   } catch (error) {
@@ -238,7 +242,14 @@ async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
   }
 }
 
-async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false) {
+/**
+ * `scope` (config-blob imports) limits the write to the policy row's fields or
+ * to its assignments; routes write both. Assignments are written as a diff:
+ * only assignments that are added or removed touch a row.
+ */
+export async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false, scope: { fields?: boolean; assignments?: boolean } = {}) {
+  const writeFields = scope.fields ?? true
+  const writeAssignments = scope.assignments ?? true
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
     return c.json(entitlement.response, entitlement.status)
@@ -251,7 +262,8 @@ async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
     return c.json({ error: "desktop_policy_not_found" }, 404)
   }
 
-  const rows = await db
+  // primary: the update merges into the stored policy, and declarative applies run back to back.
+  const rows = await db.$primary
     .select()
     .from(DesktopPolicyTable)
     .where(and(
@@ -268,13 +280,13 @@ async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
   }
 
   try {
-    const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
-    const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
+    const memberIds = writeAssignments ? await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds }) : []
+    const teamIds = writeAssignments ? await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds }) : []
     const roles = resolveRoles(input.roles)
     const updatedAt = new Date()
 
     await db.transaction(async (tx) => {
-      await tx
+      if (writeFields) await tx
         .update(DesktopPolicyTable)
         .set({
           policyName: existing.isDefault === true ? existing.policyName : input.policyName.trim(),
@@ -296,44 +308,42 @@ async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
         })
         .where(eq(DesktopPolicyTable.id, existing.id))
 
-      if (existing.isDefault !== true) {
-        await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
-        const assignmentRows = [
-          ...memberIds.map((orgMemberId) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId,
-            teamId: null,
-            role: null,
-            createdAt: updatedAt,
-          })),
-          ...teamIds.map((teamId) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId: null,
-            teamId,
-            role: null,
-            createdAt: updatedAt,
-          })),
-          ...roles.map((role) => ({
-            id: createDenTypeId("desktopPolicyMember"),
-            organizationId: payload.organization.id,
-            desktopPolicyId: existing.id,
-            orgMemberId: null,
-            teamId: null,
-            role,
-            createdAt: updatedAt,
-          })),
+      if (existing.isDefault !== true && writeAssignments) {
+        const wanted = [
+          ...memberIds.map((orgMemberId) => ({ key: `member:${orgMemberId}`, orgMemberId, teamId: null, role: null })),
+          ...teamIds.map((teamId) => ({ key: `team:${teamId}`, orgMemberId: null, teamId, role: null })),
+          ...roles.map((role) => ({ key: `role:${role}`, orgMemberId: null, teamId: null, role })),
         ]
+        const stored = await tx
+          .select()
+          .from(DesktopPolicyMemberTable)
+          .where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
+        const wantedKeys = new Set(wanted.map((row) => row.key))
+        const kept = new Set<string>()
+        const removed = stored.filter((row) => {
+          const key = row.orgMemberId ? `member:${row.orgMemberId}` : row.teamId ? `team:${row.teamId}` : `role:${row.role}`
+          if (!wantedKeys.has(key) || kept.has(key)) return true
+          kept.add(key)
+          return false
+        }).map((row) => row.id)
+        if (removed.length > 0) await tx.delete(DesktopPolicyMemberTable).where(inArray(DesktopPolicyMemberTable.id, removed))
+        const assignmentRows = wanted.filter((row) => !kept.has(row.key)).map((row) => ({
+          id: createDenTypeId("desktopPolicyMember"),
+          organizationId: payload.organization.id,
+          desktopPolicyId: existing.id,
+          orgMemberId: row.orgMemberId,
+          teamId: row.teamId,
+          role: row.role,
+          createdAt: updatedAt,
+        }))
         if (assignmentRows.length > 0) {
           await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
         }
       }
     })
 
-    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
+    // primary: reads back the policy updated above.
+    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id, db.$primary)
       .then((policies) => policies.filter((policy) => policy.id === existing.id))
     return c.json({ desktopPolicy })
   } catch (error) {
@@ -343,7 +353,7 @@ async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
   }
 }
 
-async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+export async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
   let desktopPolicyId: DesktopPolicyId
   try {
     desktopPolicyId = parseDesktopPolicyId(rawId)
@@ -351,7 +361,8 @@ async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOr
     return c.json({ error: "desktop_policy_not_found" }, 404)
   }
 
-  const rows = await db
+  // primary: the update merges into the stored policy, and declarative applies run back to back.
+  const rows = await db.$primary
     .select()
     .from(DesktopPolicyTable)
     .where(and(
@@ -430,7 +441,8 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
       }
       const { externalKey } = c.req.valid("param")
       const input = { ...c.req.valid("json"), priority: c.req.valid("json").priority ?? 0, isEnabled: c.req.valid("json").isEnabled ?? true }
-      const [existing] = await db.select().from(DesktopPolicyTable).where(and(
+      // primary: declarative applies run back to back; a stale miss would create a duplicate.
+      const [existing] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
       )).limit(1)
@@ -441,7 +453,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         if (!isDuplicateEntry(error)) throw error
         // A concurrent creator can win between lookup and insert. Retry against
         // its identity instead of creating a second resource.
-        const [winner] = await db.select().from(DesktopPolicyTable).where(and(
+        const [winner] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
       )).limit(1)
@@ -464,7 +476,8 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     async (c) => {
       const payload = c.get("organizationContext")
       const { externalKey } = c.req.valid("param")
-      const [existing] = await db.select().from(DesktopPolicyTable).where(and(
+      // primary: declarative applies run back to back; a stale miss would create a duplicate.
+      const [existing] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
       )).limit(1)

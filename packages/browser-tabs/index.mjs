@@ -8,6 +8,9 @@
 // looking at it. The Electron main process and the React renderer both consume
 // it; neither owns the policy.
 
+/** Owner of tabs opened in a new thread, before its first message makes it a conversation. */
+export const DRAFT_OWNER_KEY = "__openwork_no_session__";
+
 /** Owner key used for tabs that no conversation claimed (legacy/shared tabs). */
 export const SHARED_OWNER_KEY = "*";
 
@@ -214,6 +217,18 @@ export function createBrowserTabRegistry() {
     return { tab, wasActive, nextActiveTabId, ownerHasTabs: remaining.length > 0 };
   }
 
+  /** Every tab of one owner becomes another's, and keeps being the active one. */
+  function reassignOwner(fromOwnerSessionId, toOwnerSessionId) {
+    const from = normalizeOwner(fromOwnerSessionId);
+    const to = normalizeOwner(toOwnerSessionId);
+    const moved = tabsFor(from);
+    for (const tab of moved) tab.ownerSessionId = to;
+    const active = activeByOwner.get(ownerKey(from));
+    activeByOwner.delete(ownerKey(from));
+    if (active) activeByOwner.set(ownerKey(to), active);
+    return moved.map((tab) => tab.tabId);
+  }
+
   function reorder(tabIds) {
     const nextOrder = Array.isArray(tabIds) ? tabIds.map(String) : [];
     if (nextOrder.length !== order.length) {
@@ -274,6 +289,7 @@ export function createBrowserTabRegistry() {
     add,
     select,
     remove,
+    reassignOwner,
     reorder,
     get,
     has,

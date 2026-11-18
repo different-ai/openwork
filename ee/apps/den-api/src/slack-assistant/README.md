@@ -122,8 +122,10 @@ platform capability are rechecked while processing each turn.
 Den records which Slack run each MCP token was minted for (`slack_assistant_run_token`). When that run calls `remote-session:create`
 with target `desktop`, the command is linked to the thread its reply went to
 (`slack_assistant_desktop_handoff`); nothing the model sends picks the thread.
-A sweep on worker nodes then posts, mentioning the member: the finished answer
-(first ~600 characters, with mentions and links escaped), a session failure, an
+A sweep on worker nodes then posts, mentioning the member: the whole finished
+answer (converted from Markdown to Slack mrkdwn by `slack-text.ts`, split across
+section blocks at paragraph or sentence breaks, mentions and broadcasts
+escaped), a session failure, an
 unclaimed command expiring, or a delivery failure, each once; and "waiting for
 you to approve" once per waiting episode. Leases keep several Den instances from
 posting twice. Nothing is posted once the assistant is off, the member lost

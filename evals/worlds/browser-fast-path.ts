@@ -50,7 +50,7 @@ export async function browserFastPath(seed: Seed, { place }: { place: Place }) {
         const snapshot = await native.snapshot(session.sessionId);
         if (!snapshot.ok || !snapshot.data) return [];
         return snapshot.data.messages.flatMap((message) => message.parts)
-          .filter((part) => typeof part.tool === "string" && part.tool.startsWith("browser_") && ["completed", "error"].includes(part.status));
+          .filter((part) => typeof part.tool === "string" && /^(?:browser|webmcp)_/.test(part.tool) && ["completed", "error"].includes(part.status));
       },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };

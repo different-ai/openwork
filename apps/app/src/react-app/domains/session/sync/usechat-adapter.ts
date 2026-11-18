@@ -8,6 +8,8 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import { readComposerPill } from "../surface/composer/composer-pills";
@@ -118,7 +120,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   if (!mapped) return [];
 
   if (part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(mapFileParts), part.callID)];
   }
 
   return [mapped];
@@ -163,6 +165,7 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
       ...(backgroundShell ? { backgroundShell } : {}),
       ...(subagentNotice ? { subagentNotice } : {}),
       ...(part.metadata?.openworkPastedText === true ? { pastedText: true } : {}),
+      ...(typeof part.metadata?.openworkFileMention === "string" ? { fileMention: part.metadata.openworkFileMention } : {}),
     } },
   };
 }
@@ -203,7 +206,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
           }];
         }
         if (part.type === "file") {

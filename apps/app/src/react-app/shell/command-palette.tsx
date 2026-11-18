@@ -52,6 +52,8 @@ import {
   type PaletteResultGroup,
 } from "./command-palette-search";
 import { buildCommandPaletteSettingsItems } from "./command-palette-settings";
+import { buildSessionGroupActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { sessionGroupActionsToPalette } from "./command-palette-session-actions";
 
 export type { PaletteItem } from "./command-palette-search";
 
@@ -100,6 +102,8 @@ export type CommandPaletteProps = {
   /** Opens a chosen session beside the current session without navigating away. */
   onOpenSessionInSplit?: (workspaceId: string, sessionId: string) => void;
   currentSession?: CommandPaletteSessionRef | null;
+  secondarySession?: CommandPaletteSessionRef | null;
+  onCloseSplitSession?: () => void;
   /** Called when "New session" is chosen. */
   onCreateNewSession: () => void;
   /** Starts an empty session beside the current session. */
@@ -110,8 +114,8 @@ export type CommandPaletteProps = {
   onOpenExtensions: (section?: string) => void;
   onToggleSidebar?: () => void;
   onOpenAutomations?: () => void;
-  onOpenCalendar?: () => void;
   onOpenDashboard?: () => void;
+  dashboardLabel?: string;
   onCreateWorkspace?: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
@@ -133,7 +137,8 @@ export type CommandPaletteProps = {
   sessionGroups?: SessionGroupOption[];
   currentSessionForGroupMove?: { title: string } | null;
   currentSessionGroupId?: string | null;
-  onMoveCurrentSessionToGroup?: (groupId: string) => void;
+  onMoveCurrentSessionToGroup?: (groupId: string | null) => void;
+  onCreateGroup?: () => void;
   extraItems?: PaletteItem[];
   /** Optional: agent picker submode (Switch agent). */
   listAgents?: () => Promise<Agent[]>;
@@ -256,6 +261,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
+    ...(props.onCloseSplitSession ? [{
+      id: "close-split", title: t("session_management.close_split_view"), meta: "Workbench",
+      searchText: "close side chat split view pane keep conversation",
+      action: () => { props.onClose(); props.onCloseSplitSession?.(); },
+    }] : []),
     ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Shift+M" : "Mod+Shift+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
       disabled: !modelControls.nextPinnedOption,
@@ -299,10 +309,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(canMoveCurrentSessionToGroup
       ? [{
           id: "move-to-group",
-          title: "Move to Group",
-          detail: props.currentSessionForGroupMove
-            ? `Add ${props.currentSessionForGroupMove.title} to an existing group`
-            : "Add the selected task to an existing group",
+          title: t("session_management.move_to_group"),
+          detail: props.currentSessionForGroupMove?.title,
           meta: sessionGroupCount > 0 ? `${sessionGroupCount.toLocaleString()} groups` : "No groups",
           searchText: "move to group add task session folder organize",
           group: ACTIONS_GROUP,
@@ -398,23 +406,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(props.onOpenCalendar
-      ? [{
-          id: "calendar.open",
-          title: "Calendar",
-          keywords: ["week", "meetings", "schedule", "automations", "google calendar", "outlook"],
-          group: ACTIONS_GROUP,
-          action: () => {
-            props.onClose();
-            props.onOpenCalendar?.();
-          },
-        }]
-      : []),
     ...(props.onOpenDashboard
       ? [{
           id: "dashboard.open",
-          title: "Dashboard",
-          keywords: ["home", "overview", "apps"],
+          title: props.dashboardLabel ?? "Dashboard",
+          keywords: ["home", "overview", "apps", "artifacts", "dashboard"],
           group: ACTIONS_GROUP,
           action: () => {
             props.onClose();
@@ -463,7 +459,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   const splitSessionItems = useMemo<PaletteItem[]>(
-    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession).map((item) => ({
+    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession, props.secondarySession).map((item) => ({
       id: `split-session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
@@ -474,7 +470,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onClose();
       },
     })),
-    [props.currentSession, props.onClose, props.onOpenSessionInSplit, props.sessions],
+    [props.currentSession, props.secondarySession, props.onClose, props.onOpenSessionInSplit, props.sessions],
   );
 
   const accessibleItems = useMemo<PaletteItem[]>(() => {
@@ -529,18 +525,12 @@ export function CommandPalette(props: CommandPaletteProps) {
     ];
   }, [agents, props]);
 
-  const groupItems = useMemo<PaletteItem[]>(() => (
-    (props.sessionGroups ?? []).map((group) => ({
-      id: `group:${group.id}`,
-      title: group.label,
-      meta: props.currentSessionGroupId === group.id ? "Current" : undefined,
-      searchText: `group ${group.label}`.toLowerCase(),
-      action: () => {
-        props.onClose();
-        props.onMoveCurrentSessionToGroup?.(group.id);
-      },
-    }))
-  ), [props]);
+  const groupItems = useMemo<PaletteItem[]>(() => sessionGroupActionsToPalette(buildSessionGroupActions({
+    groups: props.sessionGroups ?? [],
+    assignedGroupId: props.currentSessionGroupId ?? null,
+    onAssignGroup: (groupId) => props.onMoveCurrentSessionToGroup?.(groupId),
+    onCreateGroup: props.onCreateGroup,
+  }), props.onClose), [props]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -550,6 +540,8 @@ export function CommandPalette(props: CommandPaletteProps) {
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (choice.loginOpen) return;
+    // An open menu inside the palette (the provider filter) takes Escape first.
+    if (event.target instanceof Element && event.target.closest('[data-slot="select-content"]')) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -596,6 +588,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       className="gap-2.5"
       disabled={item.disabled}
       onClick={() => {
+        if (item.disabled) return;
         setRecents(recordPaletteRecent(item.id));
         item.action();
       }}

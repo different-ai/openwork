@@ -80,7 +80,7 @@ export function createDbReasoningStore(): ReasoningStore {
           if (payload) found.set(row.toolCallId, payload)
         }
       } catch (error) {
-        console.warn("[gateway] Auto Router could not read reasoning state", error instanceof Error ? error.message : error)
+        console.warn("[gateway] Smart Model Router could not read reasoning state", error instanceof Error ? error.message : error)
       }
       return found
     },
@@ -103,7 +103,7 @@ export function createDbReasoningStore(): ReasoningStore {
           await db.delete(AutoRouterReasoningTable).where(lt(AutoRouterReasoningTable.expiresAt, new Date())).limit(500)
         }
       } catch (error) {
-        console.warn("[gateway] Auto Router could not save reasoning state", error instanceof Error ? error.message : error)
+        console.warn("[gateway] Smart Model Router could not save reasoning state", error instanceof Error ? error.message : error)
       }
     },
   }

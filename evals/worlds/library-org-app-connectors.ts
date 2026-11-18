@@ -1,6 +1,5 @@
 import { allocateFreePorts, listTargets } from "@openwork/cdp";
 import type { AppWeb, Seed } from "@openwork/env";
-import { seededOrganizationId } from "./organization-capabilities.ts";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 /**
@@ -10,8 +9,7 @@ import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
  * - Slack needs the organization's own app (requiresOAuthClient) and is not set up;
  * - Team notes is already added as a per-person sign-in, backed by a local OAuth MCP;
  * - Render signs in with OpenWork's own app (defaultOAuthClientId).
- * No real provider is contacted. The libraryConnectorOrgSetup feature starts
- * off, as it ships; tests turn it on through the platform-admin route /admin uses.
+ * No real provider is contacted. Organization setup is generally available.
  */
 export async function libraryOrgAppConnectors(seed: Seed) {
   const [memberPort] = await allocateFreePorts(1);
@@ -23,15 +21,6 @@ export async function libraryOrgAppConnectors(seed: Seed) {
     mocks: { notes: seed.mock() },
   });
   const notes = den.mocks.notes;
-  const organizationId = await seededOrganizationId(seed, den.admin);
-  if (!organizationId) throw new Error("Could not resolve the seeded organization.");
-  async function setOrgSetup(enabled: boolean) {
-    const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT",
-      body: JSON.stringify({ capabilities: { libraryConnectorOrgSetup: enabled } }),
-    });
-    if (!result.response.ok) throw new Error(`Could not set libraryConnectorOrgSetup=${enabled}: HTTP ${result.response.status} ${result.text.slice(0, 300)}`);
-  }
   await seed.orgConnection(den.admin, {
     name: "Team notes", url: notes.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true },
   });
@@ -73,7 +62,7 @@ export async function libraryOrgAppConnectors(seed: Seed) {
   const owner = await open("admin");
   const member = await open("sam");
   return {
-    owner, member, openedTabs, setOrgSetup,
+    owner, member, openedTabs,
     denWebUrl: den.ref.webUrl,
     notesOrigin: new URL(notes.url).origin,
   };

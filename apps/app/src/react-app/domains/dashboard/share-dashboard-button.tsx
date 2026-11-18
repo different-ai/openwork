@@ -87,7 +87,7 @@ function ShareDashboardForm({ apps, pending, setPending, onClose, onVerifiedSess
     <Button variant="outline" onClick={onClose}>Done</Button>
   </div>;
   if (complete) return <div className="space-y-4">
-    <p role="status" className="text-sm">Shared {shared.length} {shared.length === 1 ? "app" : "apps"} with {email.trim()}. They’ll appear when your teammate opens or reloads their dashboard.</p>
+    <p role="status" className="text-sm">Shared {shared.length} {shared.length === 1 ? "artifact" : "artifacts"} with {email.trim()}. They’ll appear when your teammate opens or reloads their dashboard.</p>
     <Button onClick={onClose}>Done</Button>
   </div>;
   return <form className="space-y-4" onSubmit={(event) => void share(event)}>
@@ -108,7 +108,7 @@ function ShareDashboardForm({ apps, pending, setPending, onClose, onVerifiedSess
       </div>
     </fieldset>
     <p className="text-xs text-muted-foreground">Sharing gives view access to each artifact’s underlying workflow, its saved results, and other artifacts built from that workflow. Existing permissions stay in place. Company-managed artifacts are not included.</p>
-    {error ? <p role="alert" className="text-sm text-destructive">{error} Apps marked Shared are already available to your teammate. Retry to share the remaining apps.</p> : null}
+    {error ? <p role="alert" className="text-sm text-destructive">{error} Artifacts marked Shared are already available to your teammate. Retry to share the remaining artifacts.</p> : null}
     {needsReauth ? <DenReauthNotice onVerified={async (nextClient, commit) => {
       verifiedClient.current = nextClient;
       onVerifiedSession(commit);

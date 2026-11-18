@@ -52,12 +52,38 @@ users rely on always needs a note.
 
 Title: conventional commit, imperative, under 70 characters.
 
+## Show it
+
+Before writing, ask whether a picture beats the sentence. Add one when the
+change has any of these:
+
+- **A chain of cause**, three or more hops (A stores no limit, so B assumes
+  one, so C refuses): a Mermaid `flowchart LR` under "What was the situation
+  before?".
+- **A path that changed** between parts (client, Den, gateway, provider): one
+  flowchart with the old edge and the new edge labelled, same heading.
+- **Several cases** that behave differently (per provider, mode or input): a
+  small before / after table instead of a paragraph.
+
+One per PR, at most about six nodes or rows, plain words on the labels, and
+it replaces the prose it shows rather than repeating it. It does not count
+toward the word limit. A one-file fix with a one-line cause needs none.
+
+```mermaid
+flowchart LR
+  A["Model saved with no limit"] --> B["Client assumes 32000"]
+  B -->|before| C["Provider: 400"]
+  B -->|after: gateway lowers it| D["Provider: 200"]
+```
+
 ## Evidence
 
-CI runs every spec the PR changes on the PR head and posts one sticky
-`<!-- test-evidence -->` comment linking the report. You never run the
-publisher or attach screenshots by hand. The body names the spec and says
-what the reader will see; it does not copy verdicts, SHAs, screenshots or
+PRs run only the quick check; specs do not run on PRs automatically. Run the
+spec yourself (`run-tests`) before opening the PR, or have CI run the PR's
+changed specs on its head and keep their records as artifacts:
+`gh workflow run pr-proof.yml --ref <branch> -f pr=<number>`. After merge, the
+dev push runs every proof it adds or changes and every core journey. The body names the spec and
+says what the reader will see; it does not copy verdicts, SHAs, screenshots or
 links, which go stale.
 
 ```markdown
@@ -69,13 +95,9 @@ shows Suspend; after: it does not, and a page still opens and can be used.
 - The `before:` here and "What was the situation before?" are the same
   moment. If they disagree, fix one.
 - No spec changed? Say why in one line, e.g. `No E2E; typecheck and build only`.
-  If no evidence comment appears, that is why; do not run a spec locally and
-  paste its output.
-- Red evidence needs no sentence in the body: CI's comment says Failed on
-  that SHA and flips on its own when the head goes green. Fix the spec or the
-  code; do not narrate the verdict.
-- Evidence binds to a commit. After a rebase or cherry-pick, wait for CI to
-  rerun on the new head; do not cite the old comment.
+- Red evidence is fixed, not narrated: fix the spec or the code and rerun it.
+- Evidence binds to a commit. After a rebase or cherry-pick, rerun the spec on
+  the new head; do not cite the old run.
 - UI changes: one trailing line `Design: P3, S4, C6` (DESIGN.md rule ids).
 
 ## Leave out
@@ -93,4 +115,6 @@ gh pr edit <n> --body-file /tmp/pr-body.md
 ```
 
 Write the file first and read it as the reviewer would. If a section makes
-you scroll, cut it.
+you scroll, cut it. Then run the three questions in "Show it" once more:
+if one is a yes and the body has no diagram or table, add it before creating
+the PR.

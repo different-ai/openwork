@@ -50,7 +50,8 @@ export async function recordMcpRegistrationObservation(observation: McpRegistrat
       createdAt: at,
     })
 
-    const [current] = await db.select({ status: McpRegistrationStatusTable.status })
+    // primary: the next status is derived from the current one.
+    const [current] = await db.$primary.select({ status: McpRegistrationStatusTable.status })
       .from(McpRegistrationStatusTable).where(eq(McpRegistrationStatusTable.issuer, issuer)).limit(1)
     const status = nextMcpRegistrationStatus(current?.status ?? null, observation.outcome, observation)
     const facts = {

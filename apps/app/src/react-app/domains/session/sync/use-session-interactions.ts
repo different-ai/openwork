@@ -11,6 +11,7 @@ import { t } from "@/i18n";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
+import { createSessionChildIdsSelector, useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
   questionKey,
@@ -239,10 +240,12 @@ function createInteractionHydration(client: Client, workspaceId: string, session
   const newChild = (): PermissionHydration => ({
     controller: new AbortController(), snapshot: { startedAt: 0 }, legacy, done: false,
   });
-  const refresh = () => {
+  const refreshIds = (ids: Iterable<string>) => {
     if (disposed) return;
     refreshShared();
-    for (const [id, child] of children) {
+    for (const id of ids) {
+      const child = children.get(id);
+      if (!child) continue;
       if (child.done) {
         const next = newChild();
         children.set(id, next);
@@ -251,6 +254,18 @@ function createInteractionHydration(client: Client, workspaceId: string, session
     }
     drain();
   };
+  const refresh = () => refreshIds(children.keys());
+  // A child may ask after the initial shared snapshot, while its live event
+  // is missed. Reconcile only active or blocked sessions, using the same
+  // bounded queue and snapshot fences as initial hydration and reconnect.
+  const interval = window.setInterval(() => {
+    const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId] ?? {};
+    const ids = [...children.keys()].filter(id => {
+      const record = records[id];
+      return record?.runActive || record?.waitingPermissionIds.length || record?.waitingQuestionIds.length;
+    });
+    if (ids.length) refreshIds(ids);
+  }, 5_000);
   const onVisibilityChange = () => { if (document.visibilityState === "visible") refresh(); };
   refreshShared();
   window.addEventListener("online", refresh);
@@ -283,6 +298,7 @@ function createInteractionHydration(client: Client, workspaceId: string, session
     },
     dispose() {
       disposed = true;
+      window.clearInterval(interval);
       legacy?.controller.abort();
       questions?.controller.abort();
       for (const child of children.values()) child.controller.abort();
@@ -301,10 +317,12 @@ export type UseSessionInteractionsInput = {
   sessionId: string | null;
   interactionSessionIds?: string[];
   workspaceRoot: string;
+  /** Records "Always allow" on a file-send approval with the host. */
+  rememberFileSend?: (requestID: string) => Promise<void>;
 };
 
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId, workspaceRoot, rememberFileSend } = input;
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -312,11 +330,21 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const questionReplyBusyRef = useRef(false);
 
   const requestedSessionIdsKey = (input.interactionSessionIds ?? []).join("\u0000");
+  const selectChildIds = useMemo(createSessionChildIdsSelector, []);
+  const childrenBySession = useSessionActivityStore(selectChildIds)[workspaceId ?? ""];
   const interactionSessionIds = useMemo(() => {
     if (!sessionId) return [];
     const requested = requestedSessionIdsKey ? requestedSessionIdsKey.split("\u0000") : [];
-    return Array.from(new Set([sessionId, ...requested].map((id) => id.trim()).filter(Boolean)));
-  }, [requestedSessionIdsKey, sessionId]);
+    const inventory = new Set<string>();
+    const queue = [sessionId, ...requested];
+    for (let index = 0; index < queue.length; index += 1) {
+      const id = queue[index]?.trim();
+      if (!id || inventory.has(id)) continue;
+      inventory.add(id);
+      queue.push(...(childrenBySession?.[id] ?? []));
+    }
+    return [...inventory];
+  }, [childrenBySession, requestedSessionIdsKey, sessionId]);
   const permissionQueryKeys = useMemo(
     () => workspaceId ? interactionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
     [interactionSessionIds, workspaceId],
@@ -385,13 +413,19 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
-    async (requestID: string, reply: "once" | "always" | "reject") => {
+    async (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => {
       if (!client || !workspaceId || !sessionId) return;
       if (permissionReplyBusyRef.current) return;
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
+        // "Always allow" on a file send: the host records the choice for this
+        // open question first, so a failure here answers nothing.
+        if (remember === "always" && reply === "always" && !pendingPermission?.evaluation) {
+          if (!rememberFileSend) throw new Error(t("session.file_send_remember_unavailable"));
+          await rememberFileSend(requestID);
+        }
         if (pendingPermission?.evaluation) {
           // A development-only proof request has no engine-side request to answer.
         } else if (pendingPermission?.protocol === "v2") {
@@ -422,12 +456,13 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot, rememberFileSend],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;
+  // `answers: null` dismisses the question without answering it.
   const respondQuestion = useCallback(
-    async (requestID: string, answers: string[][]) => {
+    async (requestID: string, answers: string[][] | null) => {
       if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");
       if (questionReplyBusyRef.current) throw new Error("A question reply is already in progress.");
       const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
@@ -435,11 +470,20 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
-        unwrap(
-          await (isOpencodeV2Client(client)
-            ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
-            : client.question.reply({ requestID, answers, directory: workspaceRoot || undefined })),
-        );
+        const directory = workspaceRoot || undefined;
+        if (answers === null) {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.rejectSessionQuestion({ sessionID: pendingQuestion.sessionID, requestID })
+              : client.question.reject({ requestID, directory })),
+          );
+        } else {
+          unwrap(
+            await (isOpencodeV2Client(client)
+              ? client.replySessionQuestion({ sessionID: pendingQuestion.sessionID, requestID, answers })
+              : client.question.reply({ requestID, answers, directory })),
+          );
+        }
         settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
       } catch (error) {
         toast.error(t("app.error_request_failed"), {

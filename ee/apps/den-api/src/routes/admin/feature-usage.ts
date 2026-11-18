@@ -1,6 +1,6 @@
 import { and, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
-import { readFeatureRollouts, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readLatestFeatureChanges, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { availableFeatureKeys, featureAvailableOn, featureKeySchema, resolveFeature, type FeatureKey } from "@openwork/features"
 import type { Hono } from "hono"
@@ -11,6 +11,9 @@ import { env } from "../../env.js"
 import type { FeatureHealth, FeatureOutcomeSummary, FeatureOutcomeTotals } from "../../feature-outcomes/outcomes.js"
 import { readFeatureReport, readFeatureReports, type FeatureReport } from "../../feature-outcomes/report.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
+import { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } from "../../feature-outcomes/outcomes.js"
+import { readSlackSendAsBotOutcomes } from "../../feature-outcomes/slack-send-as-bot.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -34,6 +37,8 @@ const featureUsageSchema = z.object({
   /** Members who used it in the last 7 and 30 days. */
   usedLast7Days: z.number().int(),
   usedLast30Days: z.number().int(),
+  /** Latest change that could affect this organization (its override or the deployment-wide state), or null when it was never changed in /admin. */
+  lastChange: adminFeatureChangeSchema.nullable(),
   /** Everyone who ever used it, most recent first. */
   members: z.array(featureUsageMemberSchema),
 })
@@ -160,6 +165,47 @@ function featureJson(feature: FeatureReport) {
 }
 
 export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  // Operational diagnostics outlive the rollout. Slack messages still record
+  // success, refusal reasons and rate limits in their existing store.
+  app.get(
+    "/v1/admin/slack-send-as-bot/outcomes",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Slack bot message outcomes",
+      description: "Slack bot message totals, failures by reason, limits, coverage and daily outcomes for the last 7 or 30 UTC days. Independent of feature rollouts. Counts only; never message text. Platform administrators only.",
+      responses: {
+        200: jsonResponse("Slack bot message outcomes.", z.object({
+          range: rangeSchema,
+          from: z.iso.datetime(),
+          to: z.iso.datetime(),
+          health: featureHealthSchema,
+          outcomes: featureOutcomesSchema,
+          reasons: z.array(z.object({ reason: z.string(), outcome: z.enum(["failed", "skipped"]), count: z.number().int() })),
+          byOrganization: z.array(z.object({ organizationId: z.string(), outcomes: outcomeTotalsSchema })),
+        })),
+        400: jsonResponse("Invalid range.", invalidRequestSchema),
+        401: jsonResponse("Sign in required.", unauthorizedSchema),
+        403: jsonResponse("Platform administrator required.", forbiddenSchema),
+      },
+    }),
+    adminRoute(),
+    queryValidator(rangeQuerySchema),
+    async (c) => {
+      const { range } = c.req.valid("query")
+      const window = featureOutcomeRange(range === "30d" ? 30 : 7, new Date())
+      const outcomes = summarizeFeatureOutcomes(await readSlackSendAsBotOutcomes(window), window)
+      return c.json({
+        range,
+        from: window.from.toISOString(),
+        to: window.to.toISOString(),
+        health: healthJson(featureHealth({ membersUsing: 0, outcomes })),
+        outcomes: outcomesJson(outcomes),
+        reasons: outcomes.reasons,
+        byOrganization: [...outcomes.byOrganization].map(([organizationId, totals]) => ({ organizationId, outcomes: totalsJson(totals) })),
+      })
+    },
+  )
+
   app.get(
     "/v1/admin/feature-usage",
     describeRoute({
@@ -239,7 +285,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
     describeRoute({
       tags: ["Admin"],
       summary: "Who has and uses each feature in an organization",
-      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
+      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, the latest change that could affect the organization (who turned it on or off and when), and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
       responses: {
         200: jsonResponse("Feature usage returned.", responseSchema),
         400: jsonResponse("Invalid organization id.", invalidRequestSchema),
@@ -255,7 +301,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
       const [organization] = await db.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
       if (!organization) return c.json({ error: "not_found", message: "Organization not found." }, 404)
 
-      const [members, rollouts, overrides, memberOverrides, usage] = await Promise.all([
+      const [members, rollouts, overrides, memberOverrides, usage, changes] = await Promise.all([
         db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
           .from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
           .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false), isNotNull(MemberTable.userId))),
@@ -263,6 +309,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
         readOrganizationFeatureOverrides(db, organizationId),
         readOrganizationMemberFeatureOverrides(db, organizationId),
         readOrganizationFeatureUsage(db, organizationId),
+        readLatestFeatureChanges(db, { organizationId }),
       ])
 
       const context = { ...env.features, rollouts, overrides }
@@ -280,6 +327,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
           enabledMembers: members.filter((member) => enabledFor(key, member.id)).length,
           usedLast7Days: usedWithin(7),
           usedLast30Days: usedWithin(30),
+          lastChange: serializeFeatureChange(changes[key]),
           members: used.map((row) => {
             const person = people.get(row.memberId)
             return {

@@ -132,6 +132,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const store = useMemo(
     () =>
       createProviderAuthStore({
+        nativeOpenworkClient: () => stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+        nativeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -215,6 +217,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
+
+  useEffect(() => { store.syncFromOptions(); }, [store]);
 
   useEffect(() => {
     store.start();

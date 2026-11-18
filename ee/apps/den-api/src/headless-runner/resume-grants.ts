@@ -4,6 +4,7 @@ import { HeadlessResumeGrantTable, HeadlessResumeRevocationTable, MemberTable, R
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { mintHeadlessRunMcpToken, revokeHeadlessRunMcpToken } from "../mcp/headless-run-token-mint.js"
+import { isWorkbotTurnLimitScope } from "../mcp/workbot-turn-limits.js"
 import { appLogger } from "../observability/logger.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
 import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
@@ -94,13 +95,19 @@ export async function mintHeadlessResumeGrant(input: {
     sessionId: input.sessionId,
     messageId: input.messageId,
     readOnly: input.readOnly === true,
-    scopes: input.readOnly === true && input.scopes?.length ? [...input.scopes] : null,
+    scopes: grantScopes(input),
     tokenHash: hashHeadlessResumeGrant(grant),
     expiresAt,
     createdAt: now,
     useCount: 0,
   })
   return { grant, grantId, expiresAt }
+}
+
+/** A read-only turn's extra scopes; a writing turn keeps only the ones that take connections away from it. */
+function grantScopes(input: { readOnly?: boolean; scopes?: readonly string[] }): string[] | null {
+  const scopes = input.readOnly === true ? [...(input.scopes ?? [])] : (input.scopes ?? []).filter(isWorkbotTurnLimitScope)
+  return scopes.length ? scopes : null
 }
 
 function boundId(value: string | undefined): value is string {
@@ -119,12 +126,11 @@ async function resumeGrantForTurn(input: {
   readOnly?: boolean
   scopes?: readonly string[]
   authorizedAt: Date
-}): Promise<string | undefined> {
+}): Promise<Awaited<ReturnType<typeof mintHeadlessResumeGrant>> | undefined> {
   const { sessionId, messageId } = input
   if (!boundId(sessionId) || !boundId(messageId)) return undefined
   try {
-    const { grant } = await mintHeadlessResumeGrant({ ...input, sessionId, messageId, now: input.authorizedAt })
-    return grant
+    return await mintHeadlessResumeGrant({ ...input, sessionId, messageId, now: input.authorizedAt })
   } catch (error) {
     // The turn still runs; only self-resume is lost. Never log the grant.
     logger.warn("headless resume grant not minted", { error_name: error instanceof Error ? error.name : typeof error })
@@ -142,7 +148,10 @@ export async function mintHeadlessTurnCredentials(input: {
   organizationId: string
   ttlMs?: number
   readOnly?: boolean
-  /** Extra scopes for a read-only token (a background agent's sources); never on a writing one. */
+  /**
+   * Extra scopes for a read-only token (a background agent's sources). A writing one keeps only those that take
+   * connections away from a Workbot turn (workbot-turn-limits.ts).
+   */
   scopes?: readonly string[]
   sessionId?: string
   messageId?: string
@@ -162,7 +171,10 @@ export async function mintHeadlessTurnCredentials(input: {
   const minted = await mintHeadlessRunMcpToken(input)
   const resumeGrant = await resumeGrantForTurn({ ...input, authorizedAt })
   const indexCapability = await indexCapabilityForTurn(input)
-  return { ...minted, ...(resumeGrant ? { resumeGrant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
+  if (input.indexKind === "workbot") {
+    await (await import("../mcp-events/context.js")).bindEventTurn({ ...input, tokenId: minted.tokenId, resumeGrantId: resumeGrant?.grantId, expiresAt: resumeGrant?.expiresAt ?? minted.expiresAt })
+  }
+  return { ...minted, ...(resumeGrant ? { resumeGrant: resumeGrant.grant } : {}), modelAccess, ...(indexCapability ? { indexCapability } : {}) }
 }
 
 export type HeadlessResumeGrantError =
@@ -176,7 +188,8 @@ export type HeadlessResumeGrantError =
 /** The stored grant behind a presented one, or null when it is malformed or unknown. */
 export async function findHeadlessResumeGrant(grant: string): Promise<GrantRow | null> {
   if (!HEADLESS_RESUME_GRANT_PATTERN.test(grant)) return null
-  const [row] = await db
+  // primary: a grant is minted at turn start and may be presented moments later; revocation must be visible.
+  const [row] = await db.$primary
     .select()
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.tokenHash, hashHeadlessResumeGrant(grant)))
@@ -192,7 +205,8 @@ export function headlessResumeGrantCovers(row: Pick<GrantRow, "sessionId" | "mes
 
 /** The member id when the grant's user is still an active member of its organization. */
 export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userId" | "organizationId">): Promise<string | null> {
-  const [member] = await db
+  // primary: a just-removed member must not resume.
+  const [member] = await db.$primary
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, row.organizationId), eq(MemberTable.userId, row.userId), isNull(MemberTable.removedAt)))
@@ -206,7 +220,8 @@ export async function activeHeadlessResumeGrantMember(row: Pick<GrantRow, "userI
  * concurrently can be written after that sweep; this check refuses it anyway.
  */
 export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<GrantRow, "userId" | "organizationId" | "createdAt">) {
-  const [revocation] = await db
+  // primary: the revocation race below relies on seeing a revocation as soon as it is written.
+  const [revocation] = await db.$primary
     .select({ revokedAt: HeadlessResumeRevocationTable.revokedAt })
     .from(HeadlessResumeRevocationTable)
     .where(and(eq(HeadlessResumeRevocationTable.organizationId, row.organizationId), eq(HeadlessResumeRevocationTable.userId, row.userId)))
@@ -217,7 +232,7 @@ export async function headlessResumeGrantAuthorizedBeforeRevocation(row: Pick<Gr
 
 /** The grant read again: marked revoked, or authorized before the member's latest credential revocation. */
 async function headlessResumeGrantRevokedNow(row: GrantRow) {
-  const [current] = await db
+  const [current] = await db.$primary
     .select({ revokedAt: HeadlessResumeGrantTable.revokedAt })
     .from(HeadlessResumeGrantTable)
     .where(eq(HeadlessResumeGrantTable.id, row.id))
@@ -280,6 +295,12 @@ export async function exchangeHeadlessResumeGrant(
   if (await headlessResumeGrantRevokedNow(row)) {
     await revokeHeadlessRunMcpToken(minted.tokenId)
     return { ok: false, status: 403, error: "grant_revoked" }
+  }
+  if (!row.readOnly) {
+    await (await import("../mcp-events/context.js")).rebindEventTurn({
+      tokenId: minted.tokenId, resumeGrantId: row.id, organizationId: row.organizationId, userId: row.userId,
+      memberId: input.memberId, sessionId: row.sessionId, expiresAt: row.expiresAt,
+    })
   }
   await db
     .update(HeadlessResumeGrantTable)

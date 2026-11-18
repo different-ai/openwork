@@ -28,11 +28,19 @@ included too, even when only a manifest is copied.
 Missing history, incomplete file lists, unknown inputs, or failed comparisons
 must select work rather than skip it. Push classification compares the full
 `before` to `sha` range with both rename ends and deletions, not only the latest
-commit. PR selection keeps its existing broad core/smoke coverage and checks
-paginated file counts and head consistency. The stable
-`openwork-tests-required` context requires every selected job to succeed and
-every unselected job to be skipped. Bare-Node/static assertions run independently
-of builds, package installation and services, and still gate that context.
+commit. PRs run the quick check (`quick-check.yml`): its classifier checks
+paginated file counts and head consistency, and selects the Den API auth tests
+when their inputs change (`den-api-tests`). Its `openwork-tests-required`
+context requires the always-run static, typecheck and desktop build jobs to
+succeed, and the Den job to succeed when selected and be skipped otherwise.
+
+The quick check also runs in full on every dev push. That result gates
+releases: the alpha workflow publishes nothing, and a fresh release tags
+nothing, unless the quick check passed on that exact commit
+(`.github/scripts/require-quick-check.mjs`). A tag pushed by hand (the audited
+expedited path) and a recovery rerun of an existing tag are not held.
+"Nightly regression" (`ci-tests.yml`) runs nightly and on demand only and
+gates nothing.
 
 ### EE publication and cancellation
 
@@ -50,9 +58,10 @@ API build cannot be cancelled merely because a Workbot-only merge arrives.
 Unchanged images retain their original source/version provenance; they are not
 claimed to have been built from current HEAD.
 
-Tag/manual runs still select all six EE images and Helm. Targeted infrastructure
-PRs exercise all image builds and existing health/migration assertions without
-publishing or entering the production environment. Chart validation is
+Tag/manual runs still select all six EE images and Helm. A nightly build-only run
+(and manual runs with push off) exercises all image builds and the existing
+health/migration assertions without publishing or entering the production
+environment. Chart validation is
 independent of image builds. The gateway deploy hook follows only its own actual
 publication; it is not evidence that a native Render source service consumes
 GHCR images, and it does not replace the Render filters below.
@@ -61,6 +70,60 @@ The first new dev run rebuilds images whose legacy metadata has no fingerprint.
 At rollout, let pre-change publishing runs finish (or explicitly cancel them)
 before the new publisher promotes images: an old running workflow cannot acquire
 or honor the new per-target locks.
+
+Cross-job image selection transfers only compact target identifiers and the
+publisher implementation hash. Each build job resolves its image, Dockerfile,
+port, health path and smoke environment locally from the trusted EE catalog;
+smoke fixtures stay in that runner's environment, never in a job matrix output.
+A missing matrix output is an error, not an empty selection to silently skip.
+
+During the initial rollout, GitHub's secret-output filter suppressed the combined
+five-image matrix output while the separate gateway output still transferred.
+Those five jobs never instantiated and therefore did not publish fingerprint
+labels. Repeated selection of those images is conservative recovery until their
+first successful publication, not evidence of an ongoing registry outage. The
+matched substring was not identified; do not infer a particular credential or
+fixture value from the warning.
+
+### EE queue reconciliation
+
+GitHub retains one running and one pending job per concurrency group, but does
+not order selector completion by commit age. While A builds, C's selector can
+queue C before the older B selector finishes; B can then replace pending C.
+Rejecting both stale A and stale B at promotion would leave `:dev` behind until
+another push.
+
+Every surviving dev publication lock holder therefore fetches `origin/dev`
+before checking its publication baseline and builds that latest source, not
+necessarily the commit that queued it. This includes automatic dev pushes and
+manual dev dispatches with **push enabled**. A replacement B job can build and
+publish C without a fourth push. The final per-target freshness check still
+prevents promotion if relevant inputs advance during the build. Build or
+publication failures cannot advance the successful-publication baseline.
+
+Build-only runs, including the nightly run and the default manual dry-run, use a separate
+channel unique to their run ID and attempt. They cannot replace a pending
+publisher. Publishing dev dispatches share the automatic publication channel and
+must reconcile the latest compatible dev source too; keeping their originally
+selected older SHA could otherwise strand publication after replacing C. The
+version job supplies the publication flag/channel, and source resolution rejects
+missing or invalid flags rather than inferring permission from an event.
+
+The concurrency group also includes a publisher implementation version: the Git
+blob identities of the EE publication workflow, EE image helper and shared build
+input helper. A delayed old implementation cannot evict the new implementation's
+pending job. An older lock holder refuses to build a tree whose publisher
+implementation differs; that tree must run its own workflow and arguments.
+Missing source/version data or a failed dev fetch stops the job before building.
+
+The resolved checkout SHA supplies the immutable image tags, explicit OCI
+revision label and API/gateway version arguments. It is not relabelled as the
+original triggering SHA. Build-only runs, tag runs and manual runs on other refs
+retain their selected checkout. Only dev publishing runs reconcile it to latest
+dev; manual runs still select all six images and Helm. Depth-one fetches are
+confined to disposable Actions checkouts; local invocations never shallow a
+developer's shared clone.
+The rollout caveat about already-running legacy publishers above still applies.
 
 ### Worker snapshots and other workflows
 
@@ -78,9 +141,9 @@ refresh waiting for that unrelated commit to appear in production.
 CodeQL retains real Swift scans on every dev push, schedule and manual run. Its
 all-language required scanning rule and coverage monitor currently expect a
 complete commit baseline. Skipping that scan needs a separate proven accounting
-change; never upload empty results on dev just to save a macOS build. PR Swift
-selection fails open when comparison data is incomplete and scans analyzer
-configuration changes too.
+change; never upload empty results on dev just to save a macOS build. PRs do
+not analyze: each uploads an empty result per category for the merge rule (see
+docs/codeql-results.md).
 
 When adding a workspace dependency or an external build-time source read, add a
 boundary regression and check the relevant workflow's coarse trigger as well as
@@ -193,3 +256,71 @@ Offline regression tests (no Render credentials or network calls):
 ```sh
 node --test .github/scripts/render-build-filters.test.mjs
 ```
+
+## Production deploys
+
+`.github/workflows/production-deploy.yml` deploys dev to production as the last
+step after a dev push, instead of Render's and Vercel's own Git auto-deploys,
+which start the moment a commit lands and do not wait for its checks.
+
+For each dev push it:
+
+1. Waits until the quick check and the API contract passed on that exact
+   commit. A failure stops the run; nothing deploys.
+2. Plans each target in `.github/scripts/production-deploy.mjs` by comparing
+   the commit with the one the target runs now, using the build inputs in
+   `build-inputs.mjs` (`native-*` for Render, `vercel-*` for Vercel). Unknown
+   live state or comparison deploys; a target already on a newer dev commit is
+   never moved backwards. Den API is held back (the run goes red) while Den DB
+   Migrate's latest run failed.
+3. Deploys the core services (`api-private`, `inference-private`) and waits
+   until they are live, then `workbot`, `client-web` and the Vercel projects
+   (`openwork-den`, `openwork-app`, `openwork-landing`).
+   Render deploys pin `commitId`; Vercel deploys build the checked-out commit
+   with `vercel deploy --prod`.
+
+Runs never overlap. GitHub keeps only the newest pending run, so pushes that
+land during a deploy go out together in the next one; that is why the plan
+compares with what is live rather than with the previous push.
+
+`den-api-env.yml` and `dev-daytona-snapshot.yml` redeploy the commit Den API
+already runs, never the dev head, so they cannot release an unchecked commit.
+
+### Rollout
+
+The workflow starts in **dry run**: it waits for the same checks and writes
+its plan to the run summary, compared with the previous push (the providers'
+auto-deploys have usually made the commit live already), without deploying.
+
+1. Create the `production-deploy` environment with `RENDER_API_KEY` (the
+   Different Ai Inc workspace) and `VERCEL_TOKEN` (access to the four
+   projects). Without them a dry run still plans, but cannot read or verify
+   what is live.
+2. Watch dry runs for a few days: every target should be found and verified
+   (service name, workspace, repo, branch; project name and root directory),
+   and its decisions should match the deploys Render and Vercel made.
+3. Switch, in one change:
+   - Render: set Auto-Deploy to **Off** on `api-private`, `inference-private`,
+     `workbot` and `client-web`, and on the suspended services that still have
+     it on (`api`, `inference`, `inference-west`, `den-api-west`,
+     `den-legacy-migrator-temp`, `den-mysql-core`).
+   - Vercel: the `ignoreCommand` in the `vercel.json` of `ee/apps/den-web`,
+     `apps/app` and `ee/apps/landing` first skips dev
+     (`[ "$VERCEL_GIT_COMMIT_REF" = dev ] && exit 0`), so Vercel's Git build
+     for a dev push ends as a green "Canceled by Ignored Build Step". Vercel
+     runs the ignore command only for Git deployments, not for this
+     workflow's CLI deploys. (`git.deploymentEnabled: { dev: false }` also
+     stops them, but leaves a red "Deployment was blocked" status on dev
+     commits.) Done; `production-deploy.test.mjs` keeps it so. PR previews
+     keep building. Until the mode is `deploy`, nothing deploys these
+     projects' production from dev.
+   - Set the repository variable `PRODUCTION_DEPLOY_MODE` to `deploy`.
+4. To deploy a dev commit by hand, or to roll forward after a fix, run
+   **Actions → Production deploy → Run workflow** with mode `deploy` and an
+   optional commit.
+
+To roll back the switch, unset `PRODUCTION_DEPLOY_MODE` and turn the providers'
+auto-deploys back on. For an emergency rollback of one service, use Render's
+or Vercel's own rollback, and land the fix or revert on dev before the next
+push: the next deploy of that service replaces the rollback with the newer dev
+commit.

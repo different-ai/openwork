@@ -100,9 +100,6 @@ export async function readOrgDiagnostics(caller: DiagnosticsCaller, options: { r
       : Promise.resolve({ access: "locked" as const, permission: DIAGNOSTICS_SECTION_PERMISSIONS.connectors }),
     section("installation", () => installationSection(caller, options.refresh), (): InstallationDiagnostics => ({ access: "locked", reason: "installation_admin_required" })),
   ])
-  const network = caller.has(DIAGNOSTICS_SECTION_PERMISSIONS.network)
-    ? { access: "granted" as const, canRun: caller.has("egress_diagnostics.manage") }
-    : { access: "locked" as const, permission: DIAGNOSTICS_SECTION_PERMISSIONS.network }
   const connectors = connectorSection.access === "granted"
     ? { access: connectorSection.access, checkedAt: connectorSection.checkedAt, items: connectorSection.items }
     : connectorSection
@@ -119,7 +116,6 @@ export async function readOrgDiagnostics(caller: DiagnosticsCaller, options: { r
     providers: providerSection,
     connectors,
     installation,
-    network,
   }
 }
 

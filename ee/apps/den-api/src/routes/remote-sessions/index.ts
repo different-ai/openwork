@@ -2,12 +2,19 @@ import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { remoteSessionStatusRequestSchema, remoteSessionStatusResultSchema } from "@openwork/types/automations"
-import { requireFeature } from "../../features.js"
+import {
+  memberSessionListResponseSchema,
+  remoteSessionAttachRequestSchema,
+  remoteSessionAttachResponseSchema,
+} from "@openwork/types/den/remote-sessions"
+import { requireAnyFeature, requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { OrganizationContext } from "../../orgs.js"
 import {
   executeRemoteSessionCapability,
+  listMemberRemoteSessions,
+  remoteSessionAnswerBodySchema,
   remoteSessionReadBodySchema,
   remoteSessionSendBodySchema,
   remoteSessionStopBodySchema,
@@ -21,6 +28,10 @@ import {
  * status call for every task it shows, and the transcript, follow-ups and
  * stop only when the person opens one. They run the same capabilities agents
  * call through MCP (`remote-session:*`), so both see the same receipts.
+ *
+ * With `remoteSessionAccess`, `GET /v1/sessions` lists the member's sessions
+ * across their own computers and `/attach` reaches one that was started on a
+ * computer, where its owner and the organization allow it.
  */
 
 /** Waiting status calls one member may hold at once; more answer immediately. */
@@ -32,15 +43,14 @@ const remoteSessionErrorSchema = z.object({
   message: z.string().optional(),
   retryable: z.boolean().optional(),
 }).passthrough().meta({ ref: "RemoteSessionError" })
-const featureDisabledSchema = z.object({ error: z.string(), feature: z.string().optional() })
 
 const describeMemberRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 
 const commonResponses = {
   400: jsonResponse("The request or its arguments were invalid.", z.union([invalidRequestSchema, remoteSessionErrorSchema])),
   401: jsonResponse("Authentication required.", unauthorizedSchema),
-  404: jsonResponse("The task is unknown, the organization was not found, or the feature is off.", z.union([notFoundSchema, featureDisabledSchema])),
-  409: jsonResponse("The task cannot do that now.", remoteSessionErrorSchema),
+  404: jsonResponse("The task is unknown or the organization was not found.", notFoundSchema),
+  409: jsonResponse("The task cannot do that now. remote_access_off: the computer takes nothing from other devices (its owner's choice, no choice yet under the organization's opt-in, or the organization's ceiling); the message says who can allow it.", remoteSessionErrorSchema),
   503: jsonResponse("The computer or cloud workspace that runs the task can't be reached right now; retry.", remoteSessionErrorSchema),
 }
 
@@ -48,7 +58,7 @@ function httpStatus(payload: Record<string, unknown>): 200 | 400 | 404 | 409 | 5
   const code = payload.error
   if (typeof code !== "string") return 200
   if (code === "invalid_capability_arguments") return 400
-  if (code.startsWith("unknown_")) return 404
+  if (code.startsWith("unknown_") || code === "feature_disabled") return 404
   return payload.retryable === true ? 503 : 409
 }
 
@@ -86,7 +96,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionStatusRequestSchema.meta({ ref: "RemoteSessionStatusRequest" })),
     async (c) => {
       const body = c.req.valid("json")
@@ -119,7 +128,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("The transcript page or receipt.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionReadBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "read", c.req.valid("json"))
@@ -138,10 +146,27 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("The follow-up was accepted or is pending.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionSendBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "send", c.req.valid("json"))
+      c.header("Cache-Control", "no-store")
+      return c.json(result.payload, result.status)
+    },
+  )
+
+  app.post(
+    "/v1/remote-sessions/answer",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Answer a remote session's question or permission",
+      description: "The member answers a question or permission one of their remote sessions waits on: the chosen option labels per question, decision once or reject (never always), or kind dismiss to close a question without answering it. requestId names the open request the member saw, any of those a read lists; one that is no longer open answers 409 stale_request and nothing is sent. A computer that cannot dismiss a question answers 409 answer_unsupported. A desktop that has not answered within about 20 seconds returns state pending with a requestId to read later. Same result as the remote-session:answer capability.",
+      "x-mcp": false,
+      responses: { 200: jsonResponse("The answer reached the session, or is pending.", remoteSessionResultSchema), ...commonResponses },
+    }),
+    orgMemberRoute(),
+    jsonValidator(remoteSessionAnswerBodySchema),
+    async (c) => {
+      const result = await run(c.get("organizationContext"), c.req.raw.signal, "answer", c.req.valid("json"))
       c.header("Cache-Control", "no-store")
       return c.json(result.payload, result.status)
     },
@@ -157,12 +182,54 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       responses: { 200: jsonResponse("Whether the session stopped, or a pending requestId.", remoteSessionResultSchema), ...commonResponses },
     }),
     orgMemberRoute(),
-    requireFeature("remoteSessionSubagents"),
     jsonValidator(remoteSessionStopBodySchema),
     async (c) => {
       const result = await run(c.get("organizationContext"), c.req.raw.signal, "stop", c.req.valid("json"))
       c.header("Cache-Control", "no-store")
       return c.json(result.payload, result.status)
+    },
+  )
+
+  app.post(
+    "/v1/remote-sessions/attach",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "Attach to a session started on one of the member's computers",
+      description: "Makes a session that was started on one of the member's own computers reachable from other devices, like one started remotely. The organization's ceiling and that computer's owner must both allow every session; otherwise 409 session_access_denied and nothing is queued. Returns state attached with the commandId that already reaches the session, or queued with a commandId to follow through status until the computer has attached. Repeating the call returns the same command. Other refusals: 404 unknown_computer (not one of the member's computers), 409 remote_access_off (the computer, or the organization, takes nothing from other devices), 409 desktop_update_required, 503 desktop_offline. Same result as the remote-session:attach capability. Requires active membership and a session-access-capable computer whose owner and organization both allow all sessions.",
+      "x-mcp": false,
+      responses: { 200: jsonResponse("The session is attached, or the attach is queued.", remoteSessionAttachResponseSchema), ...commonResponses },
+    }),
+    orgMemberRoute(),
+    jsonValidator(remoteSessionAttachRequestSchema.meta({ ref: "RemoteSessionAttachRequest" })),
+    async (c) => {
+      const result = await run(c.get("organizationContext"), c.req.raw.signal, "attach", c.req.valid("json"))
+      c.header("Cache-Control", "no-store")
+      return c.json(result.payload, result.status)
+    },
+  )
+
+  app.get(
+    "/v1/sessions",
+    describeMemberRoute({
+      tags: ["Automations"],
+      summary: "List the member's sessions across their computers",
+      description: "The signed-in member's own sessions, newest first, and the computers they are on. reach reachable: read, follow up, stop and answer it through its commandId and sessionId. connecting: a start or an attach is queued for the computer. attachable: the computer reports a session that was started on it, listed only while the organization's ceiling and that computer's owner both allow every session; attach first. Each computer says what applies there: chosen (its owner has chosen on it), access (their choice, or until they choose off under the organization's opt-in and created without it) and effectiveAccess (that capped by the ceiling). optIn says whether the opt-in applies. Sessions on a computer whose effectiveAccess is off are left out until it is allowed again. Never lists another member's computers or sessions. Requires active organization membership; the organization ceiling, computer owner choice, and supported runner capabilities still constrain every session.",
+      "x-mcp": false,
+      responses: {
+        200: jsonResponse("The member's computers and sessions.", memberSessionListResponseSchema),
+        401: jsonResponse("Authentication required.", unauthorizedSchema),
+        404: jsonResponse("The organization was not found, or it uses neither sessions on members' computers nor the opt-in for tasks from other devices.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const context = c.get("organizationContext")
+      if (!context) return c.json({ error: "organization_not_found" }, 404)
+      c.header("Cache-Control", "no-store")
+      return c.json(memberSessionListResponseSchema.parse(await listMemberRemoteSessions(
+        { organizationId: context.organization.id, userId: context.currentMember.userId },
+        options.deps,
+      )))
     },
   )
 }

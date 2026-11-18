@@ -10,15 +10,16 @@ import { denResumeClient, RESUME_EXCHANGE_PATH } from "../src/den-resume.js"
 import type { ErrorReport, ErrorReporter } from "../src/error-reporting.js"
 import { readPart } from "../src/files.js"
 import type { McpConnector } from "../src/mcp.js"
+import type { MemoryResolver } from "../src/memory.js"
 import type { ModelClient, ModelRequest } from "../src/model.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import type { SqlDriver } from "../src/sql.js"
 import { grantVault } from "../src/resume-grants.js"
-import { CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } from "../src/runner.js"
+import { APPS_UNREACHABLE, CUT_OFF_INSTRUCTION, Runner, type RunnerOptions } from "../src/runner.js"
 import { SelfResume } from "../src/self-resume.js"
 import { FRESH_REPEAT, type StepState } from "../src/steps.js"
 import { Store } from "../src/store.js"
-import type { Message } from "../src/types.js"
+import type { Message, SessionComputer, ToolResult } from "../src/types.js"
 
 const usage = { inputTokens: 3, cachedInputTokens: 1, outputTokens: 2 }
 const unlimited: RunnerOptions["limits"] = { maxConcurrentTurns: 4, maxSteps: 20, turnTimeoutMs: Number.POSITIVE_INFINITY, credentialRefreshMs: Number.POSITIVE_INFINITY, contextCharBudget: 100_000 }
@@ -54,12 +55,15 @@ function recordingErrors() {
 type WorldInput = {
   model: ModelClient
   mcp?: McpConnector
+  memory?: MemoryResolver
+  sleep?: RunnerOptions["sleep"]
   den?: string
   alarm?: boolean
   clock?: () => number
   errors?: ErrorReporter
   limits?: Partial<RunnerOptions["limits"]>
   driver?: (db: SqlDriver) => SqlDriver
+  computer?: SessionComputer
 }
 
 /**
@@ -80,10 +84,13 @@ function world(directory: string, input: WorldInput) {
     defaultModelApiKey: "test-key",
     limits: { ...unlimited, ...input.limits },
     mcp: input.mcp,
+    memory: input.memory,
+    sleep: input.sleep,
     resume,
     errors: input.errors,
     now: input.clock,
     stepAlarm: input.alarm,
+    computer: input.computer,
   })
   const steps = runner.recoverSteps()
   return { store, runner, recovered, steps }
@@ -318,6 +325,59 @@ test("a tool call whose result wasn't recorded is never run again: the model get
   assert.deepEqual(tokens, ["caller-token", "fresh-token-1"])
 })
 
+test("a computer command cut off with its step is picked up from the computer, never run again; one it never started stays interrupted", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  const model: ModelClient = {
+    async complete(request) {
+      requests.push(request)
+      if (resultsOf(request).length === 0) {
+        return { text: "Building it.", toolCalls: [{ id: "call_build", name: "bash", input: { command: "make report" } }, { id: "call_send", name: "bash", input: { command: "send report" } }], usage }
+      }
+      return { text: "The report is built; I couldn't confirm it was sent.", toolCalls: [], usage }
+    },
+  }
+  // The conversation's computer, which outlives the runner: it keeps what it started, by the call's key.
+  const started: Array<{ command: unknown; key: string | undefined }> = []
+  const asked: string[] = []
+  const computer = (results: Record<string, ToolResult>): SessionComputer => ({
+    prompt: "",
+    tools: [{ name: "bash", description: "Runs a command", inputSchema: { type: "object" } }],
+    toolNames: new Set(["bash"]),
+    image: "test",
+    async run(_sessionId, _name, input, callKey) {
+      started.push({ command: input.command, key: callKey })
+      return never()
+    },
+    async pickUp(_sessionId, _name, input, callKey) {
+      asked.push(callKey)
+      return results[String(input.command)] ?? null
+    },
+    known: () => false,
+    prewarm: () => undefined,
+    release: () => undefined,
+    delete: async () => undefined,
+    previewSavedFile: async () => undefined,
+  })
+  const first = world(temp.directory, { model, computer: computer({}) })
+  const session = first.store.createSession({ computer: true })
+  first.runner.send({ sessionId: session.id, messageId: "m1", prompt: "Build and send the report", credentials: { modelApiKey: "caller-key" }, execution: "steps" })
+  await until(() => started.length === 1, "the build starting")
+  // The runner dies while the build runs. On the computer it finishes; the send never started.
+  const second = world(temp.directory, { model, computer: computer({ "make report": { output: "[exit 0]\nreport.pdf written", isError: false } }) })
+  await second.runner.idle()
+  assert.equal(second.store.getTurn(session.id, "m1")?.status, "completed")
+  assert.deepEqual(started.map((call) => call.command), ["make report"], "no command ran a second time")
+  assert.equal(asked.length, 2)
+  assert.equal(asked[0], started[0]?.key, "the computer is asked by the key the command was started under")
+  assert.notEqual(asked[1], asked[0])
+  const results = transcript(second.store, session.id, "m1").filter((message) => message.role === "tool")
+  assert.deepEqual(results.map((message) => [message.callId, message.isError]), [["call_build", false], ["call_send", true]])
+  assert.equal(results[0]?.output, "[exit 0]\nreport.pdf written")
+  assert.ok(results[1]?.output.includes("not retried"))
+  assert.equal(requests.length, 2, "the step finished from the kept answer, without asking the model again")
+})
+
 test("without a resume grant, a turn that lost its credentials is interrupted as on any restart, and resumes when re-sent", async () => {
   using temp = tempDir()
   let calls = 0
@@ -390,6 +450,44 @@ test("a step that keeps dying is retried at once, then after 30 s and 2 minutes,
   assert.equal(calls, 5)
   assert.equal(scheduleRows(current.store), 0)
   assert.ok(reports.some((report) => report.code === "step_crash_loop" && report.kind === "turn_failed"), JSON.stringify(reports))
+})
+
+test("the alarm isn't kept set for a step still running here: only its next step, once it ends", async () => {
+  using temp = tempDir()
+  let release = () => {}
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let calls = 0
+  const model: ModelClient = {
+    async complete(request) {
+      calls += 1
+      if (calls === 1) {
+        await held
+        return { text: "Noting it.", toolCalls: [{ id: "call_note", name: "write_file", input: { path: "a.md", content: "a" } }], usage }
+      }
+      return { text: `Answer to ${promptOf(request)}`, toolCalls: [], usage }
+    },
+  }
+  const { store, runner } = world(temp.directory, { model, alarm: true })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "Hi", credentials: {}, execution: "steps" })
+  const first = runner.nextStepAt()
+  assert.ok(first !== null && first <= Date.now(), "the first step is due")
+  const alarm = runner.runDueSteps()
+  await until(() => calls === 1, "the first model call")
+  const row = store.stepRow(session.id, "m1")
+  assert.ok(row && row !== "invalid" && row.dueAt <= Date.now(), "due again at once, for a process that dies in the step")
+  // An alarm for it would only find it running and set itself again; celld starts that alarm during a long one.
+  assert.equal(runner.nextStepAt(), null)
+  await runner.runDueSteps()
+  assert.equal(calls, 1, "an alarm during the step doesn't start it again")
+  release()
+  await alarm
+  const next = runner.nextStepAt()
+  assert.ok(next !== null && next <= Date.now(), "its end sets the next step")
+  await drain(runner, store)
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.equal(calls, 2)
+  assert.equal(runner.nextStepAt(), null)
 })
 
 test("an exception in one lane's step fails that turn only: other lanes and the alarm keep going", async () => {
@@ -639,4 +737,91 @@ test("a reply cut off at the output cap never ends the turn: it is dropped, the 
     const turn = failing.store.getTurn("hs_cut_off", "m1")
     assert.deepEqual([turn?.status, turn?.error], ["failed", "output_limit"], `${execution ?? "one go"}`)
   }
+})
+
+/** Notes something, looks something up in the person's apps (twice when the first try fails), then answers. */
+const lookupModel = (requests: ModelRequest[]): ModelClient => ({
+  async complete(request) {
+    requests.push(request)
+    const results = resultsOf(request)
+    if (results.length === 0) return { text: "", toolCalls: [{ id: "call_note", name: "write_file", input: { path: "notes.md", content: "ask about tea" } }], usage }
+    const last = results.at(-1)
+    if (last?.name === "lookup" && !last.isError) return { text: `They like ${last.output}.`, toolCalls: [], usage }
+    request.onTool?.("lookup")
+    return { text: "", toolCalls: [{ id: `call_lookup_${results.length}`, name: "lookup", input: {} }], usage }
+  },
+})
+
+test("a step-mode run lists the person's apps' tools and reads memory once: later steps connect only for a call", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  let connects = 0
+  let closes = 0
+  let lists = 0
+  const mcp: McpConnector = async () => {
+    connects += 1
+    return {
+      tools: [{ name: "lookup", description: "Looks something up", inputSchema: { type: "object" } }],
+      call: async () => ({ output: "tea", isError: false }),
+      async close() {
+        closes += 1
+      },
+    }
+  }
+  const memory: MemoryResolver = () => ({
+    async list() {
+      lists += 1
+      return [{ path: "memory/me.md", content: `read ${lists}` }]
+    },
+    read: async () => null,
+    write: async () => ({ ok: true, size: 0 }),
+    delete: async () => false,
+  })
+  const { store, runner } = world(temp.directory, { model: lookupModel(requests), mcp, memory })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "What do they like?", credentials: { mcpToken: "token" }, execution: "steps" })
+  await runner.idle()
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.equal(requests.length, 3, "a note, a lookup, the answer")
+  // The first step lists the tools; of the two later steps, only the one that calls an app tool connects.
+  assert.equal(connects, 2)
+  assert.equal(closes, 2, "nothing stays open between steps")
+  assert.equal(lists, 1)
+  for (const request of requests) {
+    assert.deepEqual(request.tools.map((tool) => tool.name), requests[0]?.tools.map((tool) => tool.name))
+    assert.equal(request.system, requests[0]?.system, "every step's request starts the same, so the prompt cache keeps hitting")
+  }
+  assert.ok(requests[0]?.tools.some((tool) => tool.name === "lookup"))
+  assert.ok(requests[0]?.system.includes("read 1"))
+  assert.deepEqual(transcript(store, session.id, "m1").filter((message) => message.role === "tool").map((message) => message.output).slice(1), ["tea"])
+})
+
+test("a later step that can't connect to the person's apps: its call was never sent and says so, and the next step connects again", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  let connects = 0
+  let calls = 0
+  // The first step lists the tools; then the apps are out of reach for one step's three tries.
+  const mcp: McpConnector = async () => {
+    connects += 1
+    if (connects >= 2 && connects <= 4) throw new Error("connect failed")
+    return {
+      tools: [{ name: "lookup", description: "Looks something up", inputSchema: { type: "object" } }],
+      async call() {
+        calls += 1
+        return { output: "tea", isError: false }
+      },
+      async close() {},
+    }
+  }
+  const { store, runner } = world(temp.directory, { model: lookupModel(requests), mcp, sleep: async () => undefined })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "What do they like?", credentials: { mcpToken: "token" }, execution: "steps" })
+  await runner.idle()
+  const turn = store.getTurn(session.id, "m1")
+  assert.deepEqual([turn?.status, turn?.error], ["completed", null])
+  const results = transcript(store, session.id, "m1").filter((message): message is Extract<Message, { role: "tool" }> => message.role === "tool")
+  assert.deepEqual(results.slice(1).map((result) => [result.output, result.isError]), [[APPS_UNREACHABLE, true], ["tea", false]])
+  assert.equal(connects, 5, "listed once, three failed tries in one step, connected again in the next")
+  assert.equal(calls, 1, "the call that couldn't be sent ran once, when it was tried again")
 })

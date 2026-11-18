@@ -20,6 +20,7 @@ import {
   type OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+import { undeclaredArgsError } from "./undeclared-args";
 import { useUiControlMailbox } from "./use-ui-control-mailbox";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
@@ -494,6 +495,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         revision,
       };
     }
+    const argsError = undeclaredArgsError(action, request.args);
+    if (argsError) return { ok: false, id: request.id, error: argsError, code: "invalid-args", revision };
     try {
       const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
       const result = await action.execute(effectiveArgs, { setNarration: () => undefined, bridged: false });

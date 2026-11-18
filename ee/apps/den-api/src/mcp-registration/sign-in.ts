@@ -46,7 +46,8 @@ export function signInRegistrationOutcome(input: {
 }
 
 async function registrationSource(connection: Pick<ExternalMcpConnectionRow, "id" | "organizationId">): Promise<string | null> {
-  const [row] = await db.select({ extra: OrgOAuthClientTable.extra }).from(OrgOAuthClientTable)
+  // primary: the sign-in start that just ran may have registered this client.
+  const [row] = await db.$primary.select({ extra: OrgOAuthClientTable.extra }).from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, connection.organizationId), eq(OrgOAuthClientTable.providerId, connection.id)))
     .limit(1)
   const source = row?.extra?.enterpriseMcpRegistrationSource

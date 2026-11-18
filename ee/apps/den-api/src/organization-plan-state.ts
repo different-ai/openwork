@@ -15,23 +15,20 @@ export function seatBillingGateEnabled() {
   return isSeatBillingGateEnabled({ orgMode: env.orgMode, stripeSecretKey: env.stripe.secretKey, stripeSeatPriceId: env.stripe.seatPriceId })
 }
 
-/** Who pays for each organization's plan, from its stored Team (seat) and Enterprise subscriptions. */
+/** Who pays for each organization's plan, from its stored Team (seat) subscription. */
 async function paidByForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, PlanPaidBy>> {
   const result = new Map<OrgId, PlanPaidBy>()
   if (organizationIds.length === 0) return result
   const rows = await db
     .select({
       organizationId: OrgSubscriptionTable.organization_id,
-      type: OrgSubscriptionTable.type,
       status: OrgSubscriptionTable.status,
-      stripePriceId: OrgSubscriptionTable.stripe_price_id,
     })
     .from(OrgSubscriptionTable)
-    .where(and(inArray(OrgSubscriptionTable.organization_id, [...organizationIds]), inArray(OrgSubscriptionTable.type, ["seat", "enterprise"])))
+    .where(and(inArray(OrgSubscriptionTable.organization_id, [...organizationIds]), eq(OrgSubscriptionTable.type, "seat")))
   for (const organizationId of organizationIds) {
-    const seat = rows.find((row) => row.organizationId === organizationId && row.type === "seat") ?? null
-    const enterprise = rows.find((row) => row.organizationId === organizationId && row.type === "enterprise") ?? null
-    result.set(organizationId, planPaidBy({ seat, enterprise, enterprisePriceId: env.stripe.enterprisePriceId }))
+    const seat = rows.find((row) => row.organizationId === organizationId) ?? null
+    result.set(organizationId, planPaidBy({ seat }))
   }
   return result
 }

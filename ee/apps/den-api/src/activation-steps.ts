@@ -17,9 +17,23 @@ export type ActivationFacts = {
     pending: number
   }
   skillUsed: boolean
-  ownProvider: { reportedOnDevice: boolean; addedProviderName: string | null }
+  ownProvider: {
+    reportedOnDevice: boolean
+    addedProviderName: string | null
+    /** The organization provides models centrally (Den/managed models), so the member has a provider without setting one up themselves. */
+    orgProvided: boolean
+    /** The member may add their own model provider (desktop policy `allowCustomProviders` !== false). False when the org allows only its own providers, so the step is never an un-completable blocker. */
+    canConfigure: boolean
+  }
   gateway: { canManage: boolean; hasProvider: boolean; providerName: string | null }
   readyConnectionName: string | null
+  /** The client reported a connection that is connected in the engine on the member's device (`activationLocalSetup`). */
+  connectionOnDevice: boolean
+  /**
+   * `activationLocalSetup` is on for this member: a connection on the device counts, and inviting is optional while
+   * they are the only person in the organization. Off: the checklist is computed exactly as before.
+   */
+  localSetup: boolean
   ownerName: string | null
   dismissed: boolean
 }
@@ -41,23 +55,35 @@ export function computeActivationState(facts: ActivationFacts): ActivationState 
       case "invite_teammate": {
         const { canInvite, invitedByMe, teammates, joined, pending } = facts.invite
         const done = canInvite ? invitedByMe > 0 : teammates > 0
+        // Alone in the organization (nobody joined, nobody invited): the step stays listed with its action but is
+        // not counted, so someone working alone can finish setup (DESIGN P4: presence beats absence).
+        const optional = facts.localSetup && !done && teammates === 0
         return {
           id,
           done,
           ...(done ? { detail: `${joined} joined, ${pending} invited` } : {}),
           ...(!done && !canInvite ? { lockedReason: `${owner(facts)} can invite people` } : {}),
+          ...(optional ? { optional: true } : {}),
         }
       }
       case "use_skill":
         return { id, done: facts.skillUsed }
       case "own_provider": {
-        const { reportedOnDevice, addedProviderName } = facts.ownProvider
-        const done = reportedOnDevice || addedProviderName !== null
-        return {
-          id,
-          done,
-          ...(reportedOnDevice ? { detail: "Your key, on this device" } : addedProviderName ? { detail: `${addedProviderName} added` } : {}),
-        }
+        const { reportedOnDevice, addedProviderName, orgProvided, canConfigure } = facts.ownProvider
+        // The member has a model provider to use once they set one up, the organization provides
+        // models centrally, or the organization has disabled setting up personal providers (so the
+        // step is never an un-completable blocker for someone who cannot act on it).
+        const done = reportedOnDevice || addedProviderName !== null || orgProvided || !canConfigure
+        const detail = reportedOnDevice
+          ? "Your key, on this device"
+          : addedProviderName !== null
+            ? `${addedProviderName} added`
+            : orgProvided
+              ? "Models from your organization"
+              : !canConfigure
+                ? "Your team manages models"
+                : null
+        return { id, done, ...(detail ? { detail } : {}) }
       }
       case "gateway_provider": {
         const done = facts.gateway.hasProvider
@@ -68,12 +94,12 @@ export function computeActivationState(facts: ActivationFacts): ActivationState 
           ...(!done && !facts.gateway.canManage ? { lockedReason: `${owner(facts)} manages AI Gateway` } : {}),
         }
       }
-      case "connector":
-        return {
-          id,
-          done: facts.readyConnectionName !== null,
-          ...(facts.readyConnectionName ? { detail: `${facts.readyConnectionName} connected` } : {}),
-        }
+      case "connector": {
+        // An organization connection names itself; a connection on the device is known only as "connected there".
+        const onDevice = facts.localSetup && facts.connectionOnDevice
+        const detail = facts.readyConnectionName ? `${facts.readyConnectionName} connected` : onDevice ? "Connected on this device" : null
+        return { id, done: facts.readyConnectionName !== null || onDevice, ...(detail ? { detail } : {}) }
+      }
     }
   }
   return { steps: ACTIVATION_STEP_IDS.map(step), dismissed: facts.dismissed }

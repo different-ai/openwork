@@ -26,8 +26,12 @@ export type PermissionCheckFailure =
 export type PermissionCheckResult = { ok: true } | { ok: false; response: PermissionCheckFailure }
 
 export type PermissionCheckOptions = {
-  /** Override the recent sign-in window for a sensitive key. Defaults to PRIVILEGED_SESSION_MAX_AGE_MS. */
-  maxAgeMs?: number
+  /**
+   * The recent sign-in window for a sensitive key: the organization's
+   * (organizationPrivilegedSessionMaxAgeMs), null when it turned the check
+   * off. Defaults to PRIVILEGED_SESSION_MAX_AGE_MS.
+   */
+  maxAgeMs?: number | null
 }
 
 export function permissionDeniedResponse(key: PermissionKey): PermissionDeniedResponse {
@@ -61,5 +65,5 @@ export function checkMemberPermission(
 ): PermissionCheckResult {
   if (!permissions.has(key)) return { ok: false, response: permissionDeniedResponse(key) }
   if (!isPermissionSensitive(key)) return { ok: true }
-  return checkFreshPrivilegedSession(request, options.maxAgeMs ?? PRIVILEGED_SESSION_MAX_AGE_MS)
+  return checkFreshPrivilegedSession(request, options.maxAgeMs === undefined ? PRIVILEGED_SESSION_MAX_AGE_MS : options.maxAgeMs)
 }

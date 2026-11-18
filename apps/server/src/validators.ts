@@ -42,9 +42,9 @@ export function validateMcpName(name: string): void {
 }
 
 /**
- * Provider ids only OpenWork's own sync may define. The Auto Router passes the
- * "only your organization's providers" policy by id, so a client write that
- * defines it could point Auto at any endpoint; such writes are refused. Removing
+ * Provider ids only OpenWork's own sync may define. The Smart Router provider
+ * passes the "only your organization's providers" policy by id, so a client
+ * write that defines it could point Smart at any endpoint; such writes are refused. Removing
  * one (`null`) stays allowed.
  */
 const RESERVED_PROVIDER_IDS = new Set(["openwork-auto"]);

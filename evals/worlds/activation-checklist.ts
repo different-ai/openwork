@@ -8,8 +8,7 @@ import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 /**
  * Get set up in the Desktop app (in headless Chrome): a real Den with an owner and a member, each signed in to their
- * own app with a deterministic local model, and the `activationChecklist` feature off until the test turns it on
- * through the platform-admin route. Only the model is synthetic.
+ * own app with a deterministic local model. Get set up is generally available; only the model is synthetic.
  */
 export async function activationChecklistDesktop(seed: Seed) {
   const owner = { prompt: "Summarize the launch plan in one line.", reply: "The launch plan is ready to share." };
@@ -48,11 +47,6 @@ export async function activationChecklistDesktop(seed: Seed) {
     app: ownerSide.app,
     memberApp: memberSide.app,
     den, organizationId, owner, member,
-    /** A platform admin turns Get set up on or off for Acme, as /admin does. */
-    async setChecklist(enabled: boolean) {
-      const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { activationChecklist: enabled } }) });
-      if (!result.response.ok) throw new Error(`Changing Get set up failed: HTTP ${result.response.status}`);
-    },
     /** The owner shares a provider on AI Gateway, as the AI Gateway page does. */
     async shareGatewayProvider() {
       const result = await seed.api(den.admin, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Team OpenAI", providerId: "openai", modelIds: ["gpt-4o-mini"] }) });

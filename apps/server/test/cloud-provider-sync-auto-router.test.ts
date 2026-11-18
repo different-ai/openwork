@@ -20,7 +20,7 @@ function config(dir: string): ServerConfig {
 type AutoReply = { status: number; body?: unknown } | "network_error";
 
 const connected = {
-  model: { id: "openwork-auto", name: "Auto" },
+  models: [{ id: "openwork-smart-ar_engineering", name: "Smart: Engineering" }],
   baseURL: "https://gateway.example.invalid/api/v1",
   apiKey: "ow_gw_member_key",
 };
@@ -59,7 +59,13 @@ async function autoProvider(dir: string) {
   return runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config(dir)))["openwork-auto"];
 }
 
-test("a configured Auto Router materializes one openai-compatible Auto model with its key in the env store", async () => {
+const smartModel = (id: string, name: string) => ({
+  id, name, attachment: true, reasoning: false, tool_call: true,
+  limit: { context: 200_000, output: 32_000 },
+  modalities: { input: ["text", "image"], output: ["text"] },
+});
+
+test("a Smart Router materializes one openai-compatible Smart model with its key in the env store", async () => {
   await withSync(async ({ sync, dir, env, reply }) => {
     reply.current = { status: 200, body: connected };
     await sync.setSession(session);
@@ -68,21 +74,15 @@ test("a configured Auto Router materializes one openai-compatible Auto model wit
     const provider = await autoProvider(dir);
     assert.deepEqual(provider, {
       id: "openwork-auto",
-      name: "Auto",
+      name: "Smart Model Router",
       env: [AUTO_ROUTER_API_KEY_ENV],
       npm: "@ai-sdk/openai-compatible",
       options: { baseURL: "https://gateway.example.invalid/api/v1" },
-      models: {
-        "openwork-auto": {
-          id: "openwork-auto", name: "Auto", attachment: true, reasoning: false, tool_call: true,
-          limit: { context: 200_000, output: 32_000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-      },
+      models: { "openwork-smart-ar_engineering": smartModel("openwork-smart-ar_engineering", "Smart: Engineering") },
     });
     const stored = new Map((await env.list()).map((entry) => [entry.key, entry.value]));
     assert.equal(stored.get(AUTO_ROUTER_API_KEY_ENV), "ow_gw_member_key");
-    assert.equal(sync.status().providers.length, 0, "Auto is not listed as an imported provider");
+    assert.equal(sync.status().providers.length, 0, "Smart is not listed as an imported provider");
 
     // OpenCode v2 receives it through the ordinary provider mirror.
     const mapped = mapRuntimeProvidersToV2Specs({ "openwork-auto": provider }, stored, new Map(), new Set(["openwork-auto"]));
@@ -93,7 +93,24 @@ test("a configured Auto Router materializes one openai-compatible Auto model wit
   });
 });
 
-test("a rotated key or base URL re-syncs Auto", async () => {
+test("two Smart Routers become two models of the one provider; a router going away re-syncs", async () => {
+  await withSync(async ({ sync, dir, reply }) => {
+    const design = { id: "openwork-smart-ar_design", name: "Smart: Design" };
+    reply.current = { status: 200, body: { ...connected, models: [...connected.models, design, { ...design, name: "Duplicate" }, { id: " ", name: "Blank" }] } };
+    await sync.setSession(session);
+    assert.deepEqual(await sync.run("test"), { status: "applied" });
+    assert.deepEqual(Object(await autoProvider(dir)).models, {
+      "openwork-smart-ar_engineering": smartModel("openwork-smart-ar_engineering", "Smart: Engineering"),
+      "openwork-smart-ar_design": smartModel("openwork-smart-ar_design", "Smart: Design"),
+    });
+
+    reply.current = { status: 200, body: { ...connected, models: [design] } };
+    assert.equal((await sync.run("test")).status, "applied");
+    assert.deepEqual(Object.keys(Object(Object(await autoProvider(dir)).models)), ["openwork-smart-ar_design"]);
+  });
+});
+
+test("a rotated key or base URL re-syncs Smart", async () => {
   await withSync(async ({ sync, dir, env, reply }) => {
     reply.current = { status: 200, body: connected };
     await sync.setSession(session);
@@ -105,7 +122,7 @@ test("a rotated key or base URL re-syncs Auto", async () => {
   });
 });
 
-test("an unreachable Den keeps Auto; a 404 removes it and its key without failing sync", async () => {
+test("an unreachable Den keeps Smart; a 404 removes it and its key without failing sync", async () => {
   await withSync(async ({ sync, dir, env, reply }) => {
     reply.current = { status: 200, body: connected };
     await sync.setSession(session);
@@ -126,16 +143,22 @@ test("an unreachable Den keeps Auto; a 404 removes it and its key without failin
   });
 });
 
-test("an invalid connect answer offers no Auto", async () => {
+test("an invalid connect answer offers no Smart", async () => {
   await withSync(async ({ sync, dir, reply }) => {
     reply.current = { status: 200, body: { ...connected, baseURL: "file:///etc/passwd" } };
     await sync.setSession(session);
     assert.notEqual((await sync.run("test")).status, "failed");
     assert.equal(await autoProvider(dir), undefined);
+    reply.current = { status: 200, body: { ...connected, models: [{ id: "  ", name: "Blank" }] } };
+    assert.notEqual((await sync.run("test")).status, "failed");
+    assert.equal(await autoProvider(dir), undefined);
+    reply.current = { status: 200, body: { baseURL: connected.baseURL, apiKey: connected.apiKey, model: { id: "openwork-auto", name: "Auto" } } };
+    assert.notEqual((await sync.run("test")).status, "failed");
+    assert.equal(await autoProvider(dir), undefined, "the old single-model answer is not offered");
   });
 });
 
-test("signing out removes Auto", async () => {
+test("signing out removes Smart", async () => {
   await withSync(async ({ sync, dir, env, reply }) => {
     reply.current = { status: 200, body: connected };
     await sync.setSession(session);

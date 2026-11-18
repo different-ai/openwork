@@ -113,6 +113,7 @@ export async function readinessLookup(hostname: string, resolve: (hostname: stri
 // Never expose the fingerprint, inputs or resulting Redis key in a response/log.
 const readinessConfigurationSettings = [
   "DB_MODE", "DATABASE_URL", "DATABASE_HOST", "DATABASE_USERNAME", "DATABASE_PASSWORD",
+  "DATABASE_READ_USERNAME", "DATABASE_READ_PASSWORD",
   "GATEWAY_ENABLED", "GATEWAY_PROXY_BASE_URL", "INFERENCE_PROXY_BASE_URL", "GATEWAY_PUBLIC_BASE_URL",
   "DEN_HEADLESS_RUNNER_URL", "DEN_HEADLESS_RUNNER_TOKEN", "DEN_HEADLESS_RUNNER_CALLBACK_TOKEN", "DEN_WORKBOT_URL",
   "DEN_API_PUBLIC_URL", "EMAIL_FROM", "RESEND_API_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE", "OPENWORK_DEV_MODE",

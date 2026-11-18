@@ -67,11 +67,11 @@ def request(url, data=None, headers=None, limit=MAX_BUNDLE, same_origin_redirect
         return body
 
 
-def cloud(*args, project, impersonate=None):
+def cloud(*args, project, impersonate=None, timeout=None):
     command = ["gcloud", *args, "--project=" + project, "--format=json", "--quiet"]
     if impersonate:
         command.append("--impersonate-service-account=" + impersonate)
-    output = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    output = subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout).stdout
     return json.loads(output) if output.strip() else {}
 
 
@@ -165,15 +165,21 @@ def extract_verified(data, digest, destination, version):
     actual = {m.name for m in members if m.isfile() and m.name != "release.json"}
     if not isinstance(files, dict) or set(files) != actual:
         raise ValueError("release file inventory mismatch")
-    allowed = ("infra/managed-deployments/gcp/", "infra/managed-deployments/contract/")
+    allowed = ("infra/managed-deployments/gcp/", "infra/managed-deployments/contract/",
+               "infra/terraform/modules/openwork-gcp-cloud-run/")
     for file, expected in files.items():
-        if not file.startswith(allowed) or not (file.endswith(".py") or file.endswith(".tf") or file.endswith("/.terraform.lock.hcl")):
+        if (not file.startswith(allowed) or "/tests/" in file or "/examples/" in file
+                or not (file.endswith(".py") or file.endswith(".tf") or file.endswith("/.terraform.lock.hcl"))
+                or (file.startswith(allowed[2]) and (len(Path(file).parts) != 5 or not file.endswith(".tf")))):
             raise ValueError("unexpected executable in bundle")
         if hashlib.sha256((destination / file).read_bytes()).hexdigest() != expected:
             raise ValueError("release file checksum mismatch")
     for required in ["runner/install.py", "runner/runner.py", "health/health_agent.py", "terraform/main.tf", "terraform/.terraform.lock.hcl"]:
         if "infra/managed-deployments/gcp/" + required not in files:
             raise ValueError("incomplete release bundle")
+    for required in ("main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf"):
+        if allowed[2] + required not in files:
+            raise ValueError("incomplete shared GCP module")
 
 
 def ensure_sa(args, account):
@@ -200,6 +206,20 @@ def bootstrap(args, prefix):
     identities = {kind: ensure_sa(args, prefix + "-" + kind) for kind in ("runner", "runtime", "web", "health", "scheduler")}
     for role in RUNNER_ROLES:
         bind_project(args, identities["runner"], role)
+    # A custom role avoids granting monitoring.viewer merely to observe the
+    # maintenance drain. Customer re-approval includes creating this exact role.
+    role_id = prefix.replace("-", "_") + "_drain"
+    role_name = "projects/" + args.project_id + "/roles/" + role_id
+    roles = cloud("iam", "roles", "list", project=args.project_id)
+    existing_role = next((role for role in roles if role.get("name") == role_name), None)
+    if existing_role is None:
+        cloud("iam", "roles", "create", role_id, "--title=OpenWork maintenance observation",
+              "--permissions=monitoring.timeSeries.list", "--stage=GA", project=args.project_id)
+    else:
+        details = cloud("iam", "roles", "describe", role_id, project=args.project_id)
+        if details.get("includedPermissions") != ["monitoring.timeSeries.list"] or details.get("deleted"):
+            raise ValueError("unexpected maintenance role permissions; owner review required")
+    bind_project(args, identities["runner"], role_name)
     bind_project(args, identities["runtime"], "roles/cloudsql.client")
     # Read-only operational metadata, never secrets or state.
     for role in ["roles/run.viewer", "roles/cloudsql.viewer", "roles/compute.viewer", "roles/monitoring.viewer"]:
@@ -248,6 +268,8 @@ def main():
     prefix = validate(args)
     verify_target(args)
     print(f"Install OpenWork {args.version} in project {args.project_id} ({args.project_number}), {args.region}.\n"
+          "Approval includes a deployment-specific role with only monitoring.timeSeries.list for safe maintenance observation.\n"
+          "Existing services enter maintenance before migration; uncertain drain or migration leaves them disabled.\n"
           "This enables APIs, grants installer permissions across this dedicated project, and creates billable Cloud SQL,\n"
           "Cloud Run, HTTPS load balancing, DNS, secrets, a health schedule and retained versioned Terraform state.\n"
           "OpenWork receives only progress and health checks, authenticated by service-account identity; no secrets or state.\n"

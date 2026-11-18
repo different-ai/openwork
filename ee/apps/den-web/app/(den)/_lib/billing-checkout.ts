@@ -171,6 +171,7 @@ const RETURN_PAGE_NAMES: { prefix: string; name: string }[] = [
   { prefix: "/dashboard/web", name: "OpenWork Web" },
   { prefix: "/dashboard/sso", name: "Single sign-on" },
   { prefix: "/dashboard/scim", name: "SCIM" },
+  { prefix: "/dashboard/auth-security", name: "Auth & Security" },
 ];
 
 /** The button label that names where the person goes next, e.g. "Back to Members". */

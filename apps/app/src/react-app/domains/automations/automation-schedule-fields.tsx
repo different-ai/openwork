@@ -6,7 +6,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 
 const WEEKDAYS = [
   { value: 1, label: "Mon" },
@@ -87,9 +86,9 @@ export function AutomationScheduleFields(props: {
   const id = (name: string) => `${props.idPrefix ?? "automation"}-${name}`
   const schedule = props.schedule
   const time = timeForSchedule(schedule)
-  // An Automation that already repeats every few hours keeps the choice even if the feature is turned off.
-  const intervalOffered = useOrgFeature("automationIntervalSchedules") || schedule.kind === "interval"
-  const meetingsOffered = useOrgFeature("automationCalendarTriggers") || schedule.kind === "calendar"
+  // Every-few-hours and around-meetings schedules are generally available; always offered.
+  const intervalOffered = true
+  const meetingsOffered = true
 
   const changeScheduleKind = (kind: AutomationSchedule["kind"]) => {
     const timezone = schedule.timezone

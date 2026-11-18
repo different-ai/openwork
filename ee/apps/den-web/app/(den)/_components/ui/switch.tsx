@@ -33,7 +33,7 @@ export function DenSwitch({
       disabled={disabled}
       onClick={disabled ? undefined : () => onChange(!checked)}
       className={[
-        "flex items-center rounded-full p-0.5 transition",
+        "flex shrink-0 items-center rounded-full p-0.5 transition",
         size === "md" ? "h-6 w-10" : "h-5 w-9",
         checked ? "justify-end bg-gray-900" : "justify-start bg-gray-200",
         disabled ? "cursor-not-allowed opacity-60" : "",

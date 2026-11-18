@@ -6,7 +6,7 @@ const haiku = { at: 1_500, provider: "anthropic", model: "claude-haiku-5-5", nam
 
 afterEach(() => useAutoRouteStore.setState({ bySession: {} }))
 
-test("the engine's session metadata update becomes the app's Auto routes event", () => {
+test("the engine's session metadata update becomes the app's Smart routes event", () => {
   const events = translateV2Event({
     type: "session.metadata.updated",
     durable: { aggregateID: "ses_auto", seq: 4, version: 1 },

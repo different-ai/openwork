@@ -3,10 +3,9 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
+import { emailFirstStepWhenSignUpClosed, isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
-import { fetchDeploymentFeatureEnabled } from "../_lib/deployment-features";
 import { readLastSignInMethod, type LastSignInMethod } from "../_lib/last-sign-in";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { signsInInPlace } from "../_lib/auth-resume";
@@ -23,11 +22,34 @@ type PanelContent = {
 type EmailFirstStep = "email" | "sso" | "google" | "github" | "password" | "new_account";
 type ResolvedLoginStep = Exclude<EmailFirstStep, "email">;
 
+type AlternativeLoginStep = Exclude<ResolvedLoginStep, "sso">;
+
 type LoginOption = {
   nextStep: ResolvedLoginStep;
+  offerGoogleOnPassword: boolean;
   signInPath: string | null;
   signInUrl: string | null;
+  /**
+   * ssoPerOrganization: SSO is offered first and this is the usual step, one
+   * click away. Absent: SSO is the only way in.
+   */
+  alternativeStep: AlternativeLoginStep | null;
+  ssoRequired: boolean;
+  organizationName: string | null;
+  /** The identity providers that sign in this email; several get one button each. */
+  ssoProviders: SsoProviderOption[];
 };
+
+type SsoProviderOption = { providerId: string; name: string };
+
+function readSsoProviders(value: unknown): SsoProviderOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.providerId !== "string" || typeof entry.name !== "string") return [];
+    const name = entry.name.trim();
+    return entry.providerId && name ? [{ providerId: entry.providerId, name }] : [];
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -37,6 +59,10 @@ function isResolvedLoginStep(value: unknown): value is ResolvedLoginStep {
   return value === "sso" || value === "google" || value === "github" || value === "password" || value === "new_account";
 }
 
+function readAlternativeLoginStep(value: unknown): AlternativeLoginStep | null {
+  return value === "google" || value === "github" || value === "password" || value === "new_account" ? value : null;
+}
+
 function readLoginOption(payload: unknown): LoginOption | null {
   if (!isRecord(payload) || !isResolvedLoginStep(payload.nextStep)) {
     return null;
@@ -44,8 +70,13 @@ function readLoginOption(payload: unknown): LoginOption | null {
 
   return {
     nextStep: payload.nextStep,
+    offerGoogleOnPassword: payload.nextStep === "password" && payload.offerGoogleOnPassword === true,
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
+    alternativeStep: payload.nextStep === "sso" ? readAlternativeLoginStep(payload.alternativeStep) : null,
+    ssoRequired: payload.ssoRequired === true,
+    organizationName: typeof payload.organizationName === "string" && payload.organizationName.trim() ? payload.organizationName.trim() : null,
+    ssoProviders: payload.nextStep === "sso" ? readSsoProviders(payload.ssoProviders) : [],
   };
 }
 
@@ -264,6 +295,7 @@ export function AuthPanel({
   emailStepContent,
   socialFirst = false,
   socialProviders = ["google", "github"],
+  signInOnly = false,
 }: {
   prefilledEmail?: string;
   prefillKey?: string;
@@ -294,6 +326,11 @@ export function AuthPanel({
   socialFirst?: boolean;
   /** Which providers a social-first panel offers. */
   socialProviders?: readonly ("google" | "github")[];
+  /**
+   * Signs existing accounts in and offers no way to create one (the OpenWork phone app). The person gives their
+   * email first, so Google and GitHub are offered only to an account that already uses them.
+   */
+  signInOnly?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -306,8 +343,8 @@ export function AuthPanel({
   const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
   const [loginOptionBusy, setLoginOptionBusy] = useState(false);
   const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
-  // Feature lastUsedSignIn: the method a password or social sign-in left in a
-  // long-lived cookie. "pending" until the cookie and the feature are checked.
+  // The method a password or social sign-in left in a long-lived cookie.
+  // "pending" until the browser cookie is read after hydration.
   const [rememberedMethod, setRememberedMethod] = useState<LastSignInMethod | null | "pending">("pending");
   const [rememberedDismissed, setRememberedDismissed] = useState(false);
   const [rememberedPasswordOpen, setRememberedPasswordOpen] = useState(false);
@@ -346,10 +383,14 @@ export function AuthPanel({
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
   const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
-  const visibleAuthMode = resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
+  // Closed by this deployment's setting, or because the caller only signs existing accounts in.
+  const signUpClosed = isSingleOrgPrivateSignup || signInOnly;
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const emailFirstInvite = emailFirstInvitationId?.trim() ?? "";
+  // An invitation still creates its account where sign-up is otherwise closed.
+  const noNewAccounts = signUpClosed && !emailFirstInvite;
+  const visibleAuthMode = signInOnly && noNewAccounts ? "sign-in" : resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
 
   function getLoginOptionsPath(targetEmail: string) {
     const params = new URLSearchParams({ email: targetEmail });
@@ -360,10 +401,10 @@ export function AuthPanel({
   }
 
   useEffect(() => {
-    if (isSingleOrgPrivateSignup && !emailFirstInvite && authMode === "sign-up") {
+    if (noNewAccounts && authMode === "sign-up") {
       setAuthMode("sign-in");
     }
-  }, [authMode, emailFirstInvite, isSingleOrgPrivateSignup, setAuthMode]);
+  }, [authMode, noNewAccounts, setAuthMode]);
 
   useEffect(() => {
     if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org") {
@@ -411,30 +452,35 @@ export function AuthPanel({
   };
 
   const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
-  const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && !emailFirstInvite && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
+  const emailFirstStep: EmailFirstStep = emailFirstStepWhenSignUpClosed(requestedEmailFirstStep, noNewAccounts);
   const emailFirstEmail = email.trim();
+  const ssoOrganizationName = loginOption?.organizationName ?? "Your organization";
+  const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
   const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
 
+  // Read the remembered method once. setAuthMode is a new function on every
+  // provider render, so without this guard any later render (a session check,
+  // typing the email) re-ran this effect, closed the email form the person had
+  // just opened from "Continue with email", and cleared sign-in errors.
+  const rememberedMethodReadRef = useRef(false);
   useEffect(() => {
     if (!canRememberSignIn) {
+      rememberedMethodReadRef.current = false;
       setRememberedMethod(null);
       return;
     }
+    if (rememberedMethodReadRef.current) {
+      return;
+    }
+    rememberedMethodReadRef.current = true;
     const method = readLastSignInMethod(document.cookie);
     if (!method) {
       setRememberedMethod(null);
       return;
     }
-    let cancelled = false;
-    void fetchDeploymentFeatureEnabled("lastUsedSignIn").then((enabled) => {
-      if (cancelled) return;
-      setRememberedMethod(enabled ? method : null);
-      setRememberedPasswordOpen(enabled && method === "password");
-      if (enabled) setAuthMode("sign-in");
-    });
-    return () => {
-      cancelled = true;
-    };
+    setRememberedMethod(method);
+    setRememberedPasswordOpen(method === "password");
+    setAuthMode("sign-in");
   }, [canRememberSignIn, setAuthMode]);
 
   const rememberedSignInPending = canRememberSignIn && rememberedMethod === "pending" && emailFirstStep === "email";
@@ -453,6 +499,14 @@ export function AuthPanel({
           copy: "Enter your email and we'll send you to the right sign-in step.",
           submitLabel: "Next",
           ...emailStepContent,
+        }
+      : emailFirstStep === "sso" && loginOption?.alternativeStep
+      ? {
+          title: "Sign in with SSO.",
+          copy: loginOption.ssoRequired
+            ? `${ssoOrganizationName} requires SSO. Use another method to reach a different organization.`
+            : `${ssoOrganizationName} uses single sign-on for this email.`,
+          submitLabel: ssoContinueLabel,
         }
       : emailFirstStep === "sso"
       ? {
@@ -506,7 +560,7 @@ export function AuthPanel({
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
   // focused sub-flows (email verification, password reset) where switching mode
   // mid-step would be confusing.
-  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !isSingleOrgPrivateSignup && !verificationRequired && !isPasswordResetRequest;
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !signUpClosed && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
   const showEmailPasswordAuth = !isSingleOrgSsoMode;
@@ -566,7 +620,7 @@ export function AuthPanel({
         }
 
         setEmail(trimmedEmail);
-        setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+        setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
         setLoginOption(nextOption);
       } catch (error) {
         if (!superseded()) {
@@ -605,7 +659,8 @@ export function AuthPanel({
     window.location.assign(nextUrl.toString());
   };
 
-  const startEmailFirstSso = () => {
+  /** Start SSO at the organization's sign-in page; with a provider id, that identity provider (several to choose from). */
+  const startEmailFirstSso = (providerId?: string) => {
     const target = loginOption?.signInPath ?? loginOption?.signInUrl;
     if (!target) {
       setLoginOptionError("Could not find your organization SSO sign-in link. Try again.");
@@ -613,12 +668,24 @@ export function AuthPanel({
     }
 
     const nextUrl = new URL(target, window.location.origin);
+    if (providerId) {
+      nextUrl.searchParams.set("providerId", providerId);
+    }
     nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
     const trimmedEmail = email.trim();
     if (trimmedEmail) {
       nextUrl.searchParams.set("loginHint", trimmedEmail);
     }
     window.location.assign(nextUrl.toString());
+  };
+
+  /** ssoPerOrganization: leave the suggested SSO for the usual step (password, Google, a new account). */
+  const chooseAlternativeLoginStep = () => {
+    const alternativeStep = loginOption?.alternativeStep;
+    if (!loginOption || !alternativeStep) return;
+    setLoginOptionError(null);
+    setAuthMode(alternativeStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
+    setLoginOption({ ...loginOption, nextStep: alternativeStep, alternativeStep: null });
   };
 
   const resolveEmailFirstStep = async (event: FormEvent<HTMLFormElement>) => {
@@ -649,7 +716,7 @@ export function AuthPanel({
       }
 
       setEmail(trimmedEmail);
-      setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+      setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
       setLoginOption(nextOption);
     } catch (error) {
       setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
@@ -787,7 +854,7 @@ export function AuthPanel({
           </div>
         ) : null}
 
-        {socialFirst && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
+        {socialFirst && !signInOnly && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
           <div className="grid gap-2.5">
             {socialProviders.includes("google") ? (
               <SocialButton onClick={() => void beginSocialAuth("google")} disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}>
@@ -964,16 +1031,50 @@ export function AuthPanel({
           </form>
         ) : null}
 
-        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && (loginOption?.ssoProviders.length ?? 0) > 1 ? (
+          <div className="grid gap-2" data-testid="email-first-sso-providers">
+            {loginOption?.ssoProviders.map((provider) => (
+              <button
+                key={provider.providerId}
+                type="button"
+                className="den-button-primary w-full"
+                onClick={() => startEmailFirstSso(provider.providerId)}
+                disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                data-testid="email-first-sso-provider"
+              >
+                {`Continue with ${provider.name}`}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+        ) : !waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
           <button
             type="button"
             className="den-button-primary w-full"
-            onClick={startEmailFirstSso}
+            onClick={() => startEmailFirstSso()}
             disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            data-testid="email-first-sso"
           >
-            Sign in with SSO
+            {loginOption?.alternativeStep ? ssoContinueLabel : "Sign in with SSO"}
             <ArrowRight className="h-4 w-4" />
           </button>
+        ) : null}
+
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && loginOption?.alternativeStep ? (
+          <>
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <button
+              type="button"
+              className="den-button-secondary w-full"
+              data-testid="email-first-sso-alternative"
+              onClick={chooseAlternativeLoginStep}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              Use another sign-in method
+            </button>
+          </>
         ) : null}
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "google" ? (
@@ -1035,6 +1136,20 @@ export function AuthPanel({
               {formBusy ? "Working..." : "Sign in"}
               {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {loginOption?.offerGoogleOnPassword && !hideSocialAuth && socialProviders.includes("google") ? (
+              <>
+                <div className="den-divider" aria-hidden="true">
+                  <span>or</span>
+                </div>
+                <SocialButton
+                  onClick={() => void beginSocialAuth("google", { loginHint: email.trim() })}
+                  disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                >
+                  <GoogleLogo />
+                  <span>Continue with Google</span>
+                </SocialButton>
+              </>
+            ) : null}
           </form>
         ) : null}
 
@@ -1396,7 +1511,7 @@ export function AuthPanel({
               <span>Waiting for your verification code</span>
             </div>
           ) : null}
-          {authError && visibleAuthMode === "sign-in" && !isSingleOrgPrivateSignup && !verificationRequired && showEmailPasswordAuth ? (
+          {authError && visibleAuthMode === "sign-in" && !signUpClosed && !verificationRequired && showEmailPasswordAuth ? (
             <button
               type="button"
               className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"

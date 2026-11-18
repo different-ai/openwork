@@ -225,6 +225,8 @@ export async function main(argv = process.argv.slice(2)) {
   const pair: unknown = JSON.parse(await readFile(join(outputDir, "control.json"), "utf8"));
   const desktopId = text(pair, "desktopSandbox");
   const orgId = text(pair, "orgId"), memberId = text(pair, "memberId"), modelId = text(pair, "modelId");
+  const recordedAllowance = record(pair) ? pair.allowanceUsd : undefined;
+  const allowanceUsd = typeof recordedAllowance === "number" ? recordedAllowance : 5;
   assert.ok(record(pair) && record(pair.memberLogin));
   const login = pair.memberLogin;
   const member: DenSession = { email: text(login, "email"), password: text(login, "password"), token: text(login, "token"), apiUrl: text(login, "apiUrl"), webUrl: text(login, "webUrl") };
@@ -263,7 +265,7 @@ export async function main(argv = process.argv.slice(2)) {
       const listed = record(models) && Array.isArray(models.models) ? models.models.filter(record) : [];
       const usable = await denFetch(member, "/v1/mcp-connections?scope=usable", { headers: { authorization: `Bearer ${member.token}`, "x-openwork-org-id": orgId } });
       const connections = record(usable.body) && Array.isArray(usable.body.connections) ? usable.body.connections.filter(record) : [];
-      const budget = await verifyMember(member, orgId, memberId);
+      const budget = await verifyMember(member, orgId, memberId, allowanceUsd);
       const facts = {
         signedInAs: record(auth) && record(auth.user) ? auth.user.email : null,
         workshopModelAvailable: listed.some((model) => model.modelId === modelId && model.available === true),
@@ -309,14 +311,14 @@ export async function main(argv = process.argv.slice(2)) {
       const tasks: Row[] = [];
       Object.assign(receipt, { marker, tasks });
       const save = async () => writeFile(join(checks, "workshop.json"), `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
-      const spendStart = Number((await verifyMember(member, orgId, memberId)).usedMicroUsd ?? 0);
+      const spendStart = Number((await verifyMember(member, orgId, memberId, allowanceUsd)).usedMicroUsd ?? 0);
       const baseline = await workplaceState(browser);
       receipt.baselineUsedMicroUsd = spendStart;
       const run = async (name: string, prompt: string, timeoutMs = 600_000) => {
         await foregroundWorkshopDesktop(browser, desktop);
         await freshComposer(desktop, modelId);
         const before = await workplaceState(browser);
-        const usedBefore = Number((await verifyMember(member, orgId, memberId)).usedMicroUsd ?? 0);
+        const usedBefore = Number((await verifyMember(member, orgId, memberId, allowanceUsd)).usedMicroUsd ?? 0);
         const begin = Date.now();
         await sendComposerMessage(desktop, prompt);
         await waitForAssistantReply(desktop, { timeoutMs });
@@ -326,7 +328,7 @@ export async function main(argv = process.argv.slice(2)) {
         const seconds = Math.round((Date.now() - begin) / 1000);
         await capture(desktop, join(checks, `workshop-${name}.png`));
         const after = await workplaceState(browser);
-        const usedAfter = Number((await verifyMember(member, orgId, memberId)).usedMicroUsd ?? 0);
+        const usedAfter = Number((await verifyMember(member, orgId, memberId, allowanceUsd)).usedMicroUsd ?? 0);
         const tools = [...auditSince(after.microsoft, auditCursor(before.microsoft)), ...auditSince(after.atlassian, auditCursor(before.atlassian))]
           .map((entry) => `${String(entry.name)}:${String(entry.status)}`);
         const entry: Row = { name, prompt, seconds, reply, questions, workplaceCalls: tools, costMicroUsd: usedAfter - usedBefore, passed: false };
@@ -473,7 +475,7 @@ print(json.dumps(out))`, pptxPath], { encoding: "utf8" }));
       }
       await foregroundWorkshopDesktop(browser, desktop);
       await freshComposer(desktop, modelId);
-      const spendEnd = Number((await verifyMember(member, orgId, memberId)).usedMicroUsd ?? 0);
+      const spendEnd = Number((await verifyMember(member, orgId, memberId, allowanceUsd)).usedMicroUsd ?? 0);
       return await finish(true, { totalCostMicroUsd: spendEnd - spendStart, usedMicroUsdAfter: spendEnd });
     }
 
@@ -492,7 +494,7 @@ print(json.dumps(out))`, pptxPath], { encoding: "utf8" }));
       ];
       Object.assign(receipt, { guidePath, tasks, notApplicable });
       const save = async () => writeFile(join(checks, "guide.json"), `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
-      const used = async () => Number((await verifyMember(member, orgId, memberId)).usedMicroUsd ?? 0);
+      const used = async () => Number((await verifyMember(member, orgId, memberId, allowanceUsd)).usedMicroUsd ?? 0);
       const spendStart = await used();
       const baseline = await workplaceState(browser);
       receipt.baselineUsedMicroUsd = spendStart;
@@ -745,13 +747,13 @@ print(json.dumps(out))`, pptxPath], { encoding: "utf8" }));
     // Model-backed commands start from a fresh task on the workshop model.
     await foregroundWorkshopDesktop(browser, desktop);
     await freshComposer(desktop, modelId);
-    const before = await verifyMember(member, orgId, memberId);
+    const before = await verifyMember(member, orgId, memberId, allowanceUsd);
     if (command === "task") {
       await sendComposerMessage(desktop, "Using the connected workshop tools only (no shell), find the latest Northwind pilot email and tell me in under 80 words whether the pilot is production-ready and what is still pending. Do not change anything.");
       await waitForAssistantReply(desktop, { timeoutMs: 300_000 });
       await waitIdle(desktop, 300_000, "task finished");
       const reply = await waitForAssistantReply(desktop, { timeoutMs: 5_000 });
-      const after = await verifyMember(member, orgId, memberId);
+      const after = await verifyMember(member, orgId, memberId, allowanceUsd);
       const passed = /northwind/i.test(reply.text) && Number(after.usedMicroUsd) > Number(before.usedMicroUsd ?? 0);
       return await finish(passed, { reply: reply.text, usedMicroUsdBefore: before.usedMicroUsd, usedMicroUsdAfter: after.usedMicroUsd });
     }
@@ -786,7 +788,7 @@ print(json.dumps(out))`, pptxPath], { encoding: "utf8" }));
       return await finish(composer.composerEditable && !composer.modelUnavailable, { stoppedSeconds, composerUsableAfterStop: composer.composerEditable });
     }
   } catch (error) {
-    const spend = command === "workshop" ? await verifyMember(member, orgId, memberId).then((bucket) => ({ usedMicroUsdAfter: bucket.usedMicroUsd }), () => ({})) : {};
+    const spend = command === "workshop" ? await verifyMember(member, orgId, memberId, allowanceUsd).then((bucket) => ({ usedMicroUsdAfter: bucket.usedMicroUsd }), () => ({})) : {};
     await finish(false, { ...spend, error: error instanceof Error ? error.message.slice(0, 3000) : String(error) });
     process.exitCode = 1;
   }

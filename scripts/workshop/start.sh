@@ -16,7 +16,8 @@ snapshot_args=(); [ -n "$WORKSHOP_SNAPSHOT" ] && snapshot_args=(--snapshot "$WOR
 echo "Starting $SEATS seats (stage $STAGE, lifetime $LIFETIME min) at $(date '+%H:%M')…"
 pnpm world up workshop-pair --place daytona --os linux --stage "$STAGE" --detach --timeout 3000000 -- \
   --output-dir "$OUT" --seats "$SEATS" --lifetime "$LIFETIME" --concurrency 10 \
-  --timezone "$WORKSHOP_TIMEZONE" --budget-usd "$BUDGET" ${snapshot_args[@]+"${snapshot_args[@]}"} || true
+  --timezone "$WORKSHOP_TIMEZONE" --budget-usd "$BUDGET" \
+  --provider "$WORKSHOP_PROVIDER" --allowance-usd "$WORKSHOP_ALLOWANCE_USD" ${snapshot_args[@]+"${snapshot_args[@]}"} || true
 [ -f "$OUT/status.json" ] || { echo "The launch stopped before creating anything; see the error above." >&2; exit 1; }
 python3 - "$OUT/status.json" <<'PY'
 import json, sys

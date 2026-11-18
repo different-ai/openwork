@@ -9,15 +9,16 @@ import {
   AUTOMATION_SCHEDULE_KINDS,
   AUTOMATION_SCHEDULE_KINDS_HEADER,
 } from "@openwork/types/automations";
-import type { GatewayProviderSummary } from "@openwork/types/den/gateway";
+import type { GatewayAuthorizationRequest, GatewayProviderSummary } from "@openwork/types/den/gateway";
+import { parseGatewayUsableModel } from "./gateway-usable-model";
 import type { DesktopStartupReport } from "@openwork/types/den/diagnostics";
 import {
   parseModelRemovalInventory,
   type ModelRemovalInventory,
 } from "../../react-app/domains/session/surface/model-removal-inventory";
 export type { ModelRemovalInventory } from "../../react-app/domains/session/surface/model-removal-inventory";
-import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { activationStateSchema, type ActivationEventRequest, type ActivationState } from "@openwork/types/den/activation";
+import { deviceShareOptionsSchema, type DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import {
   remoteSessionStatusResultSchema,
   type RemoteSessionStatusRequest,
@@ -31,9 +32,12 @@ import type {
   AutomationExecutionTargetList,
   AutomationList,
   AutomationRun,
-  AutomationRunRange,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
+  AutomationSharing,
+  UpdateAutomationSharing,
+  SharedAutomationList,
+  CopySharedAutomation,
   CreateAutomation,
   CreateCloudAutomation,
   RunAutomationNow,
@@ -42,6 +46,20 @@ import type {
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
 import { canScheduleWorkflow, type WorkflowAccessRole } from "./workflow-run-access";
 import { gatewayUsageStatusSchema, gatewayUsageResetRequestSchema } from "@openwork/types/den/gateway-usage-limits";
+import { GATEWAY_MEMBER_USAGE_DAYS, gatewayMemberUsageResponseSchema } from "@openwork/types/den/gateway-member-usage";
+import {
+  remoteDeviceDesktopReportResponseSchema,
+  remoteDeviceDetailResponseSchema,
+  remoteDeviceDisconnectResponseSchema,
+  remoteDeviceListResponseSchema,
+  remoteDeviceResponseSchema,
+  type RemoteDevice,
+  type RemoteDeviceDesktopReport,
+  type RemoteDeviceDesktopReportResponse,
+  type RemoteDeviceDetailResponse,
+  type RemoteDeviceDisconnectResponse,
+  type RemoteDeviceRegisterRequest,
+} from "@openwork/types/den/remote-devices";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -71,16 +89,6 @@ import { clearDesktopSignInIntent, clearOrgSelectionPending, readOrgSelectionPen
 import { rememberDenOrganization } from "./den-org-memory";
 import { clearDashboardTileCacheStorage } from "./dashboard-cache-storage";
 import { isDesktopRuntime } from "./runtime-env";
-import {
-  calendarRangeSearch,
-  denGoogleCalendarEventsResponseSchema,
-  denMicrosoftCalendarEventsResponseSchema,
-  DEN_GOOGLE_CALENDAR_EVENTS_PATH,
-  DEN_MICROSOFT_CALENDAR_EVENTS_PATH,
-  type DenCalendarRangeQuery,
-  type DenGoogleCalendarEvent,
-  type DenMicrosoftCalendarEvent,
-} from "@openwork/calendar";
 import type { ReloadReason } from "../types";
 import type {
   OpenWorkExtensionContribution,
@@ -260,7 +268,7 @@ export type DenOrgSummary = {
 function normalizeDenCanonicalOrgRole(role: string): DenCanonicalOrgRole | null {
   const normalized = role.trim().toLowerCase().replace(/[\s_]+/g, "-");
   if (normalized === "owner") return "owner";
-  // Super-admin was merged into admin; a stray value from an older server reads as admin.
+  // A super-admin is also an admin for every admin check; formatDenOrgRoleLabel names it.
   if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
@@ -293,6 +301,7 @@ export function formatDenOrgRoleLabel(roleValue: string) {
     .map((role) => role.trim())
     .filter(Boolean)
     .map((role) => {
+      if (role.toLowerCase().replace(/[\s_]+/g, "-") === "super-admin") return "Super admin";
       const canonicalRole = normalizeDenCanonicalOrgRole(role);
       if (canonicalRole === "owner") return "Owner";
       if (canonicalRole === "admin") return "Admin";
@@ -303,7 +312,7 @@ export function formatDenOrgRoleLabel(roleValue: string) {
         .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
         .join(" ");
     });
-  // "admin,super-admin" from an older server must not read "Admin, Admin".
+  // Repeated names, e.g. "admin,Admin", must not read "Admin, Admin".
   return [...new Set(labels)].join(", ");
 }
 
@@ -340,6 +349,12 @@ export type DenMcpToken = {
 };
 
 export type DenOrgGatewayProvider = Pick<GatewayProviderSummary, "id" | "providerId" | "name" | "source">;
+
+/** A Gateway provider as this member can use it: ready models plus sets still awaiting their sign-in. */
+export type DenOrgUsableGatewayProvider = Pick<
+  GatewayProviderSummary,
+  "id" | "providerId" | "name" | "source" | "credentialStatus" | "updatedAt" | "models" | "authorizationRequests"
+>;
 
 export type DenOrgLlmProviderModel = {
   id: string;
@@ -456,6 +471,12 @@ export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null
 export type DenOpenWorkWebAccess = {
   hasAccess: boolean;
   accessSource: DenOpenWorkWebAccessSource;
+  /**
+   * Whether the signed-in member may use the organization's Web. False when
+   * an admin chose who gets Web and left this member out. Older Den
+   * deployments omit it, which means the same as hasAccess.
+   */
+  memberHasAccess: boolean;
 };
 
 type DenAuthResult = {
@@ -527,6 +548,8 @@ type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
   json: T | null;
+  /** The response's `Retry-After`, when it names whole seconds. */
+  retryAfterSeconds?: number;
 };
 
 /** Den serves GET /v1/resolved-plugins for at most this many plugins per request. */
@@ -536,6 +559,8 @@ export class DenApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
+  /** How long the server asked the caller to wait (`Retry-After`), on a 429. */
+  retryAfterSeconds?: number;
 
   constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
@@ -2155,6 +2180,70 @@ function getDenOrgGatewayProviders(payload: unknown): DenOrgGatewayProvider[] {
   });
 }
 
+function parseDenOrgUsableGatewayProvider(value: unknown): DenOrgUsableGatewayProvider | null {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" || !/^ipr_/i.test(value.id) ||
+    typeof value.providerId !== "string" || !value.providerId.trim() ||
+    typeof value.name !== "string" || !value.name.trim() ||
+    value.source !== "openwork_gateway" ||
+    (value.credentialStatus !== "ready" && value.credentialStatus !== "member_auth_required" && value.credentialStatus !== "org_credential_missing")
+  ) {
+    return null;
+  }
+  const models = Array.isArray(value.models)
+    ? value.models.flatMap((model) => {
+        const parsed = parseGatewayUsableModel(model);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+  const authorizationRequests: GatewayAuthorizationRequest[] = Array.isArray(value.authorizationRequests)
+    ? value.authorizationRequests.flatMap((request) => {
+        if (
+          !isRecord(request) ||
+          typeof request.credentialSetId !== "string" || !/^gcs_[0-7][0-9a-hjkmnp-tv-z]{25}$/.test(request.credentialSetId) ||
+          typeof request.name !== "string" || !request.name.trim() ||
+          typeof request.authUrl !== "string" || !request.authUrl.trim()
+        ) {
+          return [];
+        }
+        const credentialSetId = request.credentialSetId;
+        return [{
+          credentialSetId,
+          name: request.name,
+          authUrl: request.authUrl,
+          ...(Array.isArray(request.models)
+            ? { models: request.models.flatMap((model) => {
+                const parsed = parseGatewayUsableModel(model, credentialSetId);
+                return parsed ? [parsed] : [];
+              }) }
+            : {}),
+        }];
+      })
+    : [];
+  return {
+    id: value.id,
+    providerId: value.providerId,
+    name: value.name,
+    source: value.source,
+    credentialStatus: value.credentialStatus,
+    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : "",
+    models,
+    authorizationRequests,
+  };
+}
+
+/** Lenient for display: one malformed row is dropped rather than hiding every provider. */
+function getDenOrgUsableGatewayProviders(payload: unknown): DenOrgUsableGatewayProvider[] {
+  if (!isRecord(payload) || !Array.isArray(payload.inferenceProviders)) {
+    throw new DenApiError(500, "invalid_gateway_providers_payload", "AI Gateway provider response was invalid.");
+  }
+  return payload.inferenceProviders.flatMap((provider: unknown) => {
+    const parsed = parseDenOrgUsableGatewayProvider(provider);
+    return parsed ? [parsed] : [];
+  });
+}
+
 const CONNECTION_READINESS_FAILURES = ["sign_in_required", "sign_in_rejected", "setup_required", "provider_setup_required", "unavailable", "timed_out", "settings_changed", "tools_unreadable"] as const;
 export type DenConnectionReadinessFailure = (typeof CONNECTION_READINESS_FAILURES)[number];
 
@@ -2804,6 +2893,7 @@ export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAcces
   return {
     hasAccess: web.hasAccess,
     accessSource,
+    memberHasAccess: web.hasAccess && web.memberHasAccess !== false,
   };
 }
 
@@ -2834,6 +2924,7 @@ type DenRequestOptions = {
   timeoutMs?: number;
   organizationId?: string | null;
   automationModelAttentionCapable?: boolean;
+  browserUploadPermissionsCapable?: boolean;
   /** Cancels the request, e.g. a waiting status call when the window hides. */
   signal?: AbortSignal;
   /** Leave the request out of connection diagnostics: its failure is not a connection problem. */
@@ -2922,6 +3013,12 @@ async function requestJsonRaw<T>(
     headers[ORG_SCOPE_HEADER] = organizationId;
     headers[ORG_PROXY_HEADER] = organizationId;
   }
+  if (options.browserUploadPermissionsCapable) {
+    headers["X-OpenWork-Browser-Upload-Permissions"] = "1";
+  }
+  if (path === "/v1/me/desktop-config") {
+    headers["X-OpenWork-Sandbox-Only"] = "1";
+  }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
     // Without it Den treats this desktop as a release that reads only once/daily/weekly schedules.
@@ -2954,7 +3051,8 @@ async function requestJsonRaw<T>(
     } catch {
       json = null;
     }
-    return { ok: response.ok, status: response.status, json };
+    const retryAfter = response.ok ? "" : response.headers?.get("Retry-After")?.trim() ?? "";
+    return { ok: response.ok, status: response.status, json, ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
   };
   return options.unobserved ? send() : observeDenRequest(send);
 }
@@ -2969,7 +3067,9 @@ async function requestJson<T>(
     const payload = raw.json;
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
-    throw new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    const error = new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    if (raw.retryAfterSeconds !== undefined) error.retryAfterSeconds = raw.retryAfterSeconds;
+    throw error;
   }
   return raw.json as T;
 }
@@ -3127,6 +3227,7 @@ export function createDenClient(options: {
         method: "GET",
         token,
         organizationId: orgId,
+        browserUploadPermissionsCapable: true,
       });
       return normalizeDenDesktopConfig(payload);
     },
@@ -3178,7 +3279,7 @@ export function createDenClient(options: {
       };
     },
 
-    /** The Get set up checklist; null when the activationChecklist feature is off for the organization. */
+    /** The Get set up checklist; null when unavailable. */
     async getActivation(orgId: string): Promise<ActivationState | null> {
       try {
         return activationStateSchema.parse(await requestJson<unknown>(baseUrls, "/v1/me/activation", { method: "GET", token, organizationId: orgId }));
@@ -3198,6 +3299,60 @@ export function createDenClient(options: {
       }
     },
 
+    /** The computers the member can reach through OpenWork. */
+    async listRemoteDevices(orgId: string): Promise<RemoteDevice[]> {
+      return remoteDeviceListResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "GET", token, organizationId: orgId,
+      })).devices;
+    },
+
+    /** One computer with its 20 most recent events, newest first. */
+    async getRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDetailResponse> {
+      return remoteDeviceDetailResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "GET", token, organizationId: orgId,
+      }));
+    },
+
+    /** Adds a virtual computer by hand. 409 `remote_device_exists`; 403 when `shared` needs a permission the member lacks. */
+    async registerRemoteDevice(orgId: string, input: RemoteDeviceRegisterRequest): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices", {
+        method: "POST", token, organizationId: orgId, body: input,
+      })).device;
+    },
+
+    async renameRemoteDevice(orgId: string, deviceId: string, label: string): Promise<RemoteDevice> {
+      return remoteDeviceResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "PATCH", token, organizationId: orgId, body: { label },
+      })).device;
+    },
+
+    /**
+     * Disconnects one of the member's own signed-in desktops: it takes no tasks and shares no
+     * sessions until someone signs in on it again. `signedOut` says whether OpenWork there was signed out too.
+     */
+    async disconnectRemoteDevice(orgId: string, deviceId: string): Promise<RemoteDeviceDisconnectResponse> {
+      return remoteDeviceDisconnectResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}/disconnect`, {
+        method: "POST", token, organizationId: orgId, body: {},
+      }));
+    },
+
+    /** Takes a computer off the list. The computer itself keeps running. */
+    async removeRemoteDevice(orgId: string, deviceId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/remote-devices/${encodeURIComponent(deviceId)}`, {
+        method: "DELETE", token, organizationId: orgId,
+      });
+    },
+
+    /**
+     * This desktop reports itself and how its computer use is doing. A background
+     * heartbeat: a 429 carries `retryAfterSeconds`, and no failure is a connection problem.
+     */
+    async reportThisComputer(orgId: string, report: RemoteDeviceDesktopReport): Promise<RemoteDeviceDesktopReportResponse> {
+      return remoteDeviceDesktopReportResponseSchema.parse(await requestJson<unknown>(baseUrls, "/v1/remote-devices/this-computer", {
+        method: "PUT", token, organizationId: orgId, body: report, unobserved: true,
+      }));
+    },
+
     /** Reports registry features the member just used (POST /v1/org/feature-usage); Den keeps only keys that are on for them. */
     async reportFeatureUsage(orgId: string, features: readonly string[]): Promise<void> {
       await requestJson<unknown>(baseUrls, "/v1/org/feature-usage", { method: "POST", token, organizationId: orgId, body: { features }, unobserved: true });
@@ -3210,6 +3365,13 @@ export function createDenClient(options: {
       }));
       if (status.organizationId !== orgId) throw new Error("Usage response belongs to a different organization.");
       return status;
+    },
+    /** The member's own past 30 days by model, token mix and usable models with prices. */
+    async getGatewayMemberUsage(orgId: string) {
+      if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to view your usage.");
+      return gatewayMemberUsageResponseSchema.parse(await requestJson<unknown>(baseUrls, `/v1/gateway/usage/me?days=${GATEWAY_MEMBER_USAGE_DAYS}`, {
+        method: "GET", token, organizationId: orgId, cache: "no-store",
+      }));
     },
     async requestGatewayUsageReset(orgId: string, input: { bucketId: string; reason: string }) {
       if (!token || !orgId.trim()) throw new Error("Sign in and select an organization to request an increase.");
@@ -3232,7 +3394,7 @@ export function createDenClient(options: {
         method: "GET", token, organizationId: orgId,
       });
       if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.enabled !== "boolean") {
-        throw new Error("Your apps could not be loaded.");
+        throw new Error("Your artifacts could not be loaded.");
       }
       return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },
@@ -3333,7 +3495,7 @@ export function createDenClient(options: {
       // negotiation pattern so a newer hosted client never calls the Web billing
       // route on an older Den deployment that does not advertise the contract.
       if (capabilities?.openworkWeb !== true) {
-        return { hasAccess: false, accessSource: null };
+        return { hasAccess: false, accessSource: null, memberHasAccess: false };
       }
 
       const payload = await requestJson<unknown>(baseUrls, "/v1/billing/web", {
@@ -3398,6 +3560,43 @@ export function createDenClient(options: {
         return getDenOrgGatewayProviders(payload);
       } catch (error) {
         if (!options.requireCompleteInventory && error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
+        throw error;
+      }
+    },
+
+    /**
+     * What the caller may share from this device with the organization.
+     * null when Den predates this endpoint, so
+     * the app offers nothing. Never carries a key.
+     */
+    async getDeviceShareOptions(orgId: string, providerIds: readonly string[]): Promise<DeviceShareOptions | null> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, `/v1/inference-providers/device-share-options?providerIds=${encodeURIComponent(providerIds.join(","))}`, {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        const options = deviceShareOptionsSchema.safeParse(payload);
+        return options.success ? options.data : null;
+      } catch (error) {
+        if (error instanceof DenApiError && [400, 404, 405, 501].includes(error.status)) return null;
+        throw error;
+      }
+    },
+
+    /** The member's usable Gateway providers, with models and pending sign-ins. [] on Den servers without Gateway. */
+    async listOrgUsableGatewayProviders(orgId: string): Promise<DenOrgUsableGatewayProvider[]> {
+      try {
+        const payload = await requestJson<unknown>(baseUrls, "/v1/inference-providers?scope=usable", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          cache: "no-store",
+        });
+        return getDenOrgUsableGatewayProviders(payload);
+      } catch (error) {
+        if (error instanceof DenApiError && [404, 405, 501].includes(error.status)) return [];
         throw error;
       }
     },
@@ -3525,6 +3724,39 @@ export function createDenClient(options: {
       );
     },
 
+    async getAutomationSharing(orgId: string, automationId: string): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}/sharing`, {
+        method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true,
+      });
+    },
+
+    async updateAutomationSharing(orgId: string, automationId: string, input: UpdateAutomationSharing): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}/sharing`, {
+        method: "PUT", token, organizationId: orgId, body: input, automationModelAttentionCapable: true,
+      });
+    },
+
+    async listSharedAutomations(orgId: string): Promise<SharedAutomationList> {
+      return requestJson<SharedAutomationList>(baseUrls, "/v1/shared-automations", {
+        method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true,
+      });
+    },
+
+    async copySharedAutomation(orgId: string, automationId: string, input: CopySharedAutomation = {}): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(baseUrls, `/v1/shared-automations/${encodeURIComponent(automationId)}/copy`, {
+        method: "POST", token, organizationId: orgId, body: input, automationModelAttentionCapable: true,
+      });
+    },
+
+    async getAutomationSharingContext(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      const member = isRecord(payload) && isRecord(payload.currentMember) ? payload.currentMember : null;
+      return {
+        directory: parseDenLibraryOrgDirectory(payload),
+        canShareOrgWide: readStringArray(member?.permissions).includes("sharing.share_org_wide"),
+      };
+    },
+
     async activateAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {
       return requestJson<AutomationDetail>(
         baseUrls,
@@ -3599,24 +3831,6 @@ export function createDenClient(options: {
     },
 
     /**
-     * Runs of every Automation the caller owns placed in [from, to) (epoch ms),
-     * one page at a time. A Den that predates the route answers 404.
-     */
-    async listAutomationRunsInRange(
-      orgId: string,
-      options: { from: number; to: number; cursor?: string; limit?: number },
-    ): Promise<AutomationRunRange> {
-      const params = new URLSearchParams({ from: String(options.from), to: String(options.to) });
-      if (options.cursor) params.set("cursor", options.cursor);
-      if (options.limit) params.set("limit", String(options.limit));
-      return requestJson<AutomationRunRange>(
-        baseUrls,
-        `/v1/automation-runs?${params.toString()}`,
-        { method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true },
-      );
-    },
-
-    /**
      * Compact, versioned status of up to ten of the member's remote sessions.
      * With waitMs, Den holds the call until one changes, so the timeout
      * covers the wait.
@@ -3630,17 +3844,11 @@ export function createDenClient(options: {
     },
 
     /** A transcript page or pending receipt of one of the member's remote sessions; the caller parses it. */
-    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    async remoteSessionAction(orgId: string, action: "read" | "send" | "stop" | "answer", input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
       // A desktop has about 20 seconds to answer before Den returns a requestId instead.
       return requestJson<unknown>(baseUrls, `/v1/remote-sessions/${action}`, {
         method: "POST", token, organizationId: orgId, body: input, timeoutMs: 35_000, signal,
       });
-    },
-
-    /** The existing organization default-model settings, subject to Den's feature and permission guards. */
-    async getWorkbotSettings(orgId: string) {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/org/workbot-settings", { method: "GET", token, organizationId: orgId });
-      return workbotSettingsSchema.parse(payload);
     },
 
     /** Deployment switches for people without an organization; missing keys are off. */
@@ -3655,30 +3863,6 @@ export function createDenClient(options: {
       const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       return Object.fromEntries(Object.entries(features).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
-    },
-
-    /** Primary Google Calendar events overlapping [timeMin, timeMax) as the signed-in member. */
-    async listGoogleCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenGoogleCalendarEvent[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        `${DEN_GOOGLE_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
-        { method: "GET", token, organizationId: orgId },
-      );
-      const parsed = denGoogleCalendarEventsResponseSchema.safeParse(payload);
-      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Google Calendar returned an unexpected response.");
-      return parsed.data.events;
-    },
-
-    /** Outlook calendar instances (Graph calendarView) overlapping [timeMin, timeMax) as the signed-in member. */
-    async listMicrosoftCalendarEvents(orgId: string, query: DenCalendarRangeQuery): Promise<DenMicrosoftCalendarEvent[]> {
-      const payload = await requestJson<unknown>(
-        baseUrls,
-        `${DEN_MICROSOFT_CALENDAR_EVENTS_PATH}?${calendarRangeSearch(query)}`,
-        { method: "GET", token, organizationId: orgId },
-      );
-      const parsed = denMicrosoftCalendarEventsResponseSchema.safeParse(payload);
-      if (!parsed.success) throw new DenApiError(502, "invalid_calendar_payload", "Outlook returned an unexpected response.");
-      return parsed.data.events;
     },
 
     async getOrgLlmProviderConnection(orgId: string, llmProviderId: string): Promise<DenOrgLlmProviderConnection> {
@@ -3729,6 +3913,32 @@ export function createDenClient(options: {
         throw new DenApiError(500, "invalid_mcp_discovery_payload", "MCP discovery response was invalid.");
       }
       return discovery;
+    },
+
+    /**
+     * A connector only the caller can use until they share it, as My Library adds
+     * on the web. Den lets members add one that signs each person in with their
+     * own account, or that needs no sign-in; it refuses anything else from them.
+     */
+    async createPersonalMcpConnection(
+      orgId: string,
+      input: { name: string; url: string; authType: "oauth" | "none" },
+    ): Promise<string> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-connections", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: {
+          name: input.name,
+          url: input.url,
+          authType: input.authType,
+          credentialMode: input.authType === "oauth" ? "per_member" : "shared",
+          access: { orgWide: false, memberIds: [], teamIds: [] },
+        },
+      });
+      const id = isRecord(payload) && typeof payload.id === "string" ? payload.id : "";
+      if (!id) throw new DenApiError(500, "invalid_mcp_connection_payload", "MCP connection create response was invalid.");
+      return id;
     },
 
     async checkMcpConnection(orgId: string, connectionId: string): Promise<void> {
@@ -4007,6 +4217,14 @@ export function createDenClient(options: {
         baseUrls,
         `/v1/plugins/${encodeURIComponent(pluginId)}/access/${encodeURIComponent(grantId)}`,
         { method: "DELETE", token, organizationId: orgId },
+      );
+    },
+
+    async deleteBuiltMcpApp(orgId: string, appId: string): Promise<void> {
+      await requestJson<unknown>(
+        baseUrls,
+        `/v1/config-objects/${encodeURIComponent(appId)}/delete`,
+        { method: "POST", token, organizationId: orgId, body: {} },
       );
     },
 

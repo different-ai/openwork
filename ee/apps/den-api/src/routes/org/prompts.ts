@@ -2,6 +2,7 @@ import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { orgPromptSettingsSchema, orgPromptWriteSchema } from "@openwork/types/den/prompts"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { db } from "../../db.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -20,8 +21,8 @@ const teamParamsSchema = idParamSchema("teamId", "team")
 
 type PromptRouteContext = ResourceActionContext & PermissionRouteContext
 
-async function settingsView(c: PromptRouteContext, organizationId: DenTypeId<"organization">) {
-  return { ...await listPromptSettings(organizationId), canEdit: await hasPermission(c, "prompts.manage") }
+async function settingsView(c: PromptRouteContext, organizationId: DenTypeId<"organization">, database?: Parameters<typeof listPromptSettings>[1]) {
+  return { ...await listPromptSettings(organizationId, database), canEdit: await hasPermission(c, "prompts.manage") }
 }
 
 async function resolveScope(organizationId: DenTypeId<"organization">, teamId: DenTypeId<"team"> | null): Promise<PromptScope | null> {
@@ -44,7 +45,8 @@ async function save(c: PromptRouteContext, input: { teamId: DenTypeId<"team"> | 
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
-  return c.json(await settingsView(c, organizationId))
+  // primary: the response shows the prompt just saved.
+  return c.json(await settingsView(c, organizationId, db.$primary))
 }
 
 async function remove(c: PromptRouteContext, teamId: DenTypeId<"team"> | null) {
@@ -54,7 +56,7 @@ async function remove(c: PromptRouteContext, teamId: DenTypeId<"team"> | null) {
   const scope = await resolveScope(organizationId, teamId)
   if (!scope) return c.json({ error: "team_not_found" }, 404)
   await removePromptForScope({ organizationId, scope })
-  return c.json(await settingsView(c, organizationId))
+  return c.json(await settingsView(c, organizationId, db.$primary))
 }
 
 const writeResponses = {

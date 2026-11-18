@@ -20,6 +20,18 @@ inputs and generated secrets.
 | `BETTER_AUTH_SECRET`, `DEN_DB_ENCRYPTION_KEY` | Generated when not supplied. Stored in Terraform state. |
 | Kubernetes Secret | Written by Terraform by default. Can instead be rendered by the chart or supplied by you (`existing_secret_name`). |
 | Helm release `openwork-ee` | Den API, Den web, and the migration Job that runs before each install or upgrade. Ingress is optional. |
+| AI Gateway (optional, off by default) | The chart's **existing** inference deployment plus one Gateway TLS ingress; not another runtime implementation. |
+
+Use `ai_gateway_enabled=true` and `ai_gateway_domain_name="models.example.com"`;
+`ingress.tls_secret_name` must cover that name (or disable ingress and supply HTTPS
+routing externally). Output `ai_gateway_url` is null when disabled. Defaults are
+false / empty; existing advanced Helm Gateway installs are not disabled by this
+new default. The existing Terraform >= 1.5 floor is retained; native mock tests
+run on Terraform/OpenTofu >= 1.11. See [AI Gateway guide](../../AI_GATEWAY.md) for
+conflicts and limits. AI Gateway live-cluster conformance remains **NotRun**.
+The inference AI Gateway, OpenWork Web's den-gateway and Den API's MCP gateway
+are separate services. Native managed AWS/GCP installs call cloud modules, not
+this wrapper. Nothing here changes managed defaults or establishes live readiness.
 
 ## What you provide
 
@@ -95,7 +107,8 @@ without it.
 ## Anything else in the chart
 
 Pass any other chart value through `extra_helm_values`. Helm deep-merges it
-over the module's values, for example to enable Gateway or change probes:
+over the module's values, for example to change probes. When using first-class
+AI Gateway enablement, do not override its enable/URL/name/port values here:
 
 ```hcl
 extra_helm_values = {
@@ -111,6 +124,6 @@ every value.
 - Provisioning the cluster, MySQL, Redis, DNS or certificates for a specific
   cloud.
 - A tested apply on a live cluster, and an upgrade across chart versions.
-- First-class inputs for Gateway, Daytona provisioning, the GitHub connector
-  and installer artifacts (use `extra_helm_values` for now).
+- First-class inputs for Daytona provisioning, the GitHub connector and installer
+  artifacts (use `extra_helm_values` for now).
 - Helm provider 3.x (`kubernetes = {}` attribute syntax); pinned below 3.0.

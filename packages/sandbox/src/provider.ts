@@ -29,6 +29,8 @@ export type ProviderEndpointKind = "signed-expiring" | "stable" | "den-tunnel"
 export type ProviderCapabilities = {
   /** A stopped instance keeps its disk and can be started again. */
   stopResume: boolean
+  /** `start` during a pause calls it off and keeps the instance as it is, so hosts need not wait for the pause. */
+  callsOffPause?: boolean
   /** Storage can outlive the instance (volumes, PVCs, external checkpoints). */
   persistentStorage: boolean
   /** Wake restores memory state; the bootstrap can be skipped on resume. */

@@ -1,8 +1,7 @@
+import { readNativeMcpEventOutcomes } from "./native-mcp-events.js"
+import { readMcpEventOutcomes } from "./mcp-events.js"
 import { featureHasOutcomes, type FeatureKey, type OutcomeFeatureKey } from "@openwork/features"
-import { automationRunOutcomes } from "./automations.js"
 import type { FeatureOutcomeReader } from "./outcomes.js"
-import { readSlackSendAsBotOutcomes } from "./slack-send-as-bot.js"
-import { readAgentOutcomes } from "./workbot-proactive.js"
 
 /**
  * One outcome reader per feature that declares `outcomes: true` in packages/features/src/registry.ts, registered
@@ -12,11 +11,8 @@ import { readAgentOutcomes } from "./workbot-proactive.js"
  * reader show adoption only (feature_usage).
  */
 export const FEATURE_OUTCOME_READERS = {
-  slackSendAsBot: readSlackSendAsBotOutcomes,
-  workbotProactive: readAgentOutcomes,
-  automationIntervalSchedules: automationRunOutcomes("interval", "run"),
-  // One run per meeting: "Most meetings skipped".
-  automationCalendarTriggers: automationRunOutcomes("calendar", "meeting"),
+  mcpThreadEvents: readMcpEventOutcomes,
+  nativeMcpEvents: readNativeMcpEventOutcomes,
 } satisfies Record<OutcomeFeatureKey, FeatureOutcomeReader>
 
 export function featureOutcomeReader(key: FeatureKey): FeatureOutcomeReader | null {

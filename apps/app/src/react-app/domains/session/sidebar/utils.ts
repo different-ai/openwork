@@ -45,7 +45,7 @@ export function formatSessionRelativeTime(updatedAt: number | null | undefined):
   return `${Math.round(hours / 24)}d`;
 }
 
-const normalizeSessionParentID = (session: SessionListItem) => {
+const normalizeSessionParentID = (session: { parentID?: string | null }) => {
   const parentID = session.parentID?.trim();
   return parentID || "";
 };
@@ -55,7 +55,7 @@ const normalizeSessionParentID = (session: SessionListItem) => {
  * in the loaded page (the parent may be archived, deleted, or beyond the list
  * limit). Children are only reached from the task card in their parent.
  */
-export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
+export const getRootSessions = <T extends { parentID?: string | null }>(sessions: T[]): T[] =>
   sessions.filter((session) => !normalizeSessionParentID(session));
 
 /**

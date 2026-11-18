@@ -9,6 +9,8 @@ export const RemoteSessionCommandTable = mysqlTable(
     owner_member_id: denTypeIdColumn("member", "owner_member_id").notNull(),
     created_by_user_id: denTypeIdColumn("user", "created_by_user_id").notNull(),
     status: mysqlEnum("status", ["pending", "claimed", "delivered", "failed", "expired"]).notNull(),
+    /** `create` starts a session; `attach` reaches one that already exists on the computer. */
+    kind: varchar("kind", { length: 32 }).$type<"create" | "attach">().notNull().default("create"),
     title: varchar("title", { length: 120 }).notNull(),
     prompt: text("prompt"),
     model_provider_id: varchar("model_provider_id", { length: 160 }),
@@ -19,6 +21,8 @@ export const RemoteSessionCommandTable = mysqlTable(
     target_computer_id: varchar("target_computer_id", { length: 160 }),
     /** Workspace on that computer the session must be created in. */
     target_workspace_id: varchar("target_workspace_id", { length: 240 }),
+    /** Attach commands only: the session on that computer to reach. */
+    target_session_id: varchar("target_session_id", { length: 240 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimed_by_runner_id: varchar("claimed_by_runner_id", { length: 160 }),
     claimed_at: timestamp("claimed_at", { fsp: 3 }),
@@ -39,6 +43,10 @@ export const RemoteSessionCommandTable = mysqlTable(
     session_error_code: varchar("session_error_code", { length: 60 }),
     session_error_message: varchar("session_error_message", { length: 2000 }),
     session_message_count: int("session_message_count"),
+    /** The step the session ran last, as a short sentence; reported by newer runners only. */
+    session_latest_step: varchar("session_latest_step", { length: 240 }),
+    // The question or permission the session waits on, as the runner read it (remote_session_answer_v1 runners).
+    session_pending: json("session_pending").$type<Record<string, unknown>>(),
     session_observed_at: timestamp("session_observed_at", { fsp: 3 }),
     ...timestamps,
   },
@@ -70,7 +78,7 @@ export const RemoteSessionRequestTable = mysqlTable(
     session_id: varchar("session_id", { length: 240 }).notNull(),
     // The engine the session runs on, as last reported for the command.
     session_engine: mysqlEnum("session_engine", ["v1", "v2"]),
-    action: mysqlEnum("action", ["read", "send", "stop"]).notNull(),
+    action: mysqlEnum("action", ["read", "send", "stop", "answer"]).notNull(),
     input: json("input").$type<Record<string, unknown>>().notNull(),
     status: mysqlEnum("status", ["pending", "claimed", "done", "failed", "expired"]).notNull(),
     // Bounded to 256 KB by the runner completion schema.

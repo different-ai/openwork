@@ -139,7 +139,7 @@ and `AGENTS.md`).
 | `evals/` | executable test specs built on `@openwork/testkit` — see [`evals/README.md`](./evals/README.md) |
 | `worlds/` | declarative dev/test environment definitions for `pnpm world` |
 | `docs/` | operator, feature, and release docs |
-| `.opencode/skills/` | repository agent skills (testing, release, Daytona, and more) |
+| `.opencode/skills/` | repository agent skills (verification, testing, feature flags, PRs) |
 
 ### Testing
 

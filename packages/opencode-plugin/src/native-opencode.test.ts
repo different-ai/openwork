@@ -157,7 +157,7 @@ test("pagination is over recent native context; unknown or compacted cursors fai
   assert.equal(compacted.lastError, null)
 })
 
-test("bounds multibyte transcript pages by bytes and omits reasoning", async () => {
+test("bounds multibyte transcript pages by bytes and keeps reasoning out of message text", async () => {
   const { host, adapter } = await fixture()
   const receipt = await adapter.create(command, signal())
   for (let index = 0; index < 100; index++) host.histories.get(receipt.sessionId)?.push({ type: "assistant", id: `msg_large${index}`,
@@ -166,6 +166,31 @@ test("bounds multibyte transcript pages by bytes and omits reasoning", async () 
   const result = await adapter.read(receipt, { from: "end", cursor: null, limit: 100 }, signal())
   assert.ok(Buffer.byteLength(JSON.stringify(result)) < 256 * 1024)
   assert.ok(result.messages.every(message => message.truncated && !message.text.includes("not shared")))
+})
+
+test("a read sends each assistant step in native order, with the failed tool's error", async () => {
+  const { host, adapter } = await fixture()
+  const receipt = await adapter.create(command, signal())
+  host.histories.get(receipt.sessionId)?.push({ type: "assistant", id: "msg_steps", model: { providerID: "provider", id: "model" },
+    time: { created: 2000, completed: 9000 },
+    content: [
+      { type: "reasoning", text: "Plan the listing" },
+      { type: "tool", id: "prt_ls", name: "bash", state: { status: "completed", input: { command: "ls", description: "List files" }, content: [{ type: "text", text: "a" }] } },
+      { type: "text", text: "Reading one" },
+      { type: "tool", id: "prt_read", name: "read", state: { status: "error", input: { filePath: "/missing" }, error: { type: "not_found", message: "ENOENT" } } },
+      { type: "text", text: "Done." },
+    ] })
+  const result = await adapter.read(receipt, { from: "end", cursor: null, limit: 1 }, signal())
+  const message = result.messages[0]
+  assert.deepEqual(message?.parts?.map(part => part.type), ["reasoning", "tool", "text", "tool", "text"])
+  assert.equal(message?.completedAt, 9000)
+  const failed = message?.parts?.[3]
+  assert.ok(failed?.type === "tool")
+  assert.deepEqual([failed.name, failed.status, failed.error], ["read", "error", "ENOENT"])
+  const listed = message?.parts?.[1]
+  assert.ok(listed?.type === "tool")
+  assert.equal(listed.output, "a")
+  assert.equal(message?.text, "Reading one\nDone.")
 })
 
 test("inventory uses native location-scoped model list/default and public model ids, not upstream modelID", async () => {
@@ -177,4 +202,31 @@ test("inventory uses native location-scoped model list/default and public model 
     [undefined, undefined])
   await assert.rejects(async () => { await Reflect.apply(host.ctx.model.list, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
   await assert.rejects(async () => { await Reflect.apply(host.ctx.model.default, undefined, [{ location: host.ctx.location.directory }]) }, /LocationQuery/)
+})
+
+test("a pending permission is reported as plain text and the person's decision goes through the native reply once", async () => {
+  const host = createNativeHost(process.cwd(), { permissionReply: true })
+  const adapter = createNativeOpenCodeAdapter({ ctx: host.ctx, directory: await realpath(host.ctx.location.directory), workspaceId: "opaque_workspace", storagePrefix: "account/native", now: () => 5000 })
+  const receipt = await adapter.create(command, signal())
+  await adapter.send(receipt, { prompt: "Review", messageId: "msg_stable1", model: null }, signal())
+  host.pendingPermissions = true
+  const pending = { kind: "permission", requestId: "perm_example", title: "Run a command", detail: "Run the tests", command: "pnpm test" }
+  assert.deepEqual((await adapter.observe(receipt, signal())).pending, pending)
+  assert.deepEqual((await adapter.read(receipt, { from: "end", cursor: null, limit: 10 }, signal())).pending, pending)
+  assert.ok(adapter.answer)
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "perm_other", decision: "once" }, signal()), { code: "stale_request" })
+  await assert.rejects(adapter.answer(receipt, { kind: "question", requestId: "que_1", answers: [["Yes"]] }, signal()), { code: "answer_unsupported" })
+  await adapter.answer(receipt, { kind: "permission", requestId: "perm_example", decision: "once" }, signal())
+  assert.deepEqual(host.calls.filter(call => call.method === "permission.reply").map(call => call.input),
+    [{ sessionID: receipt.sessionId, requestID: "perm_example", decision: "once" }])
+  await assert.rejects(adapter.answer(receipt, { kind: "permission", requestId: "perm_example", decision: "once" }, signal()), { code: "stale_request" })
+})
+
+test("a host without a native permission reply offers no answers and reports no pending payload", async () => {
+  const { host, adapter } = await fixture()
+  const receipt = await adapter.create(command, signal())
+  await adapter.send(receipt, { prompt: "Review", messageId: "msg_stable1", model: null }, signal())
+  host.pendingPermissions = true
+  assert.equal(adapter.answer, undefined)
+  assert.equal((await adapter.observe(receipt, signal())).pending, undefined)
 })
