@@ -12,7 +12,7 @@ export function panelSessionForWorkbench(input: {
   return split.sessionId;
 }
 
-export function panelSessionForFileLink(input: {
+export function panelSessionForChatItem(input: {
   sourceSessionId: string | null;
   panelSessionId: string | null;
   primarySessionId: string | null;
