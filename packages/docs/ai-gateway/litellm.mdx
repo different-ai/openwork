@@ -191,7 +191,7 @@ Use this when your proxy runs LiteLLM's JWT auth (`enable_jwt_auth`) with Micros
 
 - Each person signs in with their Microsoft work account once, in the browser. OpenWork keeps the sign-in on the server, renews it, and sends the person's own Entra **access token** to LiteLLM as `Authorization: Bearer …`.
 - LiteLLM validates each token (signing keys, issuer, audience), maps it to a user or team, and applies that person's model access and budgets.
-- OpenWork can't read your proxy's models, teams or keys without a key, so you enter the model names people may use. There is no **Sync models**.
+- OpenWork can't read your proxy's models, teams or keys without a key, so you enter the model names people may use. There is no **Sync models**. A name that matches a well-known model, such as `gpt-4o-mini` or `azure/gpt-4o`, takes that model's context and output limits and capabilities from the [models.dev](https://models.dev) catalog. Other names, such as your own aliases, get no limits, so OpenWork may ask for more output than the model allows. Name the underlying model when you can.
 - OpenWork records token usage counts, not cost, and never logs access or refresh tokens, and its spend limits don't apply. LiteLLM budgets each person.
 
 ```mermaid
