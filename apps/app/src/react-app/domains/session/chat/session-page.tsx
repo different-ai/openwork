@@ -52,7 +52,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { panelSessionForWorkbench } from "./workbench-panel-session";
+import { panelSessionForFileLink, panelSessionForWorkbench } from "./workbench-panel-session";
 import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
@@ -839,15 +839,23 @@ export function SessionPage(props: SessionPageProps) {
         return;
       }
 
-      if (!sessionId) return;
-      openTab(sessionId, {
+      const tabSessionId = panelSessionForFileLink({
+        sourceSessionId: sessionId ?? null,
+        panelSessionId: panelSessionId ?? null,
+        primarySessionId: props.selectedSessionId ?? null,
+        primaryWorkspaceId: props.selectedWorkspaceId,
+        split: splitSession,
+        splitTakesPanel: sideChatPanelEnabled,
+      });
+      if (!tabSessionId) return;
+      openTab(tabSessionId, {
         id: fileTarget.id,
         type: "artifact",
         label: fileTarget.name,
         preview: fileTarget.preview,
         target: fileTarget,
       });
-      setCurrentSidePanel("panel");
+      openOwnerSidePanel(tabSessionId);
     };
 
     // One decision for every chat file reference: see planFileOpen.
@@ -875,7 +883,7 @@ export function SessionPage(props: SessionPageProps) {
       }
       await openNative(plan.path, plan.action);
     })().catch(reportOpenError);
-  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, panelSessionId, setCurrentSidePanel]);
+  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, panelSessionId, props.selectedSessionId, props.selectedWorkspaceId, sideChatPanelEnabled, splitSession]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
