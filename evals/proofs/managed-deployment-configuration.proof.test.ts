@@ -296,4 +296,25 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
     await person.screenshot();
   });
   }
+
+  await step("the guided AWS deployment page also keeps configuration editing available", async () => {
+    await world.setGuidedApproval(true);
+    await person.reload();
+    await person.see({ testId: "managed-deployment-row" }, { timeoutMs: WITHIN });
+    await person.click({ testId: "managed-deployment-row" });
+    await person.see({ role: "button", label: "Edit configuration" }, { timeoutMs: WITHIN });
+    await person.click({ role: "button", label: "Edit configuration" });
+    await person.type({ label: "Name" }, "Production workspace");
+    await person.click({ role: "button", label: "Review changes" });
+    await person.see({ role: "button", label: "Save name" }, { timeoutMs: WITHIN });
+    await person.click({ role: "button", label: "Save name" });
+    await person.see({ text: "Production workspace" }, { timeoutMs: WITHIN });
+    const saved = await world.deployment();
+    expect(saved.name).toBe("Production workspace");
+    expect(saved.ownerEmail).toBe("third@example.com");
+    expect(saved.installedVersion).toBe(world.installedVersion);
+    expect(saved.configuration?.change).toBeNull();
+    evidence.recordAssertionEvidence("Guided AWS sign-in and configuration editing work together", `The deployment detail route saved name ${saved.name}; email and installer version remain ${saved.ownerEmail} and ${saved.installedVersion}; no approval was needed for a name`, saved.name === "Production workspace" && saved.configuration?.change === null);
+    await person.screenshot();
+  });
 });

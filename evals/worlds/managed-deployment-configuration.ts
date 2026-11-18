@@ -272,6 +272,10 @@ export async function managedDeploymentConfigurationWorld(seed: Seed, { place }:
     async setConfigurationChanges(enabled: boolean) {
       await setFeatures({ managedDeploymentConfigUpdates: enabled });
     },
+    /** Exercise the deployment detail route when guided AWS sign-in is also enabled. */
+    async setGuidedApproval(enabled: boolean) {
+      await setFeatures({ managedDeploymentAwsSignIn: enabled });
+    },
     /**
      * The owner or the workspace admin asks Den's API directly for a change, with a request that is otherwise
      * valid: the deployment as their own view shows it, with the given edits. Returns how Den answered.

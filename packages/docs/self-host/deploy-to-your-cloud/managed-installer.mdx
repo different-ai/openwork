@@ -192,9 +192,18 @@ approval expires after 3 hours. While it waits you can:
   stops working.
 - **Discard change** to drop it. The earlier command stops working.
 
+The command first checks that the approval is still current and reserves it,
+then updates the installer in your AWS account. Once reserved, the change
+can't be edited or discarded: the shell may already be changing AWS. If it
+stays at **AWS approval reserved**, ask your OpenWork operator to inspect the
+installer before attempting recovery. Turning the feature off does not
+cancel an approval already reserved.
+
 The command runs the installer version you already have with the new values;
 it does not update OpenWork. It refuses to run in any other AWS account, and
 the installer refuses to delete or replace your database, secrets or network.
+Older installations without an immutable installer reference need an approved
+Update before configuration editing is available.
 
 ### A change restarts services
 
@@ -215,8 +224,9 @@ OpenWork never asks for a secret value. For cloud computers, create your
 Daytona or Freestyle API key as a plain-string secret in AWS Secrets Manager,
 in the deployment's AWS account and region, and enter only its ARN, for
 example `arn:aws:secretsmanager:us-east-1:123456789012:secret:daytona-key-Ab12Cd`.
-OpenWork stores the ARN and passes it to the installer; the key itself never
-leaves your account.
+OpenWork Cloud stores the ARN and passes it to the installer; it never receives
+the key value. Your installed runner uses the key to authenticate to your
+chosen computer provider.
 
 ### If Edit configuration is locked
 
