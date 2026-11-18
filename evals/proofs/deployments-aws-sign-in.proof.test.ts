@@ -73,7 +73,7 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     await user.type({ testId: "aws-sign-in-role" }, ROLE_NAME);
     await user.screenshot();
     await user.click({ testId: "aws-sign-in-save" });
-    await user.see({ text: `Signs in through ${PORTAL_HOST}` }, { timeoutMs: 60_000 });
+    await user.see({ text: `Account ${account} · ${ROLE_NAME}` }, { timeoutMs: 60_000 });
     const saved = await world.savedSignIn();
     const ok = saved?.portalUrl === PORTAL_URL && saved.roleName === ROLE_NAME;
     evidence.recordAssertionEvidence("Den saved the sign-in for the organization", `portal: ${saved?.portalUrl}; role: ${saved?.roleName}`, ok);
