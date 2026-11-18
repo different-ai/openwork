@@ -23,8 +23,8 @@ import { AccessList, addAudience, removeAudience, type AccessValue, type Audienc
 import { liteLlmSyncedLabel } from "./litellm-provider-data";
 import { GatewayModelScopePicker } from "./gateway-model-scope-picker";
 import {
-  CREATE_MISSING_USERS_DESCRIPTION, CREATE_MISSING_USERS_LABEL, TRUEFOUNDRY_DOC_URL, createTrueFoundryProvider, syncTrueFoundryProvider, trueFoundryAccessGroupId,
-  trueFoundryAttentionLabel, trueFoundryCreateError, trueFoundryModelAccount, trueFoundryModelPickChanged, trueFoundryPickedModels, trueFoundryStatusSummary, trueFoundrySyncSummary, updateTrueFoundryProvider,
+  CREATE_MISSING_USERS_DESCRIPTION, CREATE_MISSING_USERS_LABEL, TRACK_USAGE_COSTS_DESCRIPTION, TRACK_USAGE_COSTS_LABEL, TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_TOO_MANY_TOKENS_DOCS_URL, createTrueFoundryProvider, syncTrueFoundryProvider, trueFoundryAccessGroupId,
+  resetTrueFoundryMemberTokens, trueFoundryAttentionLabel, trueFoundryCreateError, trueFoundryModelAccount, trueFoundryModelPickChanged, trueFoundryPickedModels, trueFoundrySpendLabel, trueFoundryStatusSummary, trueFoundrySyncSummary, updateTrueFoundryProvider,
 } from "./truefoundry-provider-data";
 
 const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
@@ -32,7 +32,6 @@ const CARD_TITLE = "text-[13px] font-medium text-gray-900";
 const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const ROW = "flex min-h-10 items-center gap-3 py-2 text-[13px]";
 const ACCESS_TITLE = "Who gets a key";
-const SPEND_LABEL = "Not tracked, TrueFoundry budgets each person";
 
 function Mark() {
   return <DenBrandMark name="TrueFoundry" serviceUrl={TRUEFOUNDRY_DOC_URL} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />;
@@ -83,6 +82,51 @@ function MissingUsersSetting({ checked, disabled, onChange }: { checked: boolean
   );
 }
 
+/** The "Track usage costs in OpenWork" setting, shared by setup and the saved provider. */
+function UsageCostsSetting({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <div className="mt-3 flex items-start gap-3 border-t border-gray-100 pt-3">
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-medium text-gray-900" id="truefoundry-track-usage-costs-label">{TRACK_USAGE_COSTS_LABEL}</span>
+        <span className="mt-0.5 block text-[12px] leading-5 text-gray-500">{TRACK_USAGE_COSTS_DESCRIPTION}</span>
+      </span>
+      <DenSwitch checked={checked} disabled={disabled} aria-label={TRACK_USAGE_COSTS_LABEL} testId="truefoundry-track-usage-costs" onChange={onChange} />
+    </div>
+  );
+}
+
+type AttentionEntry = GatewayTrueFoundryStatus["attention"][number];
+
+/**
+ * Confirms "Reset tokens" for a person at TrueFoundry's token limit. TrueFoundry can't list or
+ * delete only the tokens OpenWork made, so the reset revokes every token the person holds.
+ */
+function ResetTokensDialog({ entry, busy, onCancel, onConfirm }: { entry: AttentionEntry | null; busy: boolean; onCancel: () => void; onConfirm: (entry: AttentionEntry) => void }) {
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const who = entry?.name ?? entry?.email ?? "this person";
+  return (
+    <AlertDialog.Root open={entry !== null} onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
+      <AlertDialog.Portal>
+        <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
+        <AlertDialog.Popup initialFocus={cancelRef} className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none" data-testid="truefoundry-reset-tokens-dialog">
+          <AlertDialog.Title className="text-[15px] font-medium text-gray-950">Reset {who}&apos;s TrueFoundry tokens?</AlertDialog.Title>
+          <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">
+            TrueFoundry doesn&apos;t let OpenWork find only the tokens it created, so this revokes every personal access token {entry?.email ?? who} has in TrueFoundry, including ones they made for their laptop, scripts or other tools. Those stop working straight away. OpenWork then creates a new key for them.
+          </AlertDialog.Description>
+          <p className="mt-2 text-[13px] leading-5 text-gray-600">
+            To keep their tokens, raise <span className="font-medium text-gray-900">Maximum Personal Access Token (PAT) Per User</span> in TrueFoundry › Settings › Organisation › Security instead, then sync.{" "}
+            <a href={TRUEFOUNDRY_TOO_MANY_TOKENS_DOCS_URL} target="_blank" rel="noreferrer" className="text-gray-900 underline underline-offset-2">How to fix Too many tokens</a>
+          </p>
+          <div className="mt-5 flex justify-end gap-2">
+            <AlertDialog.Close ref={cancelRef} disabled={busy} className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>
+            <DenButton variant="destructive" loading={busy} onClick={() => { if (entry) onConfirm(entry); }} data-testid="truefoundry-reset-tokens-confirm">Revoke all and create a new key</DenButton>
+          </div>
+        </AlertDialog.Popup>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
+  );
+}
+
 /** Setup for a new TrueFoundry provider: address, admin key, missing users, and who gets a key. */
 export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
@@ -91,12 +135,13 @@ export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolea
   const [controlPlaneUrl, setControlPlaneUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [createMissingUsers, setCreateMissingUsers] = useState(false);
+  const [trackUsageCosts, setTrackUsageCosts] = useState(false);
   const [access, setAccess] = useState<AccessValue>({ allMembers: true, memberIds: [], teamIds: [] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function connect() {
-    const input = { name: "TrueFoundry", controlPlaneUrl, apiKey, createMissingUsers, access };
+    const input = { name: "TrueFoundry", controlPlaneUrl, apiKey, createMissingUsers, trackUsageCosts, access };
     const invalid = trueFoundryCreateError(input);
     if (invalid) return setError(invalid);
     setError(null);
@@ -135,8 +180,9 @@ export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolea
           <DenSecretInput className="mt-1.5 font-mono text-[12px]" value={apiKey} onChange={setApiKey} placeholder="tfy_va_…" data-testid="truefoundry-api-key" autoComplete="new-password" />
         </label>
         <p className="mt-1.5 text-[12px] leading-5 text-gray-500">A virtual account token with the tenant admin role, from TrueFoundry › Access › Virtual Accounts. OpenWork checks it before saving and never shows it again.</p>
-        <p className="mt-2 text-[12px] text-gray-500" data-testid="truefoundry-spend-tracking">Spend tracking: {SPEND_LABEL}</p>
+        <p className="mt-2 text-[12px] text-gray-500" data-testid="truefoundry-spend-tracking">Spend tracking: {trueFoundrySpendLabel(trackUsageCosts)}</p>
         <MissingUsersSetting checked={createMissingUsers} disabled={saving} onChange={setCreateMissingUsers} />
+        <UsageCostsSetting checked={trackUsageCosts} disabled={saving} onChange={setTrackUsageCosts} />
       </section>
 
       <AccessList idPrefix="truefoundry" title={ACCESS_TITLE} value={access} busy={saving}
@@ -158,7 +204,8 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   const router = useRouter();
   const { orgId, orgSlug, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.truefoundry;
-  const [busy, setBusy] = useState<"sync" | "key" | "access" | "missing" | "models" | "remove" | null>(null);
+  const [busy, setBusy] = useState<"sync" | "key" | "access" | "missing" | "costs" | "models" | "reset" | "remove" | null>(null);
+  const [resetting, setResetting] = useState<AttentionEntry | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
@@ -177,7 +224,7 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   };
   const modelGroups = provider.modelGroups.filter((group) => group.id !== accessGroupId);
 
-  async function run(kind: "sync" | "key" | "access" | "missing" | "models", label: string, action: () => Promise<string | null>) {
+  async function run(kind: "sync" | "key" | "access" | "missing" | "costs" | "models" | "reset", label: string, action: () => Promise<string | null>) {
     setBusy(kind);
     setError(null);
     setNotice(null);
@@ -206,6 +253,15 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
   };
   const setMissingUsers = (createMissingUsers: boolean) => run("missing", "update-truefoundry-missing-users", async () =>
     `${createMissingUsers ? "OpenWork now adds missing people to TrueFoundry." : "OpenWork no longer adds missing people to TrueFoundry."} ${trueFoundrySyncSummary((await updateTrueFoundryProvider(provider.id, { createMissingUsers }, createAuditOperationContext())).sync)}`);
+  const setUsageCosts = (trackUsageCosts: boolean) => run("costs", "update-truefoundry-usage-costs", async () =>
+    `${trackUsageCosts ? "OpenWork now tracks usage costs for TrueFoundry models with public pricing." : "OpenWork no longer tracks TrueFoundry usage costs."} ${trueFoundrySyncSummary((await updateTrueFoundryProvider(provider.id, { trackUsageCosts }, createAuditOperationContext())).sync)}`);
+  const resetTokens = (entry: AttentionEntry) => run("reset", "reset-truefoundry-tokens", async () => {
+    const result = await resetTrueFoundryMemberTokens(provider.id, entry.memberId, createAuditOperationContext());
+    setResetting(null);
+    const who = entry.name ?? entry.email ?? "This person";
+    if (result.ready) return `Revoked ${who}'s TrueFoundry tokens and created a new key.`;
+    return `Revoked ${who}'s TrueFoundry tokens, but OpenWork couldn't create a new key yet${result.message ? `: ${result.message}` : "."}`;
+  }).finally(() => setResetting(null));
   const saveModels = (modelIds: string[] | null) => run("models", "update-truefoundry-models", async () => {
     const result = await updateTrueFoundryProvider(provider.id, { modelIds }, createAuditOperationContext());
     return `${modelIds === null ? "People now get every TrueFoundry model." : `People now get only the ${modelIds.length} ${modelIds.length === 1 ? "model" : "models"} you picked.`} ${trueFoundrySyncSummary(result.sync)}`;
@@ -264,7 +320,7 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">TrueFoundry</dt><dd className="min-w-0 flex-1 truncate font-mono text-[12px] text-gray-900">{status.controlPlaneUrl ?? "Not set"}</dd></div>
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Gateway</dt><dd className="min-w-0 flex-1 truncate font-mono text-[12px] text-gray-900">{status.gatewayBaseUrl ?? "Not set"}</dd></div>
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Keys</dt><dd className="flex-1 text-gray-900">OpenWork creates an API key for each person</dd></div>
-            <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Spend tracking</dt><dd className="flex-1 text-gray-900" data-testid="truefoundry-spend-tracking">{SPEND_LABEL}</dd></div>
+            <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Spend tracking</dt><dd className="flex-1 text-gray-900" data-testid="truefoundry-spend-tracking">{trueFoundrySpendLabel(status.trackUsageCosts)}</dd></div>
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Models</dt><dd className="flex-1 text-gray-900">{status.modelCount}</dd></div>
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">People with keys</dt><dd className="flex-1 text-gray-900" data-testid="truefoundry-active-count">{status.activeMemberCount}</dd></div>
             {status.createdUserCount ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Added to TrueFoundry</dt><dd className="flex-1 text-gray-900">{status.createdUserCount}</dd></div> : null}
@@ -288,6 +344,7 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
             </div>
           </dl>
           <MissingUsersSetting checked={status.createMissingUsers} disabled={busy !== null} onChange={(checked) => void setMissingUsers(checked)} />
+          <UsageCostsSetting checked={status.trackUsageCosts} disabled={busy !== null} onChange={(checked) => void setUsageCosts(checked)} />
         </section>
       ) : <DenNotice tone="error" className="mt-5" message="This TrueFoundry provider has no sync state. Sync to repair it." />}
 
@@ -303,6 +360,9 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
                   <span className="block truncate text-[12px] text-gray-500" title={entry.message ?? undefined}>{entry.email ?? ""}</span>
                 </span>
                 <span className="text-[12px] text-amber-700" title={entry.message ?? undefined}>{trueFoundryAttentionLabel(entry.reason)}</span>
+                {entry.reason === "token_limit"
+                  ? <DenButton size="sm" variant="secondary" disabled={busy !== null} onClick={() => setResetting(entry)} data-testid={`truefoundry-reset-tokens-${entry.memberId}`}>Reset tokens</DenButton>
+                  : null}
               </li>
             ))}
             {status.attention.length === 0
@@ -311,6 +371,8 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
           </ul>
         </section>
       ) : null}
+
+      <ResetTokensDialog entry={reauthDialogOpen ? null : resetting} busy={busy === "reset"} onCancel={() => setResetting(null)} onConfirm={(entry) => void resetTokens(entry)} />
 
       <AccessList idPrefix="truefoundry" title={ACCESS_TITLE} value={access} busy={busy !== null}
         onEveryone={(checked) => void (checked ? addGrant({ type: "organization" }) : removeGrant({ type: "organization" }))}

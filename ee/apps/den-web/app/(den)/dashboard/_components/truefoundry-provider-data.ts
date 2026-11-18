@@ -12,16 +12,26 @@ import { readInferenceProviderFromPayload, type DenInferenceProvider } from "./i
 export const TRUEFOUNDRY_PROVIDER_ID = "truefoundry";
 export const TRUEFOUNDRY_DOC_URL = "https://www.truefoundry.com";
 export const TRUEFOUNDRY_ACCESS_GROUP_NAME = "Gets a TrueFoundry key";
+export const TRUEFOUNDRY_TOO_MANY_TOKENS_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/truefoundry-too-many-tokens";
 
 export const CREATE_MISSING_USERS_LABEL = "Create missing users in TrueFoundry";
 // Spec wording, with "Virtual Account" replaced: the key OpenWork creates is a personal access token owned by the new user.
 export const CREATE_MISSING_USERS_DESCRIPTION = "If a user exists in OpenWork but not in TrueFoundry, create a new user in TrueFoundry and generate a new API key for them. Only default models will be available to the user until you configure their teams and access in TrueFoundry.";
+
+export const TRACK_USAGE_COSTS_LABEL = "Track usage costs in OpenWork";
+export const TRACK_USAGE_COSTS_DESCRIPTION = "Where possible, track the cost of user's usages inside OpenWork contributing to users configured limits and usage tracking. This will use the models default public pricing";
+
+/** The status row: what OpenWork does with spend for this provider. */
+export function trueFoundrySpendLabel(trackUsageCosts: boolean) {
+  return trackUsageCosts ? "Tracked in OpenWork at public pricing, where a model has it" : "Not tracked, TrueFoundry budgets each person";
+}
 
 export type TrueFoundryCreateInput = {
   name: string;
   controlPlaneUrl: string;
   apiKey: string;
   createMissingUsers: boolean;
+  trackUsageCosts: boolean;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 };
 
@@ -31,6 +41,7 @@ export function buildTrueFoundryCreateBody(input: TrueFoundryCreateInput) {
     controlPlaneUrl: input.controlPlaneUrl.trim(),
     apiKey: input.apiKey.trim(),
     createMissingUsers: input.createMissingUsers,
+    trackUsageCosts: input.trackUsageCosts,
     ...(input.access.allMembers ? { allMembers: true } : {}),
     ...(input.access.memberIds.length ? { memberIds: [...new Set(input.access.memberIds)] } : {}),
     ...(input.access.teamIds.length ? { teamIds: [...new Set(input.access.teamIds)] } : {}),
@@ -91,12 +102,26 @@ export async function syncTrueFoundryProvider(providerId: string, auditContext?:
   return readResult(payload);
 }
 
-export async function updateTrueFoundryProvider(providerId: string, body: { apiKey?: string; createMissingUsers?: boolean; modelIds?: string[] | null }, auditContext?: AuditOperationContext) {
+export async function updateTrueFoundryProvider(providerId: string, body: { apiKey?: string; createMissingUsers?: boolean; trackUsageCosts?: boolean; modelIds?: string[] | null }, auditContext?: AuditOperationContext) {
   const { response, payload } = await requestJson(`/v1/inference-providers/${encodeURIComponent(providerId)}/truefoundry`, {
     method: "PATCH", body: JSON.stringify(body.apiKey === undefined ? body : { ...body, apiKey: body.apiKey.trim() }), headers: auditOperationHeaders(auditContext),
   }, 120000);
   if (!response.ok) throw getRequestError(payload, response, `Could not update TrueFoundry (${response.status}).`);
   return readResult(payload);
+}
+
+/**
+ * Revokes every TrueFoundry token a person at the token limit holds, then creates a new OpenWork key.
+ * Returns their new state, e.g. "active", or "token_limit" if TrueFoundry still refuses.
+ */
+export async function resetTrueFoundryMemberTokens(providerId: string, memberId: string, auditContext?: AuditOperationContext) {
+  const { response, payload } = await requestJson(`/v1/inference-providers/${encodeURIComponent(providerId)}/truefoundry/members/${encodeURIComponent(memberId)}/reset-tokens`, {
+    method: "POST", headers: auditOperationHeaders(auditContext),
+  }, 120000);
+  if (!response.ok) throw getRequestError(payload, response, `Could not reset their TrueFoundry tokens (${response.status}).`);
+  const parsed = z.object({ status: z.string(), message: z.string().nullable(), ready: z.boolean() }).safeParse(payload);
+  if (!parsed.success) throw new Error("The server returned an unexpected TrueFoundry response.");
+  return parsed.data;
 }
 
 export function trueFoundrySyncSummary(sync: GatewayTrueFoundrySyncResult) {

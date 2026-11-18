@@ -19,7 +19,12 @@ const settingsSchema = z.object({
   credentialSetId: z.string().min(1),
   /** Add allowed people missing from TrueFoundry as TrueFoundry users before creating their token. */
   createMissingUsers: z.boolean().default(false),
-  /** Models served to people: the upstream chat models, narrowed to selectedModelIds when an admin picked some. */
+  /**
+   * "Track usage costs in OpenWork": serve each model's public price, so the AI Gateway prices
+   * requests and applies people's usage limits. Off: TrueFoundry alone budgets them.
+   */
+  trackUsageCosts: z.boolean().default(false),
+  /** Models served to people: the upstream chat models, narrowed to selectedModelIds when an admin picked some, priced only when usage costs are tracked. */
   catalog: z.array(storedModelSchema).max(500),
   /** Every chat model the admin key saw at the last sync. Missing on providers synced before models could be picked: catalog was all of them. */
   upstream: z.array(storedModelSchema).max(500).optional(),
@@ -80,6 +85,7 @@ export async function trueFoundryStatus(provider: { id: typeof GatewayTrueFoundr
     controlPlaneUrl: settings.controlPlaneUrl,
     gatewayBaseUrl: typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : null,
     createMissingUsers: settings.createMissingUsers,
+    trackUsageCosts: settings.trackUsageCosts,
     hasAdminKey: admin?.status === "active",
     lastSyncedAt: settings.lastSyncedAt,
     lastSyncError: settings.lastSyncError,

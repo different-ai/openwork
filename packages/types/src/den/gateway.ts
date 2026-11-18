@@ -285,7 +285,8 @@ export type GatewayTrueFoundryAttentionReason = "not_in_truefoundry" | "user_ina
 /**
  * TrueFoundry provider state for management views. Every person uses a
  * personal access token OpenWork created for their TrueFoundry user, so
- * TrueFoundry owns budgets and OpenWork does not price or limit usage.
+ * TrueFoundry owns budgets. OpenWork prices and limits usage only when
+ * trackUsageCosts is on, for models with public pricing.
  */
 export interface GatewayTrueFoundryStatus {
   /** Control plane root, never a key. */
@@ -294,6 +295,8 @@ export interface GatewayTrueFoundryStatus {
   gatewayBaseUrl: string | null;
   /** Add allowed people missing from TrueFoundry as TrueFoundry users. */
   createMissingUsers: boolean;
+  /** Track usage costs in OpenWork: models with public pricing are priced and count towards usage limits. */
+  trackUsageCosts: boolean;
   /** The TrueFoundry admin key is stored. */
   hasAdminKey: boolean;
   lastSyncedAt: string | null;

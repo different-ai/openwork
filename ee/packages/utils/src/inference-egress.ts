@@ -129,8 +129,12 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
     headers.set("accept-encoding", "identity")
     // Vertex rawPredict rejects a chunked request body with HTTP 400, so a body the
     // caller already holds in full is sent to Vertex with its exact Content-Length.
-    // Every other upstream, and any caller-supplied stream, stays chunked.
-    const fixedBody = isVertexHost(url.hostname) && request.body && init?.body != null && !(init.body instanceof ReadableStream)
+    // Node chunks only POST, PUT and PATCH bodies; any other method (TrueFoundry's
+    // DELETE …/revoke/all) would send its body with no length, read upstream as a
+    // malformed next request, so it gets a Content-Length too. Every other upstream,
+    // and any caller-supplied stream, stays chunked.
+    const needsLength = isVertexHost(url.hostname) || !["POST", "PUT", "PATCH"].includes(request.method)
+    const fixedBody = needsLength && request.body && init?.body != null && !(init.body instanceof ReadableStream)
       ? new Uint8Array(await request.arrayBuffer()) : null
     if (fixedBody) headers.set("content-length", String(fixedBody.byteLength))
     return new Promise<Response>((resolve, reject) => {
