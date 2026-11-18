@@ -8,13 +8,14 @@ import { isAwsRegion, vertexPublisherBase } from "@openwork-ee/utils/inference-e
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, isMicrosoftFoundryResourceName } from "@openwork-ee/utils/microsoft-foundry-catalog"
-import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
+import { parseGatewayProviderSecret, type GatewayAccessGrant, type GatewayAccessGrantWrite, type GatewayCredentialSet, type GatewayCredentialSetPatch, type GatewayLiteLlmStatus, type GatewayModelGroup, type GatewayModelGroupPatch, type GatewayProviderDetails, type GatewayProviderSummary, type GatewayUsableModel } from "@openwork/types/den/gateway"
 import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, recordProviderAttempt, type ProviderAuditCapture } from "../audit/provider.js"
 import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { bedrockSettingsError, microsoftFoundrySettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
-import { gatewayMemberSignInMethod, memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
+import { memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, providerMemberSignInMethod, providerMemberSignInScope, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { liteLlmCatalogProvider, liteLlmStatus, readLiteLlmSettings } from "./litellm-settings.js"
 import { trueFoundryCatalogProvider, trueFoundryStatus } from "./truefoundry-settings.js"
@@ -395,8 +396,12 @@ export async function writeGatewaySet(
   provider: GatewayProvider,
   input: GatewayCredentialSetPatch,
   target: GatewaySet["id"] | { createdByOrgMembershipId: GatewayMemberId },
-  /** Secure keys in chat: create a new organization set whose key a person adds afterwards. */
-  options: { awaitOrganizationKey?: boolean; createId?: GatewaySet["id"] } = {},
+  /**
+   * awaitOrganizationKey: secure keys in chat, create a new organization set whose key a person adds afterwards.
+   * liteLlmEntraSignIn: the caller is the LiteLLM route that owns the Microsoft sign-in settings of a provider in
+   * member Entra sign-in mode; `scopeChanged` says the provider's API scope changes in the same transaction.
+   */
+  options: { awaitOrganizationKey?: boolean; createId?: GatewaySet["id"]; liteLlmEntraSignIn?: { scopeChanged: boolean } } = {},
 ) {
   const setId = typeof target === "string" ? target : undefined
   let creatorId: GatewayMemberId | null = null
@@ -435,22 +440,29 @@ export async function writeGatewaySet(
       if (active.some((set) => set.id !== existing?.id)) throw new GatewayWriteError(409, "custom_single_key", "Custom providers have one API key. Replace it with PATCH /v1/inference-providers/{inferenceProviderId}/custom instead of adding another credential set.")
     }
   }
-  // LiteLLM member sets hold each member's own LiteLLM key, connected by that member.
+  // LiteLLM member sets hold each member's own LiteLLM key, connected by that member, or (member Microsoft Entra
+  // sign-in mode) each member's own Entra ID token, like a Microsoft Foundry member set.
   const litellm = isLiteLlmProviderId(provider.provider_id)
-  const method = gatewayMemberSignInMethod(provider.provider_id)
+  const method = providerMemberSignInMethod(provider)
+  const signInScope = providerMemberSignInScope(provider)
+  // That mode's tenant, app registration and API scope are one configuration, changed together by the LiteLLM route.
+  if (signInScope !== null && !options.liteLlmEntraSignIn && (!existing || (input.credentialMode !== undefined && input.credentialMode !== existing.credential_mode)
+    || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined || input.oauthTenantId !== undefined)) {
+    throw new GatewayWriteError(400, "litellm_entra_managed", "Change this provider's Microsoft sign-in settings with PATCH /v1/inference-providers/{inferenceProviderId}/litellm.")
+  }
   if (mode === "member" && ((!method && !litellm) || input.credential !== undefined || input.apiKeys !== undefined)) {
     throw new GatewayWriteError(400, "unsupported_credential_mode", "Member sets use each member's own sign-in or key, never an uploaded shared credential.")
   }
-  if (litellm && (clientId || clientSecret)) throw new GatewayWriteError(400, "unsupported_oauth_client", "LiteLLM sets do not use an OAuth client.")
+  if (litellm && !method && (clientId || clientSecret)) throw new GatewayWriteError(400, "unsupported_oauth_client", "LiteLLM sets do not use an OAuth client.")
   const extraneous = memberSignInExtraneousFields(mode === "member" ? method : null, mode === "member" ? signIn : { ...signIn, oauth_client_id: null, oauth_client_secret: null })
   if (extraneous) throw new GatewayWriteError(400, "unsupported_sign_in_settings", extraneous)
   const id = existing?.id ?? options.createId ?? createDenTypeId("gatewayCredentialSet")
   const modeChanged = existing && mode !== existing.credential_mode
-  const clientChanged = existing && !sameMemberSignInConfiguration(signIn, existing)
+  const clientChanged = existing && (options.liteLlmEntraSignIn?.scopeChanged === true || !sameMemberSignInConfiguration(signIn, existing))
   const disabled = existing?.status === "active" && input.status === "disabled"
   const enabled = existing && existing.status !== "active" && input.status === "active"
   if (mode === "member" && method && (!existing || modeChanged || clientChanged || enabled)) {
-    const error = memberSignInConfigurationError(method, signIn)
+    const error = memberSignInConfigurationError(method, signIn, signInScope)
     if (error) throw new GatewayWriteError(400, "oauth_client_required", error)
   }
   // Lock exchanges before tokens, but defer cancellation until validation succeeds. Renames do neither.
@@ -523,13 +535,19 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
  * client, Entra tenant and IAM Identity Center settings). `managerDetails` (default false) returns
  * them; pass it only for callers holding Manage Gateway providers. View-only callers get no
  * per-person rows at all: credentials is replaced by credentialCounts and LiteLLM attention entries
- * are dropped (attentionCount stays); createdBy, oauthTenantId, awsSso and settings.upstreamBaseUrl
- * are omitted, and oauthClientId and litellm.baseUrl are null.
+ * are dropped (attentionCount stays); createdBy, oauthTenantId, awsSso, litellm.entraScope and
+ * settings.upstreamBaseUrl are omitted, and oauthClientId and litellm.baseUrl are null.
  */
 export type GatewaySummaryOptions = {
   managerDetails?: boolean
   /** Read from the primary: the caller just wrote this provider's rows and returns them. */
   primary?: boolean
+}
+
+/** What callers who may only view providers get: no proxy address, no people and no Microsoft API scope. */
+function withoutLiteLlmUpstreamConfiguration(status: GatewayLiteLlmStatus): GatewayLiteLlmStatus {
+  const { entraScope: _entraScope, ...shared } = status
+  return { ...shared, baseUrl: null, attention: [] }
 }
 
 type GatewaySummaryRows = {
@@ -543,6 +561,7 @@ type GatewaySummaryRows = {
 
 /** The rows gatewaySummary reads, for one or many providers of an organization at once. */
 export type GatewaySummaryReads = {
+  liteLlmEntraEnabled: boolean
   creators: Array<{ id: GatewayMemberId; name: string | null; email: string | null }>
   identities: boolean
   manage: boolean
@@ -600,6 +619,8 @@ export async function readGatewaySummaries(input: { identities: boolean; manage:
     memberGatewayTeams(reader, organizationId, memberId),
   ])
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
+  const liteLlmEntraEnabled = !input.providers.some((provider) => providerMemberSignInScope(provider) !== null)
+    || await organizationFeatureEnabled(organizationId, "litellmEntraMemberSignIn", { userId: member.userId, database: db.$primary })
   const creatorIds = [...new Set(sets.flatMap((set) => set.created_by_org_membership_id ? [set.created_by_org_membership_id] : []))]
   const creators = input.identities && creatorIds.length ? await reader.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
@@ -611,6 +632,7 @@ export async function readGatewaySummaries(input: { identities: boolean; manage:
   const accessByProvider = rowsByProvider(access, (row) => row.gateway_provider_id)
   const credentialsByProvider = rowsByProvider(credentials, (row) => row.credential.gateway_provider_id)
   return {
+    liteLlmEntraEnabled,
     creators,
     identities: input.identities,
     manage,
@@ -669,18 +691,20 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     const subject = set.credential_mode === "org" ? "org" : memberId
     const token = credentials.find(({ credential: row }) => row.credential_set_id === set.id && row.subject === subject
       && row.org_membership_id === (set.credential_mode === "org" ? null : memberId) && row.status === "active")?.credential
-    // LiteLLM and TrueFoundry member sets hold one API key per person.
-    const litellm = isLiteLlmProviderId(provider.provider_id) || isTrueFoundryProviderId(provider.provider_id)
-    const method = gatewayMemberSignInMethod(provider.provider_id)
-    const configured = set.credential_mode === "member" ? litellm || Boolean(method && !memberSignInConfigurationError(method, set)) : Boolean(token)
+    // LiteLLM and TrueFoundry member sets hold one API key per person, except a LiteLLM provider in member
+    // Microsoft Entra sign-in mode: its set holds each person's Entra ID token, like a Microsoft Foundry member set.
+    const method = providerMemberSignInMethod(provider)
+    const signInScope = providerMemberSignInScope(provider)
+    const litellm = (isLiteLlmProviderId(provider.provider_id) && method === null) || isTrueFoundryProviderId(provider.provider_id)
+    const configured = set.credential_mode === "member" ? litellm || Boolean(method && !memberSignInConfigurationError(method, set, signInScope)) : Boolean(token)
     let usable = false
-    if (token) {
+    if (token && (signInScope === null || summaryReads.liteLlmEntraEnabled)) {
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
-        usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id)
+        usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id, provider.settings)
           && (set.credential_mode === "member"
             ? litellm ? parsed.kind === "api_key" && (!token.expires_at || token.expires_at.getTime() > Date.now())
-              : Boolean(method && memberSignInCredentialUsable(method, set, token, parsed))
+              : Boolean(method && memberSignInCredentialUsable(method, set, token, parsed, Date.now(), signInScope))
             : parsed.kind !== "oauth_azure" && parsed.kind !== "aws_sso"
               && (parsed.kind !== "oauth_google" || token.last_error !== "invalid_client")
               && (parsed.kind !== "oauth_google" || Boolean(token.expires_at && Number.isFinite(token.expires_at.getTime())))
@@ -700,7 +724,8 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
   const issuedReady = (isTrueFoundryProviderId(provider.provider_id) || liteLlmSettings?.mode === "member" && liteLlmSettings.keySource === "issued")
     && credentials.some(({ credential }) => credential.org_membership_id === memberId && credential.status === "active")
-  const authorizationRequests = setSummaries.filter((set) => !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
+  const signInEnabled = providerMemberSignInScope(provider) === null || summaryReads.liteLlmEntraEnabled
+  const authorizationRequests = setSummaries.filter((set) => signInEnabled && !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
     .map((set) => {
       const models: GatewayUsableModel[] = []
       return { credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}`, models }
@@ -751,7 +776,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const modelGroups: GatewayModelGroup[] = groups.map((group) => ({ id: group.id, name: group.name, description: group.description, status: group.status,
     modelIds: (modelsByGroupId.get(group.id) ?? []).map((model) => model.model_id) }))
   const status = await liteLlmStatus(provider, options.primary)
-  const litellm = status && !identities ? { ...status, baseUrl: null, attention: [] } : status
+  const litellm = status && !identities ? withoutLiteLlmUpstreamConfiguration(status) : status
   const tfStatus = await trueFoundryStatus(provider, options.primary)
   const truefoundry = tfStatus && !identities ? { ...tfStatus, controlPlaneUrl: null, gatewayBaseUrl: null, attention: [] } : tfStatus
   const settings = publicProviderSettings(provider.settings)

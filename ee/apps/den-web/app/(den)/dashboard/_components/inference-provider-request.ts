@@ -94,7 +94,7 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
 });
 const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   mode: z.enum(["org", "member"]),
-  keySource: z.enum(["personal", "issued"]).nullable().catch(null),
+  keySource: z.enum(["personal", "issued", "entra"]).nullable().catch(null),
   issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
   mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
   issuedMemberCount: z.number().catch(0),
@@ -103,6 +103,7 @@ const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
   modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
+  entraScope: z.string().optional().catch(undefined),
 });
 const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
   controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),

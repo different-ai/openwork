@@ -9,7 +9,7 @@ import { localMemory, MemoryUnavailableError, type MemoryAccess, type MemoryReso
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { createModelAdapter, ModelError, normalizeTranscript, type ModelClient } from "./model.js"
 import type { Session, Store, StoredMessage, Turn } from "./store.js"
-import { DOCUMENT_NAVIGATION_TOOL, openDocument } from "./navigation.js"
+import { DOCUMENT_NAVIGATION_TOOL, TEACHING_NAVIGATION_TOOL, openDocument, openTeaching } from "./navigation.js"
 import { REACTION_TOOL_NAMES, REACTION_TOOLS, reactionEndsTurn, runReactionTool } from "./reactions.js"
 import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
 import type { SelfResume, SweepResult } from "./self-resume.js"
@@ -1034,7 +1034,7 @@ export class Runner {
     ]
       .filter(Boolean)
       .join("\n\n")
-    const toolSpecs = kind === "report" ? FILE_TOOLS.filter((tool) => READ_ONLY_LOCAL_TOOLS.has(tool.name)) : [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(session?.desktop ? desktopToolsFor(computer?.desktopTools ?? [], session.desktopViews) : []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(session?.documentNavigation && kind === "message" ? [DOCUMENT_NAVIGATION_TOOL] : []), ...(tools?.tools ?? [])]
+    const toolSpecs = kind === "report" ? FILE_TOOLS.filter((tool) => READ_ONLY_LOCAL_TOOLS.has(tool.name)) : [...FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)), ...(files ? SAVED_FILE_TOOLS.filter((tool) => !readOnly || READ_ONLY_LOCAL_TOOLS.has(tool.name)) : []), ...(computer?.tools ?? []), ...(session?.desktop ? desktopToolsFor(computer?.desktopTools ?? [], session.desktopViews) : []), ...(reactions ? REACTION_TOOLS : []), ...(taskTools ? TASK_TOOLS : []), ...(session?.documentNavigation && kind === "message" ? [DOCUMENT_NAVIGATION_TOOL] : []), ...(session?.teachingNavigation && kind === "message" ? [TEACHING_NAVIGATION_TOOL] : []), ...(tools?.tools ?? [])]
     // A local tool answers a call before an app tool of the same name would (runCall), so only the first of a name counts.
     const readOnlyTools = new Set(READ_ONLY_LOCAL_TOOLS)
     const named = new Set<string>()
@@ -1130,6 +1130,10 @@ export class Runner {
           ? setup.session?.documentNavigation && kind === "message"
             ? openDocument(call.input)
             : { output: "Opening documents is unavailable in this conversation.", isError: true }
+        : call.name === TEACHING_NAVIGATION_TOOL.name
+          ? setup.session?.teachingNavigation && kind === "message"
+            ? openTeaching()
+            : { output: "Teaching is unavailable in this conversation.", isError: true }
         : FILE_TOOL_NAMES.has(call.name)
         ? await runFileTool(store, sessionId, call.name, call.input, memory)
         : files && SAVED_FILE_TOOL_NAMES.has(call.name)

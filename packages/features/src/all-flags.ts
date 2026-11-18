@@ -12,6 +12,7 @@ export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sid
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
+export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"
 export { default as managedDeploymentAssistants } from "@openwork/features/flags/managed-deployment-assistants"
 export { default as managedDeploymentAwsSignIn } from "@openwork/features/flags/managed-deployment-aws-sign-in"

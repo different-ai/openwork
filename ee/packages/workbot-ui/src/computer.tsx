@@ -38,10 +38,13 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, teachRequest = 0, onTeachRequestSettled, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
+  /** Counts up each time the chat asks for the teaching window; `onTeachRequestSettled` says it is open. */
+  teachRequest?: number;
+  onTeachRequestSettled?(): void;
   onViewChange?(view: ComputerView): void;
   /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
@@ -81,6 +84,11 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
   const teachable = canTeach && host.browserDemonstrations === true && views.includes("browser");
+  // Asked from the chat: the Browser view with the teaching window open, ready for the person to start.
+  useEffect(() => {
+    if (!teachRequest || !teachable) return;
+    setView("browser"); setTeachOpen(true); onTeachRequestSettled?.();
+  }, [teachRequest, teachable]);
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -266,7 +274,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
           {paused || denied || (replacing && !error) ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
         </div>
       </div> : null}
-      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
+      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} onResume={() => void action("resume")} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     </div>
     <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-[var(--wb-hairline)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
       {control || agentPaused ? <button type="button" className={`${footerButton} bg-[var(--wb-ink)] text-[var(--wb-on-ink)]`} disabled={changing || denied} onClick={() => void action("continue")}>Hand back</button> : <>

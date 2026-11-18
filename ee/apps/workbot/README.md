@@ -224,6 +224,13 @@ retries never replay an earlier request. Under the reply, Workbot says
 document" (Den refused or failed), or "Not opened, because you moved on" with
 an Open action. While a document opens, the view context names nothing, so a
 message sent meanwhile never references the previous document.
+
+Where browser teaching is on, asking Workbot in the main chat to be taught a
+browser task works the same way: Workbot requests the teaching window with
+`open_teaching`, and the page follows it once for a message sent from that
+page, opening Browser with the window ready. Nothing is recorded until the
+person presses Start teaching. A Teach Workbot action under the reply opens the
+window again; reloads and history never replay the request.
 The Documents browser remains mounted while the user switches surfaces, keeping
 local drafts intact. Turning the assistant off removes contextual actions and
 rejects new context requests without unmounting an already-open editor.

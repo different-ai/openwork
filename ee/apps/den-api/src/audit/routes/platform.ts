@@ -53,6 +53,13 @@ function operational(path: string, action: string): AuditRouteDeclaration {
 const ADMIN = "adminRoute(): platform admin acting across tenants; no single tenant."
 
 export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
+  readOnly("/v1/admin/managed-releases", "admin.managed_releases.read", "managed_installer.settings", "managed_installer", null, ADMIN),
+  readOnly("/v1/admin/managed-releases/latest", "admin.managed_releases.latest", "managed_installer.settings", "managed_installer", null, ADMIN),
+  platform("PUT", "/v1/admin/managed-releases/:provider/approval", "admin.managed_releases.approval", "managed_installer.settings", "managed_installer", "provider", "Platform admin only. Explicit approval policy change, actor and before/after committed in managed_installer_change with setting CAS. Defaults to independent platform-admin approval; no GitHub identity configuration."),
+  platform("PUT", "/v1/admin/managed-releases/:provider/source", "admin.managed_releases.source", "managed_installer.settings", "managed_installer", "provider", "Platform admin only. Canonical before/after and actor committed in managed_installer_change with setting CAS."),
+  platform("POST", "/v1/admin/managed-releases/validate", "admin.managed_releases.validate", "managed_installer.settings", "managed_installer", null, "Platform admin only. Immutable candidate, actor, source revision and expiry recorded in managed_installer_validation; no external writes."),
+  platform("POST", "/v1/admin/managed-releases/pin", "admin.managed_releases.pin", "managed_installer.settings", "managed_installer", null, "Platform admin only. Canonical before/after, actor, manifest hash and operator-attested evidence URLs committed in managed_installer_change with setting CAS."),
+  platform("POST", "/v1/admin/managed-releases/reset", "admin.managed_releases.reset", "managed_installer.settings", "managed_installer", null, "Platform admin only. Explicit restore of environment configuration; before/after and actor committed in managed_installer_change with setting CAS."),
   // app.use middleware entries (not endpoints)
   support("ALL", "/*", "request.pipeline", "Global middleware stack (observability, request id, headers, access log, CORS, sessionMiddleware, audit request capture, config token confinement)."),
   support("ALL", "/v1/*", "request.preclaim_scope", "preclaimScopeMiddleware: denies provisional agent users outside their bootstrap scope."),

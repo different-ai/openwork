@@ -8,6 +8,10 @@
  * Only public model facts are read: /model_group/info carries no deployment
  * secrets, unlike /model/info's litellm_params. Every call is egress-guarded,
  * time-boxed and never follows redirects. Errors never echo keys.
+ *
+ * The client needs a LiteLLM key. A provider in member Microsoft Entra sign-in
+ * mode has none, so nothing here is called for it: its models are the list an
+ * admin entered (liteLlmStaticModels).
  */
 import { createHash } from "node:crypto"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
@@ -315,6 +319,17 @@ export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonR
     if (mode && NON_CHAT_MODES.has(mode)) return []
     return [{ id, name: id, config: liteLlmModelConfig(id, facts) }]
   })
+}
+
+/**
+ * A model list an admin entered by hand. A proxy that only accepts sign-in
+ * tokens (member Microsoft Entra sign-in) gives OpenWork no key to read its
+ * own list with, so the admin names the models. Only the names are known:
+ * limits, prices and capabilities are omitted, never guessed.
+ */
+export function liteLlmStaticModels(modelIds: readonly string[]): LiteLlmModel[] {
+  const ids = modelIds.map((id) => id.trim()).filter((id) => id && !id.includes("*"))
+  return dedupeLiteLlmModelIds(ids).modelIds.map((id) => ({ id, name: id, config: liteLlmModelConfig(id, undefined) }))
 }
 
 /**

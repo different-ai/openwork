@@ -86,7 +86,7 @@ function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref
     /** Custom OpenAI-compatible providers only: their own model list (address is settings.upstreamBaseUrl). */
     custom: z.object({ models: z.array(gatewayCustomModelSchema).min(1).max(500) }).strict().optional(),
     /** LiteLLM providers only, informational: they are synced from the proxy and can't be applied. */
-    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
+    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
     /** Provider universe policy: [] follows every supported catalog model. */
     modelIds: z.array(modelIdSchema).max(500),
     /** Ordered pins (catalog model ids). */
