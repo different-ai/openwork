@@ -3,6 +3,19 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 18th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.68](https://github.com/different-ai/openwork/compare/v0.18.67...v0.18.68): Chat and cloud work recover more reliably
+
+  - **Chat stays readable and recoverable.** Conversations no longer jump as earlier messages load, long agent questions scroll in their own space, and replies recovered after a dropped connection render as one answer. Sign-in requests show a Connect card, and background helpers stay visible in the Agents list.
+  - **Workbot and cloud computer tasks recover faster.** Slack tasks retry brief runner interruptions; Workbot replaces stuck computers sooner, keeps command results through service restarts, and moves large files directly between Files and a computer. Its Android message box also stays above the keyboard.
+  - **Admins get clearer oversight and usage controls.** New Computer fleet and Runner fleet pages show cloud capacity and computers; members can review their own AI Gateway usage, limits, and model prices. Admins can choose TrueFoundry models and assign spend limits to invited people before they join.
+  - **Organization setup and connected work are more dependable.** Configuration imports now handle a whole organization in one run, reuse prior answers, and carry built-in connections. For self-hosters, API-key limits are configurable and Terraform deployments can opt into an AI Gateway. Connection sign-ins, provider permissions, and SCIM account changes are more carefully checked.
+  - **Everyday desktop work gets useful fixes.** Right-click file paths in chat for file actions, see web images inline, open installed Windows apps through the agent, and read Japanese Excel cell text without phonetic readings. Diagnostics is simpler, disk-full saves explain the problem, and the installed desktop app is smaller.
+  - **Some familiar controls have moved or changed.** Ollama setup now lives under AI Providers; the Network check and Settings' Discord link are gone. Packaged desktop builds keep the debugging port closed by default, and team settings now use horizontal tabs.
+
+</Update>
+
 <Update label="November 13th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.67](https://github.com/different-ai/openwork/compare/v0.18.66...v0.18.67): AI Gateway capabilities are now available to every organization
