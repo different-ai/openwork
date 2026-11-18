@@ -2012,6 +2012,28 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  packages/sandbox-microsandbox:
+    dependencies:
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      microsandbox:
+        specifier: 0.7.15
+        version: 0.7.15
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   packages/sdk:
     devDependencies:
       '@hey-api/openapi-ts':
@@ -3489,6 +3511,9 @@ packages:
 
   '@mermaid-js/parser@1.2.1':
     resolution: {integrity: sha512-n12NohV3mrUyUL2o93IgG/ifeW9FTyeJn3zDxkhwa8MJ9Fxg3HQMlA3RiGmD/3UnJvheztkjjQAjA2T4LmUcpw==}
+
+  '@microsandbox/types@0.7.15':
+    resolution: {integrity: sha512-PMwbMb3s4eiuYrbFmiUCPdLFt+SOq6566ViDvv6t9oTky4yOUg7U/oLSn2SybPlLjmHNwPTrm8nwFj9YoS1aig==}
 
   '@modelcontextprotocol/client@2.3.1':
     resolution: {integrity: sha512-mIGZXpHsjnZ6lD+gD/WCMpR5k8yVQQ8nNFH1N0Srf7AvnwTUMYD6pvTY8ng2+He5FfV7YMZLmrjL7cLa/cc3dQ==}
@@ -5609,6 +5634,38 @@ packages:
   '@stoplight/yaml@4.3.0':
     resolution: {integrity: sha512-JZlVFE6/dYpP9tQmV0/ADfn32L9uFarHWxfcRhReKUnljz1ZiUM5zpX+PH8h5CJs6lao3TuFqnPm9IJJCEkE2w==}
     engines: {node: '>=10.8'}
+
+  '@superradcompany/microsandbox-darwin-arm64@0.7.15':
+    resolution: {integrity: sha512-dmg7UvPhk1Nr4CIrSvNRVhSrNMkTPEaAZ70v4JND/KTDZ4YHxsIXrrnh6OJ8DeV2Bq30UWWBuGCnWwxB4h/u9g==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.7.15':
+    resolution: {integrity: sha512-Njrd5O9Bbasr90jx5TGVmNxMIsbi+/Ucl48l6btcHV4NwP6dDIlZIYaSinRrlsM6XaN5gls4y29Z8HI1Gq/1jQ==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.7.15':
+    resolution: {integrity: sha512-4fLrUbZWVQTp29yTGH+8iTEJmFdG+lYyZ2iHyDT3COHUi0SDtM8JRcLVdK7Vf5EpjRh6PU5ooa2z9MHlO3bUag==}
+    engines: {node: '>= 22'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@superradcompany/microsandbox-win32-arm64-msvc@0.7.15':
+    resolution: {integrity: sha512-/yo8hr28oO5ABCSwFz5X3zu5mrkPr1m+Bn7M4DAGHI6N+ggl3T2XDCX//RXgy1sYWBNaxOqVGAo8Ub+9M6tWXg==}
+    engines: {node: '>= 22'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@superradcompany/microsandbox-win32-x64-msvc@0.7.15':
+    resolution: {integrity: sha512-jo1SCDkt2VLO2GJmWue/XfIihXfu7RFMa3Fe+1owqy3I3dn13YHG7tIbqfLzHFII16X51R02l6WQChfcHI1e1A==}
+    engines: {node: '>= 22'}
+    cpu: [x64]
+    os: [win32]
 
   '@sveltejs/acorn-typescript@1.0.13':
     resolution: {integrity: sha512-wgKggnhZVL9Bfx1OaKKTrYY9BFRk6C8UAkQNUcIv1+llzYrIqy+RZm5HPKzn0NpEBvTVhTqB4kQyllZywsRBRQ==}
@@ -9177,6 +9234,11 @@ packages:
   micromatch@4.0.8:
     resolution: {integrity: sha512-PXwfBhYu0hBCPw8Dn0E+WDYb7af3dSLVWKi3HGv84IdF4TyFoC0ysxFd0Goxw7nSv4T/PzEJQxsYsEiFCKo2BA==}
     engines: {node: '>=8.6'}
+
+  microsandbox@0.7.15:
+    resolution: {integrity: sha512-HbDR0Ps0I5ZmdC+tztarXzpLrrfhiQL9UjFxJt7Sutsld+BRcuBhSK/+F2RnTGKyeDVgQY+vwGUWu7bhqwgY9Q==}
+    engines: {node: '>= 22'}
+    hasBin: true
 
   mime-db@1.52.0:
     resolution: {integrity: sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==}
@@ -13075,6 +13137,8 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
+  '@microsandbox/types@0.7.15': {}
+
   '@modelcontextprotocol/client@2.3.1(patch_hash=276c86ab47f7056638d00fa9f29759a9d3a60ac21635ceebe41f513414797476)':
     dependencies:
       '@modelcontextprotocol/core': 2.3.1
@@ -15218,6 +15282,21 @@ snapshots:
       '@stoplight/types': 14.1.1
       '@stoplight/yaml-ast-parser': 0.0.50
       tslib: 2.8.1
+
+  '@superradcompany/microsandbox-darwin-arm64@0.7.15':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-arm64-gnu@0.7.15':
+    optional: true
+
+  '@superradcompany/microsandbox-linux-x64-gnu@0.7.15':
+    optional: true
+
+  '@superradcompany/microsandbox-win32-arm64-msvc@0.7.15':
+    optional: true
+
+  '@superradcompany/microsandbox-win32-x64-msvc@0.7.15':
+    optional: true
 
   '@sveltejs/acorn-typescript@1.0.13(acorn@8.16.0)':
     dependencies:
@@ -19088,6 +19167,16 @@ snapshots:
     dependencies:
       braces: 3.0.3
       picomatch: 2.3.2
+
+  microsandbox@0.7.15:
+    dependencies:
+      '@microsandbox/types': 0.7.15
+    optionalDependencies:
+      '@superradcompany/microsandbox-darwin-arm64': 0.7.15
+      '@superradcompany/microsandbox-linux-arm64-gnu': 0.7.15
+      '@superradcompany/microsandbox-linux-x64-gnu': 0.7.15
+      '@superradcompany/microsandbox-win32-arm64-msvc': 0.7.15
+      '@superradcompany/microsandbox-win32-x64-msvc': 0.7.15
 
   mime-db@1.52.0: {}
 
