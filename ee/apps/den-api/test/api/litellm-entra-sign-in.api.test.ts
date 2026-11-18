@@ -10,6 +10,7 @@
 import assert from "node:assert/strict"
 import { createHmac } from "node:crypto"
 import { after, test } from "node:test"
+import { setTimeout } from "node:timers/promises"
 import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { bootDen, field, isRecord, list, startFakeHttpServer, strings, summary, text, type Call, type Member } from "./harness.js"
 
@@ -120,6 +121,28 @@ async function usable(member: Member, providerId: string) {
 }
 
 let entraProviderId = ""
+
+async function testPool() {
+  const { client } = await import("../../src/db.js")
+  if (!("getConnection" in client)) throw new Error("API locking test requires isolated MySQL")
+  return client
+}
+
+/** Wait for an actual database lock wait, not a guessed request delay. */
+async function waitForLock(table: string) {
+  const pool = await testPool()
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const [rows] = await pool.execute("SELECT 1 FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID = w.BLOCKING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = ? LIMIT 1", [table])
+    if (Array.isArray(rows) && rows.length) return
+    await setTimeout(10)
+  }
+  throw new Error(`No blocked ${table} mutation observed`)
+}
+
+async function killFeature(killed: boolean) {
+  const changed = await den.asPlatformAdmin("PUT", `/v1/admin/features/${FEATURE}`, { killed })
+  assert.equal(changed.status, 200, summary(changed))
+}
 
 test("with the feature off, a LiteLLM provider cannot be added with Microsoft sign-in", async () => {
   const refused = await owner("POST", "/v1/inference-providers/litellm", entraProvider())
@@ -356,7 +379,103 @@ test("changing each app registration setting revokes tokens and cancels an in-fl
   }
 })
 
-test("turning the feature off stops new sign-ins and edits, and keeps what people already have", async () => {
+test("member overrides gate the caller's models, sign-in and transaction-local authorization without affecting other members", async () => {
+  const path = `/v1/admin/organizations/${workspace.orgId}/members/${person.memberId}/capabilities`
+  const changed = await den.asPlatformAdmin("PUT", path, { capabilities: { [FEATURE]: false } })
+  assert.equal(changed.status, 200, summary(changed))
+  try {
+    const unavailable = await usable(person, entraProviderId)
+    assert.deepEqual(unavailable?.models, [])
+    assert.deepEqual(unavailable?.authorizationRequests, [])
+    const refused = await asPerson("GET", `/v1/inference-providers/${entraProviderId}/oauth/start`, undefined, { accept: "application/json" })
+    assert.equal(refused.status, 403, summary(refused))
+    const { db } = await import("../../src/db.js")
+    const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
+    assert.equal(await db.transaction((tx) => lockOrganizationFeatureForMutation(tx, workspace.orgId, person.userId, FEATURE)), false)
+    assert.equal(await db.transaction((tx) => lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE)), true)
+  } finally {
+    const restored = await den.asPlatformAdmin("PUT", path, { capabilities: { [FEATURE]: null } })
+    assert.equal(restored.status, 200, summary(restored))
+  }
+  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
+})
+
+for (const operation of ["create", "edit"]) {
+  test(`global disable during ${operation} is rechecked inside the mutation transaction`, async () => {
+    const pool = await testPool()
+    const blocker = await pool.getConnection()
+    await blocker.beginTransaction()
+    await blocker.execute("SELECT id FROM member WHERE id = ? FOR UPDATE", [workspace.owner.memberId])
+    const before = await owner("GET", "/v1/inference-providers?scope=manageable")
+    const pending = operation === "create"
+      ? owner("POST", "/v1/inference-providers/litellm", entraProvider())
+      : owner("PATCH", `/v1/inference-providers/${entraProviderId}/litellm`, { modelIds: ["blocked-model-fixture"] })
+    try {
+      await waitForLock("member")
+      await killFeature(true)
+    } finally {
+      await blocker.rollback()
+      blocker.release()
+    }
+    try {
+      const refused = await pending
+      assert.equal(refused.status, 403, summary(refused))
+      assert.equal(field(refused.body, "error"), "feature_disabled")
+      const after = await owner("GET", "/v1/inference-providers?scope=manageable")
+      assert.deepEqual(list(field(after.body, "inferenceProviders")).map((provider) => provider.id).sort(), list(field(before.body, "inferenceProviders")).map((provider) => provider.id).sort())
+      const provider = list(field(after.body, "inferenceProviders")).find((provider) => provider.id === entraProviderId)
+      assert.equal(list(provider?.modelGroups).some((group) => strings(group.modelIds).includes("blocked-model-fixture")), false)
+    } finally {
+      await killFeature(false)
+    }
+  })
+}
+
+for (const stored of [false, true]) {
+  test(`global kill serializes with a mutation when the rollout row ${stored ? "exists" : "does not exist"}`, async () => {
+    const pool = await testPool()
+    if (!stored) await pool.execute("DELETE FROM feature_rollout WHERE feature_key = ?", [FEATURE])
+    const { db } = await import("../../src/db.js")
+    const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const mutation = db.transaction(async (tx) => {
+      assert.equal(await lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE), true)
+      entered.resolve()
+      await release.promise
+    })
+    await entered.promise
+    let completed = false
+    const kill = killFeature(true).then(() => { completed = true })
+    try {
+      await waitForLock("feature_rollout")
+      assert.equal(completed, false)
+    } finally {
+      release.resolve()
+      await mutation
+      await kill
+    }
+    try {
+      const refused = await owner("POST", "/v1/inference-providers/litellm", entraProvider())
+      assert.equal(refused.status, 403, summary(refused))
+    } finally { await killFeature(false) }
+  })
+}
+
+test("a mutation sees a committed global kill even after establishing an older repeatable-read snapshot", async () => {
+  const { db } = await import("../../src/db.js")
+  const { FeatureRolloutTable } = await import("@openwork-ee/den-db/schema")
+  const { lockOrganizationFeatureForMutation } = await import("../../src/features.js")
+  try {
+    await db.transaction(async (tx) => {
+      await tx.select().from(FeatureRolloutTable)
+      await killFeature(true)
+      assert.equal(await lockOrganizationFeatureForMutation(tx, workspace.orgId, workspace.owner.userId, FEATURE), false)
+    })
+  } finally { await killFeature(false) }
+})
+
+test("turning the feature off stops new sign-ins and edits, retains tokens but makes models unusable", async () => {
   const attempt = await startConnect(person, entraProviderId)
   assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
 
@@ -373,51 +492,72 @@ test("turning the feature off stops new sign-ins and edits, and keeps what peopl
   assert.equal(edit.status, 403, summary(edit))
   assert.equal(field(edit.body, "error"), "feature_disabled")
 
-  // People who signed in keep their models, and the provider can still be read and its access managed.
-  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
+  const pool = await testPool()
+  const [entriesBefore] = await pool.execute("SELECT id FROM gateway_provider_oauth_states WHERE gateway_provider_id = ?", [entraProviderId])
+  const started = await asPerson("GET", `/v1/inference-providers/${entraProviderId}/oauth/start`, undefined, { accept: "application/json" })
+  assert.equal(started.status, 403, summary(started))
+  assert.equal(field(started.body, "error"), "feature_disabled")
+  const [entriesAfter] = await pool.execute("SELECT id FROM gateway_provider_oauth_states WHERE gateway_provider_id = ?", [entraProviderId])
+  assert.deepEqual(entriesAfter, entriesBefore)
+
+  // Retain the connection for disconnection/restoration, but advertise no usable models or sign-in requests.
+  const unavailable = await usable(person, entraProviderId)
+  assert.notEqual(unavailable?.credentialStatus, "ready")
+  assert.deepEqual(unavailable?.models, [])
+  assert.deepEqual(unavailable?.authorizationRequests, [])
+  const connections = await asPerson("GET", "/v1/inference-providers/member-connections")
+  const connection = list(field(connections.body, "connections")).find((entry) => entry.providerId === entraProviderId)
+  assert.equal(connection?.hasCredential, true)
+  assert.equal(connection?.ready, false)
   const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
   assert.equal(details.status, 200, summary(details))
   assert.equal(field(details.body, "inferenceProvider", "litellm", "keySource"), "entra")
+  assert.ok(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === person.memberId && credential.status === "active"))
 
   // Back on: the attempt that was refused continues to Microsoft.
   assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
+  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "ready")
   const again = await browser(person, `/v1/inference-providers/oauth/browser-start?attempt=${encodeURIComponent(attempt)}`)
   assert.equal(again.status, 200, summary(again))
   assert.equal(new URL(text(field(again.body, "authUrl"), "authorize URL")).searchParams.get("scope"), `api://${CLIENT}/models offline_access openid profile`)
 })
 
-test("turning the feature off during the token exchange prevents storing the sign-in", async () => {
-  const connecting = await den.newMember(workspace.owner, workspace.orgId, "Connecting member")
-  const entered = Promise.withResolvers<void>()
-  const released = Promise.withResolvers<void>()
-  beforeTokenResponse = async () => { entered.resolve(); await released.promise }
-  grantedScope = `api://${CLIENT}/models`
-  const pending = signIn(connecting, entraProviderId)
-  try {
-    await entered.promise
-    assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
-  } finally {
-    released.resolve()
-  }
-  try {
-    const { callback } = await pending
-    assert.equal(callback.status, 400, summary(callback))
-    assert.match(callback.text, /Provider access changed/)
-    assert.equal((await usable(connecting, entraProviderId))?.credentialStatus, "member_auth_required")
-    const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
-    assert.equal(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === connecting.memberId), false)
-  } finally {
-    beforeTokenResponse = undefined
-    grantedScope = API_SCOPE
-    assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
-  }
-})
+for (const change of ["organization", "global"]) {
+  test(`${change} disable during the token exchange prevents storing the sign-in`, async () => {
+    const connecting = await den.newMember(workspace.owner, workspace.orgId, `Connecting member ${change}`)
+    const entered = Promise.withResolvers<void>()
+    const released = Promise.withResolvers<void>()
+    beforeTokenResponse = async () => { entered.resolve(); await released.promise }
+    grantedScope = `api://${CLIENT}/models`
+    const pending = signIn(connecting, entraProviderId)
+    try {
+      await entered.promise
+      if (change === "global") await killFeature(true)
+      else assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
+    } finally {
+      released.resolve()
+    }
+    try {
+      const { callback } = await pending
+      assert.equal(callback.status, 400, summary(callback))
+      assert.match(callback.text, /Provider access changed/)
+      assert.notEqual((await usable(connecting, entraProviderId))?.credentialStatus, "ready")
+      const details = await owner("GET", `/v1/inference-providers/${entraProviderId}`)
+      assert.equal(list(field(details.body, "inferenceProvider", "credentials")).some((credential) => credential.orgMembershipId === connecting.memberId), false)
+    } finally {
+      beforeTokenResponse = undefined
+      grantedScope = API_SCOPE
+      if (change === "global") await killFeature(false)
+      else assert.equal((await den.setFeature(workspace.orgId, FEATURE, true)).status, 200)
+    }
+  })
+}
 
 test("with the feature off, a person can still disconnect and an admin can still disable and remove the provider", async () => {
   assert.equal((await den.setFeature(workspace.orgId, FEATURE, false)).status, 200)
   const disconnected = await asPerson("DELETE", `/v1/inference-providers/${entraProviderId}/oauth`)
   assert.equal(disconnected.status, 204, summary(disconnected))
-  assert.equal((await usable(person, entraProviderId))?.credentialStatus, "member_auth_required")
+  assert.notEqual((await usable(person, entraProviderId))?.credentialStatus, "ready")
 
   const disabled = await owner("PATCH", `/v1/inference-providers/${entraProviderId}`, { status: "disabled" })
   assert.equal(disabled.status, 200, summary(disabled))
