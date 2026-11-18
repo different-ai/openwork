@@ -131,6 +131,34 @@ export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreat
   return awsTargetSchema.parse({ ...target, runtimeProfile: target.runtimeProfile ?? (options.gatewayByDefault ? "gateway" : "legacy") })
 }
 
+/**
+ * How the organization's people sign in to AWS: their IAM Identity Center
+ * access portal and the role (permission set) to open the console with. With
+ * it, every AWS link opens through the portal in the deployment's own account.
+ * Only AWS-hosted portal addresses are accepted, so a saved value can never
+ * send an approver anywhere else.
+ */
+export const awsSignInSchema = z.object({
+  portalUrl: z.string().trim().max(300).refine((value) => awsPortalBase(value) !== null, "Enter your AWS access portal URL, such as https://your-company.awsapps.com/start.")
+    .overwrite((value) => awsPortalBase(value) ?? value),
+  roleName: z.string().trim().regex(/^[\w+=,.@-]{1,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess."),
+}).strict()
+export type AwsSignIn = z.infer<typeof awsSignInSchema>
+
+/** The portal address without a trailing slash, or null when it is not an AWS access portal. */
+export function awsPortalBase(value: string) {
+  const text = value.trim()
+  if (!URL.canParse(text)) return null
+  const url = new URL(text)
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search) return null
+  const classic = /^[a-z0-9][a-z0-9.-]*\.awsapps\.com$/.test(url.hostname)
+  const regional = /^[a-z0-9][a-z0-9.-]*\.app\.aws$/.test(url.hostname)
+  if (!classic && !regional) return null
+  const path = url.pathname.replace(/\/+$/, "")
+  if (!/^(?:\/[A-Za-z0-9_-]+)*$/.test(path)) return null
+  return `https://${url.hostname}${path || (classic ? "/start" : "")}`
+}
+
 export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-southeast1", "australia-southeast1"])
 export const gcpTargetSchema = z.object({
   projectId: z.string().trim().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, "Enter a Google Cloud project ID."),
@@ -273,6 +301,8 @@ export const managedDeploymentLaunchSchema = z.object({
 export const managedDeploymentConfigurationSchema = z.object({
   /** Requires both managed deployment features for this caller. */
   assistantsAvailable: z.boolean().default(false),
+  /** The organization's saved AWS sign-in. When set, every AWS link opens through it. */
+  awsSignIn: awsSignInSchema.nullable().default(null),
   providers: z.array(z.object({
     provider: managedDeploymentProviderSchema,
     available: z.boolean(),
@@ -282,5 +312,6 @@ export const managedDeploymentConfigurationSchema = z.object({
   })),
   updateMode: z.literal("approval"),
 })
+export const awsSignInInputSchema = z.object({ awsSignIn: awsSignInSchema.nullable() }).strict()
 export type ManagedDeployment = z.infer<typeof managedDeploymentSchema>
 export type DeploymentHealth = z.infer<typeof deploymentHealthSchema>

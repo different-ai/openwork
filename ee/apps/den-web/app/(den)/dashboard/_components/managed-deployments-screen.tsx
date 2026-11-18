@@ -2,12 +2,12 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import {
-  awsAssistantsSchema, awsTargetSchema, assistantsEnabled, gatewayAssistants, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentConfigurationSchema, managedDeploymentInputSchema,
-  managedDeploymentLaunchSchema, managedDeploymentListSchema, managedDeploymentSchema,
+  awsAssistantsSchema, assistantsEnabled, gatewayAssistants, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentInputSchema,
+  managedDeploymentSchema,
   type AwsAssistants, type AwsRuntimeProfile, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { AlertTriangle, CheckCircle2, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -16,25 +16,25 @@ import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSkeleton } from "../../_components/ui/skeleton";
-import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getOrgAccessFlags, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { getRequestError, requestJson } from "../../_lib/den-flow";
+import { permissionLockReason } from "../../_lib/den-org";
 import { ConfirmDialog } from "./item-list";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
+import { useManagedDeployments, type DeploymentConfiguration, type DeploymentLaunch } from "./use-managed-deployments";
 export { deploymentStatus } from "./managed-deployments-state";
 
-type Configuration = z.infer<typeof managedDeploymentConfigurationSchema>;
-type Launch = z.infer<typeof managedDeploymentLaunchSchema>;
+type Configuration = DeploymentConfiguration;
+type Launch = DeploymentLaunch;
 type Check = ManagedDeployment["health"]["checks"][number];
 type Tone = DeploymentTone;
 
-const STEP_LABELS: Record<z.infer<typeof deploymentStepSchema>, string> = {
+export const STEP_LABELS: Record<z.infer<typeof deploymentStepSchema>, string> = {
   runner_connected: "Installer connected", release_verified: "Release verified", account_verified: "AWS account and domain verified",
   infrastructure_applied: "Infrastructure installed", services_ready: "Services started", health_verified: "HTTPS and database verified",
 };
-const FAILURE_LABELS: Record<string, string> = {
+export const FAILURE_LABELS: Record<string, string> = {
   release_verification_failed: "The release could not be verified. Open the installer logs in AWS.",
   infrastructure_failed: "Infrastructure installation failed. Open the installer logs in AWS, then retry.",
   certificate_failed: "AWS could not issue the HTTPS certificate. Make sure the domain's CAA records allow amazon.com, then retry.",
@@ -43,7 +43,7 @@ const FAILURE_LABELS: Record<string, string> = {
   network_check_failed: "The existing network can't host OpenWork. The installer logs in AWS CodeBuild say what to change (subnets, routes, DNS or the ECS cluster); fix it, then retry.",
   runner_failed: "The AWS account or hosted zone did not match. Check the deployment details.",
 };
-function gcpFailureMessage(code: string) {
+export function gcpFailureMessage(code: string) {
   if (code === "runner_failed") return "The Google Cloud project or DNS zone did not match. Check the project ID, project number and public Cloud DNS zone, then retry.";
   if (code === "certificate_failed") return "Google Cloud could not issue the HTTPS certificate. Check the domain's DNS and certificate status in Google Cloud, then retry.";
   if (code === "service_unhealthy") return "Services did not start. Check Cloud Run service logs in Google Cloud Logging, then retry.";
@@ -52,7 +52,7 @@ function gcpFailureMessage(code: string) {
   return "Installation failed. Check the installer output in Google Cloud Shell and Google Cloud Logging, fix the reported problem, then retry.";
 }
 
-const CHECK_LABELS: Record<Check["id"], string> = {
+export const CHECK_LABELS: Record<Check["id"], string> = {
   api_health: "API", database_ready: "Database connection", web_available: "Web app", services_running: "Services",
   load_balancer_targets: "Load balancer", database_instance: "Database instance", database_storage: "Database storage",
   database_backups: "Backups", certificate: "HTTPS certificate", runner_service: "Managed runner", workbot_available: "Workbot",
@@ -64,7 +64,7 @@ const CODE_LABELS: Record<string, string> = {
   backups_disabled: "Backups off", not_issued: "Not issued", expiring: "Expires soon", expired: "Expired",
 };
 
-function relativeTime(iso: string | null) {
+export function relativeTime(iso: string | null) {
   if (!iso) return "Never";
   const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
   if (minutes < 1) return "Just now";
@@ -73,7 +73,7 @@ function relativeTime(iso: string | null) {
   return hours < 48 ? `${hours} h ago` : new Date(iso).toLocaleDateString();
 }
 
-function checkDetail(check: Check) {
+export function checkDetail(check: Check) {
   const value = check.value ?? 0;
   if (check.status === "unknown" || (check.status !== "ok" && check.code && check.id !== "services_running" && check.id !== "load_balancer_targets")) {
     return CODE_LABELS[check.code ?? "unavailable"] ?? "Couldn't check";
@@ -96,14 +96,14 @@ function checkDetail(check: Check) {
 
 const toneText: Record<Tone, string> = { neutral: "text-gray-700", warning: "text-amber-700", danger: "text-red-700" };
 
-function StatusIcon({ status }: { status: Check["status"] }) {
+export function StatusIcon({ status }: { status: Check["status"] }) {
   if (status === "ok") return <CheckCircle2 aria-hidden className="size-4 text-gray-500" />;
   if (status === "warning") return <AlertTriangle aria-hidden className="size-4 text-amber-600" />;
   if (status === "failing") return <XCircle aria-hidden className="size-4 text-red-600" />;
   return <CircleDashed aria-hidden className="size-4 text-gray-400" />;
 }
 
-function networkLabel(network: Extract<ManagedDeployment, { provider: "aws" }>["target"]["network"]) {
+export function networkLabel(network: Extract<ManagedDeployment, { provider: "aws" }>["target"]["network"]) {
   if (network.mode === "dedicated") return "Dedicated VPC";
   const cluster = network.ecsClusterArn ? ` · cluster ${network.ecsClusterArn.split("/").pop()}` : "";
   return `${network.vpcId}${cluster}`;
@@ -113,7 +113,7 @@ function idList(value: string) {
   return value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
 }
 
-function ProviderLock({ entry }: { entry: ProviderReadiness }) {
+export function ProviderLock({ entry }: { entry: ProviderReadiness }) {
   return (
     <div className="space-y-2 text-[13px] text-gray-500" data-testid={`deployment-provider-lock-${entry.provider}`}>
       <p className="flex items-start gap-2"><LockKeyhole aria-hidden className="mt-0.5 size-4 shrink-0" />{readinessMessage(entry)}</p>
@@ -132,99 +132,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export function ManagedDeploymentsScreen() {
-  const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
-  const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.currentMember.permissions);
-  const enabled = orgFeatureEnabled(orgContext, "managedDeployments");
-  const [deployments, setDeployments] = useState<ManagedDeployment[]>([]);
-  const [configuration, setConfiguration] = useState<Configuration | null>(null);
-  const assistantsAvailable = enabled && orgFeatureEnabled(orgContext, "managedDeploymentAssistants") && (configuration?.assistantsAvailable ?? false);
-  const [loading, setLoading] = useState(true);
-  const [loadedAt, setLoadedAt] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const {
+    orgId, enabled, access, deployments, configuration, loading, loadedAt, error, actionError, setActionError, launch, setLaunch, busy,
+    assistantsAvailable, available, runReauthableAction, replace, prepare, remove,
+  } = useManagedDeployments();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [launch, setLaunch] = useState<Launch | null>(null);
-  const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [deploymentToRemove, setDeploymentToRemove] = useState<ManagedDeployment | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const generation = useRef(0);
-  const available = configuration?.providers.some((entry) => entry.available && (entry.provider === "aws" || entry.provider === "gcp")) ?? false;
   const selected = deployments.find((entry) => entry.id === selectedId) ?? deployments[0] ?? null;
 
   useEffect(() => {
-    const current = ++generation.current;
-    setDeployments([]); setConfiguration(null); setLoadedAt(null); setSelectedId(null); setLaunch(null); setError(null); setActionError(null); setBusy(false); setDialogOpen(false); setDeploymentToRemove(null);
-    setLoading(enabled && access.canViewDeployments);
-    if (!enabled || !orgId || !access.canViewDeployments) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try {
-        const [list, settings] = await Promise.all([
-          requestJson("/v1/managed-deployments", { method: "GET" }),
-          requestJson("/v1/managed-deployments/configuration", { method: "GET" }),
-        ]);
-        if (!list.response.ok) throw new Error(getErrorMessage(list.payload, "Couldn't load deployments."));
-        if (!settings.response.ok) throw new Error(getErrorMessage(settings.payload, "Couldn't load deployment settings."));
-        const parsed = managedDeploymentListSchema.parse(list.payload);
-        if (!stopped && generation.current === current) {
-          setDeployments(parsed.deployments);
-          setConfiguration(managedDeploymentConfigurationSchema.parse(settings.payload));
-          setLoadedAt(new Date().toISOString());
-          setError(null);
-        }
-      } catch (failure) {
-        if (!stopped && generation.current === current) setError(failure instanceof Error ? failure.message : "Couldn't load deployments.");
-      } finally {
-        if (!stopped && generation.current === current) {
-          setLoading(false);
-          timer = setTimeout(() => { void refresh(); }, 10_000);
-        }
-      }
-    }
-    void refresh();
-    return () => { stopped = true; clearTimeout(timer); };
+    setSelectedId(null); setDialogOpen(false); setDeploymentToRemove(null);
   }, [orgId, enabled, access.canViewDeployments]);
-
-  function replace(item: ManagedDeployment) {
-    setDeployments((previous) => previous.some((entry) => entry.id === item.id) ? previous.map((entry) => entry.id === item.id ? item : entry) : [...previous, item]);
-  }
-
-  async function prepare(deployment: ManagedDeployment, kind: Launch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
-    if ((assistants || runtimeProfile) && deployment.provider === "aws") {
-      const parsed = awsTargetSchema.safeParse({ ...deployment.target, ...(runtimeProfile ? { runtimeProfile } : {}), ...(assistants ? { assistants } : {}) });
-      if (!parsed.success) { setActionError(parsed.error.issues[0]?.message ?? "Check the assistant settings."); return; }
-    }
-    const current = generation.current;
-    setBusy(true); setActionError(null); setCopied(false);
-    try {
-      await runReauthableAction(kind === "install" ? `Prepare ${providerName(deployment.provider)} approval` : kind === "update" ? "Prepare update" : "Prepare retry", async () => {
-        const result = await requestJson(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind, ...(assistants ? { assistants } : {}), ...(runtimeProfile ? { runtimeProfile } : {}) }) });
-        if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't prepare the installer.");
-        const parsed = managedDeploymentLaunchSchema.parse(result.payload);
-        if (generation.current === current) { setLaunch(parsed); replace(parsed.deployment); }
-      });
-    } catch (failure) {
-      if (generation.current === current) setActionError(failure instanceof Error ? failure.message : "Couldn't prepare the installer.");
-    } finally {
-      if (generation.current === current) setBusy(false);
-    }
-  }
-
-  async function remove(deployment: ManagedDeployment) {
-    const current = generation.current;
-    setBusy(true); setActionError(null);
-    try {
-      await runReauthableAction("Remove deployment", async () => {
-        const result = await requestJson(`/v1/managed-deployments/${deployment.id}`, { method: "DELETE" });
-        if (!result.response.ok) throw getRequestError(result.payload, result.response, "Couldn't remove the deployment.");
-        if (generation.current === current) { setDeployments((previous) => previous.filter((entry) => entry.id !== deployment.id)); setSelectedId(null); setLaunch(null); }
-      });
-    } finally {
-      if (generation.current === current) setBusy(false);
-    }
-  }
 
   // Feature intro: full screen while the organization has no deployment (DESIGN.md I1, I2).
   const intro = useFeatureIntro(
@@ -300,7 +220,7 @@ export function ManagedDeploymentsScreen() {
           {selected ? (
             <DeploymentDetail key={`${selected.id}:${selected.run?.id ?? "none"}`} deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
               assistantsAvailable={assistantsAvailable} copied={copied} actionError={actionError} canPrepare={(configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false) && !(selected.provider === "aws" && (selected.target.runtimeProfile === "gateway" || assistantsEnabled(selected.target.assistants)) && !assistantsAvailable)}
-              onPrepare={(kind, assistants, profile) => { void prepare(selected, kind, assistants, profile); }}
+              onPrepare={(kind, assistants, profile) => { setCopied(false); void prepare(selected, kind, assistants, profile); }}
               onCopy={(command) => { void navigator.clipboard.writeText(command).then(() => setCopied(true)).catch(() => setActionError("Couldn't copy. Open Technical details and copy the command.")); }}
               onRemove={() => { setActionError(null); setDeploymentToRemove(selected); }} />
           ) : null}
@@ -310,7 +230,7 @@ export function ManagedDeploymentsScreen() {
         title: `Remove ${deploymentToRemove.name}?`,
         description: `This removes the deployment record and its pending approval from this workspace. ${providerName(deploymentToRemove.provider)} resources and charges are unchanged. This cannot be undone.`,
         action: "Remove",
-      } : null} onConfirm={async () => { if (deploymentToRemove) await remove(deploymentToRemove); }} onClose={() => setDeploymentToRemove(null)} />
+      } : null} onConfirm={async () => { if (deploymentToRemove) { await remove(deploymentToRemove); setSelectedId(null); } }} onClose={() => setDeploymentToRemove(null)} />
       {createDialog}
     </section>
   );
@@ -434,7 +354,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
   );
 }
 
-function CreateDeploymentDialog({ open, onOpenChange, configuration, assistantsAvailable, runReauthableAction, onCreated }: {
+export function CreateDeploymentDialog({ open, onOpenChange, configuration, assistantsAvailable, runReauthableAction, onCreated }: {
   open: boolean; onOpenChange: (open: boolean) => void; configuration: Configuration | null; assistantsAvailable: boolean;
   runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>; onCreated: (deployment: ManagedDeployment) => void;
 }) {

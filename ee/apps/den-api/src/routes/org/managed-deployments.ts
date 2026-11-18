@@ -1,16 +1,16 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
-import { ManagedDeploymentEventTable, ManagedDeploymentHealthTable, ManagedDeploymentRunTable, ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
+import { ManagedDeploymentAwsSignInTable, ManagedDeploymentEventTable, ManagedDeploymentHealthTable, ManagedDeploymentRunTable, ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
 import {
-  awsEnrollmentSchema, awsSignedIdentitySchema, amzDateToDate, consoleUrl, enrollmentProof, healthRoleName,
-  heartbeatProof, quickCreateUrl, runnerRoleName, updateStackCommand, verifyAwsIdentity, type AwsLaunch,
+  awsEnrollmentSchema, awsSignedIdentitySchema, amzDateToDate, cloudShellUrl, consoleUrl, enrollmentProof, healthRoleName,
+  heartbeatProof, quickCreateUrl, runnerRoleName, throughAccessPortal, updateStackCommand, verifyAwsIdentity, type AwsLaunch,
 } from "@openwork/managed-deployments/aws"
 import { cloudShellCommand, consoleUrl as gcpConsoleUrl, enrollmentAudience, gcpEnrollmentSchema, heartbeatAudience, serviceAccountEmail, verifyGcpIdentity, type GcpLaunch } from "@openwork/managed-deployments/gcp"
 import { compareVersions, hashToken, summarizeHealth, tokenMatches, validateEventTransition } from "@openwork/managed-deployments/lifecycle"
 import {
-  assistantsEnabled, awsTargetSchema, normalizeAwsTargetForCreate, normalizeAwsTargetForView, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
+  assistantsEnabled, awsSignInInputSchema, awsSignInSchema, awsTargetSchema, normalizeAwsTargetForCreate, normalizeAwsTargetForView, gcpTargetSchema, deploymentEventInputSchema, healthCheckSchema, healthReportSchema, managedDeploymentConfigurationSchema,
   managedDeploymentInputSchema, managedDeploymentLaunchInputSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema,
-  managedDeploymentSchema, type ManagedDeployment,
+  managedDeploymentSchema, type AwsSignIn, type ManagedDeployment,
 } from "@openwork/managed-deployments/schema"
 import type { Hono } from "hono"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
@@ -70,7 +70,7 @@ async function releaseFor(row: DeploymentRow): Promise<ManagedDeploymentRelease 
   return row.provider === "aws" || row.provider === "gcp" ? effectiveInstallerRelease(row.provider) : null
 }
 
-function launchDetails(row: DeploymentRow, run: RunRow) {
+function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn | null) {
   const common = {
     deploymentId: row.id, runId: run.id, challenge: run.challenge, domainName: row.domain_name,
     ownerEmail: row.owner_email, size: row.size,
@@ -92,12 +92,14 @@ function launchDetails(row: DeploymentRow, run: RunRow) {
     includeRuntimeProfileParameter: Object.hasOwn(row.target, "runtimeProfile"),
   }
   if (run.kind === "install") {
-    const url = quickCreateUrl(launch)
+    const url = throughAccessPortal(quickCreateUrl(launch), launch.target.accountId, signIn)
     return {
       approvalUrl: url, command: null,
       handoff: {
         action: "open_link" as const, url, command: null,
-        instructions: `Open the link signed in to AWS account ${launch.target.accountId}, review the installer permissions, acknowledge IAM and choose Create stack. Nothing is created until you do.`,
+        instructions: signIn
+          ? `Open the link. It signs you in to AWS account ${launch.target.accountId} through your access portal as ${signIn.roleName}, then opens the installer. Review the installer permissions, acknowledge IAM and choose Create stack. Nothing is created until you do.`
+          : `Open the link signed in to AWS account ${launch.target.accountId}, review the installer permissions, acknowledge IAM and choose Create stack. Nothing is created until you do.`,
       },
     }
   }
@@ -105,8 +107,8 @@ function launchDetails(row: DeploymentRow, run: RunRow) {
   return {
     approvalUrl: null, command,
     handoff: {
-      action: "run_in_cloud_shell" as const, url: awsCloudShellUrl(launch.target.region), command,
-      instructions: `Open AWS CloudShell signed in to account ${launch.target.accountId}, then paste and run the command. It checks the account and updates only the existing installer; nothing is deleted.`,
+      action: "run_in_cloud_shell" as const, url: throughAccessPortal(cloudShellUrl(launch.target.region), launch.target.accountId, signIn), command,
+      instructions: `Open AWS CloudShell ${signIn ? `with the link, which signs you in to account ${launch.target.accountId} through your access portal` : `signed in to account ${launch.target.accountId}`}, then paste and run the command. It checks the account and updates only the existing installer; nothing is deleted.`,
     },
   }
 }
@@ -115,11 +117,16 @@ function gcpCloudShellUrl(projectId: string) {
   return `https://console.cloud.google.com/?project=${encodeURIComponent(projectId)}&cloudshell=true`
 }
 
-function awsCloudShellUrl(region: string) {
-  return `https://${region}.console.aws.amazon.com/cloudshell/home?region=${region}`
+/** The organization's saved AWS sign-in, or null when none is saved or the guided approval is off for it. */
+async function awsSignInFor(org: { organization: { id: DeploymentRow["org_id"] }; currentMember: { userId: string } }, database: typeof db | typeof db.$primary = db): Promise<AwsSignIn | null> {
+  if (!await organizationFeatureEnabled(org.organization.id, "managedDeploymentAwsSignIn", { userId: org.currentMember.userId })) return null
+  const [row] = await database.select().from(ManagedDeploymentAwsSignInTable).where(eq(ManagedDeploymentAwsSignInTable.org_id, org.organization.id)).limit(1)
+  if (!row) return null
+  const saved = awsSignInSchema.safeParse({ portalUrl: row.portal_url, roleName: row.role_name })
+  return saved.success ? saved.data : null
 }
 
-async function deploymentViews(rows: DeploymentRow[], now = new Date(), database: typeof db | typeof db.$primary = db): Promise<ManagedDeployment[]> {
+async function deploymentViews(rows: DeploymentRow[], signIn: AwsSignIn | null, now = new Date(), database: typeof db | typeof db.$primary = db): Promise<ManagedDeployment[]> {
   if (!rows.length) return []
   const runIds = rows.flatMap((row) => row.active_run_id ? [row.active_run_id] : [])
   const runs = runIds.length ? await database.select().from(ManagedDeploymentRunTable).where(inArray(ManagedDeploymentRunTable.id, runIds)) : []
@@ -136,7 +143,7 @@ async function deploymentViews(rows: DeploymentRow[], now = new Date(), database
     return managedDeploymentSchema.parse({
       id: row.id, name: row.name, provider: row.provider, target, domainName: row.domain_name, ownerEmail: row.owner_email,
       size: row.size, updateMode: "approval", createdAt: row.created_at.toISOString(), webUrl: `https://${row.domain_name}`,
-      consoleUrl: row.provider === "gcp" ? gcpConsoleUrl(gcpTargetSchema.parse(row.target).projectId) : consoleUrl(row.id, target.region), installedVersion: installed, availableVersion: available,
+      consoleUrl: row.provider === "gcp" ? gcpConsoleUrl(gcpTargetSchema.parse(row.target).projectId) : throughAccessPortal(consoleUrl(row.id, target.region), awsTarget(row).accountId, signIn), installedVersion: installed, availableVersion: available,
       updateAvailable: Boolean(installed && available && (compareVersions(installed, available) ?? 0) < 0),
       health: summarizeHealth({ checks, reportedAt: report?.reported_at ?? null, version: report?.version ?? null }, now),
       run: run ? {
@@ -153,8 +160,8 @@ async function deploymentViews(rows: DeploymentRow[], now = new Date(), database
 }
 
 /** `primary` when the caller just wrote the deployment's run. */
-async function oneView(row: DeploymentRow, options: { primary?: boolean } = {}) {
-  const [view] = await deploymentViews([row], new Date(), options.primary ? db.$primary : db)
+async function oneView(row: DeploymentRow, signIn: AwsSignIn | null, options: { primary?: boolean } = {}) {
+  const [view] = await deploymentViews([row], signIn, new Date(), options.primary ? db.$primary : db)
   if (!view) throw new Error("deployment view missing")
   return view
 }
@@ -182,7 +189,20 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         ],
         updateMode: "approval",
         assistantsAvailable: await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { userId: org.currentMember.userId }),
+        awsSignIn: await awsSignInFor(org),
       }))
+    })
+
+  app.put(`${PATH}/aws-sign-in`, operation("Save how the organization signs in to AWS", "Saves the organization's AWS access portal URL and the role to open the console with, or removes them with awsSignIn null. While saved, every AWS link (approval link, CloudShell, CloudFormation stack) opens through the portal in the deployment's own account, so an approver lands signed in to the right account. Only AWS-hosted access portal addresses are accepted.", awsSignInInputSchema, { mcp: false }),
+    orgPermissionRoute("deployments.manage"), requireFeature("managedDeployments"), requireFeature("managedDeploymentAwsSignIn"), jsonValidator(awsSignInInputSchema), async (c) => {
+      const org = c.get("organizationContext")
+      if (!org) return c.json({ error: "organization_not_found" }, 404)
+      const { awsSignIn } = c.req.valid("json")
+      if (!awsSignIn) await db.delete(ManagedDeploymentAwsSignInTable).where(eq(ManagedDeploymentAwsSignInTable.org_id, org.organization.id))
+      else await db.insert(ManagedDeploymentAwsSignInTable).values({ org_id: org.organization.id, portal_url: awsSignIn.portalUrl, role_name: awsSignIn.roleName })
+        .onDuplicateKeyUpdate({ set: { portal_url: awsSignIn.portalUrl, role_name: awsSignIn.roleName } })
+      markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAwsSignIn"] })
+      return c.json({ awsSignIn })
     })
 
   app.get(PATH, operation("List the organization's managed deployments", "Returns each installation in the organization's own cloud accounts with its latest installer run, health checks and available update. Agents poll this after the person approves: report run.events as progress, a failed event's errorCode as the problem, and give the person webUrl only once health.state is operational.", managedDeploymentListSchema, { mcp: true }),
@@ -190,7 +210,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const rows = await db.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.org_id, org.organization.id)).limit(100)
-      return c.json({ deployments: await deploymentViews(rows) })
+      return c.json({ deployments: await deploymentViews(rows, await awsSignInFor(org)) })
     })
 
   app.post(PATH, operation("Create a managed deployment", "Records a new installation target; nothing is launched or billed until the owner approves it in their cloud. Confirm the account/project, address and billing first. When configuration.assistantsAvailable is true, new AWS targets default to runtimeProfile gateway: Den, the native model gateway, managed runner, Workbot and Slack/Automations are included. Use that profile for new managed runtimes; explicit legacy preserves the core-only profile. Configure upstream providers and credentials in Models inside the installed Den after first sign-in, and the customer's Slack app in its Connectors. Never request or send a hosted model key, upstream endpoint or raw provider credentials here. Only computers are optional (off by default): Daytona is preferred and needs a computer snapshot; Daytona/Freestyle require the customer's plain-string Secrets Manager key ARN in this account/region and execute outside AWS. GCP retains its existing legacy flow.", managedDeploymentSchema, { mcp: true }),
@@ -227,7 +247,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).limit(1)
       if (!row) return c.json({ error: "deployment_not_found" }, 404)
       if (row.provider === "aws" && awsTarget(row).runtimeProfile === "gateway") markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
-      return c.json(await oneView(row))
+      return c.json(await oneView(row, await awsSignInFor(org)))
     })
 
   app.delete(`${PATH}/:deploymentId`, operation("Remove a deployment that was never installed", "Deletes a deployment record that never reached the customer's cloud. Installed deployments stay tracked and answer 409.", acceptedSchema, { mcp: false }),
@@ -309,9 +329,11 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       })
       if ("error" in result) return c.json({ error: result.error }, result.status)
       if (runtimeProfile || assistants || (result.row.provider === "aws" && (awsTarget(result.row).runtimeProfile === "gateway" || assistantsEnabled(awsTarget(result.row).assistants)))) markFeaturesUsed({ organizationId: org.organization.id, memberId: org.currentMember.id, keys: ["managedDeploymentAssistants"] })
+      // Primary: an admin who just saved the sign-in prepares the approval next.
+      const signIn = await awsSignInFor(org, db.$primary)
       return c.json(managedDeploymentLaunchSchema.parse({
-        deployment: await oneView(result.row, { primary: true }), kind: result.run.kind,
-        ...launchDetails(result.row, result.run),
+        deployment: await oneView(result.row, signIn, { primary: true }), kind: result.run.kind,
+        ...launchDetails(result.row, result.run, signIn),
         expiresAt: result.run.expires_at.toISOString(),
       }))
     })

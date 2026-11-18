@@ -148,6 +148,7 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   deviceCode: { reason: "runtime" },
   sandbox_organization: { reason: "platform" },
   managed_deployment: { reason: "platform", note: "operator state" },
+  managed_deployment_aws_sign_in: { reason: "platform", note: "operator state" },
   account_follow_up: { reason: "platform", note: "platform-admin sales follow-up" },
   account_follow_up_action: { reason: "platform" },
 }

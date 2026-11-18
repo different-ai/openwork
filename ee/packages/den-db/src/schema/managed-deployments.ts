@@ -59,3 +59,14 @@ export const ManagedDeploymentHealthTable = mysqlTable("managed_deployment_healt
   // Signature time of the accepted report; later reports must be newer.
   signed_at: timestamp("signed_at", { fsp: 3 }).notNull(),
 })
+
+/**
+ * How an organization's people sign in to AWS (their access portal and role),
+ * so every AWS link in Deployments opens in the deployment's own account.
+ */
+export const ManagedDeploymentAwsSignInTable = mysqlTable("managed_deployment_aws_sign_in", {
+  org_id: denTypeIdColumn("org", "org_id").notNull().primaryKey(),
+  portal_url: varchar("portal_url", { length: 300 }).notNull(),
+  role_name: varchar("role_name", { length: 64 }).notNull(),
+  ...timestamps,
+})

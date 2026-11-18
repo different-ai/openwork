@@ -261,6 +261,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   // Managed deployments (customer-cloud installs)
   member("GET", "/v1/managed-deployments/configuration", "tenant_read", "managed_deployment.configuration.read", "managed_deployment", "managed_deployment", null),
   member("GET", "/v1/managed-deployments", "tenant_read", "managed_deployment.list", "managed_deployment", "managed_deployment", null),
+  member("PUT", "/v1/managed-deployments/aws-sign-in", "tenant_change", "managed_deployment.aws_sign_in.update", "managed_deployment", "managed_deployment", null, { notes: "Saves or removes the organization's AWS access portal and role; AWS links then open through it." }),
   member("POST", "/v1/managed-deployments", "tenant_change", "managed_deployment.create", "managed_deployment", "managed_deployment", null),
   member("DELETE", "/v1/managed-deployments/:deploymentId", "tenant_change", "managed_deployment.delete", "managed_deployment", "managed_deployment", "deploymentId", { notes: "Only never-approved records; installed deployments answer 409." }),
   member("POST", "/v1/managed-deployments/:deploymentId/launch", "tenant_change", "managed_deployment.launch.prepare", "managed_deployment", "managed_deployment", "deploymentId", { notes: "Prepares an approval link or account-checked command; nothing runs until the customer approves in their cloud." }),

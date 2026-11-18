@@ -1415,6 +1415,13 @@
       "when": 1794962802413,
       "tag": "0202_narrow_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "5",
+      "when": 1794984625784,
+      "tag": "0203_managed_deployment_aws_sign_in",
+      "breakpoints": true
     }
   ]
 }
