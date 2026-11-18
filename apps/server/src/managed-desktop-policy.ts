@@ -444,6 +444,15 @@ class ManagedDesktopPolicy {
 
   /** Remote computers require the signed-in organization's verified rollout. */
   async remoteComputersEnabled(): Promise<boolean> {
+    return this.organizationFeatureEnabled("remoteComputers");
+  }
+
+  /** Secret handles in the built-in browser require the signed-in organization's verified rollout. */
+  async browserSecretHandlesEnabled(): Promise<boolean> {
+    return this.organizationFeatureEnabled("browserSecretHandles");
+  }
+
+  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles"): Promise<boolean> {
     const session = this.session;
     const generation = this.generation;
     if (!session) return false;
@@ -451,7 +460,7 @@ class ManagedDesktopPolicy {
       const payload = await this.readDenJson(session, "/v1/org", generation);
       this.identityChanged(generation);
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
-      return features.remoteComputers === true;
+      return features[key] === true;
     } catch {
       // Missing, unreachable, signed-out or changed identity never grants access.
       return false;

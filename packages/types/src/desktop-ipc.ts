@@ -374,9 +374,19 @@ export type ComputerRequest = {
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
   /** `save`: the one name is where the app will save a file, not a file handed to it. */
   files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
-  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
-  credential?: { site?: string; app?: string; appId?: string };
+  /**
+   * Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id.
+   * `secret`: OpenWork fills a secret the person saved for this chat instead of text the agent holds: its name, its kind, and the
+   * input type of the field it goes into. A secret is asked about every time, so `standing` is false.
+   */
+  credential?: { site?: string; app?: string; appId?: string; secret?: { label: string; kind: BrowserSecretKind; field: string } };
 };
+
+/** What a saved browser secret is: a password, a one-time code, or an API key or token. */
+export type BrowserSecretKind = "password" | "code" | "token";
+
+/** A chat's saved browser secret as the app shows it. The value never leaves the main process. */
+export type BrowserSecretSummary = { secretRef: string; label: string; kind: BrowserSecretKind; origins: string[] };
 
 /** One chat's computer use state, as the broker reports it. */
 export type ComputerSnapshot = {
@@ -573,6 +583,17 @@ export type DesktopCommandMap = {
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
+
+  // Built-in browser secrets (`browserSecretHandles`): entered by the person, kept in memory per chat
+  /** The renderer reports the feature; main verifies it with the local server before turning it on, and answers what holds. */
+  browserSecretsSetEnabled: { args: [enabled: boolean]; result: boolean };
+  browserSecretsList: { args: [sessionId: string]; result: BrowserSecretSummary[] };
+  /** `origins` are the exact HTTPS origins the value may be sent to. `error` is a sentence the person can act on. */
+  browserSecretsAdd: {
+    args: [input: { sessionId: string; label: string; kind: BrowserSecretKind; origins: string[]; value: string }];
+    result: { ok: true; secret: BrowserSecretSummary } | { ok: false; error: string };
+  };
+  browserSecretsRemove: { args: [input: { sessionId: string; secretRef: string }]; result: boolean };
 
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };

@@ -56,6 +56,10 @@ import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-
 import { browserOperationLabels } from "./browser-status";
 import type { BrowserPresentationMode } from "./browser-presentation-store";
 import { chooseAgentViewport, storedAgentViewport } from "./agent-viewport";
+import { isBrowserSecretsDialogTarget } from "./browser-secrets";
+import { BrowserSecretsButton } from "./browser-secrets-dialog";
+import { NO_SESSION_SIDE_PANEL_KEY } from "./side-panel-session";
+import { useBrowserSecretsEnabled } from "./use-browser-secrets";
 
 /** Floating browser presentation controls, present only while that feature is on. */
 export type BrowserPresentationControls = {
@@ -117,6 +121,11 @@ function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; sc
       </PopoverContent>
     </Popover>
   );
+}
+
+function BrowserSecretsControl({ sessionId, pageUrl }: { sessionId: string; pageUrl: string }) {
+  const enabled = useBrowserSecretsEnabled();
+  return enabled && sessionId !== NO_SESSION_SIDE_PANEL_KEY ? <BrowserSecretsButton key={sessionId} sessionId={sessionId} pageUrl={pageUrl} /> : null;
 }
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
@@ -517,6 +526,7 @@ export function BrowserPanelContent({
                 </PopoverContent>
               </Popover>
             ) : null}
+            <BrowserSecretsControl sessionId={sessionId} pageUrl={tab.url} />
           </div>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -807,6 +817,7 @@ export function SidePanel({
       <div
         className="flex h-full flex-col"
         onKeyDownCapture={(event) => {
+          if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
           event.preventDefault();
           event.stopPropagation();

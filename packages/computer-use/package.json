@@ -19,6 +19,7 @@
     "./computer-windows-driver": "./computer-windows-driver.mjs",
     "./browser-task": "./browser-task.mjs",
     "./browser-navigation": "./browser-navigation.mjs",
+    "./browser-secrets": "./browser-secrets.mjs",
     "./browser-demonstration": "./browser-demonstration.mjs",
     "./cloud": {
       "types": "./cloud.d.mts",
