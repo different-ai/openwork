@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { bigint, index, int, json, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, index, int, json, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type {
   AutomationAction,
   AutomationDesktopRunnerCapability,
@@ -48,6 +48,27 @@ export const AutomationTable = mysqlTable(
   (table) => [
     index("automation_org_owner_state").on(table.organization_id, table.owner_member_id, table.state),
     index("automation_due").on(table.state, table.next_due_at),
+  ],
+)
+
+export const AutomationShareTable = mysqlTable(
+  "automation_share",
+  {
+    id: denTypeIdColumn("automationShare", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    automation_id: denTypeIdColumn("automation", "automation_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id"),
+    team_id: denTypeIdColumn("team", "team_id"),
+    org_wide: boolean("org_wide").notNull().default(false),
+    created_by_org_membership_id: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [
+    index("automation_share_automation").on(table.automation_id),
+    index("automation_share_org_member").on(table.organization_id, table.org_membership_id),
+    index("automation_share_org_team").on(table.organization_id, table.team_id),
+    uniqueIndex("automation_share_member").on(table.automation_id, table.org_membership_id),
+    uniqueIndex("automation_share_team").on(table.automation_id, table.team_id),
   ],
 )
 

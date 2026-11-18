@@ -61,6 +61,10 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/workflow-runs", "tenant_read", "workflow_run.list", "workflow.run", "workflow_run", null, { notes: "Owners and admins; run receipts with tool call names, status and error text. No inputs or results." }),
 
   // Automations
+  member("GET", "/v1/automations/:id/sharing", "tenant_read", "automation.sharing.read", "automation.management", "automation", "id", { notes: MCP_NATIVE }),
+  member("PUT", "/v1/automations/:id/sharing", "tenant_change", "automation.sharing.update", "automation.management", "automation", "id", { notes: MCP_NATIVE }),
+  member("GET", "/v1/shared-automations", "tenant_access", "automation.shared.list", "automation.management", "automation", null, { notes: `Definition-only shared access; never capture instructions. ${MCP_NATIVE}` }),
+  member("POST", "/v1/shared-automations/:id/copy", "tenant_change", "automation.shared.copy", "automation.management", "automation", "id", { notes: `Creates an independently owned inactive Automation. ${MCP_NATIVE}` }),
   member("GET", "/v1/automations", "tenant_access", "automation.list", "automation.management", "automation", null, { notes: `Returns automation instructions. Read may persist needs_attention_reason (reconcileModelAttention). mcp/agent.ts also lists automations directly as a read-only resource index. ${MCP_NATIVE}` }),
   member("POST", "/v1/automations", "tenant_change", "automation.create", "automation.management", "automation", null, { notes: `Same automationService.create as POST /v1/cloud-automations. ${MCP_NATIVE}` }),
   member("POST", "/v1/cloud-automations", "tenant_change", "automation.cloud.create", "automation.management", "automation", null, { notes: `Same automationService.create as POST /v1/automations; validates Workflow access. Scheduled runs are started by the scheduler tick, not an HTTP route. ${MCP_NATIVE}` }),
