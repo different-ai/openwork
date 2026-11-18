@@ -8,6 +8,7 @@ import type {
   ComputerFleetState,
 } from "@openwork/types/den/admin-computer-fleet";
 import { RefreshCw } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { DenBadge, type DenBadgeTone } from "../../../app/(den)/_components/ui/badge";
 import { DenButton } from "../../../app/(den)/_components/ui/button";
@@ -15,31 +16,36 @@ import { DenCard } from "../../../app/(den)/_components/ui/card";
 import { DenNotice } from "../../../app/(den)/_components/ui/notice";
 import { DenPageHeader } from "../../../app/(den)/_components/ui/page-header";
 import { DenSegmented } from "../../../app/(den)/_components/ui/segmented";
+import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { DenTable, type DenTableColumn } from "../../../app/(den)/_components/ui/table";
 import { AdminAccessScreen } from "../admin-access-screen";
 import { useComputerFleet, useComputerFleetHistory } from "./computer-fleet-data";
 import {
+  ALL_ORGANIZATIONS,
   ATTENTION_LABEL,
   bucketLevel,
   bucketTitle,
   bucketValue,
+  computerHref,
   defaultFilter,
   filterSandboxes,
   fleetNotice,
   formatAge,
   formatPlace,
-  formatSize,
   historyGrid,
+  imageLabel,
+  organizationOptions,
   plainCode,
   SOURCE_NAME,
   STATE_LABEL,
+  stateDuration,
   stateShares,
   type GridLevel,
   type HistoryMetric,
   type ListFilter,
 } from "./computer-fleet-model";
 
-const STATE_TONE: Record<ComputerFleetState, DenBadgeTone> = { running: "success", starting: "info", pausing: "info", stopping: "info", paused: "neutral", stopped: "neutral", failed: "danger", unknown: "neutral" };
+export const STATE_TONE: Record<ComputerFleetState, DenBadgeTone> = { running: "success", starting: "info", pausing: "info", stopping: "info", paused: "neutral", stopped: "neutral", failed: "danger", unknown: "neutral" };
 const STATE_FILL: Record<ComputerFleetState, string> = { running: "bg-emerald-500", starting: "bg-sky-400", pausing: "bg-sky-300", stopping: "bg-sky-200", paused: "bg-slate-400", stopped: "bg-slate-300", failed: "bg-red-600", unknown: "bg-slate-200" };
 const RANGE_OPTIONS: Array<{ value: ComputerFleetHistoryRange; label: string }> = [{ value: "24h", label: "24 hours" }, { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }];
 const RANGE_NAME: Record<ComputerFleetHistoryRange, string> = { "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days" };
@@ -124,7 +130,7 @@ function ComputerList({ sandboxes, now, emptyLabel }: { sandboxes: readonly Comp
       render: (sandbox) => (
         <div className="flex flex-col items-start gap-1">
           <DenBadge size="sm" tone={STATE_TONE[sandbox.state]}>{STATE_LABEL[sandbox.state]}</DenBadge>
-          {sandbox.attention ? <span className="text-[12px] font-medium text-red-700">{ATTENTION_LABEL[sandbox.attention]}</span> : null}
+          {sandbox.attention ? <span className={`text-[12px] font-medium ${sandbox.attention === "idle_running" || sandbox.attention === "long_running" || sandbox.attention === "expired" ? "text-amber-800" : "text-red-700"}`}>{ATTENTION_LABEL[sandbox.attention]}</span> : null}
         </div>
       ),
     },
@@ -138,10 +144,16 @@ function ComputerList({ sandboxes, now, emptyLabel }: { sandboxes: readonly Comp
       ),
     },
     { key: "organization", header: "Organization", width: "170px", render: (sandbox) => sandbox.organization ? <span className="text-gray-900">{sandbox.organization.name || sandbox.organization.id}</span> : <span className="text-gray-600">Not known</span> },
-    { key: "size", header: "Size", width: "110px", render: (sandbox) => <span className="tabular-nums text-gray-700">{formatSize(sandbox)}</span> },
+    { key: "since", header: "In this state", width: "110px", render: (sandbox) => <span className="tabular-nums text-gray-700" title={sandbox.lastChangedAt ?? undefined}>{stateDuration(sandbox, now) ?? "Not reported"}</span> },
     { key: "active", header: "Last active", width: "110px", render: (sandbox) => <span className="tabular-nums text-gray-700" title={sandbox.lastActivityAt ?? undefined}>{formatAge(sandbox.lastActivityAt, now)}</span> },
-    { key: "created", header: "Created", width: "100px", render: (sandbox) => <span className="tabular-nums text-gray-700" title={sandbox.createdAt ?? undefined}>{formatAge(sandbox.createdAt, now)}</span> },
-    { key: "id", header: "Provider id", render: (sandbox) => <span className="break-all font-mono text-[12px] text-gray-700">{sandbox.id}</span> },
+    {
+      key: "image", header: "Image", width: "100px",
+      render: (sandbox) => <span className={sandbox.imageCurrent === false ? "font-medium text-amber-800" : "text-gray-700"} title={sandbox.image ?? undefined}>{imageLabel(sandbox)}</span>,
+    },
+    {
+      key: "id", header: "Computer",
+      render: (sandbox) => <Link href={computerHref(sandbox)} className="break-all font-mono text-[12px] text-gray-900 underline decoration-gray-300 underline-offset-2 hover:decoration-gray-700" data-testid="computer-fleet-open">{sandbox.id}</Link>,
+    },
   ], [now]);
   return (
     <DenTable
@@ -202,7 +214,8 @@ function HistoryFigure({ history, metric, now }: { history: AdminComputerFleetHi
 }
 
 export function ComputerFleetPage() {
-  const { state, receivedAt, retry } = useComputerFleet();
+  const [organization, setOrganization] = useState(ALL_ORGANIZATIONS);
+  const { state, receivedAt, retry } = useComputerFleet(organization);
   const [range, setRange] = useState<ComputerFleetHistoryRange>("24h");
   const [metric, setMetric] = useState<HistoryMetric>("running");
   const [filter, setFilter] = useState<ListFilter | null>(null);
@@ -222,11 +235,16 @@ export function ComputerFleetPage() {
   if (!fleet) return <AdminAccessScreen state="error" message={state.message} onRetry={retry} />;
 
   const notice = fleetNotice(fleet);
-  const shown = filter ?? defaultFilter(fleet);
+  // Counted from what is listed: with an organization chosen, that is its computers, not the fleet's.
+  const needLook = fleet.sandboxes.filter((sandbox) => sandbox.attention !== null).length;
+  const shown = filter ?? defaultFilter(fleet.sandboxes);
   const listed = filterSandboxes(fleet.sandboxes, shown);
+  const organizations = organizationOptions(fleet);
+  // An organization whose last computer just went away is still the one chosen: keep it in the menu.
+  const chosen = organizations.some((option) => option.value === organization) ? organizations : [...organizations, { value: organization, label: "The chosen organization (0)" }];
   const seconds = receivedAt === null ? null : Math.max(0, Math.round((now - receivedAt) / 1000));
   const filterOptions: Array<{ value: ListFilter; label: string }> = [
-    { value: "attention", label: `Need a look (${count(fleet.totals.attention)})` },
+    { value: "attention", label: `Need a look (${count(needLook)})` },
     { value: "running", label: "Running or changing" },
     { value: "all", label: `All (${count(fleet.sandboxes.length)})` },
   ];
@@ -271,12 +289,19 @@ export function ComputerFleetPage() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h2 id="computer-fleet-list" className="text-[16px] font-medium text-gray-950">Computers</h2>
-                <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">Those needing a look first, then the busiest. The organization is named when Den knows the conversation the computer belongs to.{fleet.listTruncated ? " Only the first 500 are listed." : ""}</p>
+                <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">Those needing a look first, then the busiest. Open a computer to see why it is in its state, what it was built from and what happened to it.{fleet.listTruncated ? " Only the first 500 are listed." : ""}</p>
               </div>
-              <DenSegmented aria-label="Which computers to list" value={shown} onChange={setFilter} options={filterOptions} />
+              <div className="flex max-w-full flex-wrap items-center gap-2 lg:justify-end">
+                <div className="w-[260px] max-w-full">
+                  <DenSelect size="sm" aria-label="Organization" searchLabel="Find an organization" searchEmptyLabel="No organization has computers by that name." value={organization} onChange={(event) => { setOrganization(event.target.value); setFilter(null); }} data-testid="computer-fleet-organization">
+                    {chosen.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </DenSelect>
+                </div>
+                <DenSegmented aria-label="Which computers to list" value={shown} onChange={setFilter} options={filterOptions} />
+              </div>
             </div>
             <DenCard className="!rounded-lg !p-0" data-testid="computer-fleet-list">
-              <ComputerList sandboxes={listed} now={minute} emptyLabel={shown === "attention" ? "No computer needs a look." : shown === "running" ? "No computer is running or changing state." : "No computers right now."} />
+              <ComputerList sandboxes={listed} now={minute} emptyLabel={shown === "attention" ? "No computer needs a look." : shown === "running" ? "No computer is running or changing state." : organization === ALL_ORGANIZATIONS ? "No computers right now." : "This organization has no computers right now."} />
             </DenCard>
           </section>
 
@@ -299,7 +324,7 @@ export function ComputerFleetPage() {
           </section>
 
           <p className="text-[12px] leading-5 text-gray-600">
-            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, and a failure is shown for a day.
+            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, as running unused after 30 minutes with no use or two hours after its conversation went quiet, as awake most of its life when it is two days old and has run for more than half of them, and a failure is shown for a day.
           </p>
         </>
       ) : null}

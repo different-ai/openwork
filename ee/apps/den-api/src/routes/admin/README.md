@@ -14,7 +14,7 @@ This folder owns admin-only Den API surfaces.
 - `opportunities.ts`: recent organization adoption, verified non-personal email signals, and active Cloud skill/MCP counts, stored plan, paid status and recorded outreach (`GET /v1/admin/opportunities`)
 - `opportunity-companies.ts`: signups grouped by verified company email domain across organizations, with plan, paid status and recorded outreach (`GET /v1/admin/opportunities/companies`)
 - `runner-fleet.ts`: the cloud runner's celld nodes, read live from each node's own state endpoint (`GET /v1/admin/runner-fleet`, `/history`, `/events`); see "Runner fleet" below
-- `computer-fleet.ts`: the sandboxes cloud conversations use as computers, as their providers report them, read through the headless runner (`GET /v1/admin/computer-fleet`, `/history`); see "Computer fleet" below
+- `computer-fleet.ts`: the sandboxes cloud conversations use as computers, as their providers report them, read through the headless runner (`GET /v1/admin/computer-fleet`, `/history`, `/computers/:source/:id`); see "Computer fleet" below
 - `feature-usage.ts`: per feature across organizations, whether it is used and working (`GET /v1/admin/feature-usage`, `GET /v1/admin/feature-usage/:key`), and who uses each feature in one organization (`GET /v1/admin/organizations/:organizationId/feature-usage`); see "Feature outcomes" below
 
 ## Current routes
@@ -32,7 +32,8 @@ This folder owns admin-only Den API surfaces.
 - `GET /v1/admin/runner-fleet`: every runner node now (open or closed to new cells, memory, cells in memory and owned, cells waiting for room); `status` is `not_configured` without `DEN_HEADLESS_FLEET_STATE_HOST`
 - `GET /v1/admin/runner-fleet/history?range=24h|7d|30d`: per node, the worst reading in each 10 minutes (24h) or hour (7d, 30d)
 - `GET /v1/admin/runner-fleet/events`: the same reading as a server-sent event stream, every five seconds; ends itself after two and a half minutes, and the page reconnects
-- `GET /v1/admin/computer-fleet`: every computer now (state, gateway pool or direct provider, size, times, what needs a look, whose it is); `status` is `not_configured` without a headless runner or when the runner has no computers
+- `GET /v1/admin/computer-fleet?organization=`: every computer now (state, gateway pool or direct provider, size, times, image, what needs a look, whose it is); `status` is `not_configured` without a headless runner or when the runner has no computers. `organization` (an id, or `unknown`) lists only that organization's computers; totals, sources and the status stay the whole fleet's
+- `GET /v1/admin/computer-fleet/computers/:source/:id`: one computer in full (its provider's record and rules, the gateway's placement decision, its conversation's organization, member and activity, and what happened to it); `404` when the provider has none by that id, `502 computer_unavailable` when the runner or provider cannot be read
 - `GET /v1/admin/computer-fleet/history?range=24h|7d|30d`: the fleet's highest counts in each 10 minutes (24h) or hour (7d, 30d)
 
 ## Expectations
@@ -142,7 +143,12 @@ sandboxes and pools, and the direct provider's machines, whichever it is configu
 the runner credentials it already has. The page needs no setting of its own and Den holds no provider key.
 
 - `state.ts`: one vocabulary of states for every provider, what needs a look (failed in the last day, stuck
-  starting, pausing or stopping, past its expiry), totals and the overall status. A computer's key is `hc-` and a
+  starting, pausing or stopping, past its expiry, running with no use for 30 minutes or longer where the runner's
+  pause or the provider's own idle rule is longer, running two hours after its conversation last had a turn or an
+  open view, or awake for more than half of a life of two days or more, where the provider counts run time), totals
+  and the overall status. The last two exist because a desktop is never
+  silent on the network: a provider's own idle rule does not stop a computer the runner failed to pause, so Den's
+  own record of the conversation is the reliable sign. A provider's run total can lag by days while a computer runs. A computer's key is `hc-` and a
   hash of its conversation's session id, which is how it is tied to an organization.
 - `service.ts`: readers within 15 seconds share one read of the runner's list. Organization names come from
   `headless_session_index` (Workbot conversations) and `remote_device`, read at most every five minutes. A
@@ -150,5 +156,16 @@ the runner credentials it already has. The page needs no setting of its own and 
   `computer_fleet_history`, one row per UTC hour, 31 days kept) through the `computer_fleet_sampler` lease.
 - `history.ts`: folds readings into 10-minute buckets that keep the highest of each count.
 
+One computer's page (`/admin/computer-fleet/<source>/<id>`) reads the provider through the runner again
+(`GET /v1/computers/:source/:id`) and adds what Den holds for the conversation with that key: the organization, the
+member, when a turn has been under way, and the events Workbot's server reported for the computer
+(`remote_device_event`: views opened, pauses, resumes, rebuilds, failures). It never returns the conversation's name
+or content. Nothing is run on the computer to answer, since a command would count as use: so what is installed
+inside one (its guest version) is not shown, only the image it was built from and whether new computers still use it.
+The gateway's own events need a runner key that may read its audit log (`audit:read`); without it the page says so
+and shows Workbot's reports alone.
+
 A runner from before `GET /v1/computers` answers 404: the page says the runner is too old, and nothing is recorded.
+One from before `GET /v1/computers/:source/:id` lists computers without their image or the runner's pause rule, and a
+computer's page says it needs a current runner.
 Payloads are states, sizes, times, provider sandbox ids and organization names: nothing a computer holds.

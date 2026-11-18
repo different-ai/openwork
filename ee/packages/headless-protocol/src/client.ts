@@ -246,8 +246,25 @@ export const runnerComputerSchema = z.object({
   expiresAt: fleetText,
   endedAt: fleetText,
   attempts: fleetCount,
+  // Added after the list first shipped: a runner from before them leaves them out, which reads as "not known".
+  image: fleetText.default(null),
+  imageCurrent: z.boolean().nullable().default(null),
+  idleTimeoutSeconds: fleetCount.default(null),
+  idledAt: fleetText.default(null),
+  resumeRequestedAt: fleetText.default(null),
+  slotReleased: z.boolean().nullable().default(null),
+  trust: fleetText.default(null),
+  runSeconds: fleetCount.default(null),
 })
 export type RunnerComputer = z.infer<typeof runnerComputerSchema>
+/** How the runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */
+export const runnerComputerSettingsSchema = z.object({
+  image: fleetText,
+  idlePauseSeconds: z.number().finite().nonnegative(),
+  keepDays: z.number().finite().nonnegative(),
+  persistent: z.boolean(),
+})
+export type RunnerComputerSettings = z.infer<typeof runnerComputerSettingsSchema>
 export const runnerComputerSourceSchema = z.object({
   source: z.enum(["gateway", "direct"]),
   provider: z.string().min(1).max(40),
@@ -255,6 +272,7 @@ export const runnerComputerSourceSchema = z.object({
   error: z.string().max(40).nullable(),
   truncated: z.boolean(),
   pools: z.array(z.object({ name: z.string().max(200), backend: fleetText, region: fleetText, enabled: z.boolean(), health: z.string().max(40) })).max(64),
+  settings: runnerComputerSettingsSchema.nullable().default(null),
 })
 export type RunnerComputerSource = z.infer<typeof runnerComputerSourceSchema>
 export const runnerComputerFleetSchema = z.object({
@@ -264,6 +282,44 @@ export const runnerComputerFleetSchema = z.object({
   sandboxes: z.array(runnerComputerSchema).max(8_000),
 })
 export type RunnerComputerFleet = z.infer<typeof runnerComputerFleetSchema>
+/** One computer in full, as the runner's `GET /v1/computers/:source/:id` returns it. */
+export const runnerComputerDetailSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  computer: runnerComputerSchema,
+  limits: z.object({
+    profile: fleetText,
+    classification: fleetText,
+    capabilities: z.array(z.string().max(200)).max(100),
+    preemptible: z.boolean().nullable(),
+    ttlSeconds: fleetCount,
+    maxRunSeconds: fleetCount,
+    maxPausedSeconds: fleetCount,
+    autoDeleteSeconds: fleetCount,
+    totalRunSeconds: fleetCount,
+  }),
+  settings: runnerComputerSettingsSchema.nullable(),
+  placement: z.object({
+    pool: fleetText,
+    strategy: fleetText,
+    outcome: fleetText,
+    reason: fleetText,
+    evaluatedAt: fleetText,
+    policies: z.array(z.string().max(200)).max(50),
+    candidates: z.array(z.object({
+      pool: z.string().max(200),
+      trust: fleetText,
+      eligible: z.boolean().nullable(),
+      hasCapacity: z.boolean().nullable(),
+      rank: fleetCount,
+      reasons: z.array(z.string().max(2_000)).max(20),
+    })).max(50),
+  }).nullable(),
+  events: z.array(z.object({ at: fleetText, action: z.string().max(200), outcome: fleetText, details: z.record(z.string(), z.string().max(2_000)) })).max(200).nullable(),
+  eventsError: z.string().max(40).nullable(),
+})
+export type RunnerComputerDetail = z.infer<typeof runnerComputerDetailSchema>
+const computerRefusalSchema = z.object({ error: z.string().max(60), code: z.string().max(40).optional() })
 
 /**
  * Longer than the cell host's own wait. celld holds a request for a cell it cannot start yet (its node is full, or
@@ -905,6 +961,28 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
       const parsed = runnerComputerFleetSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
+    /**
+     * One computer in full (the runner's `GET /v1/computers/:source/:id`): the provider's record, where it was placed
+     * and why, and its lifecycle events. `unknown_computer`: the provider has none by that id, or it is not this
+     * runner's. `provider_<code>`: the provider did not answer the runner. `http_404` is a runner from before this.
+     */
+    async readComputer(source: "gateway" | "direct", id: string): Promise<RunnerResult<RunnerComputerDetail>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", `/v1/computers/${source}/${encodeURIComponent(id)}`, undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) {
+        const refusal = computerRefusalSchema.safeParse(answer.payload)
+        const named = refusal.success && (refusal.data.error === "unknown_computer" || refusal.data.error === "invalid_computer") ? refusal.data.error : null
+        const provider = refusal.success && refusal.data.error === "provider_unreachable" ? `provider_${refusal.data.code ?? "unreachable"}` : null
+        return { ok: false, status: answer.status, error: named ?? provider ?? `http_${answer.status}` }
+      }
+      const parsed = runnerComputerDetailSchema.safeParse(answer.payload)
       return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
     },
 
