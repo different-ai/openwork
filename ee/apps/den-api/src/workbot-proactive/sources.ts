@@ -366,6 +366,25 @@ export function blockedConnections(sources: readonly ResolvedSource[]): { connec
   return [...blocked.values()]
 }
 
+/** How long after its last read a source that went off is still worth telling the member about. */
+const STOPPED_SOURCE_MS = 7 * 24 * 3_600_000
+
+/**
+ * Sources the member's agent read in the last week that are no longer on for them: an admin turned the source off, or
+ * it became the member's choice and they never chose. Not a source the member turned off themselves, and not one that
+ * is on but needs its account connected (`blockedConnections`).
+ */
+export function stoppedSources(input: {
+  sources: readonly ResolvedSource[]
+  choices: Readonly<Record<string, MemberSourceChoice>>
+  now: number
+}): ResolvedSource[] {
+  return input.sources.filter((source) => !source.on
+    && source.lastReadAt !== null
+    && input.now - source.lastReadAt <= STOPPED_SOURCE_MS
+    && input.choices[source.id]?.on !== false)
+}
+
 /** What a member, or an agent with an older habit, calls mail and chat: the services whose connection reads them, first match wins. */
 const SERVICE_WORDS: Record<string, readonly NonNullable<ReturnType<typeof connectionService>>[]> = {
   gmail: ["google-workspace"],

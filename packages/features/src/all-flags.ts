@@ -38,6 +38,7 @@ export { default as sideQuestions } from "@openwork/features/flags/side-question
 export { default as workbotAgentBrief } from "@openwork/features/flags/workbot-agent-brief"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"
+export { default as workbotAgentStoppedSources } from "@openwork/features/flags/workbot-agent-stopped-sources"
 export { default as workbotCalmChat } from "@openwork/features/flags/workbot-calm-chat"
 export { default as workbotDeviceActivity } from "@openwork/features/flags/workbot-device-activity"
 export { default as workbotDocumentEditing } from "@openwork/features/flags/workbot-document-editing"

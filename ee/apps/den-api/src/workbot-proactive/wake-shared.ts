@@ -6,7 +6,7 @@ import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import type { DeliveryResult } from "./deliver.js"
 import type { AgentInstanceRow } from "./repository.js"
-import { connectionService, readableConnections, withConnectionState, type MemberConnection, type ResolvedSource } from "./sources.js"
+import { connectionService, readableConnections, stoppedSources, withConnectionState, type MemberConnection, type MemberSourceChoice, type ResolvedSource } from "./sources.js"
 
 /**
  * What both ways of waking a member's agent share (today's, wake.ts, and the brief's, wake-brief.ts): the one calendar
@@ -93,6 +93,80 @@ export async function noticeUnreadableSources(input: {
       key: `source_disconnected:${entry.connection.id}:${input.slot}`,
       kind: input.kind,
       sources: entry.sources.map((source) => ({ id: source.id, name: source.name, connectionId: entry.connection.id })),
+      message: sent.ok ? sent.message ?? null : null,
+    })
+  }
+  return notices
+}
+
+/** The agent's state keeps a stopped source's notice under its own key, apart from a connection's. */
+function stoppedNoticeKey(sourceId: string) {
+  return `stopped:${sourceId}`
+}
+
+/**
+ * A source the agent read lately that is no longer on for the member (`workbotAgentStoppedSources`): one message for
+ * the ones they can turn back on and one for the ones an admin turned off, once, each with a check that names what it
+ * stopped reading. Returns the notices to keep in the agent's state; one is forgotten when its source is on again.
+ * The feature is asked only when there is something to tell, and while it is off nothing is told or kept.
+ */
+export async function noticeStoppedSources(input: {
+  row: AgentInstanceRow
+  organizationId: DenTypeId<"organization">
+  userId: DenTypeId<"user">
+  sources: readonly ResolvedSource[]
+  choices: Readonly<Record<string, MemberSourceChoice>>
+  /** Some source can still be read; otherwise the message says nothing is left to check. */
+  othersReadable: boolean
+  told: Readonly<Record<string, number>>
+  now: number
+  slot: string
+  kind: AgentCheckKind
+  deps: {
+    holdsLease: (row: AgentInstanceRow) => Promise<boolean>
+    allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
+    deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
+    stoppedSources?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<{ link: string } | null>
+  }
+  record: (input: CheckRecordInput) => Promise<void>
+}): Promise<Record<string, number>> {
+  const { deps } = input
+  const stopped = stoppedSources({ sources: input.sources, choices: input.choices, now: input.now })
+  const feature = stopped.length && deps.stoppedSources
+    ? await deps.stoppedSources({ organizationId: input.organizationId, memberId: input.row.memberId, userId: input.userId }).catch(() => null)
+    : null
+  if (!feature) return {}
+  const notices: Record<string, number> = {}
+  const untold: ResolvedSource[] = []
+  for (const source of stopped) {
+    const told = input.told[stoppedNoticeKey(source.id)]
+    if (told === undefined) untold.push(source)
+    else notices[stoppedNoticeKey(source.id)] = told
+  }
+  const rest = input.othersReadable ? "" : " I have nothing else to check until a source is on."
+  const groups = [
+    { byAdmin: false, sources: untold.filter((source) => source.policy !== "off") },
+    { byAdmin: true, sources: untold.filter((source) => source.policy === "off") },
+  ]
+  for (const group of groups) {
+    if (!group.sources.length) continue
+    const what = joinNames(group.sources.map((source) => source.name))
+    const many = group.sources.length > 1
+    const text = group.byAdmin
+      ? `Quick check: I've stopped reading your ${what} because your admin turned ${many ? "them" : "it"} off for agents.${rest}`
+      : `Quick check: I've stopped reading your ${what} because ${many ? "they are" : "it is"} no longer on for me.${rest} <${feature.link}|Choose what I read>`
+    const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
+      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
+      : { ok: false as const, code: "lease_or_feature_lost" }
+    for (const source of group.sources) {
+      if (sent.ok) notices[stoppedNoticeKey(source.id)] = input.now
+      appLogger.info("workbot_agent_source_stopped", { member_id: input.row.memberId, source_id: source.id, policy: source.policy, told: sent.ok })
+    }
+    await input.record({
+      reason: "source_stopped",
+      key: `source_stopped:${group.sources.map((source) => source.id).join(",")}:${input.slot}`,
+      kind: input.kind,
+      sources: group.sources.map((source) => ({ id: source.id, name: source.name, connectionId: source.connections[0]?.id ?? null })),
       message: sent.ok ? sent.message ?? null : null,
     })
   }

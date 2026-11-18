@@ -42,6 +42,7 @@ const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
   agent_unavailable: "failed",
   no_findings: "quiet",
   findings_held: "quiet",
+  source_stopped: "failed",
 }
 
 const FIX_OF: Partial<Record<AgentCheckReason, AgentCheckFix>> = {
@@ -81,7 +82,7 @@ export function describeAgentCheck(input: {
   const from = names(input.sources ?? [])
   const subject = topic ? ` about ${topic}` : from ? ` from ${from}` : ""
   const held = subject ? ` Held a message${subject}.` : ""
-  const unread = input.reason === "source_disconnected" ? from || "a source" : ""
+  const unread = input.reason === "source_disconnected" || input.reason === "source_stopped" ? from || "a source" : ""
   const summaries: Record<AgentCheckReason, string> = {
     sent: `Sent you ${(input.messages ?? 1) > 1 ? `${input.messages} messages` : "a message"}${subject}.`,
     nothing_new: "Stayed quiet: nothing new.",
@@ -101,6 +102,7 @@ export function describeAgentCheck(input: {
     agent_unavailable: "Couldn't run the check: trying again in 15 minutes.",
     no_findings: "Stayed quiet: nothing needed you.",
     findings_held: "Stayed quiet: found something that can wait for a later check.",
+    source_stopped: `Stopped reading ${unread}: no longer on for your agent.`,
   }
   return { outcome: OUTCOME_OF[input.reason], summary: summaries[input.reason] }
 }
