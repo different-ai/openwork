@@ -5,8 +5,30 @@ import { once } from "node:events"
 import { Buffer } from "node:buffer"
 import { gzipSync, gunzipSync } from "node:zlib"
 import { inspectInstallerBundle } from "../src/managed-deployments/release-verifier.js"
-import { installerSourceBaseUrl, verifyInstallerRelease } from "../src/managed-deployments/release-verifier.js"
+import { installerSourceBaseUrl, latestInstallerVersion, verifyInstallerRelease } from "../src/managed-deployments/release-verifier.js"
 import { fixtureArtifacts, fixtureFetch, gcpSource, source } from "./api/managed-installer-fixtures.js"
+
+test("latest stable discovery requests GitHub JSON rather than the artifact download media type", async () => {
+  const accepted: string[] = []
+  const server = createServer((request, response) => {
+    accepted.push(request.headers.accept ?? "")
+    assert.equal(request.headers.authorization, undefined)
+    response.writeHead(request.headers.accept === "application/vnd.github+json" ? 200 : 415, { "content-type": "application/json" })
+    response.end(JSON.stringify({ tag_name: "v1.2.3", draft: false, prerelease: false, html_url: "https://github.com/different-ai/openwork/releases/tag/v1.2.3" }))
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const address = server.address()
+  assert.ok(address && typeof address !== "string")
+  try {
+    const transport: typeof fetch = async (input, init) => {
+      assert.equal(input, "https://api.github.com/repos/different-ai/openwork/releases/latest")
+      return fetch(`http://127.0.0.1:${address.port}/latest`, init)
+    }
+    assert.deepEqual(await latestInstallerVersion(transport), { version: "1.2.3", url: "https://github.com/different-ai/openwork/releases/tag/v1.2.3" })
+    assert.deepEqual(accepted, ["application/vnd.github+json"])
+  } finally { server.closeAllConnections(); await new Promise<void>((resolve) => server.close(() => resolve())) }
+})
 
 test("real streamed HTTP bodies are bounded and redirects are refused through the scoped transport", async () => {
   const server = createServer((request, response) => {

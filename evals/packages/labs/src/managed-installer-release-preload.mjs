@@ -68,6 +68,7 @@ globalThis.fetch = Object.assign(async (input, init) => {
     return new Response(method === "HEAD" ? null : bytes, { headers: { "content-length": String(bytes.length), "x-amz-version-id": versionId } });
   }
   if (url.href === "https://api.github.com/repos/different-ai/openwork/releases/latest") {
+    if (new Headers(init?.headers).get("accept") !== "application/vnd.github+json") return Response.json({ message: "Unsupported media type" }, { status: 415 });
     return Response.json({ tag_name: "v1.2.3", draft: false, prerelease: false, html_url: "https://github.com/different-ai/openwork/releases/tag/v1.2.3" });
   }
   return originalFetch(input, init);

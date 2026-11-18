@@ -48,8 +48,8 @@ export function inferInstallerSource(provider: ManagedInstallerProvider, templat
 }
 
 /** One deadline includes response headers and all streamed bodies. No redirects or ambient credentials. */
-export async function boundedReleaseGet(url: string, max: number, signal: AbortSignal, fetcher: typeof fetch = fetch) {
-  const response = await fetcher(url, { redirect: "error", signal, credentials: "omit", headers: { accept: "application/octet-stream" } })
+export async function boundedReleaseGet(url: string, max: number, signal: AbortSignal, fetcher: typeof fetch = fetch, accept = "application/octet-stream") {
+  const response = await fetcher(url, { redirect: "error", signal, credentials: "omit", headers: { accept } })
   if (!response.ok || !response.body || Number(response.headers.get("content-length")) > max) throw new InstallerReleaseError("artifact_unavailable", "A release object is unavailable or exceeds its size limit.", 502)
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
@@ -146,6 +146,17 @@ export async function verifyInstallerRelease(provider: ManagedInstallerProvider,
     if (error instanceof InstallerReleaseError) throw error
     throw new InstallerReleaseError("release_verification_failed", "Release verification failed. Check public immutable objects, checksums, protocol and complete digest-pinned runtime images.", 502)
   }
+}
+
+export async function latestInstallerVersion(fetcher: typeof fetch = fetch) {
+  try {
+    const response = await boundedReleaseGet("https://api.github.com/repos/different-ai/openwork/releases/latest", 128 * 1024, AbortSignal.timeout(5000), fetcher, "application/vnd.github+json")
+    const release = z.object({ tag_name: z.string().regex(/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/), draft: z.literal(false), prerelease: z.literal(false), html_url: z.string() }).parse(JSON.parse(response.body.toString()))
+    const version = release.tag_name.replace(/^v/, "")
+    const url = `https://github.com/different-ai/openwork/releases/tag/${release.tag_name}`
+    if (release.html_url !== url) throw new Error("Unexpected release")
+    return { version, url }
+  } catch { throw new InstallerReleaseError("latest_unavailable", "GitHub's latest stable release is unavailable. Enter an exact stable version manually.", 502) }
 }
 
 export async function verifyFrozenInstallerRelease(input: { provider: ManagedInstallerProvider, manifest_url: string, template_sha256: string, validation: { manifestSha256: string, release: { templateUrl: string, bundleUrl: string, bundleSha256: string } } }, fetcher: typeof fetch = fetch) {

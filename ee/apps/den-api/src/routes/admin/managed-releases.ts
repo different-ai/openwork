@@ -6,7 +6,7 @@ import { adminRoute, jsonValidator, paramValidator } from "../../middleware/inde
 import { jsonResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { installerReleaseReport, pinInstallerRelease, resetInstallerRelease, saveInstallerApproval, saveInstallerSource, validateInstallerRelease } from "../../managed-deployments/releases.js"
-import { boundedReleaseGet, InstallerReleaseError } from "../../managed-deployments/release-verifier.js"
+import { latestInstallerVersion, InstallerReleaseError } from "../../managed-deployments/release-verifier.js"
 
 const path = "/v1/admin/managed-releases"
 const describe = (summary: string, schema: z.ZodType) => {
@@ -17,17 +17,6 @@ async function result<T>(run: () => Promise<T>): Promise<{ value: T, error?: nev
   try { return { value: await run() } } catch (error) {
     return { error: error instanceof InstallerReleaseError ? error : new InstallerReleaseError("settings_unavailable", "Release settings are unavailable. Check the database migration and try again.", 503) }
   }
-}
-
-export async function latestInstallerVersion(fetcher: typeof fetch = fetch) {
-  try {
-    const response = await boundedReleaseGet("https://api.github.com/repos/different-ai/openwork/releases/latest", 128 * 1024, AbortSignal.timeout(5000), fetcher)
-    const release = z.object({ tag_name: z.string().regex(/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/), draft: z.literal(false), prerelease: z.literal(false), html_url: z.string() }).parse(JSON.parse(response.body.toString()))
-    const version = release.tag_name.replace(/^v/, "")
-    const url = `https://github.com/different-ai/openwork/releases/tag/${release.tag_name}`
-    if (release.html_url !== url) throw new Error("Unexpected release")
-    return { version, url }
-  } catch { throw new InstallerReleaseError("latest_unavailable", "GitHub's latest stable release is unavailable. Enter an exact stable version manually.", 502) }
 }
 
 export function registerAdminManagedReleaseRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
