@@ -29,6 +29,23 @@ const qualification = { freshInstallUrl: "https://example.test/evidence/fresh", 
 const fetcher = fixtureFetch(new Map(["1.2.1", "1.2.3", "1.2.4"].map((version) => [version, fixtureArtifacts(version)])))
 const verifier: typeof verifyInstallerRelease = (provider, base, version) => verifyInstallerRelease(provider, base, version, fetcher)
 
+test("the generated contract describes every managed release operation without exposing it through MCP", async () => {
+  const contract = await den.request(null, "GET", "/openapi.json")
+  assert.equal(contract.status, 200, summary(contract))
+  for (const [path, method] of [
+    ["/v1/admin/managed-releases", "get"], ["/v1/admin/managed-releases/latest", "get"],
+    ["/v1/admin/managed-releases/{provider}/source", "put"], ["/v1/admin/managed-releases/{provider}/approval", "put"],
+    ["/v1/admin/managed-releases/validate", "post"], ["/v1/admin/managed-releases/pin", "post"], ["/v1/admin/managed-releases/reset", "post"],
+  ] satisfies [string, string][]) {
+    const description = field(contract.body, "paths", path, method, "description")
+    const title = field(contract.body, "paths", path, method, "summary")
+    assert.ok(typeof description === "string" && description.length > 100, `${method} ${path} has a useful description`)
+    assert.notEqual(description, title)
+    assert.ok(description.includes("Platform administrators only"), `${method} ${path} names its access boundary`)
+    assert.equal(field(contract.body, "paths", path, method, "x-mcp"), false)
+  }
+})
+
 test("all release routes require an authenticated platform administrator, not an organization owner or member", async () => {
   for (const [method, path, body] of [
     ["GET", "/v1/admin/managed-releases", undefined], ["GET", "/v1/admin/managed-releases/latest", undefined],
