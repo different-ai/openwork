@@ -98,9 +98,9 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
           configurationError: gatewayConfigurationError(provider.provider_config, provider.settings),
           pinnedModelIds: provider.pinned_model_ids.filter((id) => visibleModels.some((model) => model.gateway_provider_id === provider.id && model.model_id === id)),
           migration: provider.settings.migration,
-          // Only these settings affect member issued-key readiness, not sync
+          // Only these settings affect member issued-key and Microsoft sign-in readiness, not sync
           // timestamps, management configuration or another member's attention.
-          mode: readLiteLlmSettings(provider.settings)?.mode, keySource: readLiteLlmSettings(provider.settings)?.keySource })),
+          mode: readLiteLlmSettings(provider.settings)?.mode, keySource: readLiteLlmSettings(provider.settings)?.keySource, entraScope: readLiteLlmSettings(provider.settings)?.entraScope })),
         models: visibleModels.map((model) => ({ id: model.id, providerId: model.gateway_provider_id, upstreamModelId: model.model_id,
           config: buildGatewayModelConfig({ id: model.id, name: model.name, config: model.model_config }) })),
         groups: groups.filter((group) => visibleGroupIds.includes(group.id)).map((group) => ({ id: group.id, name: group.name })),
