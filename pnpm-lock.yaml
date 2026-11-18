@@ -2018,6 +2018,28 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
+  packages/sandbox-instabox:
+    dependencies:
+      '@insforge/instabox-sdk':
+        specifier: 0.9.0
+        version: 0.9.0
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
   packages/sandbox-microsandbox:
     dependencies:
       '@openwork/sandbox':
@@ -3300,6 +3322,10 @@ packages:
     peerDependenciesMeta:
       '@types/node':
         optional: true
+
+  '@insforge/instabox-sdk@0.9.0':
+    resolution: {integrity: sha512-dEFYkmGuewhNUX2P4ExduSzjskyYONEFqwEF4yfEh4KHX8DYTdqBm3uzjONKyOY2j+JFr0iAiQwTBTOUjngjSQ==}
+    engines: {node: '>=18'}
 
   '@ioredis/commands@2.0.0':
     resolution: {integrity: sha512-vrx0AE/T0h7cRZwfo1M39Cr+ZhZrkf0V8mQN75wucKCxCLD9l/VX6no3gFvrLqD1IlG/1LtzWovqEw3t0Vr9zg==}
@@ -12846,6 +12872,8 @@ snapshots:
   '@inquirer/type@4.0.5(@types/node@25.6.0)':
     optionalDependencies:
       '@types/node': 25.6.0
+
+  '@insforge/instabox-sdk@0.9.0': {}
 
   '@ioredis/commands@2.0.0': {}
 

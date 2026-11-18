@@ -41,15 +41,15 @@ This change migrates Web's contract imports, not its lifecycle policy. Workbot
 and worlds adopt the shared adapters in separate changes. Their existing SDK
 and CLI paths are not silently replaced.
 
-| Building block | Daytona adapter | Freestyle adapter | Differently adapter |
-| --- | --- | --- | --- |
-| Compute lifecycle, discovery, commands | yes (existing Web contract) | yes; stop uses memory-preserving pause | yes; stop falls back to pause on pools that cannot stop |
-| Synchronous `run`: env, cwd, exit code, exact stdout/stderr | verified Linux flavor | Linux | Linux; exact on OpenSandbox with `lineEndings: kept` |
-| `files`: read/write/stat | yes | yes | yes; stat from a directory listing, mode with `chmod` |
-| `pause`: preserve memory, resume through start | opt-in for a class known to support it | yes | where the routed pool pauses |
-| `snapshots`: capture a running instance, delete the image | absent; image building is a different operation | yes | yes; a snapshot boots on the pool that took it |
-| Persistent volumes | existing Daytona storage implementation | absent | absent |
-| Endpoints | signed preview URLs | requires an explicit endpoint binding for TLS/domain setup | the routed pool's port URL; off for OpenSandbox pools |
+| Building block | Daytona adapter | Freestyle adapter | Differently adapter | instabox adapter |
+| --- | --- | --- | --- | --- |
+| Compute lifecycle, discovery, commands | yes (existing Web contract) | yes; stop uses memory-preserving pause | yes; stop falls back to pause on pools that cannot stop | yes, the idempotency key names the sandbox, so a second create is refused |
+| Synchronous `run`: env, cwd, exit code, exact stdout/stderr | verified Linux flavor | Linux | Linux; exact on OpenSandbox with `lineEndings: kept` | Linux |
+| `files`: read/write/stat | yes | yes | yes; stat from a directory listing, mode with `chmod` | yes, stat and mode run `stat` and `chmod` in the sandbox |
+| `pause`: preserve memory, resume through start | opt-in for a class known to support it | yes | where the routed pool pauses | yes |
+| `snapshots`: capture a running instance, delete the image | absent; image building is a different operation | yes | yes; a snapshot boots on the pool that took it | yes, returns once the snapshot is saved |
+| Persistent volumes | existing Daytona storage implementation | absent | absent | absent |
+| Endpoints | signed preview URLs | requires an explicit endpoint binding for TLS/domain setup | the routed pool's port URL; off for OpenSandbox pools | a stable HTTPS URL per published port |
 
 **Flavors are adapter configuration.** Daytona's `snapshot`, `target`, explicit
 `platform` and `supportsPause` identify the configured flavor. We do not infer
@@ -127,6 +127,7 @@ pnpm --filter @openwork/sandbox-differently test
 DAYTONA_API_KEY=… pnpm --filter @openwork/sandbox-daytona test:live
 FREESTYLE_API_KEY=… pnpm --filter @openwork/sandbox-freestyle test:live
 DIFFERENTLY_URL=… DIFFERENTLY_API_KEY=… pnpm --filter @openwork/sandbox-differently test:live
+INSTABOX_API_KEY=… pnpm --filter @openwork/sandbox-instabox test:live
 ```
 
 Live tests verify exact process output, binary files and missing-file behavior;
