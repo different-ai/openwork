@@ -14,6 +14,19 @@ export type ModelKey = keyof typeof profiles;
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+export function rawMessages(body: unknown) {
+  if (!isRecord(body) || !isRecord(body.messages) || !Array.isArray(body.messages.data)) throw new Error("Native snapshot has no message page");
+  const rows = body.messages.data.filter(isRecord);
+  return "cursor" in body.messages ? rows.toReversed() : rows;
+}
+
+/** Native idle markers are messages too; completion belongs to a new assistant stop message. */
+export function hasStoppedAssistantAnswer(body: unknown, previousMessageIds: ReadonlySet<string>) {
+  return rawMessages(body).some(message => typeof message.id === "string" && !previousMessageIds.has(message.id)
+    && message.type === "assistant" && message.finish === "stop" && Array.isArray(message.content)
+    && message.content.some(part => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.length > 0));
+}
+
 export function redact(text: string, secrets: readonly string[]) {
   for (const secret of secrets) if (secret) text = text.replaceAll(secret, "[redacted]");
   return text;
@@ -109,7 +122,7 @@ export async function sandboxDenFixture() {
     const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "content-type": "application/json" };
     if (request.method === "OPTIONS") { response.writeHead(204, headers).end(); return; }
     reads.push(path);
-    const body = path === "/v1/features" ? { sandboxTools: true }
+    const body = path === "/v1/features" ? { features: { sandboxTools: true } }
       : path === "/v1/app-version" ? { minAppVersion: "0.0.0", latestAppVersion: "0.0.0", publishedDesktopVersions: [] }
       : null;
     response.writeHead(body ? 200 : 404, headers).end(JSON.stringify(body ?? { error: "fixture_not_found" }));
@@ -162,33 +175,40 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
       codeModeTools: [...raw.replaceAll("\\n", "\n").matchAll(/^\s*- tools\.([A-Za-z0-9_.]+)\(/gm)].map(match => match[1] ?? ""),
       status: 0, responseModel: null, completed: false, requestContainedHostSecret: raw.includes(state.hostSecret) };
     records.push(entry); // Visible immediately, allowing an active-turn Settings interaction.
-    const headers: Record<string, string> = {};
-    for (const name of ["content-type", "accept", "anthropic-version", "anthropic-beta", "openai-beta", "openai-organization", "openai-project"]) {
-      const value = request.headers[name];
-      if (typeof value === "string") headers[name] = value;
+    try {
+      const headers: Record<string, string> = {};
+      for (const name of ["content-type", "accept", "anthropic-version", "anthropic-beta", "openai-beta", "openai-organization", "openai-project"]) {
+        const value = request.headers[name];
+        if (typeof value === "string") headers[name] = value;
+      }
+      if (model === "fable") headers["x-api-key"] = realKey;
+      else headers.authorization = `Bearer ${realKey}`;
+      const upstream = await fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: raw, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
+      entry.status = upstream.status;
+      response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
+      let text = "";
+      const decoder = new TextDecoder();
+      const reader = upstream.body?.getReader();
+      if (reader) {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            text += decoder.decode(value, { stream: true });
+            response.write(value);
+          }
+        } finally { reader.releaseLock(); }
+      }
+      text += decoder.decode();
+      entry.responseModel = responseModels(text);
+      entry.completed = true;
+      response.end();
+    } catch {
+      entry.status = 502;
+      entry.completed = true;
+      if (!response.headersSent) response.writeHead(502);
+      response.end();
     }
-    if (model === "fable") headers["x-api-key"] = realKey;
-    else headers.authorization = `Bearer ${realKey}`;
-    const upstream = await fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: raw, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
-    entry.status = upstream.status;
-    response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
-    let text = "";
-    const decoder = new TextDecoder();
-    const reader = upstream.body?.getReader();
-    if (reader) {
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          text += decoder.decode(value, { stream: true });
-          response.write(value);
-        }
-      } finally { reader.releaseLock(); }
-    }
-    text += decoder.decode();
-    entry.responseModel = responseModels(text);
-    entry.completed = true;
-    response.end();
   };
   const server = createServer((request, response) => {
     void handle(request, response).catch(() => { if (!response.headersSent) response.writeHead(502); response.end(); });

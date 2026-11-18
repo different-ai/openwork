@@ -9,10 +9,11 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { attachSurface, browserScript, clickTarget, evaluateOnSurface, reload, typeText, waitForLocated, type AttachedSurface } from "@openwork/cdp";
-import { control, createAndSelectWorkspace, engineSessionProbe, waitForText } from "@openwork/behaviors";
+import { control, createAndSelectWorkspace, engineSessionProbe, waitFor, waitForText } from "@openwork/behaviors";
 import { localHost } from "@openwork/hosts";
-import { GUEST_TOOLS, hasOnlyDirectGuestTools, inferenceFixture, isRecord, isolatedParentEnvironment, packagedBundle, profiles, redact, sandboxDenFixture, type ModelKey } from "./packaged-sandbox-fixtures.ts";
+import { GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, inferenceFixture, isRecord, isolatedParentEnvironment, packagedBundle, profiles, rawMessages, redact, sandboxDenFixture, type ModelKey } from "./packaged-sandbox-fixtures.ts";
 
 const exec = promisify(execFile);
 type Options = { binary: string; model: ModelKey; realKey: string; evidenceDir: string; keepRoot?: boolean; expectedGitSha?: string; expectedBundleSha256?: string };
@@ -57,7 +58,14 @@ export async function packagedSandboxWorld(options: Options) {
   let handle: Awaited<ReturnType<typeof host.spawnElectron>> | undefined;
   let workspaceId = "";
   let sessionId = "";
-  let turnMessageOffset = 0;
+  let previousMessageIds = new Set<string>();
+  function turnMessages(snapshot: Awaited<ReturnType<ReturnType<typeof engineSessionProbe>["snapshot"]>>) {
+    const rows = rawMessages(snapshot.body);
+    return snapshot.data.messages.filter((_message, index) => {
+      const id = rows[index]?.id;
+      return typeof id === "string" && !previousMessageIds.has(id);
+    });
+  }
   let disposed = false;
   function check(name: string, ok: boolean, detail: unknown = null) {
     assertions.push({ name, ok, detail });
@@ -94,17 +102,26 @@ export async function packagedSandboxWorld(options: Options) {
   async function clickSwitch() { await clickTarget(surface(), { testId: "host-execution-switch" }); }
   async function returnToChat() {
     await clickTarget(surface(), { role: "button", label: "Back to app" });
+    await waitForLocated(surface(), "composer", { timeoutMs: 90_000 });
     if (sessionId) await control(surface(), "session.open", { sessionId });
     await waitForLocated(surface(), "composer", { timeoutMs: 90_000 });
   }
   async function send(text: string) {
     // This is the normal composer input + Run task button, not prompt_async or an engine API.
-    const before = await native().snapshot(sessionId);
-    if (!before.ok) throw new Error(`Cannot establish the current turn's transcript boundary: HTTP ${before.status}`);
-    turnMessageOffset = before.data.messages.length;
+    if (sessionId) {
+      const before = await native().snapshot(sessionId);
+      if (!before.ok) throw new Error(`Cannot establish the current turn's transcript boundary: HTTP ${before.status}`);
+      previousMessageIds = new Set(rawMessages(before.body).flatMap(message => typeof message.id === "string" ? [message.id] : []));
+    } else previousMessageIds = new Set();
     await clickTarget(surface(), "composer", { timeoutMs: 90_000 });
     await typeText(surface(), text);
     await clickTarget(surface(), { role: "button", label: "Run task" });
+    if (!sessionId) {
+      const opened = await waitFor(surface(), () => window.location.hash.match(/\/session\/(ses_[^/?#]+)/)?.[1] ?? null,
+        { timeoutMs: 90_000, label: "the normal composer opens its persisted chat" });
+      if (typeof opened !== "string") throw new Error("The composer did not open a persisted chat");
+      sessionId = opened;
+    }
   }
   async function finished(timeoutMs = 600_000) {
     const deadline = Date.now() + timeoutMs;
@@ -121,9 +138,9 @@ export async function packagedSandboxWorld(options: Options) {
       const phaseRequests = inference.records.filter(entry => entry.phase === state.phase);
       const rejected = phaseRequests.find(entry => entry.status >= 400);
       if (rejected) throw new Error(`Real inference rejected ${rejected.requestedModel}: HTTP ${rejected.status} at ${rejected.path}`);
-      const currentMessages = snapshot.data.messages.slice(turnMessageOffset);
+      const currentMessages = turnMessages(snapshot);
       const hasAnswer = phaseRequests.length > 0 && phaseRequests.every(entry => entry.completed)
-        && currentMessages.at(-1)?.parts.some(part => part.type === "text" && part.text.length > 0) === true;
+        && hasStoppedAssistantAnswer(snapshot.body, previousMessageIds);
       if (idle >= 4 && hasAnswer) {
         transcripts.push({ phase: state.phase, ...snapshot });
         check(`${state.phase}: run finishes with no tool still running`, snapshot.ok && currentMessages.flatMap(message => message.parts).every(part => part.type !== "tool" || !["pending", "running"].includes(part.status)), currentMessages);
@@ -156,7 +173,7 @@ export async function packagedSandboxWorld(options: Options) {
     while (Date.now() < deadline) {
       const result = await api(`/workspace/${workspaceId}/opencode2/api/session/active`);
       const snapshot = await native().snapshot(sessionId);
-      const runningShell = snapshot.data.messages.slice(turnMessageOffset).flatMap(message => message.parts)
+      const runningShell = turnMessages(snapshot).flatMap(message => message.parts)
         .some(part => part.tool === "shell" && part.status === "running" && JSON.stringify(part.input).includes(command));
       if (result.status === 200 && JSON.stringify(result.body).includes(sessionId) && inference.records.length > count && runningShell) { active = true; break; }
       await delay(100);
@@ -169,6 +186,8 @@ export async function packagedSandboxWorld(options: Options) {
     await clickSwitch();
     const pending = await waitSettings(body => body.pending === true && body.allowHostExecution === desiredAllowHostExecution && body.effectiveAllowHostExecution === !desiredAllowHostExecution);
     check(`${phase}: desired setting is saved while the current run keeps its effective execution mode`, pending.pending === true, pending);
+    await waitFor(surface(), browserScript((checked) => document.querySelector('[data-testid="host-execution-switch"]')?.getAttribute("aria-checked") === String(checked), [desiredAllowHostExecution]),
+      { timeoutMs: 15_000, label: "the switch displays the saved choice while application is pending" });
     await waitForText(surface(), "finish", { timeoutMs: 15_000 });
     await screenshot(`${phase}-pending`);
     await returnToChat();
@@ -177,7 +196,12 @@ export async function packagedSandboxWorld(options: Options) {
     check(`${phase}: a later read in the same ongoing turn is not revoked`, final.some(part => part.tool === "read" && part.status === "completed" && JSON.stringify(part.input).includes(files.notes) && part.output.includes("status:")), final.filter(part => part.tool === "read"));
     const phaseRequests = inference.records.filter(entry => entry.phase === phase);
     if (desiredAllowHostExecution) check(`${phase}: pending host enable does not offer host tools to the guest turn`, hasOnlyDirectGuestTools(phaseRequests), phaseRequests);
-    else check(`${phase}: the ongoing host turn retains its ordinary additive catalog`, phaseRequests.length > 0 && phaseRequests.every(entry => entry.offeredTools.includes("shell") && entry.offeredTools.includes("read") && entry.offeredTools.length > GUEST_TOOLS.length), phaseRequests);
+    else {
+      const executableRequests = phaseRequests.filter(entry => entry.offeredTools.length > 0);
+      check(`${phase}: every executable request retains the ongoing host turn's host execution rail`, executableRequests.length > 0 && executableRequests.every(entry =>
+        entry.offeredTools.includes("shell") && entry.offeredTools.includes("read")
+        || entry.offeredTools.includes("execute") && entry.codeModeTools.includes("shell") && entry.codeModeTools.includes("read")), phaseRequests);
+    }
     const applied = await waitSettings(body => body.pending === false && body.allowHostExecution === desiredAllowHostExecution && body.effectiveAllowHostExecution === desiredAllowHostExecution);
     check(`${phase}: pending setting applies only after the run finishes`, applied.pending === false, applied);
     await settingsRoute();
@@ -217,13 +241,16 @@ export async function packagedSandboxWorld(options: Options) {
     if (error && app) await screenshot("failure").catch(() => undefined);
     const processes = await ownedProcesses().catch(() => []);
     const plugins = await auditConfigs(root).catch(() => []);
-    await writeFile(join(evidenceDir, `${options.model}-report.json`), redact(JSON.stringify({
-      scope: "Branch-built packaged macOS arm64 Electron, its embedded app.asar server and staged runtime; real provider inference and microVM. Signed-out Den rollout is a loopback contract fixture, not a production organization.",
-      artifact, sourceContext, bakedBuildInfo, expectedGitSha: options.expectedGitSha ?? null, model: profile.model, provider: profile.provider, upstream: profile.upstream, root, workspaceId, sessionId,
-      assertions, inference: inference.records, denReads: den.reads, processes, pluginConfigs: plugins,
-      fatal: error instanceof Error ? error.stack : error ? String(error) : null,
-    }, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
-    await writeFile(join(evidenceDir, `${options.model}-transcript.json`), redact(JSON.stringify(transcripts, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
+    let evidenceFailure: unknown;
+    try {
+      await writeFile(join(evidenceDir, `${options.model}-report.json`), redact(JSON.stringify({
+        scope: "Branch-built packaged macOS arm64 Electron, its embedded app.asar server and staged runtime; real provider inference and microVM. Signed-out Den rollout is a loopback contract fixture, not a production organization.",
+        artifact, sourceContext, bakedBuildInfo, expectedGitSha: options.expectedGitSha ?? null, model: profile.model, provider: profile.provider, upstream: profile.upstream, root, workspaceId, sessionId,
+        assertions, inference: inference.records, denReads: den.reads, processes, pluginConfigs: plugins,
+        fatal: error instanceof Error ? error.stack : error ? String(error) : null,
+      }, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
+      await writeFile(join(evidenceDir, `${options.model}-transcript.json`), redact(JSON.stringify(transcripts, null, 2), [options.realKey, inference.token]), { mode: 0o600 });
+    } catch (error) { evidenceFailure = error; }
     // Stop only this surface/process group. Never search/kill a person's existing app or VM.
     try {
       await app?.stop();
@@ -235,8 +262,9 @@ export async function packagedSandboxWorld(options: Options) {
       const leftovers = ownedVms.filter(row => alive(row.pid));
       await writeFile(join(evidenceDir, `${options.model}-cleanup.json`), JSON.stringify({ ownedVmPids: ownedVms.map(row => row.pid), leftovers }, null, 2));
       if (leftovers.length) throw new Error(`Owned VM processes did not stop; keeping ${root} intact`);
-      if (!options.keepRoot) await rm(root, { recursive: true, force: true });
+      if (!options.keepRoot && !evidenceFailure) await rm(root, { recursive: true, force: true });
     } finally { await Promise.all([den.close(), inference.close()]); }
+    if (evidenceFailure) throw evidenceFailure;
   }
 
   async function launch() {
@@ -287,9 +315,7 @@ export async function packagedSandboxWorld(options: Options) {
     const granted = await api(`/workspace/${workspaceId}/authorized-folders`, "PUT", { folders: [shared] });
     check("packaged server authorizes only the disposable shared folder", granted.status === 200, granted.body);
     await returnToChat();
-    const created = await control(surface(), "session.create_task");
-    if (typeof created !== "string") throw new Error("Normal task creation returned no session id");
-    sessionId = created;
+    check("fresh packaged workspace is ready for its first normal message", sessionId === "");
   }
 
   async function exercise() {
@@ -333,11 +359,16 @@ export async function packagedSandboxWorld(options: Options) {
     await screenshot("live-edits-both-directions");
 
     await activeToggle(true, "active-sandbox-to-host", "Linux");
+    check("every phase used the selected real model", inference.records.length > 0 && inference.records.every(entry => entry.status === 200 && entry.completed && entry.requestedModel === profile.model && entry.responseModel?.startsWith(profile.model)), inference.records);
     check("Den fixture rollout was actually read", den.reads.includes("/v1/features"), den.reads);
     const pluginConfigs = await auditConfigs(root);
     check("owned packaged engine config loads the shipped sandbox plugin", pluginConfigs.length > 0, pluginConfigs);
     const processes = await ownedProcesses();
-    check("owned app process is the supplied bundle, with no source server process", processes.some(row => row.pid === handle?.pid && row.command.includes(artifact.binary)) && processes.every(row => !/apps\/server\/src|--import tsx|bun.*src\//.test(row.command)), processes);
+    const rendererUrl = await evaluateOnSurface(surface(), () => location.href);
+    const expectedRendererRoot = `${pathToFileURL(join(artifact.resources, "app-dist")).href}/`;
+    check("owned launch PID is alive and its renderer comes from the supplied bundle, with no source server process", processes.some(row => row.pid === handle?.pid)
+      && rendererUrl.startsWith(expectedRendererRoot)
+      && processes.every(row => !/apps\/server\/src|--import tsx|bun.*src\//.test(row.command)), { launchPid: handle?.pid, rendererUrl, expectedRendererRoot, processes });
   }
 
   return { launch, exercise, dispose, root, assertions, artifact, inference: inference.records };

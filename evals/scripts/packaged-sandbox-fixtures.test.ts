@@ -2,12 +2,49 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, isolatedParentEnvironment, offeredToolNames, packagedBundle, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
+import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, isolatedParentEnvironment, offeredToolNames, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const request = (overrides: Partial<InferenceRecord> = {}): InferenceRecord => ({ phase: "guest", path: "/v1/messages", requestedModel: "test", offeredTools: GUEST_TOOLS,
   codeModeTools: [], responseModel: "test", status: 200, completed: true, requestContainedHostSecret: false, ...overrides });
+
+describe("native packaged turn completion", () => {
+  const answer = (id: string) => ({ id, type: "assistant", finish: "stop", content: [{ type: "text", text: "Darwin; status: draft" }] });
+  it("normalizes a native descending cursor page and ignores its newest idle marker", () => {
+    const body = { messages: { data: [{ id: "idle", type: "idle", content: [] }, answer("new-answer"), { id: "new-user", type: "user", content: [] }, answer("old-answer")], cursor: null } };
+    expect(rawMessages(body).map(message => message.id)).toEqual(["old-answer", "new-user", "new-answer", "idle"]);
+    expect(hasStoppedAssistantAnswer(body, new Set(["old-answer"]))).toBe(true);
+  });
+  it("preserves oldest-first pages without a cursor", () => {
+    const body = { messages: { data: [answer("first"), answer("second")] } };
+    expect(rawMessages(body).map(message => message.id)).toEqual(["first", "second"]);
+  });
+  it("uses IDs rather than a count boundary when a 50-message page rolls over", () => {
+    const previousIds = new Set(Array.from({ length: 50 }, (_, index) => `old-${index}`));
+    const ascending = [...Array.from({ length: 47 }, (_, index) => answer(`old-${index + 3}`)), { id: "new-user", type: "user", content: [] }, answer("new-answer"), { id: "new-idle", type: "idle", content: [] }];
+    const body = { messages: { data: ascending.toReversed(), cursor: "previous-page" } };
+    expect(rawMessages(body)).toHaveLength(50);
+    expect(rawMessages(body).filter(message => typeof message.id === "string" && !previousIds.has(message.id)).map(message => message.id)).toEqual(["new-user", "new-answer", "new-idle"]);
+    expect(hasStoppedAssistantAnswer(body, previousIds)).toBe(true);
+  });
+  it("does not mistake an earlier turn's answer, a user message or idle marker for completion", () => {
+    const body = { messages: { data: [{ id: "idle", type: "idle", content: [] }, { id: "user", type: "user", content: [{ type: "text", text: "new request" }] }, answer("old-answer")], cursor: null } };
+    expect(hasStoppedAssistantAnswer(body, new Set(["old-answer"]))).toBe(false);
+  });
+  it("requires a stopped assistant with nonempty text, not a tool-only or unfinished response", () => {
+    for (const candidate of [
+      { ...answer("new"), finish: "tool-calls" },
+      { ...answer("new"), type: "user" },
+      { ...answer("new"), content: [] },
+      { ...answer("new"), content: [{ type: "text", text: "" }] },
+      { ...answer("new"), content: [{ type: "tool", text: "tool output is not a final answer" }] },
+    ]) expect(hasStoppedAssistantAnswer({ messages: { data: [candidate] } }, new Set())).toBe(false);
+  });
+  it("fails loudly when the native message-page contract is missing", () => {
+    expect(() => rawMessages({ messages: [] })).toThrow("Native snapshot has no message page");
+  });
+});
 
 describe("packaged sandbox proof prerequisites", () => {
   it("never inherits a member's history, config, provider credentials or source overrides", () => {
@@ -69,7 +106,7 @@ describe("packaged sandbox proof prerequisites", () => {
     const den = await sandboxDenFixture();
     try {
       const response = await fetch(`${den.url}/v1/features`);
-      expect(await response.json()).toEqual({ sandboxTools: true });
+      expect(await response.json()).toEqual({ features: { sandboxTools: true } });
       expect(den.reads).toEqual(["/v1/features"]);
       expect((await fetch(`${den.url}/v1/org`)).status).toBe(404);
     } finally { await den.close(); }
