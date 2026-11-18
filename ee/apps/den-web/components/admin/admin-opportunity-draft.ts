@@ -33,6 +33,14 @@ export function outreachDraft(item: Pick<OutreachItem, "play" | "organizationNam
       return write("OpenWork for your team", `I help teams get set up on OpenWork. If others${item.company ? ` at ${item.company}` : ""} would use it too, a shared workspace lets you share skills and connections and keep billing in one place. I'm happy to set that up with you. Would a short call this week work?`);
     case "free_limit":
       return write("More room on OpenWork", `You reached the free model limit on OpenWork recently, which usually means it's doing real work for you. The Models add-on lifts that limit. If it helps, I can walk you through what's included or answer any questions.`);
+    case "shrinking":
+      return write(`${workspace} on OpenWork`, `I'm checking in on how OpenWork is going for the team at ${workspace}. If some of the team ran into snags, or it isn't fitting how they work, I'd like to help. A short session on shared skills and connections usually gets people going again. Would that be useful?`);
+    case "lapsed_failed":
+      return write("Sorry OpenWork let you down", `Some of your tasks in OpenWork didn't complete the last time you used it, and I'm sorry about that. If you tell me what you were trying to get done, I'll make sure it works, or we can spend 15 minutes and do it together.`);
+    case "lapsed_limit":
+      return write("Your OpenWork limit has reset", `You reached the free model limit on OpenWork a little while ago. That limit has reset, so you can pick up where you left off, and the Models add-on lifts it if you need more room. Is there anything I can help with?`);
+    case "lapsed":
+      return write("Checking in", `I wanted to check in on OpenWork for ${workspace}. If something got in the way, or it didn't fit what you needed, I'd value hearing it. And if you'd like a hand getting a workflow running, I'm happy to set up 15 minutes.`);
     case "quiet_paying":
       return write("Checking in", `I'm checking in on how OpenWork is working for ${workspace}. If there's a workflow you'd like help with, or something getting in the way, I'm glad to set up time.`);
   }

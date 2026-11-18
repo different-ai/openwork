@@ -1,4 +1,4 @@
-import { Armchair, Building2, CalendarClock, CreditCard, DoorOpen, Gauge, MoonStar, UsersRound, type LucideIcon } from "lucide-react";
+import { Armchair, Building2, CalendarClock, CircleAlert, CreditCard, DoorOpen, Gauge, History, MoonStar, TrendingDown, UsersRound, type LucideIcon } from "lucide-react";
 import type { OutreachPlay } from "@openwork/types/den/admin-organization";
 import { DenBadge } from "../../app/(den)/_components/ui/badge";
 
@@ -12,8 +12,12 @@ export const PLAY: Record<OutreachPlay, { label: string; ask: string; icon: Luci
   team_no_plan: { label: "Team, no plan", ask: "Several people use it here. Offer the Team plan and a setup session.", icon: UsersRound, tone: "text-[var(--ow-success)]" },
   seats_full: { label: "Seats full", ask: "Offer help adding more people.", icon: Armchair, tone: "text-[var(--ow-success)]" },
   company: { label: "Same company", ask: "Colleagues use it in separate workspaces. Offer one shared workspace.", icon: Building2, tone: "text-[var(--ow-success)]" },
+  shrinking: { label: "Team shrinking", ask: "Some of the team stopped. Ask the person still using it what got in the way.", icon: TrendingDown, tone: "text-[var(--ow-warning)]" },
   free_limit: { label: "Hit free limit", ask: "They ran out of free model use. Offer the Models add-on.", icon: Gauge, tone: "text-[var(--dls-accent)]" },
   quiet_paying: { label: "Paying, quiet", ask: "Paying but no tasks seen. Check in before renewal.", icon: MoonStar, tone: "text-[var(--dls-text-secondary)]" },
+  lapsed_failed: { label: "Left after failures", ask: "Their tasks kept failing, then they stopped. Apologize, ask what they were doing, offer to make it work.", icon: CircleAlert, tone: "text-[var(--ow-warning)]" },
+  lapsed_limit: { label: "Left at the limit", ask: "They ran out of free model use and never came back. The limit has reset; say so and offer the Models add-on.", icon: Gauge, tone: "text-[var(--ow-warning)]" },
+  lapsed: { label: "Went quiet", ask: "Regular use, then nothing. Ask what got in the way and offer a short session.", icon: History, tone: "text-[var(--dls-text-secondary)]" },
 };
 
 type Billing = { plan: "free" | "team" | "enterprise"; paying: boolean; modelsAddOn: boolean };

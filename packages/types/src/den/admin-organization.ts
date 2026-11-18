@@ -124,7 +124,11 @@ export const accountFollowUpSchema = z.object({
 })
 
 // Reasons to write to an account, strongest first. An account is listed once, under its strongest reason.
-export const OUTREACH_PLAYS = ["follow_up", "payment", "cancelling", "team_no_plan", "seats_full", "company", "free_limit", "quiet_paying"] as const
+export const OUTREACH_PLAYS = [
+  "follow_up", "payment", "cancelling", "team_no_plan", "seats_full", "company", "shrinking", "free_limit", "quiet_paying",
+  // Accounts that used to run tasks and stopped, by what happened just before.
+  "lapsed_failed", "lapsed_limit", "lapsed",
+] as const
 export type OutreachPlay = (typeof OUTREACH_PLAYS)[number]
 const outreachPersonSchema = z.object({
   userId: z.string(), name: z.string().nullable(), email: z.string(), role: z.string(),
@@ -137,6 +141,7 @@ export const outreachItemSchema = z.object({
   contact: outreachPersonSchema.nullable(), others: z.array(outreachPersonSchema).max(5),
   people: z.object({ members: count, active: count }),
   billing: opportunityBillingSchema, endsAt: isoDate.nullable().describe("When the plan in the reason ends or ended."),
+  lastActiveAt: isoDate.nullable().describe("The last task anyone here ran in the last 60 days."),
   followUp: accountFollowUpSchema.nullable(),
 })
 export type OutreachItem = z.infer<typeof outreachItemSchema>
@@ -148,7 +153,13 @@ export const adminOutreachSchema = z.object({
   waiting: z.array(z.object({
     organizationId: z.string(), organizationName: z.string(), contactedAt: isoDate,
     ownerName: z.string().nullable(), followUpAt: isoDate.nullable(),
+    activeAgainAt: isoDate.nullable().describe("First day after the contact on which someone here ran a task."),
   })).max(50),
+  results: z.object({
+    days: count, contacted: count, replied: count,
+    quietWhenContacted: count.describe("Contacted accounts where nobody had run a task in the two weeks before."),
+    cameBack: count.describe("Of those quiet accounts, the ones where someone ran a task after the contact. Observed, not attributed."),
+  }).describe("What happened to the accounts admins recorded contacting."),
   hidden: count.describe("Accounts with a reason that an admin dismissed or closed."),
 }).meta({ ref: "AdminOutreach" })
 export type AdminOutreach = z.infer<typeof adminOutreachSchema>
