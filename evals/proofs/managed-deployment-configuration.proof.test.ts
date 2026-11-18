@@ -218,7 +218,7 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
   });
   async function prepareEmail(email: string, entry = "managed-deployment-edit-configuration") {
     await person.click({ testId: entry });
-    await person.type({ label: "First administrator email" }, email);
+    await person.type({ label: "First administrator email" }, email, { replace: true });
     await person.click({ role: "button", label: "Review changes" });
     await person.click({ testId: "deployment-configuration-consent" });
     await person.click({ role: "button", label: "Prepare AWS approval" });
@@ -256,7 +256,7 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
     expect(current).toContain("second@example.com");
     expect(await world.aws.enrollStatus(old)).toBe(404);
     await person.click({ role: "button", label: "Edit change" });
-    await person.type({ label: "First administrator email" }, "third@example.com");
+    await person.type({ label: "First administrator email" }, "third@example.com", { replace: true });
     await person.click({ role: "button", label: "Review changes" });
     await person.click({ testId: "deployment-configuration-consent" });
     await person.click({ role: "button", label: "Prepare AWS approval" });
@@ -304,7 +304,7 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
     await person.click({ testId: "managed-deployment-row" });
     await person.see({ role: "button", label: "Edit configuration" }, { timeoutMs: WITHIN });
     await person.click({ role: "button", label: "Edit configuration" });
-    await person.type({ label: "Name" }, "Production workspace");
+    await person.type({ label: "Name" }, "Production workspace", { replace: true });
     await person.click({ role: "button", label: "Review changes" });
     await person.see({ role: "button", label: "Save name" }, { timeoutMs: WITHIN });
     await person.click({ role: "button", label: "Save name" });
