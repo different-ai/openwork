@@ -7,7 +7,7 @@ import { createFakeProvider } from "../../../packages/sandbox/src/testing/fake-p
 import type { ServerConfig } from "../src/types.js";
 import { createLocalSandboxRuntime } from "../src/local-sandbox-runtime.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
-import { readSandboxSettings, writeSandboxSettings } from "../src/sandbox-settings-store.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings, writeSandboxSettings } from "../src/sandbox-settings-store.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "../src/sandbox-host-guards.js";
 import { serve } from "../src/serve-node.js";
 import { setupSandboxTools, type SandboxPluginContext, type SandboxToolMode, type HostNativeTool } from "../src/opencode-plugins/openwork-sandbox-v2.js";
@@ -58,6 +58,30 @@ test("local preference is engine-global DB state; a workspace JSON cannot import
     expect(JSON.parse(await readFile(join(f.workspace, "openwork.json"), "utf8"))).toEqual({ allowHostExecution: true });
     await expect(managedDesktopPolicy(f.config).assertHostExecution()).rejects.toThrow("Host execution is disabled");
   } finally { await f.cleanup(); }
+});
+
+test("desired intent is durable without changing the applied local policy of active work", async () => {
+  const f = await fixture();
+  const policy = managedDesktopPolicy(f.config);
+  const runtime = createLocalSandboxRuntime(f.config, { access: async () => ({ enabled: true, scope: "fixture" }) });
+  try {
+    await applySandboxSettings(f.config);
+    await writeSandboxSettings(f.config, { allowHostExecution: false });
+    expect(await readSandboxSettings({ ...f.config })).toEqual({ allowHostExecution: false });
+    expect(await readAppliedSandboxSettings({ ...f.config })).toEqual({ allowHostExecution: true });
+    expect(await policy.requiresSandbox()).toBe(true);
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "tools" });
+    await expect(policy.assertLegacyExecutionRequest(new Request("http://localhost/opencode/session", { method: "POST" }), "/opencode/session")).rejects.toMatchObject({ code: "sandbox_only" });
+    await applySandboxSettings(f.config);
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
+    await writeSandboxSettings(f.config, { allowHostExecution: true });
+    expect(await readAppliedSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    await applySandboxSettings(f.config);
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+  } finally { await runtime.close(); await f.cleanup(); }
 });
 
 test("verified org deny beats local allow, survives flag off/outage and scoped cold restart", async () => {
@@ -352,7 +376,7 @@ test("settings route requires approval before engine-global writes and leaves wo
   const hostHeaders = { "x-openwork-host-token": f.config.hostToken, "content-type": "application/json" };
   try {
     const route = `${root}/workspace/ws_sandbox/sandbox-settings`;
-    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managed: false, featureEnabled: false });
     const pending = fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: false }) });
     let approvalId: string | undefined;
     for (let attempt = 0; attempt < 50 && !approvalId; attempt++) {
@@ -365,7 +389,7 @@ test("settings route requires approval before engine-global writes and leaves wo
     await fetch(`${root}/approvals/${approvalId}`, { method: "POST", headers: hostHeaders, body: JSON.stringify({ reply: "allow" }) });
     const updated = await pending;
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: false });
     expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
     expect((await fetch(`${root}/workspace/ws_sandbox/files/raw?path=missing.txt`, { headers })).status).toBe(403);
     expect((await fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: "yes" }) })).status).toBe(400);

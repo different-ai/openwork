@@ -1046,7 +1046,8 @@ export async function startServer(
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
-          await engineV2Preview.ensureProjectIsolation();
+          const currentTaskAccess = isV2CurrentTaskRequest(request.method, mount.restPath);
+          if (!currentTaskAccess) await engineV2Preview.ensureProjectIsolation();
           if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
             await engineV2Preview.assertSandboxReady(workspace.path);
           }
@@ -1060,12 +1061,12 @@ export async function startServer(
           // Reads can initialize a location and import its project plugins.
           // Enforce process isolation before warmups or any native forwarding,
           // not merely after a prompt's provider preparation has already run.
-          await engineV2Preview.assertProjectConfigReady();
+          if (!currentTaskAccess) await engineV2Preview.assertProjectConfigReady();
           // As in v1, requests go straight to the engine: OpenWork upkeep
           // (provider mirroring, MCP registration) runs when configuration
           // changes, and never holds reads. A folder's upkeep starts in the
           // background the first time it is seen.
-          engineV2Preview.warmWorkspace(workspace.id, workspace.path);
+          if (!currentTaskAccess) engineV2Preview.warmWorkspace(workspace.id, workspace.path);
           if (needsV2ProviderCatalog(request.method, mount.restPath)) {
             // For ~200 ms a folder the engine has not loaded omits configured
             // providers from its catalog; v1's engine waits for its own folder
@@ -1080,6 +1081,8 @@ export async function startServer(
             proxyPath: mount.restPath,
             connection,
             resolveConnection: () => engineV2Preview.connection(),
+            currentTaskAccess,
+            assertAdmission: currentTaskAccess ? undefined : () => engineV2Preview.assertProjectConfigReady(),
             logWarning: (message, attributes) => logger.log("warn", message, attributes),
             // A turn uses the connections that are ready; MCP upkeep runs in
             // the background and the engine adds tools as connections finish.
@@ -1441,6 +1444,15 @@ async function resolveV2SessionExecutionDirectory(
   }
 }
 
+function isV2CurrentTaskRequest(method: string, path: string): boolean {
+  const nativePath = decodeURIComponent(path).replace(/^\/opencode2/, "");
+  if (["GET", "HEAD"].includes(method.toUpperCase())) {
+    return /^\/api\/(?:session\/active|experimental\/job)\/?$/.test(nativePath)
+      || /^\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?\/?$/.test(nativePath);
+  }
+  return method.toUpperCase() === "POST" && /^\/api\/session\/ses_[A-Za-z0-9_-]+\/interrupt\/?$/.test(nativePath);
+}
+
 export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpencodeV2Request>[0]) {
   const current = () => {
     if (!input.resolveConnection) return input;
@@ -1448,10 +1460,16 @@ export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpe
     if (!connection) throw new ApiError(503, "engine_v2_preview_not_running", "The engine is restarting. Retry this request.");
     return { ...input, connection };
   };
-  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeV2Request(current());
+  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) {
+    await input.assertAdmission?.();
+    return forwardOpencodeV2Request(current());
+  }
   const release = await enterEngineMutation(input.config, "v2", input.request.signal);
-  try { return await forwardOpencodeV2Request(current()); }
-  finally { await release(); }
+  try {
+    // The setting may have changed while this request waited behind a restart.
+    await input.assertAdmission?.();
+    return await forwardOpencodeV2Request(current());
+  } finally { await release(); }
 }
 
 /** Chats resolved at once when a workspace lists its v2 sessions. */
@@ -1467,6 +1485,10 @@ async function forwardOpencodeV2Request(input: {
   connection: { url: string; username: string; password: string };
   /** Re-read after a queued mutation crosses a same-engine process restart. */
   resolveConnection?: () => { url: string; username: string; password: string } | undefined;
+  /** Activity/history and Stop use only native global APIs, never a caller's location. */
+  currentTaskAccess?: boolean;
+  /** Recheck desired/process policy after entering the engine mutation fence. */
+  assertAdmission?: () => Promise<void>;
   /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
   prepareExecution?: (directory: string) => Promise<void>;
   /** Restart one connection that is not healthy (v1's `POST /mcp/:name/connect`). */
@@ -1477,6 +1499,7 @@ async function forwardOpencodeV2Request(input: {
   logWarning?: (message: string, attributes: Record<string, string | null>) => void;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const currentTaskAccess = input.currentTaskAccess === true && isV2CurrentTaskRequest(method, input.proxyPath);
   const readRequest = method === "GET" || method === "HEAD";
   const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
@@ -1521,7 +1544,7 @@ async function forwardOpencodeV2Request(input: {
     for (const key of [...target.searchParams.keys()]) {
       if (key === "location" || key.startsWith("location[")) target.searchParams.delete(key);
     }
-    target.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", input.workspace.path);
   }
 
   const headers = new Headers(input.request.headers);
@@ -1547,7 +1570,7 @@ async function forwardOpencodeV2Request(input: {
 
   const readNative = async (path: string): Promise<unknown> => {
     const url = new URL(path, input.connection.url);
-    url.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) url.searchParams.set("location[directory]", input.workspace.path);
     const result = await engineFetch(url.toString(), {
       headers: { authorization: headers.get("authorization") ?? "" },
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
@@ -1578,7 +1601,7 @@ async function forwardOpencodeV2Request(input: {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
     executionDirectory = nativeSessionDirectory(session) ?? input.workspace.path;
-    target.searchParams.set("location[directory]", executionDirectory);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", executionDirectory);
   }
 
   if (method !== "GET" && method !== "HEAD" && [OPENWORK_V2_INSTRUCTION_KEY, OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY]
@@ -3373,7 +3396,9 @@ function createRoutes(
 
   addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
     await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
-    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
   });
   addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
     ensureWritable(config);
@@ -3384,15 +3409,17 @@ function createRoutes(
     await requireApproval(ctx, {
       workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
     });
-    await engineV2Preview.ensureProjectIsolation({
-      localAllowHostExecution: parsed.data.allowHostExecution,
-      commit: () => writeSandboxSettings(config, parsed.data),
-    });
+    // Save intent before checking activity. An active task keeps its process;
+    // new work must pass the desired policy and the process-isolation boundary.
+    await writeSandboxSettings(config, parsed.data);
+    await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
     await recordAudit(workspace.path, {
       id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
       action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
     });
-    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {

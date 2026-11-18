@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dirnameHere = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(dirnameHere, "..");
-const requiredRoots = [{
+export const requiredRoots = [{
   name: "@openwork/computer-use", resolveTarget: "@openwork/computer-use/computer-control",
 }, {
   name: "@modelcontextprotocol/sdk",
@@ -17,7 +17,24 @@ const requiredRoots = [{
 }, {
   // The server and the Electron main process import this as plain Node.
   name: "@openwork/types",
+}, {
+  // local-sandbox-runtime.js imports this lazily; workspace collection alone
+  // does not preserve it in the packaged server's resolution tree.
+  name: "@openwork/sandbox-microsandbox",
+  fromPackageJson: resolve(desktopRoot, "../server/package.json"),
 }];
+
+export function microsandboxPlatformPackage(platform = process.platform, arch = process.arch) {
+  const triples = {
+    "darwin-arm64": "darwin-arm64",
+    "linux-x64": "linux-x64-gnu",
+    "linux-arm64": "linux-arm64-gnu",
+    "win32-x64": "win32-x64-msvc",
+    "win32-arm64": "win32-arm64-msvc",
+  };
+  const triple = triples[`${platform}-${arch}`];
+  return triple ? `@superradcompany/microsandbox-${triple}` : null;
+}
 
 function packageRoot(name, fromPackageJson, resolveTarget = name) {
   const requireFromPackage = createRequire(pathToFileURL(fromPackageJson));
@@ -65,7 +82,15 @@ export function compiledTypesExports(exports) {
   }));
 }
 
-export function stageRuntimeNodeModules(outdir) {
+export function packagedMicrosandboxResolver(source) {
+  const original = 'return root ? join(root, "bin", msbFileName()) : null;';
+  if (source.split(original).length !== 2) throw new Error("microsandbox binary resolver changed; review ASAR native path handling.");
+  // Electron resolves unpacked files through virtual app.asar paths. Rust's
+  // process launcher needs the corresponding real directory, not that alias.
+  return source.replace(original, 'return root ? join(root.replace(/([\\\\/])app\\.asar([\\\\/])/, "$1app.asar.unpacked$2"), "bin", msbFileName()) : null;');
+}
+
+export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platform = process.platform, arch = process.arch } = {}) {
   const output = resolve(outdir);
   const desktopPackageJson = resolve(desktopRoot, "package.json");
   const staged = [];
@@ -98,6 +123,7 @@ export function stageRuntimeNodeModules(outdir) {
         if (source === resolvedPackage.root) return true;
         const parts = relative(resolvedPackage.root, source).split(sep);
         if (parts.includes("node_modules")) return false;
+        if (name === "@openwork/sandbox-microsandbox" || name === "@openwork/sandbox") return ["dist", "package.json"].includes(parts[0]);
         // The core's published entrypoints are dist (Node) and src (Bun/dev).
         // Do not ship checkout-only tests, tooling or incidental local links.
         if (name === "@openwork/remote-sessions") return ["dist", "src", "package.json"].includes(parts[0]);
@@ -107,8 +133,24 @@ export function stageRuntimeNodeModules(outdir) {
         return true;
       },
     });
+    if (name === "microsandbox") {
+      const resolver = resolve(destination, "dist/internal/resolve-binary.js");
+      writeFileSync(resolver, packagedMicrosandboxResolver(readFileSync(resolver, "utf8")));
+    }
     staged.push(destination.slice(output.length + 1));
-    const dependencies = resolvedPackage.packageJson.dependencies ?? {};
+    const dependencies = { ...resolvedPackage.packageJson.dependencies };
+    if (name === "microsandbox") {
+      const platformPackage = microsandboxPlatformPackage(platform, arch);
+      if (platformPackage) {
+        const version = resolvedPackage.packageJson.optionalDependencies?.[platformPackage];
+        if (version !== resolvedPackage.packageJson.version) {
+          throw new Error(`microsandbox must pin ${platformPackage} to its SDK version.`);
+        }
+        const native = packageRoot(platformPackage, resolve(resolvedPackage.root, "package.json"));
+        if (native.packageJson.version !== version) throw new Error(`microsandbox native version mismatch: ${platformPackage}`);
+        dependencies[platformPackage] = version;
+      }
+    }
     for (const dependencyName of Object.keys(dependencies)) {
       stagePackage(
         { name: dependencyName, fromPackageJson: resolve(resolvedPackage.root, "package.json") },
@@ -137,8 +179,8 @@ export function stageRuntimeNodeModules(outdir) {
     stagePackage({ name: "zod", fromPackageJson: resolve(root, "package.json") }, destination);
   }
 
-  for (const item of requiredRoots) {
-    stagePackage({ ...item, fromPackageJson: desktopPackageJson }, output, true);
+  for (const item of roots) {
+    stagePackage({ fromPackageJson: desktopPackageJson, ...item }, output, true);
   }
 
   return staged.sort();

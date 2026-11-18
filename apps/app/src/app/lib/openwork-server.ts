@@ -474,6 +474,7 @@ export type OpenworkAuthorizedFoldersResponse = {
 export type OpenworkSandboxSettingsResponse = {
   allowHostExecution: boolean;
   effectiveAllowHostExecution: boolean;
+  pending?: boolean;
   managed: boolean;
   featureEnabled: boolean;
 };

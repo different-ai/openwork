@@ -35,6 +35,8 @@ const NOTE_KEYS = {
   managed: "context_panel.host_execution_managed",
   sandbox_unavailable: "context_panel.host_execution_sandbox_unavailable",
   sandbox_only: "context_panel.host_execution_sandbox_only",
+  pending_host: "context_panel.host_execution_pending_host",
+  pending_sandbox: "context_panel.host_execution_pending_sandbox",
 } as const satisfies Record<NonNullable<HostExecutionRowNote>, string>;
 
 export function HostExecutionPanel(props: HostExecutionPanelProps) {
@@ -51,6 +53,7 @@ export function HostExecutionPanel(props: HostExecutionPanelProps) {
     retry: false,
     staleTime: 0,
     refetchOnWindowFocus: true,
+    refetchInterval: (query) => query.state.data?.pending ? 1_000 : false,
   });
 
   const save = useMutation({
@@ -99,7 +102,7 @@ export function HostExecutionPanel(props: HostExecutionPanelProps) {
               data-testid="host-execution-switch"
               aria-label={t("context_panel.host_execution")}
               aria-describedby={row.note ? noteId : undefined}
-              checked={row.hostToolsAllowed}
+              checked={row.desiredHostToolsAllowed}
               disabled={row.lockedByOrganization || save.isPending}
               onCheckedChange={(checked) => save.mutate(checked)}
             />
@@ -108,10 +111,10 @@ export function HostExecutionPanel(props: HostExecutionPanelProps) {
         {row.note ? (
           <LayoutSectionItemFootnote className="flex items-center gap-1.5">
             {row.lockedByOrganization ? <Lock className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-            <span id={noteId} data-testid="host-execution-note" data-host-execution-note={row.note}>{t(NOTE_KEYS[row.note])}</span>
+            <span id={noteId} role={settings.data?.pending ? "status" : undefined} data-testid="host-execution-note" data-host-execution-note={row.note}>{t(NOTE_KEYS[row.note])}</span>
           </LayoutSectionItemFootnote>
         ) : null}
-        {save.isSuccess ? (
+        {save.isSuccess && !settings.data?.pending ? (
           <LayoutSectionItemFootnote>
             <span data-testid="host-execution-saved" role="status">{t("context_panel.host_execution_saved")}</span>
           </LayoutSectionItemFootnote>

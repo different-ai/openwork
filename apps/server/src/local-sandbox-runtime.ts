@@ -9,10 +9,10 @@ import { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 import { isEngineGlobalRuntimeConfigId, onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
 import { resolveSandboxMounts, sandboxMountFingerprint, sandboxMountGrants } from "./sandbox-mounts.js";
 import { createSandboxToolHost, SANDBOX_TOOL_NAMES, sandboxToolSchemas, type SandboxToolCall } from "./sandbox-tool-host.js";
-import { readSandboxSettings } from "./sandbox-settings-store.js";
+import { readAppliedSandboxSettings } from "./sandbox-settings-store.js";
+import { loadSandboxImageSdk, prepareSandboxGuestImage } from "./packaged-sandbox-assets.js";
 
 const OPERATION_TIMEOUT = { timeoutMs: 120_000 };
-const IMAGE = "alpine:3.22";
 type Entry = { provider: SandboxProvider; handle: SandboxHandle; fingerprint: string; scope: string; invalidated?: boolean };
 export type LocalSandboxRuntimeDeps = {
   access?: () => Promise<{ enabled: boolean; scope: string; hostDenied?: boolean; hostPolicyVerified?: boolean }>;
@@ -26,13 +26,14 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
   const entries = new Map<string, Entry>();
   const queues = new Map<string, Promise<unknown>>();
   const access = deps.access ?? (() => managedDesktopPolicy(config).localSandboxAccess());
-  const allowHostExecution = deps.allowHostExecution ?? (async () => (await readSandboxSettings(config)).allowHostExecution);
+  const allowHostExecution = deps.allowHostExecution ?? (async () => (await readAppliedSandboxSettings(config)).allowHostExecution);
   const directories = deps.externalDirectories ?? (async () => runtimeExternalDirectory(await readGlobalRuntimeOpencodeConfig(config)));
   const providerFor = deps.provider ?? (async mounts => {
     const adapter = "@openwork/sandbox-microsandbox";
     const load: () => Promise<typeof import("@openwork/sandbox-microsandbox")> = () => import(adapter);
     const { createMicrosandboxProvider } = await load();
-    return createMicrosandboxProvider({ image: IMAGE, network: { egress: "none" }, mounts });
+    const image = await prepareSandboxGuestImage(await loadSandboxImageSdk());
+    return createMicrosandboxProvider({ image, network: { egress: "none" }, mounts });
   });
   const installScope = createHash("sha256").update(runtimeDbPath(config)).digest("hex");
   let closed = false;

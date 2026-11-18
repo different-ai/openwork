@@ -18,9 +18,34 @@ trusted engine process. Authorized live rw bind mounts intentionally let the gue
 Den member/team agent permissions add **Run tools on this computer**. Turn it off to require sandbox-only.
 Settings -> Permissions has the same editable local control below Authorized Folders. Effective restriction is
 stricter-wins: local Allow cannot undo org Deny. Managed restrictions lock the local switch. The setting is
-engine-global, not imported from workspace files. Mode changes safely refresh the native engine before being
-acknowledged; busy or unknown activity returns 409 without changing the preference or stopping someone else's task.
-Required startup disables project configuration and project extension discovery; a tool reload alone is not enough.
+engine-global, not imported from workspace files. Saving during a task persists the desired preference and returns
+200 with `pending: true`: “Saved. Applies when current tasks finish.” Current tasks keep the applied local policy,
+including subsequent tool calls in the same turn; organization denials remain live and strict. New native admissions
+are refused while the desired/applied policy or native process isolation differs. Existing session metadata/messages,
+global activity/job snapshots, and explicit Stop (`POST /api/session/:id/interrupt`) remain available through global
+native APIs without initializing a caller-supplied location. Session access still verifies its persistent workspace
+home. Cold location metadata/configuration remains blocked. No task is automatically canceled. A global
+session-and-background-job idle check automatically refreshes the native process in both directions, without another
+save or message. Unknown activity remains pending rather than authorizing a restart. Required startup disables
+project configuration and project extension discovery; a tool reload alone is not enough.
+
+### Settings API
+
+`GET` and `PUT /workspace/:id/sandbox-settings` describe the engine-global setting (the workspace path scopes access,
+not the preference). PUT still accepts exactly `{ allowHostExecution: boolean }`, with existing approval and audit
+checks. Both responses retain `allowHostExecution`, `effectiveAllowHostExecution`, `managed`, and `featureEnabled`,
+and add `pending: boolean`. `allowHostExecution` is durable desired local intent; `effectiveAllowHostExecution` is the
+applied host policy, bounded by native process isolation and live organization authority, including tasks allowed to
+finish under the previous local preference. During
+a local disable, `false / true / pending: true` is intentional, not an authorization grant for a new turn. During a
+local enable, `true / false / pending: true` means the reverse transition has not yet applied. Clients poll while
+pending and render the toggle from desired intent, never from the old process's permission. Older synchronous hosts
+omit `pending`; the client treats that as false.
+
+Desired and applied local preferences are separate host-owned runtime database rows. Cold startup installs desired
+intent before spawning a fresh native process. During a running process, only its verified global idle boundary
+advances applied intent; failed refreshes never fall back to a host engine. Feature-off ordinary mode stays ordinary;
+a saved or managed restriction is not cleared by rollout loss.
 
 Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and host tools do not
 come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations
@@ -53,6 +78,8 @@ from a live Claude CLI/SDK-provider test, which remains unverified.
 ## Evidence
 
 [Design](design.md), [verification](verification.md), [Fable](model-check-fable.md), [Sol](model-check-sol.md).
+Those original source-run results do not establish packaged availability. See the
+[packaged repair acceptance boundary](packaged-verification.md) for the distributable regression and final build evidence.
 Proofs: `evals/proofs/sandbox-only.proof.test.ts` (native Electron/real microVM on Mac) and
 `sandbox-controls.proof.test.ts` (portable Den/Settings UI). Real readonly provider checks supplement the UI proof.
 Daytona had no usable KVM access for its default user, so microVM proof is explicitly local.
