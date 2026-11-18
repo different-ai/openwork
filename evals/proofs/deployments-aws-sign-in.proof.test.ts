@@ -45,10 +45,32 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     expect(ok).toBe(true);
   });
 
-  await step("the admin saves the AWS access portal and role", async () => {
+  await step("after: the admin saves only the access portal and AWS asks them to choose a role", async () => {
     await user.click({ testId: "aws-sign-in-open" });
-    await user.see({ testId: "aws-sign-in-dialog" });
+    await user.see({ text: "Role name (optional)" });
     await user.type({ testId: "aws-sign-in-portal" }, PORTAL_URL);
+    await user.screenshot();
+    await user.click({ testId: "aws-sign-in-save" });
+    await user.see({ text: `Signs in through ${PORTAL_HOST}` }, { timeoutMs: 60_000 });
+    await user.reload();
+    await user.see({ testId: "deployment-approve-link" }, { timeoutMs: 60_000 });
+    const saved = await world.savedSignIn();
+    const href = (await probe.linkTargets('[data-testid="deployment-approve-link"]'))[0] ?? "";
+    const params = new URLSearchParams(href.slice(href.indexOf("?") + 1));
+    const signIn = (await text('[data-testid="deployment-approve-sign-in"]')).join(" ");
+    await user.screenshot();
+    const ok = saved?.portalUrl === PORTAL_URL && saved.roleName === null && href.startsWith(`${PORTAL_URL}/#/console?`)
+      && !params.has("role_name") && params.get("account_id") === ACCOUNT_ID
+      && (params.get("destination") ?? "").startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/")
+      && signIn.includes("Choose role at sign-in");
+    evidence.recordAssertionEvidence("Saving a portal without a role leaves role selection to AWS", `saved role: ${saved?.roleName}; row: ${signIn}; role parameter present: ${params.has("role_name")}; account: ${params.get("account_id")}`, ok);
+    expect(ok).toBe(true);
+  });
+
+  await step("the admin can also save an exact role name", async () => {
+    await user.click({ text: /^Change$/, role: "button" });
+    await user.see({ testId: "aws-sign-in-dialog" });
+    await user.type({ testId: "aws-sign-in-role" }, ROLE_NAME);
     await user.screenshot();
     await user.click({ testId: "aws-sign-in-save" });
     await user.see({ text: `Signs in through ${PORTAL_HOST}` }, { timeoutMs: 60_000 });

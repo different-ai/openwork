@@ -133,7 +133,7 @@ export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreat
 
 /**
  * How the organization's people sign in to AWS: their IAM Identity Center
- * access portal and the role (permission set) to open the console with. With
+ * access portal and optional role (permission set) to open the console with. With
  * it, every AWS link opens through the portal in the deployment's own account.
  * Only AWS-hosted portal addresses are accepted, so a saved value can never
  * send an approver anywhere else.
@@ -141,7 +141,7 @@ export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreat
 export const awsSignInSchema = z.object({
   portalUrl: z.string().trim().max(300).refine((value) => awsPortalBase(value) !== null, "Enter your AWS access portal URL, such as https://your-company.awsapps.com/start.")
     .overwrite((value) => awsPortalBase(value) ?? value),
-  roleName: z.string().trim().regex(/^[\w+=,.@-]{1,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess."),
+  roleName: z.string().trim().regex(/^[\w+=,.@-]{0,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess.").nullable().default(null).overwrite((value) => value || null),
 }).strict()
 export type AwsSignIn = z.infer<typeof awsSignInSchema>
 

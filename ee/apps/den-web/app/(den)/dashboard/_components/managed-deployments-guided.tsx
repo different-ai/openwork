@@ -87,7 +87,7 @@ function AwsSignInDialog({ open, onClose, saved, onSave }: {
   const [wasOpen, setWasOpen] = useState(false);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open) { setPortalUrl(saved?.portalUrl ?? ""); setRoleName(saved?.roleName ?? "AdministratorAccess"); setError(null); }
+    if (open) { setPortalUrl(saved?.portalUrl ?? ""); setRoleName(saved?.roleName ?? ""); setError(null); }
   }
 
   async function save(value: AwsSignIn | null) {
@@ -121,8 +121,9 @@ function AwsSignInDialog({ open, onClose, saved, onSave }: {
           <form onSubmit={submit} className="space-y-4">
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">AWS access portal URL</span>
               <DenInput data-testid="aws-sign-in-portal" value={portalUrl} onChange={(event) => setPortalUrl(event.target.value)} required placeholder="https://your-company.awsapps.com/start" /></label>
-            <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Role</span>
-              <DenInput data-testid="aws-sign-in-role" value={roleName} onChange={(event) => setRoleName(event.target.value)} required placeholder="AdministratorAccess" /></label>
+            <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Role name (optional)</span>
+              <DenInput data-testid="aws-sign-in-role" aria-describedby="aws-sign-in-role-help" value={roleName} onChange={(event) => setRoleName(event.target.value)} placeholder="AdministratorAccess" /></label>
+            <p id="aws-sign-in-role-help" className="text-[12px] leading-4 text-gray-500">Leave empty and AWS asks you to pick a role when you sign in. If you fill it in, use the exact name your access portal shows, such as AdministratorAccess.</p>
             <p className="text-[12px] leading-4 text-gray-500">Every AWS link in Deployments opens through this sign-in, in the deployment&apos;s own account.</p>
             {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -213,7 +214,7 @@ export function GuidedDeploymentsList() {
               <SectionTitle title="Settings" />
               <ItemPanel>
                 <ItemRow testId="aws-sign-in-setting" logo={<CloudLogo provider="aws" />} title="AWS sign-in" statusOnNarrow
-                  status={signIn ? `${portalHost(signIn)} · ${signIn.roleName}` : "Not set"}
+                  status={signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Not set"}
                   action={access.canManageDeployments ? <DenButton type="button" variant="secondary" size="sm" data-testid="aws-sign-in-open" onClick={() => setSignInOpen(true)}>{signIn ? "Edit" : "Set up"}</DenButton> : undefined} />
               </ItemPanel>
             </section>
@@ -346,7 +347,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
         {aws ? (signIn ? (
           <div className={ROW_CLASS} data-testid="deployment-approve-sign-in">
             <CheckCircle2 aria-hidden className="mx-1 size-4 shrink-0 text-gray-500" />
-            <StepText title={`Signs in through ${portalHost(signIn)}`} description={`Account ${account} · ${signIn.roleName}`} />
+            <StepText title={`Signs in through ${portalHost(signIn)}`} description={`Account ${account} · ${signIn.roleName ?? "Choose role at sign-in"}`} />
             {canManage ? <DenButton type="button" variant="ghost" size="sm" onClick={onSignIn}>Change</DenButton> : null}
           </div>
         ) : (
@@ -467,8 +468,8 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
           ...(aws ? [{
             label: "AWS sign-in",
             value: canManage
-              ? <button type="button" className="underline-offset-2 hover:underline" data-testid="aws-sign-in-detail" onClick={onSignIn}>{signIn ? `${portalHost(signIn)} · ${signIn.roleName}` : "Set up"}</button>
-              : signIn ? `${portalHost(signIn)} · ${signIn.roleName}` : "Not set",
+              ? <button type="button" className="underline-offset-2 hover:underline" data-testid="aws-sign-in-detail" onClick={onSignIn}>{signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Set up"}</button>
+              : signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Not set",
           }] : []),
         ]} />
       </section>
@@ -478,7 +479,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
           <DisclosureSection label="If AWS shows something else" open={otherOpen} onToggle={() => setOtherOpen((value) => !value)} testId="deployment-aws-help-toggle">
             <DetailRows rows={[
               { wrap: true, label: "A sign-in page asking for a root or IAM user", value: `This browser isn't signed in to account ${account}. ${signIn ? `Sign in at ${portalHost(signIn)}` : "Sign in on your company's AWS page"}, then open the link again.` },
-              { wrap: true, label: "“Select a role”", value: `Choose ${signIn ? signIn.roleName : "a role that can create CloudFormation stacks"}. The filled-in form opens next.` },
+              { wrap: true, label: "“Select a role”", value: `Choose ${signIn?.roleName ?? "a role that can create CloudFormation stacks"}. The filled-in form opens next.` },
               { wrap: true, label: "A different account number in the top right", value: `Don't create the stack. Switch to account ${account}, then open the link again.` },
               { wrap: true, label: "You closed the tab or want a teammate to approve", value: `Open or send the same link. It returns to this approval until ${until}.` },
             ]} />
