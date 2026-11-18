@@ -17,7 +17,7 @@ import { recheckAuditEntitlement } from "../../audit/capture.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { lockOrganizationFeatureForMutation, organizationFeatureEnabled } from "../../features.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
@@ -254,7 +254,7 @@ async function pendingKeyPrompt(provider: GatewayProvider, setId: string | null)
     destination: gatewayUpstreamDestination(provider.provider_id, provider.provider_config, provider.settings),
   }))
 }
-async function providerTransaction<T>(c: { req: { raw: Request; param: (key: string) => string | undefined }; get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }, mutate: (tx: GatewayTx, provider: GatewayProvider) => Promise<T>, options: { lockOrganization?: boolean } = {}): Promise<T> {
+async function providerTransaction<T>(c: { req: { raw: Request; param: (key: string) => string | undefined }; get: (key: "organizationContext") => OrgRouteVariables["organizationContext"] }, mutate: (tx: GatewayTx, provider: GatewayProvider) => Promise<T>, options: { lockOrganization?: boolean; liteLlmEntra?: boolean } = {}): Promise<T> {
   const actor = c.get("organizationContext")
   const id = c.req.param("inferenceProviderId")
   if (!actor || !id) throw new GatewayWriteError(403, "forbidden")
@@ -262,6 +262,7 @@ async function providerTransaction<T>(c: { req: { raw: Request; param: (key: str
     const capture = providerAuditRequests.get(c.req.raw)?.capture ?? null
     // Match membership/role mutation order: organization before member/provider.
     if (capture) await recheckAuditEntitlement(tx, actor.organization.id)
+    if (options.liteLlmEntra) await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin", transaction: tx, used: false })
     // Writes that also change usage limits take the organization lock usage-limit writes take
     // first, before any member row, so the two never wait on each other in opposite order.
     if (options.lockOrganization) await lockUsageOrganization(tx, actor.organization.id)
@@ -387,8 +388,11 @@ const LITELLM_ENTRA_FEATURE = "litellmEntraMemberSignIn"
  * Member Microsoft Entra sign-in for LiteLLM is a rollout. With it off nobody adds or changes a
  * provider in that mode and nobody signs in through one; a use is recorded for /admin when asked.
  */
-async function requireLiteLlmEntraSignIn(input: { organizationId: GatewayProvider["organization_id"]; userId: string; memberId: GatewayMemberId; audience: "admin" | "member"; used?: boolean }) {
-  if (!await organizationFeatureEnabled(input.organizationId, LITELLM_ENTRA_FEATURE, { userId: input.userId })) {
+async function requireLiteLlmEntraSignIn(input: { organizationId: GatewayProvider["organization_id"]; userId: string; memberId: GatewayMemberId; audience: "admin" | "member"; used?: boolean; transaction?: GatewayTx }) {
+  const enabled = input.transaction
+    ? await lockOrganizationFeatureForMutation(input.transaction, input.organizationId, input.userId, LITELLM_ENTRA_FEATURE)
+    : await organizationFeatureEnabled(input.organizationId, LITELLM_ENTRA_FEATURE, { userId: input.userId })
+  if (!enabled) {
     throw new GatewayWriteError(403, "feature_disabled", input.audience === "admin"
       ? "Microsoft sign-in for LiteLLM is not turned on for this organization."
       : "Microsoft sign-in for this provider is turned off for your organization. An admin can turn it back on.")
@@ -474,8 +478,8 @@ async function storeMemberCredential(input: {
 }) {
   const { provider, set, state } = input
   return db.transaction(async (tx) => {
+    if (providerMemberSignInScope(provider) !== null && !await lockOrganizationFeatureForMutation(tx, provider.organization_id, input.userId, LITELLM_ENTRA_FEATURE)) return false
     if (!await lockMemberOAuthAuthorization(tx, provider, set, state.org_membership_id, input.userId)) return false
-    if (providerMemberSignInScope(provider) !== null && !await organizationFeatureEnabled(provider.organization_id, LITELLM_ENTRA_FEATURE, { userId: input.userId, database: tx, lock: "share" })) return false
     const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, input.browserSession.id), eq(AuthSessionTable.token, input.browserSession.token), eq(AuthSessionTable.userId, input.browserSession.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
     if (!liveSession) return false
     const [current] = await tx.select().from(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.id, state.id)).for("update")
@@ -933,6 +937,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (!clientBinding) throw new GatewayWriteError(400, "oauth_client_required")
       const attempt = { verifier, userId, clientBinding }
       await db.transaction(async (tx) => {
+        if (signInScope !== null) await requireLiteLlmEntraSignIn({ organizationId: provider.organization_id, userId, memberId: actor.currentMember.id, audience: "member", transaction: tx })
         if (!await lockMemberOAuthAuthorization(tx, provider, set, actor.currentMember.id, userId)) throw new GatewayWriteError(403, "forbidden")
         await tx.insert(GatewayProviderOauthStateTable).values({ id: createDenTypeId("inferenceProviderOauthState"), gateway_provider_id: provider.id, credential_set_id: set.id, org_membership_id: actor.currentMember.id, state, code_verifier: JSON.stringify(attempt), redirect_to: redirectTo, expires_at: new Date(Date.now() + 600_000) })
       })
@@ -1020,6 +1025,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (!clientBinding) throw new GatewayWriteError(403, "oauth_configuration_changed", "Provider configuration changed. Start Connect again.")
       const nextAttempt = { verifier, userId: attempt.userId, clientBinding }
       await db.transaction(async (tx) => {
+        if (signInScope !== null) await requireLiteLlmEntraSignIn({ organizationId: provider.organization_id, userId: attempt.userId, memberId: entry.org_membership_id, audience: "member", transaction: tx, used: false })
         if (!await lockMemberOAuthAuthorization(tx, provider, set, entry.org_membership_id, attempt.userId)) throw new GatewayWriteError(403, "forbidden")
         const [liveSession] = await tx.select().from(AuthSessionTable).where(and(eq(AuthSessionTable.id, session.id), eq(AuthSessionTable.token, session.token), eq(AuthSessionTable.userId, session.userId), gt(AuthSessionTable.expiresAt, new Date()))).for("update")
         if (!liveSession) throw new GatewayWriteError(403, "browser_signin_required")
@@ -1242,6 +1248,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const now = new Date()
         const provider: GatewayProvider = { id: createDenTypeId("inferenceProvider"), organization_id: actor.organization.id, created_by_org_membership_id: actor.currentMember.id, provider_id: LITELLM_PROVIDER_ID, name: input.name, model_ids: [], pinned_model_ids: [], provider_config: buildProviderConfigSnapshot(liteLlmCatalogProvider({ settings: {} })), settings: { upstreamBaseUrl: endpoints.inferenceBaseUrl, litellm: emptyEntraSettings(input.oauthScope) }, credential_mode: "member", oauth_client_id: null, oauth_client_secret: null, status: "active", created_at: now, updated_at: now }
         const sync = await db.transaction(async (tx) => {
+          await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin", transaction: tx, used: false })
           const member = await liveMember(tx, actor, true)
           await requireLiveManage(tx, actor)
           return createLiteLlmEntraProvider(tx, provider, { signIn: { tenantId: input.oauthTenantId.toLowerCase(), clientId: input.oauthClientId, clientSecret: input.oauthClientSecret }, models: entra.models ?? [], audiences: liteLlmAudiences(input), creatorId: member.id })
@@ -1296,7 +1303,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (input.apiKey !== undefined || input.issueStrategy !== undefined || input.mirrorFallback !== undefined) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in. It has no LiteLLM key or key creation settings.")
         await requireLiteLlmEntraSignIn({ organizationId: actor.organization.id, userId: actor.currentMember.userId, memberId: actor.currentMember.id, audience: "admin" })
         const entra = liteLlmEntraInput(input)
-        const result = await providerTransaction(c, async (tx, provider) => ({ provider, ...await updateLiteLlmEntraProvider(tx, provider, { tenantId: entra.tenantId, clientId: input.oauthClientId, clientSecret: input.oauthClientSecret, scope: entra.scope, models: entra.models }) }))
+        const result = await providerTransaction(c, async (tx, provider) => ({ provider, ...await updateLiteLlmEntraProvider(tx, provider, { tenantId: entra.tenantId, clientId: input.oauthClientId, clientSecret: input.oauthClientSecret, scope: entra.scope, models: entra.models }) }), { liteLlmEntra: true })
         await revokeUpstreamCredentials(result.revoked)
         return c.json({ inferenceProvider: await gatewaySummary(result.provider, actor.currentMember.id, publicBase(c.req.raw), true, { managerDetails: await hasPermission(c, MANAGE), primary: true }), sync: result.sync })
       }

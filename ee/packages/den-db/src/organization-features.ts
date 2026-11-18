@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  FEATURES,
   isFeatureKey,
   mapFeatures,
   resolveFeature,
@@ -26,7 +27,7 @@ import { FeatureChangeTable, FeatureRolloutTable, FeatureUsageTable, MemberFeatu
 
 type Db = ReturnType<typeof createDenDb>["db"]
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
-export type FeatureDatabase = Db | Tx
+export type FeatureDatabase = Db | Db["$primary"] | Tx
 
 export type FeatureOverrideChanges = Partial<Record<FeatureKey, boolean | null>>
 
@@ -103,6 +104,38 @@ export async function readFeatures(
   const overrides = organizationId ? await readOrganizationFeatureOverrides(database, organizationId, options) : {}
   const memberOverrides = organizationId && options.userId ? await readMemberFeatureOverrides(database, organizationId, options.userId, options) : {}
   return resolveFeatures({ ...environment, rollouts, overrides, memberOverrides })
+}
+
+/**
+ * A single feature held stable for a mutation. Materializing its default row
+ * gives a concurrent first kill switch an actual row to serialize against,
+ * including on databases without gap locks. Existing rollout values are never
+ * changed. Only mutation callers opt in; ordinary feature reads stay read-only.
+ */
+export async function lockFeatureForMutation(
+  database: Tx,
+  organizationId: string,
+  userId: string,
+  key: FeatureKey,
+  environment: FeatureEnvironment,
+): Promise<boolean> {
+  // Lock parents before member/provider writes, matching override writers even
+  // when no override exists yet. Call before taking member/provider locks.
+  await database.select({ id: OrganizationTable.id }).from(OrganizationTable)
+    .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).for("share")
+  await database.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)),
+    eq(MemberTable.userId, normalizeDenTypeId("user", userId)),
+    isNull(MemberTable.removedAt),
+  )).for("update")
+  await database.insert(FeatureRolloutTable)
+    .values({ feature_key: key, enabled: FEATURES[key].default, killed: false })
+    .onDuplicateKeyUpdate({ set: { feature_key: key } })
+  const [rollout] = await database.select().from(FeatureRolloutTable)
+    .where(eq(FeatureRolloutTable.feature_key, key)).for("share")
+  const overrides = await readOrganizationFeatureOverrides(database, organizationId, { lock: "share" })
+  const memberOverrides = await readMemberFeatureOverrides(database, organizationId, userId, { lock: "share" })
+  return resolveFeature(key, { ...environment, rollouts: { [key]: rollout }, overrides, memberOverrides }).enabled
 }
 
 /** Effective state with its source, for /admin. */

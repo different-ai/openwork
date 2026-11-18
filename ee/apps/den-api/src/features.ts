@@ -1,5 +1,6 @@
 import {
   readFeatures,
+  lockFeatureForMutation,
   readOrganizationFeatureOverridesForMany,
   readOrganizationMemberFeatureOverrides,
   setFeatureRollout,
@@ -68,6 +69,11 @@ export async function getOrganizationFeatures(organizationId: string, options: R
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
+}
+
+/** Transaction-local authorization, including a concurrent first deployment kill switch. */
+export async function lockOrganizationFeatureForMutation(database: Parameters<typeof lockFeatureForMutation>[0], organizationId: string, userId: string, key: FeatureKey): Promise<boolean> {
+  return lockFeatureForMutation(database, organizationId, userId, key, env.features)
 }
 
 /**

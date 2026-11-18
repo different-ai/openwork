@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { parseInferenceProviderSecret, type GatewayMemberConnectionsResponse, type InferenceProviderSecret } from "@openwork/types/den/inference"
 import { db } from "../db.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { GatewayWriteError, type GatewayMemberId, type GatewayProvider } from "./gateway-matrix.js"
 import { gatewayConfigurationError } from "./inference-provider-config.js"
 import { GOOGLE_OAUTH_MAX_EXPIRY_SECONDS, googleBearerTokenSchema } from "./inference-provider-google-oauth.js"
@@ -15,6 +16,8 @@ export async function gatewayMemberConnections(input: { organizationId: GatewayP
     const providers = (await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, input.organizationId)))
       .filter((provider) => providerMemberSignInMethod(provider) !== null)
     if (!providers.length) return { connections: [] }
+    const liteLlmEntraEnabled = !providers.some((provider) => providerMemberSignInScope(provider) !== null)
+      || await organizationFeatureEnabled(input.organizationId, "litellmEntraMemberSignIn", { userId: input.userId, database: tx })
     const providerIds = providers.map((provider) => provider.id)
     const sets = await tx.select().from(GatewayCredentialSetTable).where(and(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds), eq(GatewayCredentialSetTable.credential_mode, "member")))
     if (!sets.length) return { connections: [] }
@@ -53,7 +56,7 @@ export async function gatewayMemberConnections(input: { organizationId: GatewayP
           && Boolean(parsed.token.refreshToken && /^[\x21-\x7e]+$/.test(parsed.token.refreshToken))
           && (parsed.token.tokenType === undefined || /^Bearer$/i.test(parsed.token.tokenType))
           && typeof expiry === "number" && expiry > 0 && expiry <= now + GOOGLE_OAUTH_MAX_EXPIRY_SECONDS * 1000)
-        const ready = !configurationRequired && hasAccess && credential?.status === "active" && parsed !== null && googleTokenValid
+        const ready = (providerMemberSignInScope(provider) === null || liteLlmEntraEnabled) && !configurationRequired && hasAccess && credential?.status === "active" && parsed !== null && googleTokenValid
           && memberSignInCredentialUsable(method, set, credential, parsed, now, providerMemberSignInScope(provider))
           && !gatewayConfigurationError(provider.provider_config, provider.settings)
         const identity = parsed?.kind === "oauth_google" ? { revision: parsed.token.googleIdentity?.authorizationRevision ?? null, account: parsed.token.googleIdentity?.emailVerified === true ? parsed.token.googleIdentity.email : null }

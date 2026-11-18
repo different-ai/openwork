@@ -13,6 +13,7 @@ import { loadProviderAudit, providerAuditMutation, providerSystemAuditContext, r
 import { recheckAuditEntitlement } from "../audit/capture.js"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { bedrockSettingsError, microsoftFoundrySettingsError, isAwsGatewayNpm, buildGatewayModelConfig, buildGatewayProviderConfig, buildProviderConfigSnapshot, gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm, upstreamBaseUrlSettingError } from "./inference-provider-config.js"
 import { memberSignInConfigurationError, memberSignInCredentialKind, memberSignInCredentialUsable, memberSignInExtraneousFields, providerMemberSignInMethod, providerMemberSignInScope, readAwsSsoSettings, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
@@ -560,6 +561,7 @@ type GatewaySummaryRows = {
 
 /** The rows gatewaySummary reads, for one or many providers of an organization at once. */
 export type GatewaySummaryReads = {
+  liteLlmEntraEnabled: boolean
   creators: Array<{ id: GatewayMemberId; name: string | null; email: string | null }>
   identities: boolean
   manage: boolean
@@ -617,6 +619,8 @@ export async function readGatewaySummaries(input: { identities: boolean; manage:
     memberGatewayTeams(reader, organizationId, memberId),
   ])
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
+  const liteLlmEntraEnabled = !input.providers.some((provider) => providerMemberSignInScope(provider) !== null)
+    || await organizationFeatureEnabled(organizationId, "litellmEntraMemberSignIn", { userId: member.userId, database: db.$primary })
   const creatorIds = [...new Set(sets.flatMap((set) => set.created_by_org_membership_id ? [set.created_by_org_membership_id] : []))]
   const creators = input.identities && creatorIds.length ? await reader.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email }).from(MemberTable)
     .leftJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
@@ -628,6 +632,7 @@ export async function readGatewaySummaries(input: { identities: boolean; manage:
   const accessByProvider = rowsByProvider(access, (row) => row.gateway_provider_id)
   const credentialsByProvider = rowsByProvider(credentials, (row) => row.credential.gateway_provider_id)
   return {
+    liteLlmEntraEnabled,
     creators,
     identities: input.identities,
     manage,
@@ -693,7 +698,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
     const litellm = (isLiteLlmProviderId(provider.provider_id) && method === null) || isTrueFoundryProviderId(provider.provider_id)
     const configured = set.credential_mode === "member" ? litellm || Boolean(method && !memberSignInConfigurationError(method, set, signInScope)) : Boolean(token)
     let usable = false
-    if (token) {
+    if (token && (signInScope === null || summaryReads.liteLlmEntraEnabled)) {
       try {
         const parsed = parseGatewayProviderSecret(token.kind, token.secret)
         usable = isInferenceCredentialKindSupported(parsed.kind, provider.provider_id, provider.settings)
@@ -719,7 +724,8 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   const liteLlmSettings = isLiteLlmProviderId(provider.provider_id) ? readLiteLlmSettings(provider.settings) : null
   const issuedReady = (isTrueFoundryProviderId(provider.provider_id) || liteLlmSettings?.mode === "member" && liteLlmSettings.keySource === "issued")
     && credentials.some(({ credential }) => credential.org_membership_id === memberId && credential.status === "active")
-  const authorizationRequests = setSummaries.filter((set) => !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
+  const signInEnabled = providerMemberSignInScope(provider) === null || summaryReads.liteLlmEntraEnabled
+  const authorizationRequests = setSummaries.filter((set) => signInEnabled && !issuedReady && set.credentialMode === "member" && set.credentialStatus === "member_auth_required" && grants.some((grant) => grant.credential_set_id === set.id))
     .map((set) => {
       const models: GatewayUsableModel[] = []
       return { credentialSetId: set.id, name: set.name, authUrl: `${baseUrl}/v1/inference-providers/${provider.id}/oauth/start?credentialSetId=${encodeURIComponent(set.id)}`, models }
