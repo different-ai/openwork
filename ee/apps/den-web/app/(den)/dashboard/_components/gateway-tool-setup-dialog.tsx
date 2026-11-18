@@ -4,6 +4,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import { DEFAULT_GATEWAY_API_KEY_EXPIRY, type CreatedGatewayApiKey } from "@openwork/types/den/gateway-api-keys";
 import { KeyRound, Lock, Plug, Plus, X } from "lucide-react";
 import { useState } from "react";
+import { markFeatureUsed } from "../../_lib/feature-usage";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { expiryFromDays, formatExpiry, useCreateGatewayApiKey } from "./gateway-api-keys-data";
@@ -50,7 +51,10 @@ export function GatewayToolSetupRow({ enabled, baseUrl }: { enabled: boolean; ba
           <button
             key={entry.id}
             type="button"
-            onClick={() => setOpen(entry.id)}
+            onClick={() => {
+              setOpen(entry.id);
+              if (entry.id === "opencode") markFeatureUsed("gatewayOpenCodeSetup");
+            }}
             aria-label={`Set up ${entry.name}`}
             title={entry.line}
             data-testid={`gateway-tool-setup-${entry.id}`}
@@ -97,8 +101,12 @@ function ToolSetup({ tool, enabled, baseUrl, onClose }: { tool: Tool; enabled: b
           <X size={16} aria-hidden />
         </Dialog.Close>
       </div>
-      <ApiKeyStep tool={tool} enabled={enabled} created={created} onCreated={setCreated} />
-      <div className="h-px bg-gray-100" aria-hidden />
+      {tool.id !== "opencode" ? (
+        <>
+          <ApiKeyStep tool={tool} enabled={enabled} created={created} onCreated={setCreated} />
+          <div className="h-px bg-gray-100" aria-hidden />
+        </>
+      ) : null}
       <GatewayToolSteps tool={tool.id} apiKey={created?.key ?? null} baseUrl={baseUrl} />
       <div className="flex justify-end">
         <DenButton size="sm" variant={created ? "primary" : "secondary"} onClick={onClose} data-testid="gateway-tool-setup-done">Done</DenButton>

@@ -127,7 +127,7 @@ export default async function AiGatewayPage() {
           id="works-with-heading"
           label="Works with"
           lines={["Keep your gateway.", "Use any harness."]}
-          aside="Each person gets their own AI Gateway key. The same models and spend limits apply in every tool."
+          aside="Sign in with the OpenWork plugin for OpenCode. Other tools can connect with a personal AI Gateway key."
           size="small"
         />
         <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-12">
@@ -295,7 +295,7 @@ const HARNESSES: Guide[] = [
   { name: "Claude Code", detail: "Every model, not just Claude", href: "/docs/ai-gateway/claude-code", mark: <BrandLogo name="claude" className="h-5 w-5 text-[#D97757]" /> },
   { name: "Codex", detail: "The CLI and the ChatGPT app", href: "/docs/ai-gateway/codex", mark: <BrandLogo name="openai" className="h-5 w-5 text-[#111]" /> },
   { name: "Cursor", detail: "Chat and agent, run locally", href: "/docs/ai-gateway/cursor", mark: <BrandLogo name="cursor" className="h-5 w-5 text-[#111]" /> },
-  { name: "OpenCode", detail: "One opencode.json", href: "/docs/ai-gateway/opencode", mark: <OpenCodeMark className="h-5 w-5" /> },
+  { name: "OpenCode", detail: "Install the plugin and sign in", href: "/docs/model-context-protocol/opencode-plugin", mark: <OpenCodeMark className="h-5 w-5" /> },
   { name: "Any other tool", detail: "OpenAI or Anthropic compatible", href: "/docs/ai-gateway/third-party-tools", mark: <Route className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.5} aria-hidden="true" /> }
 ];
 

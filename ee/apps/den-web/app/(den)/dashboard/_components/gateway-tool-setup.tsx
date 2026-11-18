@@ -27,7 +27,7 @@ export const GATEWAY_TOOLS: readonly GatewayTool[] = [
   { id: "codex-app", name: "Codex app", slug: "openai", serviceUrl: "https://openai.com", line: "Every model, in Codex in the ChatGPT app" },
   { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Every model, in Claude Code" },
   { id: "claude-desktop", name: "Claude Desktop", slug: "claude", serviceUrl: "https://claude.com", line: "Your Claude models, in the Claude app" },
-  { id: "opencode", name: "OpenCode", serviceUrl: "https://opencode.ai", line: "Every model, in the OpenCode CLI" },
+  { id: "opencode", name: "OpenCode", serviceUrl: "https://opencode.ai", line: "Install the OpenWork plugin for OpenCode 2" },
   { id: "other", name: "Another tool", line: "Any OpenAI or Anthropic compatible tool" },
 ];
 
@@ -36,7 +36,7 @@ export const CLAUDE_CODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/cl
 export const CODEX_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex";
 export const CODEX_APP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex-desktop";
 export const CLAUDE_DESKTOP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-desktop";
-export const OPENCODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/opencode";
+export const OPENCODE_DOCS_URL = "https://openworklabs.com/docs/model-context-protocol/opencode-plugin";
 
 /** The tools this organization offers: OpenCode only while `gatewayOpenCodeSetup` is on. */
 export function useGatewayTools(): readonly GatewayTool[] {
@@ -47,7 +47,7 @@ export function useGatewayTools(): readonly GatewayTool[] {
 
 /** The large choice of tools under "Start using this key". */
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
-  const tools = useGatewayTools();
+  const tools = GATEWAY_TOOLS.filter((tool) => tool.id !== "opencode");
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="gateway-tool-picker">
       {tools.map((tool) => (
@@ -525,50 +525,21 @@ export function ClaudeDesktopSteps({ apiKey, baseUrl }: { apiKey: string | null;
   );
 }
 
-/**
- * `opencode.json` for OpenCode: an `openwork` provider on the Gateway's OpenAI compatible endpoint
- * that reads the key from OPENWORK_API_KEY, every model the person can use, and the chosen one as
- * the default. OpenCode's /models switches between the rest.
- */
-export function openCodeConfig(input: { baseUrl: string; models: readonly GatewayToolModel[]; model: GatewayToolModel }) {
-  return JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-    provider: {
-      openwork: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "OpenWork",
-        options: { baseURL: input.baseUrl, apiKey: "{env:OPENWORK_API_KEY}" },
-        models: Object.fromEntries(input.models.map((entry) => [entry.alias, { name: entry.name }])),
-      },
-    },
-    model: `openwork/${input.model.alias}`,
-  }, null, 2);
-}
-
-/** OpenCode: the key in the shell profile, and an `openwork` provider in opencode.json. */
-export function OpenCodeSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
-  const models = useGatewayToolModels(true);
-  const list = models.data ?? [];
+/** OpenCode connects through the published plugin, not a manually created key. */
+function OpenCodeSteps() {
   return (
     <div className="flex flex-col gap-4" data-testid="gateway-tool-opencode">
       <ol className="flex flex-col gap-4">
-        <SetupStep number={1} field={<CopyField value={`export OPENWORK_API_KEY="${apiKey ?? "<your API key>"}"`} label="Copy the key line" testId="gateway-tool-opencode-env" />}>
-          Add this line to your shell profile (for example <Strong>~/.zshrc</Strong>), then open a new terminal:
+        <SetupStep number={1} field={<CopyField value="opencode plugin add opencode-openwork" label="Copy install command" testId="gateway-tool-opencode-install" />}>
+          In OpenCode 2, install the OpenWork plugin:
         </SetupStep>
-        <SetupStep
-          number={2}
-          field={(
-            <ModelSnippet models={list} loading={models.isLoading} error={models.error} empty="Your organization hasn't given you any models yet.">
-              {(model) => model ? <CopyField multiline label="Copy the OpenCode configuration" testId="gateway-tool-opencode-config" value={openCodeConfig({ baseUrl, models: list, model })} /> : null}
-            </ModelSnippet>
-          )}
-        >
-          Choose your default model, then save this as <Strong>opencode.json</Strong> in your project, or as <Strong>~/.config/opencode/opencode.json</Strong> for every project. Already have one? Merge the <Strong>openwork</Strong> provider into it.
-        </SetupStep>
-        <SetupStep number={3} field={<CopyField value="opencode" label="Copy the command" />}>
-          Start OpenCode in your project. <Strong>/models</Strong> lists your OpenWork models under <Strong>OpenWork</Strong>.
+        <SetupStep number={2} field={<CopyField value="opencode auth login openwork --method browser --standalone" label="Copy sign-in command" testId="gateway-tool-opencode-sign-in" />}>
+          Sign in with your browser, choose your organization, and approve access:
         </SetupStep>
       </ol>
+      <p className="text-[13px] leading-5 text-gray-600">
+        Your organization&apos;s models appear in <Strong>/models</Strong>. No API key to create or copy.
+      </p>
       <DocsLink href={OPENCODE_DOCS_URL} />
     </div>
   );
@@ -610,7 +581,7 @@ export function GatewayToolSteps({ tool, apiKey, baseUrl }: { tool: GatewayToolI
     case "codex-app": return <CodexAppSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "claude-code": return <ClaudeCodeSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "claude-desktop": return <ClaudeDesktopSteps apiKey={apiKey} baseUrl={baseUrl} />;
-    case "opencode": return <OpenCodeSteps apiKey={apiKey} baseUrl={baseUrl} />;
+    case "opencode": return <OpenCodeSteps />;
     case "other": return <OtherToolSteps apiKey={apiKey} baseUrl={baseUrl} />;
   }
 }

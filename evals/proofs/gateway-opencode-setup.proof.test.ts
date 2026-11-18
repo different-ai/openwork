@@ -16,7 +16,7 @@ off("a member keeps the existing setup options before OpenCode rolls out", async
   });
 });
 
-on("a member can copy an OpenCode configuration for their gateway models", async ({ user, probe, step, evidence }) => {
+on("a member can set up the OpenCode plugin without creating an API key", async ({ user, probe, step, evidence }) => {
   await step("after: OpenCode appears alongside the other setup options", async () => {
     await user.see(setup, { timeoutMs: 60_000 });
     const entries = await probe.dom('[data-testid="gateway-tool-setup-opencode"]');
@@ -25,21 +25,22 @@ on("a member can copy an OpenCode configuration for their gateway models", async
     await user.screenshot();
   });
 
-  await step("when the member opens OpenCode setup, they can see how to set their key", async () => {
+  await step("when the member opens OpenCode setup, they can copy the plugin install command", async () => {
     await user.click(setup);
-    await user.see({ testId: "gateway-tool-opencode-env" });
-    const field = (await probe.dom('[data-testid="gateway-tool-opencode-env"]')).elements[0]?.text ?? "";
-    evidence.recordAssertionEvidence("The instructions name the key variable", "The shell command uses OPENWORK_API_KEY", field.includes('OPENWORK_API_KEY="<your API key>"'));
-    expect(field).toContain('OPENWORK_API_KEY="<your API key>"');
+    await user.see({ role: "button", name: "Copy install command" });
+    const command = (await probe.dom('[data-testid="gateway-tool-opencode-install"]')).elements[0]?.text;
+    evidence.recordAssertionEvidence("The dialog shows the published plugin install command", command ?? "Install command missing", command === "opencode plugin add opencode-openwork");
+    expect(command).toBe("opencode plugin add opencode-openwork");
   });
 
-  await step("then the member gets a config with a default model and no embedded key", async () => {
-    await user.see({ testId: "gateway-tool-opencode-config" }, { timeoutMs: 30_000 });
-    const config = (await probe.dom('[data-testid="gateway-tool-opencode-config"]')).elements[0]?.text ?? "";
-    const model = config.match(/"model": "openwork\/(gwm_[^"]+)"/)?.[1];
-    const ok = Boolean(model && config.includes(`"${model}": {`) && config.includes('"apiKey": "{env:OPENWORK_API_KEY}"') && config.includes('"npm": "@ai-sdk/openai-compatible"'));
-    evidence.recordAssertionEvidence("The config selects an available model and reads the key from the environment", `default model present: ${Boolean(model)}; provider and key reference validated: ${ok}`, ok);
-    expect(ok).toBe(true);
+  await step("then the member sees browser sign-in without a create-key step", async () => {
+    await user.see({ role: "button", name: "Copy sign-in command" });
+    const command = (await probe.dom('[data-testid="gateway-tool-opencode-sign-in"]')).elements[0]?.text;
+    const keyButtons = (await probe.dom('[data-testid="gateway-tool-setup-create-key"]')).elements.length;
+    const expected = "opencode auth login openwork --method browser --standalone";
+    evidence.recordAssertionEvidence("The dialog shows browser sign-in instead of creating an API key", `${command ?? "Sign-in command missing"}; create-key buttons: ${keyButtons}`, command === expected && keyButtons === 0);
+    expect(command).toBe(expected);
+    expect(keyButtons).toBe(0);
     await user.screenshot();
   });
 });
