@@ -10,7 +10,7 @@ import type { z } from "zod";
 import { DenButton } from "../../_components/ui/button";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
-  changeGroups, changeStateLine, fieldLabel, hasConfiguration, recordedDocument, valueLabel,
+  approvalReserved, changeGroups, changeStateLine, fieldLabel, hasConfiguration, recordedDocument, valueLabel,
   type AwsDeployment, type EditableDeployment,
 } from "./managed-deployment-configuration-state";
 
@@ -127,7 +127,7 @@ export function ManagedDeploymentConfigurationSummary({ deployment, canManage, c
     <section aria-labelledby={heading} className="space-y-2" data-testid="managed-deployment-configuration-change" data-change-state={change.state}>
       <h3 id={heading} className="text-[13px] font-semibold text-gray-900">Requested changes</h3>
       <ConfigurationChangeList deployment={editable} changes={change.changes} />
-      <p className={`text-[13px] ${change.state === "failed" ? "text-gray-900" : "text-gray-500"}`} data-testid="managed-deployment-configuration-change-state">{changeStateLine(change)}</p>
+      <p className={`text-[13px] ${change.state === "failed" ? "text-gray-900" : "text-gray-500"}`} data-testid="managed-deployment-configuration-change-state">{changeStateLine(change, undefined, approvalReserved(deployment.run))}</p>
       {error ? <p role="alert" className="text-[13px] text-red-700">{error}</p> : null}
       {change.state === "applying" ? null : (
         <div className="flex flex-wrap items-center gap-2">

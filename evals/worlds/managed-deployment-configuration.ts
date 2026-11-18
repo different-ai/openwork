@@ -175,6 +175,14 @@ export async function managedDeploymentConfigurationWorld(seed: Seed, { place }:
     /** The customer runs the approval in their account: the installer enrolls. No milestone is reported yet. */
     async start(commandOrLink: string): Promise<InstallerRun> {
       const approval = readAwsApproval(commandOrLink);
+      // Configuration commands reserve the current approval before CloudFormation
+      // is allowed to change the installer. Play that step over local HTTP too.
+      if (commandOrLink.includes("/approval-check")) {
+        const checked = await post(controlPlane(approval), `/v1/managed-deployments/${approval.deploymentId}/runs/${approval.runId}/approval-check`, {
+          body: JSON.stringify({ challenge: parameter(approval.parameters, "Challenge") }),
+        });
+        if (checked.status !== 200) throw new Error(`Den refused the approval check: HTTP ${checked.status} ${checked.text.slice(0, 300)}`);
+      }
       const enrolled = await enroll(approval);
       if (enrolled.status !== 200) throw new Error(`Den refused the installer's enrollment: HTTP ${enrolled.status} ${enrolled.text.slice(0, 300)}`);
       return { approval, token: enrollmentSchema.parse(JSON.parse(enrolled.text)).token, reported: 0 };
@@ -277,7 +285,8 @@ export async function managedDeploymentConfigurationWorld(seed: Seed, { place }:
         configuration: { provider: "aws", name: edit.name ?? shown.name, domainName: shown.domainName, ownerEmail: edit.ownerEmail ?? shown.ownerEmail, size: shown.size, target: shown.target },
       }) });
       const answer = z.object({ error: z.string().optional(), message: z.string().optional(), outcome: z.string().optional() }).catch({}).parse(result.body);
-      return { status: result.response.status, error: answer.error ?? null, message: answer.message ?? null, outcome: answer.outcome ?? null };
+      const launch = managedDeploymentLaunchSchema.safeParse(result.body);
+      return { status: result.response.status, error: answer.error ?? null, message: answer.message ?? null, outcome: answer.outcome ?? null, command: launch.success ? launch.data.command : null };
     },
     /** Everything Den's API process tried to send to AWS, as the fixture saw it. */
     async awsTraffic() {

@@ -39,6 +39,7 @@ export function deploymentStatus(deployment: ManagedDeployment): { label: string
   const run = deployment.run;
   const installed = Boolean(deployment.installedVersion);
   if (run?.kind === "configure") {
+    if (run.state === "awaiting_approval" && run.lastSeenAt) return { label: "AWS approval reserved", tone: "neutral" };
     // A change nobody approved in time left the installation as it was, so its health is the status.
     if (run.state === "provisioning") return run.expired ? { label: "Configuration change stopped reporting", tone: "danger" } : { label: "Applying configuration change", tone: "neutral" };
     if (run.state === "failed") return { label: "Configuration change failed", tone: "danger" };

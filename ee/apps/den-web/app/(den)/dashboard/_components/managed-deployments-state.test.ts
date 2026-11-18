@@ -84,6 +84,9 @@ test("a configuration change has its own status, and one nobody approved in time
   assert.deepEqual(deploymentStatus(item), { label: "Awaiting AWS approval", tone: "neutral" });
   item.run.expired = true;
   assert.deepEqual(deploymentStatus(item), { label: "Operational", tone: "neutral" }, "nothing reached AWS, so the installation is as healthy as it reports");
+  item.run.lastSeenAt = new Date().toISOString();
+  assert.deepEqual(deploymentStatus(item), { label: "AWS approval reserved", tone: "neutral" });
+  item.run.lastSeenAt = null;
   item.run.state = "provisioning";
   assert.deepEqual(deploymentStatus(item), { label: "Configuration change stopped reporting", tone: "danger" });
   item.run.expired = false;

@@ -271,6 +271,7 @@ test("an approval command stays on the page only for the run it was issued for, 
   assert.equal(currentHandoff(handoff, withdrawn), null, "the change was withdrawn: the deployment shows its earlier run");
   assert.equal(currentHandoff(handoff, view()), null, "no run at all");
   assert.equal(currentHandoff(handoff, view({ view: { run: run({ expired: true }) } })), null, "the approval ran out");
+  assert.equal(currentHandoff(handoff, view({ view: { run: run({ lastSeenAt: new Date().toISOString() }) } })), null, "the shell already reserved this approval");
   for (const state of ["provisioning", "failed", "ready"]) assert.equal(currentHandoff(handoff, view({ view: { run: run({ state }) } })), null, `${state}: the command has been used`);
   assert.equal(currentHandoff(handoff, view({ view: { id: "00000000-0000-4000-8000-00000000000a", run: run() } })), null, "another deployment");
 
@@ -280,6 +281,8 @@ test("an approval command stays on the page only for the run it was issued for, 
 
 test("a change nobody approved in time has no progress to show", () => {
   assert.equal(changeNeverApproved({ kind: "configure", state: "awaiting_approval", expired: true }), true);
+  assert.equal(changeNeverApproved({ kind: "configure", state: "awaiting_approval", expired: true, lastSeenAt: new Date().toISOString() }), false, "an expired reservation is not proof AWS was untouched");
+  assert.match(changeStateLine({ state: "applying", requestedAt: new Date().toISOString(), expiresAt: new Date().toISOString() }, undefined, true), /approval is reserved.*can't be discarded/);
   assert.equal(changeNeverApproved({ kind: "configure", state: "awaiting_approval", expired: false }), false, "still approvable");
   assert.equal(changeNeverApproved({ kind: "configure", state: "provisioning", expired: true }), false, "it started: its steps say where it stopped");
   assert.equal(changeNeverApproved({ kind: "configure", state: "failed", expired: false }), false);

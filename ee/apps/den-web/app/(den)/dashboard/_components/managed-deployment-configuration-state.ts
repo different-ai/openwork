@@ -124,8 +124,13 @@ export function runtimeBlock(deployment: ManagedDeployment, reason: string | nul
 type Run = NonNullable<ManagedDeployment["run"]>;
 
 /** A change whose approval ran out before anyone approved it: nothing started, so there is no progress to show. */
-export function changeNeverApproved(run: Pick<Run, "kind" | "state" | "expired">): boolean {
-  return run.kind === "configure" && run.state === "awaiting_approval" && run.expired;
+export function changeNeverApproved(run: Pick<Run, "kind" | "state" | "expired"> & Partial<Pick<Run, "lastSeenAt">>): boolean {
+  return run.kind === "configure" && run.state === "awaiting_approval" && run.expired && !run.lastSeenAt;
+}
+
+/** The shell reserved permission to change AWS, but the installer has not enrolled yet. */
+export function approvalReserved(run: Pick<Run, "kind" | "state" | "lastSeenAt"> | null): boolean {
+  return run?.kind === "configure" && run.state === "awaiting_approval" && Boolean(run.lastSeenAt);
 }
 
 /**
@@ -137,7 +142,7 @@ export function changeNeverApproved(run: Pick<Run, "kind" | "state" | "expired">
 export function currentHandoff<Handoff extends { deployment: Pick<ManagedDeployment, "id" | "run"> }>(handoff: Handoff | null, deployment: Pick<ManagedDeployment, "id" | "run">): Handoff | null {
   const run = deployment.run;
   if (!handoff || !run || handoff.deployment.id !== deployment.id || handoff.deployment.run?.id !== run.id) return null;
-  return run.state === "awaiting_approval" && !run.expired ? handoff : null;
+  return run.state === "awaiting_approval" && !run.expired && !approvalReserved(run) ? handoff : null;
 }
 
 // What to do after each installer failure when the run was a configuration change: the next step is the change itself, not Retry.
@@ -279,7 +284,8 @@ function clockTime(iso: string): string {
 }
 
 /** What is true of a requested change right now. */
-export function changeStateLine(change: Pick<ConfigurationChangeView, "state" | "requestedAt" | "expiresAt">, time: (iso: string) => string = clockTime): string {
+export function changeStateLine(change: Pick<ConfigurationChangeView, "state" | "requestedAt" | "expiresAt">, time: (iso: string) => string = clockTime, reserved = false): string {
+  if (reserved) return "AWS approval is reserved. Waiting for the installer to connect. This change can't be discarded; if it stays here, ask your OpenWork operator to check the installer in AWS.";
   switch (change.state) {
     case "awaiting_approval": return `Nothing has changed yet. The approval expires at ${time(change.expiresAt)}.`;
     case "applying": return "AWS is applying this now. The deployment shows the new values when it finishes.";

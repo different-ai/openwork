@@ -394,7 +394,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
       {run && run.state !== "ready" && !(changeRun && changeNeverApproved(run)) ? (
         <section aria-labelledby="run-heading" className="space-y-2">
           <h3 id="run-heading" className="text-[13px] font-semibold text-gray-900">{run.kind === "configure" ? "Configuration change" : run.kind === "update" ? `Update to ${run.version}` : run.kind === "retry" ? `Retry ${run.version}` : `Install ${run.version}`}</h3>
-          {run.state === "awaiting_approval" && !run.expired ? <p className="text-[13px] text-gray-500">Waiting for approval in {cloud}{gcp ? " Shell" : ""}.</p> : null}
+          {run.state === "awaiting_approval" && !run.expired && !(run.kind === "configure" && run.lastSeenAt) ? <p className="text-[13px] text-gray-500">Waiting for approval in {cloud}{gcp ? " Shell" : ""}.</p> : null}
           <ol data-testid="managed-deployment-steps">
             {deploymentStepSchema.options.map((step, index) => {
               const event = run.events.find((entry) => entry.step === step);

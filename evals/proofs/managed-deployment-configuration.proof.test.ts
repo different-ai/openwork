@@ -207,4 +207,93 @@ test("an owner turns on the gateway runtime and cloud computers for an installed
       `${traffic.answered.length} STS GetCallerIdentity replays answered locally for account ${world.account} (the installer twice, the health agent twice); ${traffic.denied} denied; ${traffic.refused.length} requests to any other amazonaws.com host were attempted`,
       traffic.refused.length === 0 && traffic.answered.length === 4);
   });
+
+  // Continue in the same running installation for recovery and polling checks.
+  {
+  const person = user.on(world.owner);
+  const page = probe.on(world.owner);
+  const texts = async (selector: string) => (await page.dom(selector)).elements.map((element) => element.text);
+  const shows = (testId: string, text: string) => page.eventually(() => texts(id(testId)), {
+    within: WITHIN, label: text, until: (found) => found.some((entry) => entry.includes(text)),
+  });
+  async function prepareEmail(email: string, entry = "managed-deployment-edit-configuration") {
+    await person.click({ testId: entry });
+    await person.type({ label: "First administrator email" }, email);
+    await person.click({ role: "button", label: "Review changes" });
+    await person.click({ testId: "deployment-configuration-consent" });
+    await person.click({ role: "button", label: "Prepare AWS approval" });
+    await shows("managed-deployment-configuration-change-state", "Nothing has changed yet.");
+  }
+  async function command() {
+    await person.click({ testId: "managed-deployment-command-toggle" });
+    return (await texts(id("managed-deployment-command")))[0] ?? "";
+  }
+
+  await step("the owner reviews an email correction and can discard it before approving", async () => {
+    await world.setConfigurationChanges(true);
+    await person.reload();
+    await person.see({ role: "button", label: "Edit configuration" }, { timeoutMs: 120_000 });
+    await prepareEmail("corrected@example.com");
+    const pending = await world.deployment();
+    expect(pending.ownerEmail).toBe("admin@example.com");
+    await person.click({ role: "button", label: "Discard change" });
+    await page.eventually(() => texts(id("managed-deployment-configuration-change")), { within: WITHIN, label: "no requested change", until: (found) => found.length === 0 });
+    expect((await world.deployment()).configuration?.change).toBeNull();
+    evidence.recordAssertionEvidence("Discarding leaves the installed values alone", `Before discard the email was ${pending.ownerEmail}; after discard there is no pending change`, pending.ownerEmail === "admin@example.com");
+    await person.screenshot();
+  });
+
+  await step("editing a pending change replaces its command, and polling never keeps the old command", async () => {
+    await prepareEmail("first@example.com");
+    const old = await command();
+    const superseded = await world.requestChange("owner", { ownerEmail: "second@example.com" });
+    expect(superseded.status).toBe(200);
+    await shows("managed-deployment-configuration-change", "second@example.com");
+    expect(await texts(id("managed-deployment-command"))).toEqual([]);
+    await person.click({ role: "button", label: "Show approval command" });
+    const current = await command();
+    expect(current).not.toBe(old);
+    expect(current).toContain("second@example.com");
+    expect(await world.aws.enrollStatus(old)).toBe(404);
+    await person.click({ role: "button", label: "Edit change" });
+    await person.type({ label: "First administrator email" }, "third@example.com");
+    await person.click({ role: "button", label: "Review changes" });
+    await person.click({ testId: "deployment-configuration-consent" });
+    await person.click({ role: "button", label: "Prepare AWS approval" });
+    await shows("managed-deployment-configuration-change", "third@example.com");
+    evidence.recordAssertionEvidence("The copied command belongs to the requested change on screen", "Polling removed the superseded command; Show approval command returned the new command; the superseded run cannot enroll; Edit change prepared the third email", current !== old);
+    await person.screenshot();
+  });
+
+  await step("a reload can reopen the approval, and a failed run leaves the installed email unchanged", async () => {
+    await person.reload();
+    await person.see({ role: "button", label: "Show approval command" }, { timeoutMs: WITHIN });
+    await person.click({ role: "button", label: "Show approval command" });
+    const approval = await command();
+    const run = await world.aws.start(approval);
+    await world.aws.fail(run, "runner_failed");
+    await shows("managed-deployment-status", "Configuration change failed");
+    const failed = await world.deployment();
+    expect(failed.ownerEmail).toBe("admin@example.com");
+    expect(failed.configuration?.change?.state).toBe("failed");
+    evidence.recordAssertionEvidence("A failed change is not presented as applied", `Email ${failed.ownerEmail}; change state ${failed.configuration?.change?.state}`, failed.ownerEmail === "admin@example.com");
+    await person.screenshot();
+  });
+
+  await step("Review and try again completes the email correction at the same installer version", async () => {
+    await person.click({ role: "button", label: "Review and try again" });
+    await person.click({ role: "button", label: "Review changes" });
+    await person.click({ testId: "deployment-configuration-consent" });
+    await person.click({ role: "button", label: "Prepare AWS approval" });
+    await shows("managed-deployment-status", "Awaiting AWS approval");
+    const approval = await command();
+    await world.aws.approve(approval);
+    await shows("managed-deployment-status", "Operational");
+    const applied = await world.deployment();
+    expect(applied.ownerEmail).toBe("third@example.com");
+    expect(applied.installedVersion).toBe(world.installedVersion);
+    evidence.recordAssertionEvidence("The final milestone records the corrected email without upgrading", `Email ${applied.ownerEmail}; installer ${applied.installedVersion}`, applied.ownerEmail === "third@example.com" && applied.installedVersion === world.installedVersion);
+    await person.screenshot();
+  });
+  }
 });
