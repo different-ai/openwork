@@ -1317,11 +1317,24 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     })
   }
 
+  const loadEnabledMemberGatewayAccess: LoadMemberGatewayAccess = async (identity) => {
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const isEntraRow = (row: typeof rows[number]) => isLiteLlmProviderId(row.provider.provider_id) && row.provider.litellmKeySource === "entra"
+    if (!rows.some(isEntraRow)) return rows
+    let enabled = false
+    try {
+      enabled = await dependencies.checkLiteLlmEntraFeature(identity)
+    } catch {
+      // Only the new mode fails closed; existing providers remain discoverable.
+    }
+    return enabled ? rows : rows.filter((row) => !isEntraRow(row))
+  }
+
   /** What the Smart Model Router needs for one request. */
   function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
     return {
       loadConfig: dependencies.loadAutoRouterConfig,
-      loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+      loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
       catalog: dependencies.catalog,
       askJev: dependencies.askJev,
       reasoningStore: dependencies.autoRouterReasoning,
@@ -1349,7 +1362,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const rows = await loadEnabledMemberGatewayAccess(identity)
     // Smart Routers are listed for the API keys members paste into tools; the desktop and other
     // OpenWork clients learn them from Den. Either key can call them on POST /api/v1/chat/completions.
     const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
@@ -1360,7 +1373,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const rows = await loadEnabledMemberGatewayAccess(identity)
     return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
@@ -1382,7 +1395,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       api,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1397,7 +1410,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const rows = await loadEnabledMemberGatewayAccess(identity)
     return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
@@ -1427,7 +1440,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1441,7 +1454,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const rows = await loadEnabledMemberGatewayAccess(identity)
     return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   api.post(codexResponsesPath, async (c) => {
@@ -1462,7 +1475,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),

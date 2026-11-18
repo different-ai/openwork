@@ -18,7 +18,7 @@ export type GatewayAccessRow = {
   model: typeof GatewayProviderModelTable.$inferSelect | null
 }
 export type LoadGatewayAccess = (scope: GatewayAccessScope, consistency?: "primary") => Promise<GatewayAccessRow[]>
-export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name">
+export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name"> & { litellmKeySource: string | null }
 /** An access row across every provider the member can reach, tagged with its provider. */
 export type GatewayMemberAccessRow = GatewayAccessRow & { provider: GatewayAccessProvider }
 export type LoadMemberGatewayAccess = (scope: GatewayContext) => Promise<GatewayMemberAccessRow[]>
@@ -62,7 +62,11 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
   const sets = GatewayCredentialSetTable
   const models = GatewayProviderModelTable
   const links = GatewayModelGroupModelTable
-  const provider = { id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name }
+  const provider = {
+    id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name,
+    litellmKeySource: sql`json_unquote(json_extract(${GatewayProviderTable.settings}, '$.litellm.keySource'))`
+      .mapWith((value: unknown) => typeof value === "string" ? value : null),
+  }
   return executor.select({ grant: grants, group: groups, credentialSet: sets, model: models, provider })
     .from(MemberTable)
     .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.organization_id, MemberTable.organizationId))

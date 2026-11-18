@@ -12,7 +12,10 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { resolveFeatures, type FeatureContext } from "@openwork/features"
 import { createLiteLlmEntraFeatureCheck } from "../src/litellm-entra-feature.js"
 import { createOauthRefresher, providerHoldsRefreshableKind, sameOauthVersion, type OauthCredentialRow, type OauthRefreshStore, type RefreshMemberToken } from "../src/credentials/oauth-refresh.js"
-import type { GatewayAccessRow } from "../src/provider-access.js"
+import type { GatewayAccessRow, GatewayMemberAccessRow } from "../src/provider-access.js"
+import { cursorModelsPath } from "../src/cursor.js"
+import { claudeCodeModelsPath } from "../src/claude-code.js"
+import { codexModelsPath } from "../src/codex.js"
 import type { GatewayCredential, GatewayCredentialLookup, GatewayProvider } from "../src/provider-credentials.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
 import type { OrganizationVariables } from "../src/middleware/org-context.js"
@@ -20,7 +23,7 @@ import type { OrganizationVariables } from "../src/middleware/org-context.js"
 // env.ts validates at import; nothing here touches a database.
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
-const { registerGatewayRoutes, gatewayPathPrefix } = await import("../src/gateway.js")
+const { registerGatewayRoutes, gatewayPathPrefix, gatewayModelsPath } = await import("../src/gateway.js")
 const { createProviderCatalog } = await import("../src/provider-catalog.js")
 
 const organizationId = createDenTypeId("organization")
@@ -331,6 +334,7 @@ function app(input: {
   featureEnabled?: () => Promise<boolean>
   refreshMemberToken?: RefreshMemberToken
   onCredentialRead?: () => void
+  memberRows?: GatewayMemberAccessRow[]
 }) {
   const sent: Request[] = []
   const row = accessRow()
@@ -364,10 +368,12 @@ function app(input: {
       return ++providerReads <= 2 ? provider : { ...provider, ...input.reloadedProvider }
     },
     checkLiteLlmEntraFeature: input.featureEnabled ?? (async () => true),
+    loadMemberGatewayAccess: async () => input.memberRows ?? [],
+    autoRouterRoutingConfigured: false,
     refreshMemberToken: input.refreshMemberToken,
     loadGatewayAccess: async (_scope, consistency) => { accessConsistencies.push(consistency); return [row] },
     loadProviderCredential: async (lookup) => { credentialConsistencies.push(lookup.consistency); input.onCredentialRead?.(); return input.credential },
-    catalog: createProviderCatalog({ litellm: { npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] } }),
+    catalog: createProviderCatalog({ litellm: { npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] }, "microsoft-foundry": { npm: "@ai-sdk/anthropic", env: [] } }),
     now: () => now,
   })
   const send = () => api.request(`${gatewayPathPrefix}/${providerId}/chat/completions`, {
@@ -375,7 +381,7 @@ function app(input: {
     headers: { "content-type": "application/json", authorization: "Bearer ow_gw_caller_key_fixture" },
     body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }),
   })
-  return { sent, send, providerReads: () => providerReads, providerConsistencies, accessConsistencies, credentialConsistencies }
+  return { sent, send, api, providerReads: () => providerReads, providerConsistencies, accessConsistencies, credentialConsistencies }
 }
 
 function entraCredential(identityScope: string | undefined): GatewayCredential {
@@ -535,6 +541,54 @@ test("disabling Entra while credentials prepare stops the final dispatch", async
   assert.equal(reads, 4)
   assert.equal(sent.length, 0)
 })
+
+function discoveryRow(keySource: string | null, modelId: string, providerType = "litellm", mode: "org" | "member" = "member"): GatewayMemberAccessRow {
+  const row = accessRow()
+  const id = createDenTypeId("inferenceProvider")
+  return {
+    ...row,
+    provider: { id, provider_id: providerType, name: providerType, litellmKeySource: keySource },
+    grant: { ...row.grant, gateway_provider_id: id },
+    group: { ...row.group, gateway_provider_id: id },
+    credentialSet: { ...row.credentialSet, gateway_provider_id: id, credential_mode: mode },
+    model: { id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: id, model_id: modelId, name: modelId, created_at: now,
+      model_config: { id: modelId, name: modelId } },
+  }
+}
+
+for (const path of [gatewayModelsPath, cursorModelsPath, claudeCodeModelsPath, codexModelsPath]) {
+  test(`${path} hides retained Entra models while off or unavailable, without hiding existing modes`, async () => {
+    const checks = [async () => false, async () => { throw new Error("feature storage unavailable") }, async () => true]
+    for (const [index, check] of checks.entries()) {
+      let featureReads = 0
+      const { api, providerReads, sent } = app({ settings: liteLlmSettings("personal"), credential: entraCredential(apiScope),
+        memberRows: [discoveryRow("entra", "retained-entra-model"), discoveryRow("personal", "existing-personal-model"),
+          discoveryRow("issued", "existing-issued-model"), discoveryRow("personal", "existing-org-model", "litellm", "org"), discoveryRow("entra", "existing-foundry-model", "microsoft-foundry")],
+        featureEnabled: async () => { featureReads++; return check() } })
+      const response = await api.request(path)
+      assert.equal(response.status, 200)
+      const body = await response.text()
+      if (index === 2) assert.match(body, /retained-entra-model/)
+      else assert.doesNotMatch(body, /retained-entra-model/)
+      for (const modelId of ["existing-personal-model", "existing-issued-model", "existing-org-model", "existing-foundry-model"]) assert.ok(body.includes(modelId), modelId)
+      assert.equal(featureReads, 1)
+      assert.equal(providerReads(), 0)
+      assert.equal(sent.length, 0)
+    }
+  })
+
+  test(`${path} does not read features or providers for ordinary discovery rows`, async () => {
+    let featureReads = 0
+    const { api, providerReads } = app({ settings: liteLlmSettings("personal"), credential: entraCredential(apiScope),
+      memberRows: [discoveryRow("personal", "existing-model"), discoveryRow("entra", "existing-foundry-model", "microsoft-foundry")],
+      featureEnabled: async () => { featureReads++; throw new Error("must not read") } })
+    const response = await api.request(path)
+    assert.equal(response.status, 200)
+    assert.match(await response.text(), /existing-model/)
+    assert.equal(featureReads, 0)
+    assert.equal(providerReads(), 0)
+  })
+}
 
 test("disabling Entra during credential lookup stops renewal before its network call", async () => {
   let enabled = true

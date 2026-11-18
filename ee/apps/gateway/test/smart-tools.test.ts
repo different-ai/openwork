@@ -42,7 +42,7 @@ function accessRow(model: { modelId: string; name: string; context?: number }): 
   const groupId = createDenTypeId("gatewayModelGroup")
   const setId = createDenTypeId("gatewayCredentialSet")
   return {
-    provider: { id: providerId, provider_id: "anthropic", name: "Anthropic" },
+    provider: { id: providerId, provider_id: "anthropic", name: "Anthropic", litellmKeySource: null },
     grant: { id: createDenTypeId("inferenceProviderAccess"), gateway_provider_id: providerId, model_group_id: groupId, credential_set_id: setId, audience_key: "organization", org_membership_id: null, team_id: null, created_at: now },
     group: { id: groupId, gateway_provider_id: providerId, name: "Default", description: null, status: "active", created_at: now, updated_at: now },
     credentialSet: { id: setId, gateway_provider_id: providerId, created_by_org_membership_id: null, name: "Organization key", credential_mode: "org", oauth_client_id: null, oauth_client_secret: null, oauth_tenant_id: null, aws_sso: null, status: "active", created_at: now, updated_at: now },
