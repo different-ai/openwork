@@ -40,6 +40,8 @@ const createSessionBody = z
     tasks: z.boolean().optional(),
     /** The host opens a document beside this chat on the person's explicit request (`open_document`). Off unless asked for. */
     documentNavigation: z.boolean().optional(),
+    /** The host opens its teaching window on the person's explicit request (`open_teaching`). Off unless asked for. */
+    teachingNavigation: z.boolean().optional(),
     /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
     sandboxGateway: z.boolean().optional(),
     /** Trusted host rollout for read-only browser recovery. */

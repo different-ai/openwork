@@ -140,9 +140,16 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
       const file = files.get(id)
       return file ? [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size }] : []
     })
-    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: "Got it.", step: 0 }], modelSteps: 1, error: null }
+    // Asked to be taught, the answer carries the receipt that opens the teaching window.
+    const teach = /\bteach\b/i.test(input.text)
+    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: teach ? "Sure, opening the teaching window. Pick the tab and press Start teaching." : "Got it.", step: 0 }], modelSteps: 1, error: null, ...(teach ? { teaching: { id: `teach-${input.id}` } } : {}) }
     current.turns.push(turn)
     return json(response, 202, { ok: true })
+  }
+  // The teaching window lists one tab and has nothing recorded.
+  if (request.method === "POST" && path === "/v1/workbot/teaching") {
+    await body(request)
+    return json(response, 200, { demonstration: null, tabs: [{ id: "tab-1", origin: "https://www.example.com" }] })
   }
   if (request.method === "POST" && path === "/v1/workbot/files") {
     const bytes = await body(request)

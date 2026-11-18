@@ -57,6 +57,7 @@ const sessionOptions = z.object({
   reactions: z.boolean().optional(),
   tasks: z.boolean().optional(),
   documentNavigation: z.boolean().optional(),
+  teachingNavigation: z.boolean().optional(),
   sandboxGateway: z.boolean().optional(),
   browserRecovery: z.boolean().optional(),
   timeZone: z.string().optional(),
@@ -111,6 +112,8 @@ export type Session = {
   tasks: boolean
   /** Whether the host opens a document beside this chat when the person explicitly asks (the `open_document` tool). */
   documentNavigation: boolean
+  /** Whether the host opens its teaching window when the person asks to teach a browser task (the `open_teaching` tool). */
+  teachingNavigation: boolean
   /** Whether this conversation's computer runs through the runner's sandbox gateway (SANDBOX_GATEWAY) instead of its own provider. */
   sandboxGateway: boolean
   browserRecovery: boolean
@@ -143,6 +146,7 @@ export type SessionInput = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  teachingNavigation?: boolean
   sandboxGateway?: boolean
   browserRecovery?: boolean
   owner?: string
@@ -163,6 +167,7 @@ function optionsOf(input: {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  teachingNavigation?: boolean
   sandboxGateway?: boolean
   browserRecovery?: boolean
   timeZone?: string | null
@@ -179,6 +184,7 @@ function optionsOf(input: {
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
     ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+    ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
     ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
     ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
@@ -203,6 +209,7 @@ function serializeOptions(options: SessionOptions) {
     ...(options.reactions ? { reactions: true } : {}),
     ...(options.tasks ? { tasks: true } : {}),
     ...(options.documentNavigation ? { documentNavigation: true } : {}),
+    ...(options.teachingNavigation ? { teachingNavigation: true } : {}),
     ...(options.sandboxGateway ? { sandboxGateway: true } : {}),
     ...(options.browserRecovery ? { browserRecovery: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
@@ -588,6 +595,7 @@ export class Store {
       reactions: options.reactions ?? false,
       tasks: options.tasks ?? false,
       documentNavigation: options.documentNavigation ?? false,
+      teachingNavigation: options.teachingNavigation ?? false,
       sandboxGateway: options.sandboxGateway ?? false,
       browserRecovery: options.browserRecovery ?? false,
       owner: value.owner ?? null,
