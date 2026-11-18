@@ -61,10 +61,11 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 ## How to try it
 
 1. Turn `litellmEntraMemberSignIn` on for the organization in `/admin`.
-2. In Entra, register an app, expose an API scope on it, set
-   `requestedAccessTokenVersion` to `2` in its manifest, and create a client
-   secret. Configure LiteLLM's JWT auth with that tenant's v2.0 issuer and the
-   app's client ID as an audience. The published guide has every step:
+2. Use a LiteLLM proxy with a valid Enterprise or trial license: native JWT
+   authentication requires one. In Entra, register an app, expose an API scope
+   on it, set `requestedAccessTokenVersion` to `2` in its manifest, and create a
+   client secret. Configure LiteLLM's JWT auth with that tenant's v2.0 issuer and
+   the app's client ID as an audience. The published guide has every step:
    `packages/docs/ai-gateway/litellm.mdx` ("Microsoft sign-in").
 3. Add the provider in AI Gateway with **Microsoft sign-in**, save, and add
    the redirect URI shown on the provider page to the Entra app registration.
@@ -81,13 +82,28 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 - **Connect** stops: the connect page says Microsoft sign-in for this provider
   is turned off and that an admin can turn it back on. A sign-in already in
   the browser is refused at the callback and nothing is stored.
-- People who already signed in keep their models. AI Gateway does not read
-  feature state, so it keeps renewing and forwarding their token until it is
-  revoked. To cut access immediately, disable or remove the provider, or
-  remove its access grants; all of these work with the feature off, and
-  people can still sign out.
-- Stored tokens and settings are kept, so turning the feature back on restores
-  everything without anyone signing in again.
+- People who already signed in cannot use this mode while the feature is off:
+  their models are no longer advertised as ready, and AI Gateway refuses new
+  requests before renewing or forwarding an Entra token. It checks again before
+  dispatch, so disabling the feature during request preparation also blocks it.
+  An upstream request already dispatched is not cancelled.
+- Stored encrypted tokens and settings are kept. Turning the feature back on
+  lets people reuse their sign-in if Microsoft still accepts it; otherwise they
+  connect again. Disabling or removing providers, changing access grants and
+  signing out remain available with the feature off.
+
+## Merge and rollback
+
+The feature is off by default on cloud and self-hosted installations. Merging
+this code does not create providers, change Entra app registrations, enable the
+feature for an organization or migrate data. With no explicit rollout or
+operator override, the only setup UI change is a locked sign-in option.
+
+The additional identity, feature-state and primary-database dispatch checks are
+restricted to this new LiteLLM mode; existing provider modes retain their
+previous request path. To roll back a trial, turn the feature off before
+reverting its code. Keep the flag off until licensed, real-provider and browser
+verification is complete.
 
 ## What to watch
 
@@ -117,7 +133,10 @@ Tokens and the client secret are never logged and never returned by any API.
 
 ## Not verified
 
-- Entra ID and LiteLLM are stand-ins in every test. The flow has not been run
+- A local LiteLLM 1.109.1 probe confirmed that native JWT authentication refuses
+  unlicensed requests with HTTP 403. That checks the license gate only, not
+  successful sign-in or inference.
+- Entra ID and LiteLLM are stand-ins in every automated test. The flow has not been run
   against a real Entra tenant or a real LiteLLM proxy, so the token Entra
   issues for a custom scope and LiteLLM's validation of it are unproven here.
 - The admin screens were typechecked, linted and unit tested, not opened in a

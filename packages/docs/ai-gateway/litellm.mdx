@@ -178,10 +178,16 @@ Keys are created when the provider is added, at each sync, and the first time an
 ## Microsoft sign-in
 
 <Note>
-  **Rolling out.** If **Add a provider → LiteLLM** doesn't offer **Microsoft sign-in**, it isn't on for your organization yet. Ask us, or on a self-hosted deployment your operator, to turn on **LiteLLM: member Microsoft Entra sign-in**.
+  **Rolling out.** If **Microsoft sign-in** is locked in **Add a provider → LiteLLM**, it isn't on for your account yet. Ask your deployment administrator to turn on **LiteLLM: member Microsoft Entra sign-in**.
 </Note>
 
-Use this when your proxy runs LiteLLM's JWT auth (`enable_jwt_auth`) with Microsoft Entra ID as the identity provider, with or without LiteLLM keys turned off. OpenWork holds no LiteLLM key for this provider:
+Use this when your proxy runs LiteLLM's JWT auth (`enable_jwt_auth`) with Microsoft Entra ID as the identity provider. OpenWork holds no LiteLLM key for this provider:
+
+<Note>
+  LiteLLM's native JWT authentication requires a valid **Enterprise or trial license**. Start with a working proxy whose models and database are configured. See [LiteLLM's identity-provider setup](https://docs.litellm.ai/docs/proxy/token_auth).
+
+  Enabling JWT authentication does **not** disable ordinary LiteLLM keys. This OpenWork mode needs no member virtual keys or JWT-to-key mapping. Keep the proxy's strong administrative master key private; if your deployment must accept only JWTs from inference clients, enforce that restriction at its client-facing ingress.
+</Note>
 
 - Each person signs in with their Microsoft work account once, in the browser. OpenWork keeps the sign-in on the server, renews it, and sends the person's own Entra **access token** to LiteLLM as `Authorization: Bearer …`.
 - LiteLLM validates each token (signing keys, issuer, audience), maps it to a user or team, and applies that person's model access and budgets.
@@ -294,6 +300,8 @@ A version mismatch can make LiteLLM answer `Invalid issuer` or `Audience doesn't
 On the provider page, edit the model list at any time. Changing the tenant, application, API scope or client secret signs everyone out, because a sign-in belongs to the settings it was made with: people select **Connect** again. To change the proxy URL or switch to a key mode, add a new LiteLLM provider.
 
 People stay signed in as long as Entra ID keeps renewing their sign-in, following your Conditional Access policies. **Sign out** on the provider in **My Library → Models** erases the person's sign-in in OpenWork.
+
+During rollout, turning the feature off blocks new connections and new requests through this mode, including token renewal. Saved sign-ins remain encrypted so they can be reused if the feature is turned on again and Microsoft still accepts them. Requests already sent to the proxy are not cancelled. The three LiteLLM key modes are unaffected.
 
 ## Keep models in sync
 
