@@ -1,4 +1,4 @@
-import { cellInputFromText, openXlsxWorkbook, sheetGridRows, writeXlsxWorkbook } from "@openwork/workbook";
+import { openXlsxWorkbook, sheetGridRows } from "@openwork/workbook";
 
 import type { Data } from "./open-target";
 
@@ -10,6 +10,12 @@ function extension(name: string) {
   
   return index >= 0 ? clean.slice(index + 1) : "";
 }
+
+export function isEditableSpreadsheet(name: string) {
+  return ["csv", "tsv"].includes(extension(name));
+}
+
+export const READ_ONLY_WORKBOOK_MESSAGE = "This workbook is read-only. Download it or open it in a spreadsheet app to make changes.";
 
 function delimiterForName(name: string) {
   return extension(name) === "tsv" ? "\t" : ",";
@@ -86,8 +92,8 @@ function serializeDelimited(rows: SpreadsheetRows, delimiter: string) {
 }
 
 function unsupportedWorkbookMessage(ext: string) {
-  if (ext === "xls") return "Legacy .xls workbooks can't be edited here. Save the file as .xlsx and open it again.";
-  if (ext === "ods") return "OpenDocument spreadsheets can't be edited here. Export the file as .xlsx and open it again.";
+  if (ext === "xls") return "Legacy .xls workbooks can't be previewed here. Download it or open it in a spreadsheet app.";
+  if (ext === "ods") return "OpenDocument spreadsheets can't be previewed here. Download it or open it in a spreadsheet app.";
   return null;
 }
 
@@ -95,19 +101,10 @@ function workbookBytes(content: Data): Uint8Array {
   return new Uint8Array(content.kind === "binary" ? content.data : new ArrayBuffer(0));
 }
 
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes.byteLength);
-
-  copy.set(bytes);
-
-  return copy.buffer;
-}
-
 /**
- * Rows of the first sheet as a dense grid anchored at A1, so cell positions
- * survive a save. Values are the stored values: numbers as written, booleans
- * as TRUE/FALSE, date-formatted serials as ISO dates, formulas by their last
- * calculated result.
+ * Read-only preview of the first worksheet, not a workbook editing model.
+ * Formulas appear by their last calculated result; formatting and other
+ * workbook objects remain in the original bytes, which are never serialized.
  */
 export async function parseSpreadsheet(input: { name: string; content: Data }): Promise<SpreadsheetRows> {
   const ext = extension(input.name);
@@ -125,26 +122,8 @@ export async function parseSpreadsheet(input: { name: string; content: Data }): 
   return sheetGridRows(sheet);
 }
 
-/**
- * Writes the edited grid back. Delimited files stay text; workbooks become a
- * single-sheet .xlsx whose cells keep their value types (canonical numbers,
- * TRUE and FALSE) instead of turning every value into text. Text is never
- * turned into a formula: the editor cannot tell typed formulas from imported
- * text, so nothing saved here is executable.
- */
+/** Delimited tables are editable; a preview must never replace an Office file. */
 export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows): Promise<Data> {
-  const ext = extension(name);
-
-  if (ext === "csv" || ext === "tsv") {
-    return { kind: "text", data: serializeDelimited(rows, delimiterForName(name)) };
-  }
-
-  const unsupported = unsupportedWorkbookMessage(ext);
-  if (unsupported) throw new Error(unsupported);
-
-  const { bytes } = await writeXlsxWorkbook([
-    { name: "Sheet1", header: false, rows: rows.map((row) => row.map((value) => cellInputFromText(String(value ?? "")))) },
-  ]);
-
-  return { kind: "binary", data: toArrayBuffer(bytes) };
+  if (!isEditableSpreadsheet(name)) throw new Error(READ_ONLY_WORKBOOK_MESSAGE);
+  return { kind: "text", data: serializeDelimited(rows, delimiterForName(name)) };
 }
