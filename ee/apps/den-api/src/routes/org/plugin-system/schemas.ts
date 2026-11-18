@@ -288,11 +288,21 @@ export const pluginCreateSchema = z.object({
   marketplaceId: marketplaceIdSchema.optional(),
 })
 
+/** A stable key: lowercase letters, digits, dots, dashes and underscores. */
+export const externalKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/)
+
+export const configObjectExternalKeySchema = z.object({
+  /** The key a configuration import finds this object by; null clears it. */
+  externalKey: externalKeySchema.nullable(),
+})
+
 export const pluginUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
+  /** The key a configuration import finds this plugin by; null clears it. */
+  externalKey: externalKeySchema.nullable().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.description === undefined) {
+  if (value.name === undefined && value.description === undefined && value.externalKey === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Provide at least one field to update.",
@@ -622,6 +632,7 @@ export const libraryItemSchema = z.discriminatedUnion("type", [
     edges: z.array(effectiveAccessEdgeSchema),
     state: z.enum(["ready", "needs_signin", "needs_admin_setup"]),
     resultState: z.enum(["never_run", "fresh", "stale", "needs_attention"]),
+    failureReason: z.string().nullable().optional(),
     latestSuccessfulAt: nullableTimestampSchema,
     viewState: z.enum(["default", "custom_active", "build_failed", "retired"]),
     activeViewTitle: nullableStringSchema,
@@ -654,6 +665,7 @@ export const configObjectVersionSchema = z.object({
 
 export const configObjectSchema = z.object({
   id: configObjectIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   objectType: configObjectTypeSchema,
   sourceMode: configObjectSourceModeSchema,
@@ -711,6 +723,7 @@ export const pluginExtensionSchema = z.object({
 
 export const pluginSchema = z.object({
   id: pluginIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema,
@@ -1169,7 +1182,7 @@ const pluginMcpRequirementConfigureItemSchema = (
     }),
   })
 )
-/** With secure keys in chat on, an API-key requirement set up without its key also returns credentialPrompt. */
+/** An API-key requirement set up without its key also returns credentialPrompt. */
 export const pluginMcpRequirementConfigureResponseSchema = z.object({
   ok: z.literal(true),
   item: pluginMcpRequirementConfigureItemSchema,

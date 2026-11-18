@@ -22,6 +22,7 @@ import {
   type DenOrgSummary,
 } from "@/app/lib/den";
 import { markDesktopSignInInitiated, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { clearSignInReturnTarget } from "@/app/lib/den-sign-in-return";
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
@@ -33,6 +34,7 @@ import {
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
+import { explainSignOutAfterDisconnect } from "../../devices/disconnected-sign-out";
 import {
   cloudSessionOrganizationFromSettings,
   useCloudSession,
@@ -226,6 +228,8 @@ export function useDenSession({
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
       const usesPasteHandoff = new URL(url).searchParams.get("desktopAuth") === "1";
+      // A sign-in started here supersedes one started from a conversation.
+      clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
@@ -351,6 +355,7 @@ export function useDenSession({
       .catch(async (error) => {
         if (cancelled) return;
         if (isDenSessionRevokedError(error)) {
+          explainSignOutAfterDisconnect();
           await clearSignedInState();
         }
         // A timeout, offline state, or server failure does not invalidate the
@@ -502,6 +507,8 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
+    // A sign-in finished here supersedes one started from a conversation.
+    clearSignInReturnTarget();
 
     try {
       // The helper exchanges, persists, and dispatches the success/error session events.

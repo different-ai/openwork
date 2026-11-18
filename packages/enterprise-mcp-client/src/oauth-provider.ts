@@ -66,6 +66,32 @@ function tokenExpiration(tokens: StoredOAuthTokens, now: number): number | undef
   return assertFiniteEpoch(now + tokens.expires_in * 1_000, "token expiration")
 }
 
+// Google does not advertise `offline_access` and issues a refresh token only for
+// `access_type=offline` on a fresh consent. Values a configured sign-in address
+// already sets are kept.
+function withGoogleOfflineAccess(authorizationUrl: URL): URL {
+  if (authorizationUrl.hostname !== "accounts.google.com") return authorizationUrl
+  const url = new URL(authorizationUrl)
+  if (!url.searchParams.has("access_type")) url.searchParams.set("access_type", "offline")
+  if (!url.searchParams.has("prompt")) url.searchParams.set("prompt", "consent")
+  return url
+}
+
+// The SDK always adds the scopes a server's sign-in challenge names to the
+// administrator's selection. Some servers name every scope they support there,
+// so an administrator can choose to ask for their own selection alone.
+// `offline_access` is kept when the SDK added it: it lets access renew and
+// grants nothing on the server.
+function withSelectedScopesOnly(authorizationUrl: URL, selectedScopes: readonly string[]): URL {
+  if (selectedScopes.length === 0) return authorizationUrl
+  const computed = authorizationUrl.searchParams.get("scope")?.split(/\s+/).filter(Boolean) ?? []
+  const scopes = [...new Set(selectedScopes)]
+  if (computed.includes("offline_access") && !scopes.includes("offline_access")) scopes.push("offline_access")
+  const url = new URL(authorizationUrl)
+  url.searchParams.set("scope", scopes.join(" "))
+  return url
+}
+
 export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly redirectUri: string
   private readonly connectionId: string
@@ -79,6 +105,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   private readonly applicationType: EnterpriseMcpOAuthConfiguration["applicationType"]
   private readonly authorizationServerIssuer: string | undefined
   private readonly requestedScopes: string[]
+  private readonly requestSelectedScopesOnly: boolean
   private readonly fetch: EnterpriseMcpFetch
   readonly clientMetadataUrl: string | undefined
   private loadedClient: EnterpriseMcpOAuthClientRegistration | undefined
@@ -126,6 +153,7 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       : undefined
     this.authorizationServerIssuer = this.manualState?.authorizationServerUrl ?? input.oauthConfiguration?.authorizationServerIssuer
     this.requestedScopes = [...new Set(input.oauthConfiguration?.requestedScopes ?? [])]
+    this.requestSelectedScopesOnly = input.oauthConfiguration?.requestSelectedScopesOnly === true
     this.fetch = input.fetch
   }
 
@@ -521,7 +549,10 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   redirectToAuthorization(authorizationUrl: URL): void {
-    this.authorizeUrl = authorizationUrl.toString()
+    const requested = this.requestSelectedScopesOnly
+      ? withSelectedScopesOnly(authorizationUrl, this.requestedScopes)
+      : authorizationUrl
+    this.authorizeUrl = withGoogleOfflineAccess(requested).toString()
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {

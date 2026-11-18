@@ -73,7 +73,7 @@ resource "aws_iam_role_policy_attachment" "execution" {
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = concat([aws_secretsmanager_secret.app.arn], aws_secretsmanager_secret.runner[*].arn, [for a in local.extra_secret_resource_arns : a if strcontains(a, ":secretsmanager:")])
+    resources = concat([aws_secretsmanager_secret.app.arn], aws_secretsmanager_secret.runner[*].arn, aws_secretsmanager_secret.workbot[*].arn, values(local.runner_external_secrets), [for a in local.extra_secret_resource_arns : a if strcontains(a, ":secretsmanager:")])
   }
 
   dynamic "statement" {
@@ -122,7 +122,27 @@ locals {
 
 # Task definitions -----------------------------------------------------------
 
-resource "aws_ecs_task_definition" "api" {
+# Forget pre-contract revisions rather than invoking AWS's unscopable
+# DeregisterTaskDefinition action. Never manually restart retained legacy ARNs.
+removed {
+  from = aws_ecs_task_definition.api
+  lifecycle { destroy = false }
+}
+removed {
+  from = aws_ecs_task_definition.web
+  lifecycle { destroy = false }
+}
+moved {
+  from = aws_ecs_task_definition.api_ca
+  to   = aws_ecs_task_definition.api_v1
+}
+moved {
+  from = aws_ecs_task_definition.web_ca
+  to   = aws_ecs_task_definition.web_v1
+}
+
+resource "aws_ecs_task_definition" "api_v1" {
+  skip_destroy             = true
   family                   = "${var.name}-den-api"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -166,7 +186,8 @@ resource "aws_ecs_task_definition" "api" {
   }
 }
 
-resource "aws_ecs_task_definition" "web" {
+resource "aws_ecs_task_definition" "web_v1" {
+  skip_destroy             = true
   family                   = "${var.name}-den-web"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -204,7 +225,7 @@ resource "aws_ecs_task_definition" "web" {
 resource "aws_ecs_service" "api" {
   name                  = "${var.service_name_prefix}den-api"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.api.arn
+  task_definition       = aws_ecs_task_definition.api_v1.arn
   desired_count         = var.den_api.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
@@ -252,7 +273,7 @@ resource "aws_ecs_service" "api" {
 resource "aws_ecs_service" "web" {
   name                  = "${var.service_name_prefix}den-web"
   cluster               = local.cluster_arn
-  task_definition       = aws_ecs_task_definition.web.arn
+  task_definition       = aws_ecs_task_definition.web_v1.arn
   desired_count         = var.den_web.desired_count
   launch_type           = "FARGATE"
   wait_for_steady_state = var.wait_for_steady_state
@@ -274,8 +295,10 @@ resource "aws_ecs_service" "web" {
   }
 
   deployment_circuit_breaker {
-    enable   = true
-    rollback = true
+    enable = true
+    # A managed first adoption may still have a pre-CA historical revision.
+    # Never resurrect it after strict promotion, even if the new rollout fails.
+    rollback = !var.managed_legacy_secrets
   }
 
   depends_on = [terraform_data.migration_complete, aws_lb_listener.https, aws_lb_listener_rule.web_host, aws_secretsmanager_secret_version.app]

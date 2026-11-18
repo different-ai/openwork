@@ -11,7 +11,7 @@ const scope = { serverKey: "https://den.example.test", userId: "user-a" };
 const firstOrg = { id: "org-a", name: "First workspace", slug: "first", role: "member" };
 const lastOrg = { id: "org-b", name: "Last workspace", slug: "last", role: "member" };
 
-function memoryClient(features: Record<string, boolean> = { rememberLastOrganization: true }) {
+function memoryClient(features: Record<string, boolean> = {}) {
   return {
     listOrgs: mock(async () => ({
       orgs: [firstOrg, lastOrg],
@@ -65,11 +65,11 @@ describe("last organization preference", () => {
 });
 
 describe("returning account restoration", () => {
-  test("validates current membership and rollout, then syncs the last org rather than the exchange default", async () => {
+  test("validates current membership, then syncs the last org rather than the exchange default", async () => {
     rememberDenOrganization(scope, lastOrg.id);
     const client = memoryClient();
     expect(await restoreRememberedDenOrganization({ ...scope, client, isCurrent: () => true })).toEqual(lastOrg);
-    expect(client.getOrgFeatures).toHaveBeenCalledWith(lastOrg.id);
+    expect(client.getOrgFeatures).not.toHaveBeenCalled();
     expect(client.setActiveOrganization).toHaveBeenCalledWith({ organizationId: lastOrg.id });
   });
 
@@ -81,12 +81,12 @@ describe("returning account restoration", () => {
     expect(client.setActiveOrganization).not.toHaveBeenCalled();
   });
 
-  test.each([{}, { rememberLastOrganization: false }])("missing or disabled rollout keeps the chooser (%j)", async (features) => {
+  test.each([{}, { rememberLastOrganization: false }])("legacy rollout metadata cannot disable restoration (%j)", async (features) => {
     rememberDenOrganization(scope, lastOrg.id);
     const client = memoryClient(features);
-    expect(await restoreRememberedDenOrganization({ ...scope, client, isCurrent: () => true })).toBeNull();
-    expect(client.setActiveOrganization).not.toHaveBeenCalled();
-    expect(readRememberedDenOrganization(scope)).toBe(lastOrg.id);
+    expect(await restoreRememberedDenOrganization({ ...scope, client, isCurrent: () => true })).toEqual(lastOrg);
+    expect(client.getOrgFeatures).not.toHaveBeenCalled();
+    expect(client.setActiveOrganization).toHaveBeenCalledWith({ organizationId: lastOrg.id });
   });
 
   test("removed membership cannot restore the remembered org", async () => {
@@ -97,12 +97,11 @@ describe("returning account restoration", () => {
     expect(client.setActiveOrganization).not.toHaveBeenCalled();
   });
 
-  test.each(["directory", "features", "sync"])("a %s failure keeps the chooser and preference", async (stage) => {
+  test.each(["directory", "sync"])("a %s failure keeps the chooser and preference", async (stage) => {
     rememberDenOrganization(scope, lastOrg.id);
     const client = memoryClient();
     const reject = async (): Promise<never> => { throw new Error("temporarily unavailable"); };
     if (stage === "directory") client.listOrgs.mockImplementation(reject);
-    if (stage === "features") client.getOrgFeatures.mockImplementation(reject);
     if (stage === "sync") client.setActiveOrganization.mockImplementation(reject);
     expect(await restoreRememberedDenOrganization({ ...scope, client, isCurrent: () => true })).toBeNull();
     expect(readRememberedDenOrganization(scope)).toBe(lastOrg.id);
@@ -112,9 +111,9 @@ describe("returning account restoration", () => {
     rememberDenOrganization(scope, lastOrg.id);
     const client = memoryClient();
     let current = true;
-    client.getOrgFeatures.mockImplementation(async () => {
+    client.listOrgs.mockImplementation(async () => {
       current = false;
-      return { rememberLastOrganization: true };
+      return { orgs: [firstOrg, lastOrg], activeOrgId: firstOrg.id, activeOrgSlug: firstOrg.slug, defaultOrgId: firstOrg.id };
     });
     expect(await restoreRememberedDenOrganization({ ...scope, client, isCurrent: () => current })).toBeNull();
     expect(client.setActiveOrganization).not.toHaveBeenCalled();

@@ -13,14 +13,18 @@ import {
   COMPOSER_BADGE_META_CLASS,
   attachmentChipIcon,
   attachmentChipMeta,
+  composerBadgeLogoClass,
   composerBadgeSlotClass,
   composerPillBadge,
   lineCount,
   pastedTextBadge,
+  sessionReferenceBadge,
   type ChipIcon,
   type ComposerBadge,
 } from "@/react-app/domains/session/surface/composer/composer-chips"
 import type { ComposerPill } from "@/react-app/domains/session/surface/composer/composer-pills"
+import { sessionReferenceHref, type SessionReferenceIdentity } from "./session-reference"
+import { useSessionReferencesMaybe } from "./session-reference-context"
 import { cn } from "@/lib/utils"
 
 export function ChipIconSvg(props: { icon: ChipIcon; className?: string }) {
@@ -49,7 +53,7 @@ function BadgeSlot(props: { badge: ComposerBadge }) {
   if (logo) {
     return (
       <span className={composerBadgeSlotClass(props.badge, true)}>
-        <img src={logo} alt="" decoding="async" className="size-3.5 object-contain" onError={() => setFailed((current) => current + 1)} />
+        <img src={logo} alt="" decoding="async" className={composerBadgeLogoClass(slot)} onError={() => setFailed((current) => current + 1)} />
       </span>
     )
   }
@@ -75,7 +79,46 @@ export function ComposerBadgeChip(props: { badge: ComposerBadge; className?: str
 }
 
 export function ComposerPillChip(props: { pill: ComposerPill; className?: string }) {
+  if (props.pill.kind === "session") return <SessionReferenceChip reference={props.pill} className={props.className} />
   return <ComposerBadgeChip badge={composerPillBadge(props.pill)} className={props.className} />
+}
+
+/**
+ * A task referenced with `#`. It shows the task's current title, so a rename
+ * never breaks it, and opens the task when clicked. A task that was deleted or
+ * is no longer accessible keeps its saved title, marked unavailable.
+ */
+export function SessionReferenceChip(props: { reference: SessionReferenceIdentity & { title: string }; className?: string }) {
+  const references = useSessionReferencesMaybe()
+  const resolved = references?.resolve(sessionReferenceHref(props.reference))
+  if (!references || !resolved) {
+    return (
+      <ComposerBadgeChip
+        badge={sessionReferenceBadge(props.reference.title, { unavailable: Boolean(references) })}
+        className={cn(references && "opacity-70", props.className)}
+      />
+    )
+  }
+  const badge = sessionReferenceBadge(resolved.title)
+  const open = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.button === 0 || event.button === 1) references.openReference(resolved)
+  }
+  return (
+    <a
+      href={sessionReferenceHref(resolved)}
+      aria-label={`Open ${resolved.archived ? "archived task" : "task"}: ${resolved.title}`}
+      title={resolved.title}
+      data-session-reference=""
+      className="inline-flex max-w-full rounded-lg align-middle transition-colors hover:[&>span]:bg-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+      onClick={open}
+      onAuxClick={open}
+      onMouseDown={(event) => { if (event.button === 1) event.preventDefault() }}
+    >
+      <ComposerBadgeChip badge={badge} className={cn("mx-0 cursor-pointer", props.className)} />
+    </a>
+  )
 }
 
 const PREVIEW_LINES = 6

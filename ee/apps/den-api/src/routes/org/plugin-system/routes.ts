@@ -4,7 +4,6 @@ import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
-import { organizationFeatureEnabled } from "../../../features.js"
 import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
@@ -114,6 +113,7 @@ import {
   pluginMutationResponseSchema,
   pluginParamsSchema,
   pluginUpdateSchema,
+  configObjectExternalKeySchema,
   resolvedPluginsQuerySchema,
   resolvedPluginsResponseSchema,
   resourceAccessGrantWriteSchema,
@@ -124,6 +124,7 @@ import { pluginArchHasPermission, requirePluginArchCapability, type PluginArchAc
 import { pluginArchRoutePaths } from "./contracts.js"
 import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "../shared.js"
 import { ensureFreshPrivilegedSession } from "../../../privileged-session.js"
+import { primaryReadsMiddleware } from "../../../read-routing.js"
 import { isAgentOAuthClientConnection, listMemberUsableConnectionFacts } from "../mcp-connections.js"
 import { listWorkflowLibraryItems } from "../../../workflow-library.js"
 import {
@@ -190,6 +191,7 @@ import {
   removePluginMembership,
   retryConnectorSyncEvent,
   syncConnectorInstanceNow,
+  setConfigObjectExternalKey,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
@@ -205,6 +207,11 @@ import {
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 type PluginCreateBody = z.infer<typeof pluginCreateSchema>
+
+const externalKeyConflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "PluginArchExternalKeyConflictError" })
 
 const marketplaceConflictSchema = z.object({
   error: z.string(),
@@ -276,11 +283,9 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
     }
     const denied = await requirePermissionWithFreshSession(c, "connections.manage")
     if (denied) return denied
-    const organizationId = actorContext(c).organizationContext.organization.id
-    const secureEntry = await organizationFeatureEnabled(organizationId, "secureSecretFields")
-    if (secureEntry && c.get("apiKey") && body.apiKey) return c.json(SECURE_ENTRY_REQUIRED, 400)
+    if (c.get("apiKey") && body.apiKey) return c.json(SECURE_ENTRY_REQUIRED, 400)
     const { awaitingKey, connectionRow, ...item } = await configureMarketplacePluginMcpRequirement({
-      awaitKey: secureEntry,
+      awaitKey: true,
       authType: body.authType,
       apiKey: body.apiKey,
       configObjectId: body.configObjectId,
@@ -309,7 +314,10 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
-  routeApp[method](path, orgMemberRoute(), ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
+  // A write route reads back what it wrote (often through shared helpers), so
+  // all of its reads go to the primary instead of a lagging replica.
+  const readScope = method === "get" ? [] : [primaryReadsMiddleware]
+  routeApp[method](path, orgMemberRoute(), ...readScope, ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -548,6 +556,32 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const params = validParam<any>(c)
         return c.json({ item: await getConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), versionId: params.versionId }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "put", pluginArchRoutePaths.configObjectKey,
+    paramValidator(configObjectParamsSchema),
+    jsonValidator(configObjectExternalKeySchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Set config object key",
+      description: "Sets or clears the stable key a configuration import finds this config object by. The key is unique per organization and never follows the title.",
+      responses: {
+        200: jsonResponse("Config object key updated successfully.", configObjectMutationResponseSchema),
+        400: jsonResponse("The key was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage config objects.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage this config object.", forbiddenSchema),
+        404: jsonResponse("The config object could not be found.", notFoundSchema),
+        409: jsonResponse("Another config object in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await setConfigObjectExternalKey({ configObjectId: params.configObjectId, context: actorContext(c), externalKey: body.externalKey }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -823,13 +857,14 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to update plugins.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
         404: jsonResponse("The plugin could not be found.", notFoundSchema),
+        409: jsonResponse("Another plugin in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, name: body.name, pluginId: params.pluginId }) })
+        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, externalKey: body.externalKey, name: body.name, pluginId: params.pluginId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

@@ -10,6 +10,10 @@
  * membership changes (revokeOrganizationApiKeysForMember; enabled → false).
  */
 export const domainChangeEmitters: Readonly<Record<string, string>> = {
+  // Retired with organization grants (2026-10): nothing emits them any more; kept so past events stay filterable.
+  "organization.benefit_setting.updated": "retired (organization grants)",
+  "organization.benefit_grant.created": "retired (organization grants)",
+  "organization.benefit_grant.revoked": "retired (organization grants)",
   "api_key.created": "audit/domain/api-keys.ts", "api_key.deleted": "audit/domain/api-keys.ts", "api_key.revoked": "audit/domain/api-keys.ts",
   "invitation.created": "audit/domain/invitations.ts", "invitation.refreshed": "audit/domain/invitations.ts", "invitation.canceled": "audit/domain/invitations.ts",
   "invitation.rejected": "audit/domain/invitations.ts",
@@ -17,12 +21,16 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "member.role_updated": "audit/domain/members.ts", "member.ownership_transferred": "audit/domain/members.ts", "member.removed": "audit/domain/members.ts",
   "scim_connection.token_rotated": "audit/domain/scim.ts", "scim_connection.deleted": "audit/domain/scim.ts", "scim_connection.reconciled": "audit/domain/scim.ts", "scim_group_mapping.updated": "audit/domain/scim.ts",
   "sso_connection.registered": "audit/domain/sso.ts", "sso_connection.enabled": "audit/domain/sso.ts", "sso_connection.disabled": "audit/domain/sso.ts", "sso_connection.deleted": "audit/domain/sso.ts",
+  "sso_connection.renamed": "audit/domain/sso.ts",
   "organization.complimentary_access.granted": "audit/domain/organization-settings.ts", "organization.complimentary_access.revoked": "audit/domain/organization-settings.ts",
   "organization.dpa_signed.updated": "audit/domain/organization-settings.ts",
   "web_origin.approved": "audit/domain/web-origins.ts", "web_origin.removed": "audit/domain/web-origins.ts",
   "permission_set.created": "audit/domain/permissions.ts", "permission_set.permissions_changed": "audit/domain/permissions.ts", "permission_set.archived": "audit/domain/permissions.ts",
   "permission_set.renamed": "audit/domain/permissions.ts", "permission_set.teams_changed": "audit/domain/permissions.ts",
+  "permission_set.members_changed": "audit/domain/permissions.ts",
   "agent_permission_policy.updated": "audit/domain/agent-permissions.ts", "agent_permission_policy.removed": "audit/domain/agent-permissions.ts",
+  "managed_deployment.renamed": "audit/domain/managed-deployments.ts", "managed_deployment.configuration_change_requested": "audit/domain/managed-deployments.ts",
+  "managed_deployment.configuration_change_withdrawn": "audit/domain/managed-deployments.ts",
   // Organization-bound MCP OAuth tokens (consent referenceId; src/audit/better-auth.ts).
   "oauth_token.issued": "audit/domain/oauth-tokens.ts", "oauth_token.revoked": "audit/domain/oauth-tokens.ts",
   // User-scoped events (attribution user_memberships, src/audit/fanout.ts).

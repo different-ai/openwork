@@ -19,17 +19,27 @@ function session(value: unknown) {
   return { ...info, directory: home ?? (isRecord(info.location) ? info.location.directory : undefined) };
 }
 async function pages(read: Read, path: string, limit?: number): Promise<Record<string, unknown>[]> {
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) {
+    throw new Error("Invalid engine read limit: expected a positive safe integer");
+  }
   const url = new URL(path, "http://engine");
-  url.searchParams.set("limit", String(limit ?? 200));
   const rows: Record<string, unknown>[] = [];
   const cursors = new Set<string>();
   while (true) {
+    // The semantic total is not the engine's native page size (maximum 200).
+    const remaining = limit === undefined ? undefined : limit - rows.length;
+    url.searchParams.set("limit", String(Math.min(200, remaining ?? 200)));
     const result = await read(url.pathname + url.search);
-    rows.push(...items(result));
+    const page = items(result);
+    rows.push(...(remaining === undefined ? page : page.slice(0, remaining)));
+    if (!page.length) return rows;
     const next = isRecord(result) && isRecord(result.cursor) ? result.cursor.next : undefined;
-    if (limit !== undefined || typeof next !== "string" || !next) return rows;
+    if (typeof next !== "string" || !next) return rows;
     if (cursors.has(next)) throw new Error("Invalid engine pagination cursor");
+    if (rows.length === limit) return rows;
     cursors.add(next);
+    // The opaque cursor carries the order; the engine rejects cursor + order.
+    url.searchParams.delete("order");
     url.searchParams.set("cursor", next);
   }
 }
@@ -76,12 +86,41 @@ export function createV2ReadAdapter(read: Read): Read {
       return (await pages(native, "/api/session")).filter(row => row.parentID === decodeURIComponent(target[1])).map(session);
     }
     const limit = url.searchParams.get("limit");
-    const rows = await pages(native, `/api/session/${target[1]}/message`, limit === null ? undefined : Number(limit));
-    return rows.filter(row => row.type === "user" || row.type === "assistant")
+    const rows = await pages(native, `/api/session/${target[1]}/message?order=desc`, limit === null ? undefined : Number(limit));
+    // Native pages are newest first. Reverse before the stable time sort so
+    // messages sharing a timestamp also keep chronological timeline order.
+    return rows.reverse().filter(row => row.type === "user" || row.type === "assistant")
       .sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0))
       .map(row => ({ info: { id: row.id, role: row.type, time: row.time, ...(row.error ? { error: row.error } : {}) },
         parts: Array.isArray(row.content) ? row.content.filter(part => isRecord(part) && part.type === "text") : typeof row.text === "string" ? [{ type: "text", text: row.text }] : [] }));
   };
+}
+
+function nativeSessionPath(workspaceId: string, sessionId: string): string {
+  return `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * Native `Session.Message.Info` rows of every type, unfiltered, in timeline
+ * order: the first `limit` from the start, or the newest `limit` from the end
+ * (all of them when `limit` is omitted). Used by `session.read` detail reads.
+ */
+export async function readV2NativeMessages(
+  read: Read,
+  workspaceId: string,
+  sessionId: string,
+  options: { from: "start" | "end"; limit?: number },
+): Promise<Record<string, unknown>[]> {
+  const order = options.from === "start" ? "asc" : "desc";
+  const rows = await pages(read, `${nativeSessionPath(workspaceId, sessionId)}/message?order=${order}`, options.limit);
+  const timeline = order === "desc" ? rows.reverse() : rows;
+  // Stable sort: messages sharing a timestamp keep the engine's timeline order.
+  return timeline.sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0));
+}
+
+/** One native `Session.Message.Info` row by id. */
+export async function readV2NativeMessage(read: Read, workspaceId: string, sessionId: string, messageId: string): Promise<unknown> {
+  return data(await read(`${nativeSessionPath(workspaceId, sessionId)}/message/${encodeURIComponent(messageId)}`));
 }
 
 export async function readV2SessionActivity(read: Read, workspaceId: string, sessionId: string) {

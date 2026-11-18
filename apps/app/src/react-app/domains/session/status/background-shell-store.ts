@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { setBackgroundShellTasksFlag, type EngineShell } from "../../../../app/lib/background-shell-tasks";
+import type { EngineShell } from "../../../../app/lib/background-shell-tasks";
 
 /** A command the agent left running in the background for one conversation. */
 export type BackgroundShell = {
@@ -117,24 +117,13 @@ export function sessionBackgroundShells(
 }
 
 type BackgroundShellStore = {
-  /** Mirrors the `backgroundShellTasks` feature. Off keeps the old chat and records nothing. */
-  enabled: boolean;
   booksByWorkspaceId: Record<string, BackgroundShellBook>;
-  setEnabled: (enabled: boolean) => void;
   update: (workspaceId: string, change: (book: BackgroundShellBook) => BackgroundShellBook) => void;
 };
 
 export const useBackgroundShellStore = create<BackgroundShellStore>((set) => ({
-  enabled: false,
   booksByWorkspaceId: {},
-  setEnabled: (enabled) => {
-    setBackgroundShellTasksFlag(enabled);
-    // Turning the feature off forgets everything, so turning it back on
-    // starts from the engine's own list instead of stale counts.
-    set((state) => state.enabled === enabled ? state : { enabled, booksByWorkspaceId: enabled ? state.booksByWorkspaceId : {} });
-  },
   update: (workspaceId, change) => set((state) => {
-    if (!state.enabled) return state;
     const current = state.booksByWorkspaceId[workspaceId] ?? emptyBackgroundShellBook;
     const next = change(current);
     return next === current ? state : { booksByWorkspaceId: { ...state.booksByWorkspaceId, [workspaceId]: next } };

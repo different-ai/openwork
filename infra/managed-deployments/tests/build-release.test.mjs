@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages } from "../tools/build-release.mjs";
+import "./aws-assistant-bootstrap.test.mjs";
+import { AWS_REPOSITORIES, buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
 
 const digest = (character) => "sha256:" + character.repeat(64);
 const metadata = (character, os = "linux", architecture = "amd64") => ({
@@ -74,16 +75,22 @@ test("registry re-verification and approved manifest identity must match", () =>
   assert.throws(() => resolveGcpImages("0.18.0", { ...pins, den_api: GCP_REPOSITORIES.den_api + "@" + digest("e") }, inspect), /Approved pin/);
 });
 
-test("AWS release architecture does not invoke Docker or add GCP image inventory", () => {
+test("default AWS release resolves current image tags without adding GCP inventory", () => {
   const output = mkdtempSync(join(tmpdir(), "openwork-aws-build-test-"));
   try {
-    buildRelease(["aws", "0.18.0", output]);
+    buildRelease(["aws", "0.18.65", output], inspect);
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.provider, "aws");
     const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
     assert.equal(release.provider, "aws");
-    assert.equal(release.images, undefined);
+    assert.deepEqual(release.images, pins);
     assert.ok(release.files["infra/managed-deployments/aws/runner/runner.py"]);
+    for (const healthFile of ["health_agent.py", "assistant_health_agent.py"]) {
+      const path = "infra/managed-deployments/aws/health/" + healthFile;
+      const archived = execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), path]);
+      assert.equal(createHash("sha256").update(archived).digest("hex"), release.files[path]);
+      assert.deepEqual(archived, readFileSync(resolve(root, path)));
+    }
     assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
   } finally {
     rmSync(output, { recursive: true, force: true });
@@ -107,59 +114,169 @@ test("second-update fixture only overrides the non-secret revision default", () 
   assert.match(fixture, /^variable "tls_task_revision"\s*\{\s*default = "second-update"\s*\}$/);
   const main = readFileSync(resolve(root, "infra/managed-deployments/aws/terraform/main.tf"), "utf8");
   assert.match(main, /variable "tls_task_revision"\s*\{\s*type\s*=\s*string\s*default\s*=\s*""/);
-  assert.match(main, /tls_task_revision\s*=\s*var\.tls_task_revision/);
+  assert.match(main, /OPENWORK_MANAGED_TASK_REVISION\s*=\s*var\.tls_task_revision/);
 });
-const modulePath = "infra/managed-deployments/aws/terraform/modules/openwork-aws-ecs";
-// Current dev at 8b586b13ab89b78379fbecd8ddb9c7c7caba31f8, including runner updates.
-// Only the TLS overlay may differ from this complete dev snapshot.
-const baselineTree = "561d5b63514a13df471ad7458eae2b620cfc5803";
-const baselineBlobs = {
-  "main.tf": "879a181b41208c2514a0edf3a3a5b8aab92547c1",
-  "ecs.tf": "376f3f89bd7220eead002a35ab130e2ee3fa95f6",
-  "variables.tf": "311952c9651de29b756815b00ee04ace0c9a049f",
-  "versions.tf": "a5b975afb4a825ad41cf4bda2c75d0f6a8085aed",
-};
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const objectHash = (kind, bytes) => createHash("sha1")
-  .update(Buffer.from(`${kind} ${bytes.length}\0`)).update(bytes).digest();
+const modulePath = "infra/terraform/modules/openwork-aws-ecs";
+test("new AWS installer versions use independently approved immutable application images", () => {
+  assert.deepEqual(resolveAwsImages(pins, inspect), pins);
+  for (const candidate of [{}, { ...pins, den_api: GCP_REPOSITORIES.den_api + ":latest" }, { ...pins, health: HEALTH_SOURCE }]) {
+    assert.throws(() => resolveAwsImages(candidate, inspect));
+  }
+  assert.throws(() => resolveAwsImages(pins, () => { throw new Error("missing image"); }), /missing image/);
+});
+test("AWS tag resolution verifies both unique Linux/amd64 manifests", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (ref) => {
+    calls.push(ref);
+    return [metadata("e", "linux", "arm64"), inspect(ref)];
+  }), pins);
+  assert.deepEqual(calls, [GCP_REPOSITORIES.den_api + ":0.18.65", pins.den_api,
+    GCP_REPOSITORIES.den_web + ":0.18.65", pins.den_web]);
+  for (const response of [[], metadata("a", "linux", "arm64"), [metadata("a"), metadata("b")]]) {
+    assert.throws(() => resolveAwsImages("0.18.65", undefined, () => response), /Linux\/amd64/);
+  }
+  assert.deepEqual(resolveAwsImages("0.18.65", pins, inspect), pins);
+});
 
-function treeHash(directory) {
-  const baselineRoot = directory === resolve(root, modulePath);
-  const entries = readdirSync(directory).filter((name) => !baselineRoot || name !== "tls.tf").map((name) => {
-    const path = join(directory, name);
-    const info = lstatSync(path);
-    assert.equal(info.isSymbolicLink(), false, "Frozen sources cannot be symlinks");
-    assert.ok(info.isFile() || info.isDirectory());
-    const directoryEntry = info.isDirectory();
-    return {
-      sortKey: Buffer.from(name + (directoryEntry ? "/" : "")),
-      entry: Buffer.concat([
-        Buffer.from(`${directoryEntry ? "40000" : "100644"} ${name}\0`),
-        directoryEntry ? treeHash(path) : baselineRoot && baselineBlobs[name]
-          ? Buffer.from(baselineBlobs[name], "hex") : objectHash("blob", readFileSync(path)),
-      ]),
-    };
-  }).sort((left, right) => Buffer.compare(left.sortKey, right.sortKey));
-  return objectHash("tree", Buffer.concat(entries.map(({ entry }) => entry)));
+const legacyAssistantPins = { ...pins,
+  headless_runner: AWS_REPOSITORIES.headless_runner + "@" + digest("e"),
+  workbot: AWS_REPOSITORIES.workbot + "@" + digest("f"),
+};
+const assistantPins = { ...legacyAssistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + "@" + digest("c") };
+const inspectAssistants = (source) => source.includes("openwork-headless-runner") ? metadata("e")
+  : source.includes("openwork-workbot") ? metadata("f") : inspect(source);
+
+test("AWS explicitly opts into resolving the complete assistant image set", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (source) => {
+    calls.push(source);
+    return [metadata("d", "linux", "arm64"), inspectAssistants(source)];
+  }, true), assistantPins);
+  assert.deepEqual(calls, Object.entries(AWS_REPOSITORIES).flatMap(([kind, repository]) => [repository + ":0.18.65", assistantPins[kind]]));
+  assert.deepEqual(resolveAwsImages(assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages(legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.throws(() => resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants, true), /five/);
+});
+
+test("AWS refuses partial assistant inventories and validates every fixed repository before registry access", () => {
+  for (const candidate of [
+    { ...pins, headless_runner: assistantPins.headless_runner }, { ...pins, workbot: assistantPins.workbot },
+    { ...pins, ai_gateway: assistantPins.ai_gateway },
+    { ...pins, headless_runner: assistantPins.headless_runner, ai_gateway: assistantPins.ai_gateway },
+    { ...assistantPins, extra: pins.den_api }, { ...assistantPins, health: HEALTH_SOURCE },
+    { ...assistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + ":0.18.67" },
+    { ...assistantPins, ai_gateway: "ghcr.io/other/inference@" + digest("c") },
+    { ...assistantPins, headless_runner: AWS_REPOSITORIES.headless_runner + ":0.18.65" },
+    { ...assistantPins, workbot: "ghcr.io/other/workbot@" + digest("f") },
+    { ...assistantPins, workbot: assistantPins.headless_runner }, { ...assistantPins, workbot: assistantPins.workbot + "\n" },
+  ]) {
+    let contacted = false;
+    assert.throws(() => resolveAwsImages(candidate, () => { contacted = true; return metadata("a"); }));
+    assert.equal(contacted, false);
+  }
+  assert.throws(() => resolveAwsImages("0.18.65", pins, inspectAssistants, true), /complete/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => {
+    if (source.includes("headless-runner")) throw new Error("assistant image missing");
+    return inspectAssistants(source);
+  }), /assistant image missing/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => source.includes("workbot") ? metadata("e") : inspectAssistants(source)), /Approved pin/);
+  // Google Cloud still rejects optional AWS images instead of expanding its scope.
+  assert.throws(() => resolveGcpImages("0.18.65", assistantPins, inspectAssistants), /exactly den_api and den_web/);
+});
+
+test("AWS builder packages opt-in tag and explicit-pin inventories without changing the baseline", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-assistant-build-"));
+  try {
+    const approved = join(output, "approved.json");
+    writeFileSync(approved, JSON.stringify(assistantPins));
+    for (const options of [["--include-assistants"], ["--image-pins", approved], ["--image-pins", approved, "--include-assistants"]]) {
+      buildRelease(["aws", "0.18.65", output, ...options], inspectAssistants);
+      const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+      assert.deepEqual(release.images, assistantPins);
+      assert.equal(Object.hasOwn(release.images, "health"), false);
+      assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
+    }
+    buildRelease(["aws", "0.18.65", output], inspectAssistants);
+    const baseline = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(baseline.images, pins);
+    assert.equal(Object.hasOwn(baseline.images, "headless_runner"), false);
+    assert.equal(Object.hasOwn(baseline.images, "workbot"), false);
+    assert.equal(Object.hasOwn(baseline.images, "ai_gateway"), false);
+    writeFileSync(approved, JSON.stringify(legacyAssistantPins));
+    buildRelease(["aws", "0.18.65", output, "--image-pins", approved], inspectAssistants);
+    const legacy = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(legacy.images, legacyAssistantPins);
+  } finally { rmSync(output, { force: true, recursive: true }); }
+});
+
+test("assistant CLI opt-in is AWS-only and rejects duplicate, missing and unknown options", () => {
+  for (const options of [["--include-assistants", "--include-assistants"], ["--image-pins"], ["--image-pins", "--include-assistants"], ["--skip-verification"]]) {
+    assert.throws(() => buildRelease(["aws", "0.18.65", "/unused", ...options], inspectAssistants), /Use --image-pins/);
+  }
+  assert.throws(() => buildRelease(["gcp", "0.18.65", "/unused", "--include-assistants"], inspectAssistants), /AWS-only/);
+});
+
+for (const provider of ["aws", "gcp"]) {
+  test(`${provider} repeated builds produce identical archives and manifests`, () => {
+    const output = mkdtempSync(join(tmpdir(), "openwork-reproducible-build-"));
+    try {
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      const before = ["bundle.tar.gz", "manifest.json"].map((name) => readFileSync(join(output, name)));
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      for (const [index, name] of ["bundle.tar.gz", "manifest.json"].entries()) {
+        assert.deepEqual(readFileSync(join(output, name)), before[index]);
+      }
+    } finally { rmSync(output, { recursive: true, force: true }); }
+  });
 }
 
-test("managed AWS differs from its pinned dev snapshot only in the TLS files", () => {
-  assert.equal(treeHash(resolve(root, modulePath)).toString("hex"), baselineTree,
-    "Outside main.tf, ecs.tf, variables.tf, versions.tf and added tls.tf, every byte must match pinned dev");
-  const tls = readFileSync(resolve(root, modulePath, "tls.tf"), "utf8");
+test("portable archive ignores source timestamps, modes and output filename, refuses symlinks", () => {
+  const directory = mkdtempSync(join(tmpdir(), "openwork-archive-test-"));
+  const source = join(directory, "source");
+  const helper = fileURLToPath(new URL("../tools/deterministic-archive.py", import.meta.url));
+  try {
+    // Keep outputs outside the archived source tree.
+    mkdirSync(source);
+    const file = join(source, "runner.py");
+    writeFileSync(file, "print('fixture')\n");
+    execFileSync("python3", [helper, source, join(directory, "first.tar.gz")]);
+    chmodSync(file, 0o755);
+    utimesSync(file, 100, 200);
+    execFileSync("python3", [helper, source, join(directory, "second.tar.gz")]);
+    assert.deepEqual(readFileSync(join(directory, "first.tar.gz")), readFileSync(join(directory, "second.tar.gz")));
+    symlinkSync(file, join(source, "link"));
+    const result = spawnSync("python3", [helper, source, join(directory, "third.tar.gz")], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing symlink/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+test("missing module-local file references fail the release before packaging", () => {
+  const definition = `${modulePath}/migration.tf`;
+  const code = `${modulePath}/migration.py`;
+  const source = readFileSync(resolve(root, definition), "utf8");
+  assert.throws(() => validateModuleReferences([definition], () => source), /Missing packaged module reference.*migration.py/);
+  assert.doesNotThrow(() => validateModuleReferences([definition, code], () => source));
+});
+
+test("managed AWS explicitly preserves legacy keys while adopting the shared module", () => {
+  const tls = readFileSync(resolve(root, modulePath, "security.tf"), "utf8");
   assert.match(tls, /https:\/\/truststore\.pki\.rds\.amazonaws\.com/);
   assert.match(tls, /NODE_EXTRA_CA_CERTS/);
   assert.doesNotMatch(tls, /insecure\s*=\s*true/);
   const main = readFileSync(resolve(root, "infra/managed-deployments/aws/terraform/main.tf"), "utf8");
-  assert.match(main, /source\s*=\s*"\.\/modules\/openwork-aws-ecs"/);
-  assert.doesNotMatch(main, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
-  assert.doesNotMatch(main, /write_only_secrets/);
+  assert.match(main, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
+  assert.match(main, /write_only_secrets\s*=\s*false/);
+  assert.match(main, /managed_legacy_secrets\s*=\s*true/);
 });
 
-test("installer archive contains only the frozen operational module, with identical file bytes", () => {
-  const output = mkdtempSync(join(tmpdir(), "openwork-frozen-installer-test-"));
+test("installer archive contains every shared operational dependency with identical file bytes", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-shared-installer-test-"));
   try {
-    buildRelease(["aws", "0.18.58", output]);
+    buildRelease(["aws", "0.18.58", output], inspect);
     const bundle = join(output, "bundle.tar.gz");
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.bundleSha256, sha256(readFileSync(bundle)));
@@ -169,13 +286,14 @@ test("installer archive contains only the frozen operational module, with identi
     const archiveNames = JSON.parse(execFileSync("python3", ["-c",
       "import json,sys,tarfile; a=tarfile.open(sys.argv[1]); print(json.dumps([e.name for e in a.getmembers() if e.isfile()]))", bundle], { encoding: "utf8" }));
     assert.deepEqual(archiveNames.sort(), [...names, "release.json"].sort());
-    const expected = readdirSync(resolve(root, modulePath)).filter((name) => name.endsWith(".tf")).map((name) => `${modulePath}/${name}`).sort();
-    assert.equal(expected.length, 11);
+    const expected = readdirSync(resolve(root, modulePath)).filter((name) => name.endsWith(".tf") || name === "migration.py").map((name) => `${modulePath}/${name}`).sort();
+    assert.ok(expected.includes(`${modulePath}/migration.py`));
+    validateModuleReferences(expected);
     assert.deepEqual(names.filter((name) => name.startsWith(modulePath + "/")).sort(), expected);
-    assert.equal(names.some((name) => name.startsWith("infra/terraform/modules/openwork-aws-ecs/")), false);
+    assert.equal(names.some((name) => name.includes("aws/terraform/modules/openwork-aws-ecs/")), false);
     assert.equal(names.some((name) => name.includes("/examples/") || name.includes("/tests/")), false);
     assert.equal(names.some((name) => name.endsWith("second-update_override.tf")), false);
-    assert.match(execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/runner/runner.py"], { encoding: "utf8" }), /def tls_redeploy\(force=True\):/);
+    assert.match(execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/runner/runner.py"], { encoding: "utf8" }), /def tls_redeploy\(force=True, cluster=None, expected=None\):/);
     for (const name of expected) {
       const source = readFileSync(resolve(root, name));
       const packaged = execFileSync("tar", ["-xOf", bundle, name]);
@@ -183,7 +301,7 @@ test("installer archive contains only the frozen operational module, with identi
       assert.equal(release.files[name], sha256(source), name);
     }
     const packagedMain = execFileSync("tar", ["-xOf", bundle, "infra/managed-deployments/aws/terraform/main.tf"], { encoding: "utf8" });
-    assert.match(packagedMain, /source\s*=\s*"\.\/modules\/openwork-aws-ecs"/);
+    assert.match(packagedMain, /source\s*=\s*"\.\.\/\.\.\/\.\.\/terraform\/modules\/openwork-aws-ecs"/);
     assert.equal(names.some((name) => /\.(?:tfstate|tfvars|tfplan)(?:\.|$)/.test(name)), false);
   } finally {
     rmSync(output, { recursive: true, force: true });

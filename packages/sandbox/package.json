@@ -24,8 +24,7 @@
   },
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test": "tsx --test src/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

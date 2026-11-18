@@ -1,3 +1,4 @@
+import { readAgentForm, type AgentForm } from "@openwork/types/agent-form";
 import type {
   Agent,
   ApiError,
@@ -19,12 +20,24 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { featureAnalytics } from "./analytics";
+import { nativeSkillAnalyticsIdentity } from "@openwork/product-analytics";
+import { AUTO_ROUTER_SESSION_ROUTES_KEY, autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
+import { SESSION_LINK_METADATA_KEY, SESSION_PROMPT_SENDER_KEY, readSessionLink, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
 import { attachmentMarker, attachmentNoteFilenames, composeV2Prompt, splitV2Prompt, wrapPastedText, type PromptAttachment } from "./v2-prompt-context";
+import { composerPillText, composerPillTextMetadata } from "../../react-app/domains/session/surface/composer/composer-pills";
+import {
+  agentMentionInstruction,
+  decodeSentWords,
+  fileMentionInstruction,
+  mentionText,
+} from "../../react-app/domains/session/surface/composer/sent-message-tokens";
+import { readShowThinkingPreference } from "../../react-app/kernel/local-preferences-storage";
 import {
   BACKGROUND_SHELL_FINISHED_EVENT,
   BACKGROUND_SHELL_NOTICE_KEY,
@@ -34,12 +47,12 @@ import {
   SHELL_EXITED_EVENT,
   backgroundShellIdFromToolMetadata,
   backgroundShellNoticeLabel,
-  backgroundShellTasksEnabled,
   readBackgroundShellCompletion,
   readEngineShell,
   type BackgroundShellNotice,
   type EngineShell,
 } from "./background-shell-tasks";
+import { SUBAGENT_NOTICE_KEY, readSubagentCompletion, subagentNoticeLabel, type SubagentNotice } from "./subagent-notices";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -67,6 +80,8 @@ type PromptPart = {
   synthetic?: unknown;
   metadata?: unknown;
   filename?: unknown;
+  name?: unknown;
+  source?: unknown;
 };
 
 function selectedSkill(part: PromptPart): Record<string, unknown> | null {
@@ -111,6 +126,22 @@ function partText(part: PromptPart): string | null {
 }
 
 /**
+ * An `@agent` or `@file` mention. v1 sends them as agent and file parts; the
+ * native prompt is one string, so they become their visible `@` text plus a
+ * hidden instruction the transcript decodes back into the same chip.
+ */
+function promptMention(part: PromptPart): { text: string; instruction: string } | null {
+  if (part.type === "agent" && typeof part.name === "string" && part.name) {
+    return { text: mentionText(part.name), instruction: agentMentionInstruction(part.name) };
+  }
+  if (part.type !== "file" || readString(part.source, "type") !== "file") return null;
+  const path = readString(part.source, "path");
+  const label = readString(readRecord(part.source, "text"), "value");
+  if (!path || !label?.startsWith("@")) return null;
+  return { text: mentionText(path), instruction: fileMentionInstruction(path) };
+}
+
+/**
  * The exact native prompt body. The person's words keep their order, pasted
  * text stays marked, and hidden parts follow in one context block so the
  * transcript can show the words without them (see v2-prompt-context).
@@ -122,11 +153,15 @@ export function v2PromptText(parts: readonly PromptPart[]): string {
   }));
   const words = parts.flatMap((part) => {
     if (part.type === "file" && typeof part.filename === "string" && attached.has(part.filename)) return [attachmentMarker(part.filename)];
+    const mention = promptMention(part);
+    if (mention) return [mention.text];
     const text = partText(part);
     if (text === null || part.synthetic === true) return [];
     return [isPastedText(part) ? wrapPastedText(text) : text];
   }).join("");
   const context = parts.flatMap((part) => {
+    const mention = promptMention(part);
+    if (mention) return [mention.instruction];
     const text = partText(part);
     return text !== null && part.synthetic === true && !selectedSkill(part) ? [text] : [];
   });
@@ -149,10 +184,13 @@ function attachmentNames(metadata: unknown): string[] {
  */
 export function v2AcknowledgementText(parts: readonly PromptPart[]): string {
   const words = parts.flatMap((part) => {
+    const mention = promptMention(part);
+    if (mention) return [mention.text];
     const text = partText(part);
     return text !== null && part.synthetic !== true ? [text] : [];
   }).join("");
   const files = new Set(parts.flatMap((part) => {
+    if (promptMention(part)) return [];
     if (part.type === "file") return typeof part.filename === "string" && part.filename ? [part.filename] : [];
     return part.type === "text" && part.synthetic === true ? attachmentNames(part.metadata) : [];
   }));
@@ -174,6 +212,47 @@ type PromptParameters = SessionParameters & {
 type SessionCreateParameters = DirectoryParameters & {
   model?: ModelBinding;
   title?: string;
+  /** The session this one is started from; recorded in the new session's metadata. */
+  link?: SessionLink;
+};
+
+/** How a session's latest run ended, as the engine recorded it. */
+export type V2SessionRunEnd = {
+  /** When the latest run ended, in milliseconds. */
+  idleAt: number;
+  outcome: "succeeded" | "failed" | "interrupted";
+};
+
+/** A session's latest turn: what was answered, and which session's agent asked for it (null: the person). */
+export type V2SessionLastTurn = { reply: string; sentBy: string | null };
+
+/** Read the latest turn from one page of engine messages, newest first. */
+export function readV2LastTurn(messages: readonly unknown[]): V2SessionLastTurn {
+  let reply: string | undefined;
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const type = readString(message, "type") ?? readString(message, "role");
+    if (type === "user") {
+      const sender = readRecord(message, "metadata")?.[SESSION_PROMPT_SENDER_KEY];
+      return { reply: reply ?? "", sentBy: typeof sender === "string" && sender ? sender : null };
+    }
+    if (type !== "assistant" || reply !== undefined) continue;
+    const content = message.content;
+    reply = (Array.isArray(content) ? content : [])
+      .flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text ? [part.text] : [])
+      .join("\n\n");
+  }
+  return { reply: reply ?? "", sentBy: null };
+}
+
+type SessionNoteParameters = SessionParameters & {
+  /** Repeating an id the engine already admitted adds nothing. */
+  id: string;
+  text: string;
+  description: string;
+  metadata: Record<string, string>;
+  /** False leaves the note for the session's next run instead of starting one. */
+  resume: boolean;
 };
 
 type SessionUpdateParameters = SessionParameters & {
@@ -181,7 +260,10 @@ type SessionUpdateParameters = SessionParameters & {
   time?: { archived?: number };
 };
 
-export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving and unarchiving are not available in the OpenCode v2 preview.";
+/** The app's event for a session's recorded Smart Router routing decisions (`properties: { sessionID, routes }`). */
+export const AUTO_ROUTES_EVENT = "openwork.auto-routes.updated";
+
+export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving needs a newer OpenWork on the computer that runs this workspace.";
 
 type PermissionReply = "once" | "always" | "reject";
 
@@ -210,7 +292,7 @@ type V2QuestionField = {
   options: { value: string; label: string; description: string }[];
 };
 
-function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
+function mapV2Question(value: unknown): { request: QuestionRequest & { form?: AgentForm }; fields: V2QuestionField[] } | null {
   if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
   const id = readString(value, "id");
   const sessionID = readString(value, "sessionID");
@@ -239,7 +321,8 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const form = readAgentForm(value.metadata, fields.length);
+  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}), ...(form ? { form } : {}) }, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";
@@ -258,6 +341,8 @@ export type V2MappedMessage = {
     modelID?: string;
     providerID?: string;
     resolvedModel?: { id: string; providerID?: string; name?: string };
+    tokens?: { input?: number; output?: number; reasoning?: number; cache?: { read?: number; write?: number } };
+    cost?: number;
   };
   parts: Part[];
 };
@@ -464,7 +549,15 @@ function readMessageID(value: Record<string, unknown>): string {
   return readString(value, "assistantMessageID") ?? readString(value, "messageID") ?? readString(value, "messageId") ?? "";
 }
 
-function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number): Session | null {
+/** OpenCode 2.1 brought back unarchive (anomalyco/opencode#53759). */
+export function engineCanArchive(version: string | undefined): boolean {
+  const match = /^(\d+)\.(\d+)\./.exec(version ?? "");
+  if (!match) return false;
+  const major = Number(match[1]);
+  return major > 2 || (major === 2 && Number(match[2]) >= 1);
+}
+
+function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number, showArchived = false): Session | null {
   const data = responseData(value);
   if (!isRecord(data)) return null;
   const source = readRecord(data, "info") ?? data;
@@ -474,7 +567,7 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
   const location = readRecord(source, "location");
   const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
-  const archived = readNumber(time, "archived");
+  const archived = showArchived ? readNumber(time, "archived") : undefined;
   const parentID = readString(source, "parentID");
   const model = readRecord(source, "model");
   const modelID = readString(model, "id") ?? readString(model, "modelID");
@@ -490,24 +583,31 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     // Keep native untitled sessions eligible for compatibility title recovery.
     title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
-    time: {
-      created,
-      updated,
-      ...(archived === undefined ? {} : { archived }),
-    },
+    // Before 2.1 the engine cannot unarchive, so an archive time (only ever
+    // copied from v1 history) would lock the chat read-only forever. Callers
+    // show it only when the engine can restore it.
+    time: { created, updated, ...(archived === undefined ? {} : { archived }) },
     ...(parentID ? { parentID } : {}),
     ...(providerID && modelID ? {
       model: { providerID, id: modelID, ...(variant ? { variant } : {}) },
     } : {}),
     ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
   };
-  return mapped;
+  const metadata = readRecord(source, "metadata");
+  // The engine copies metadata to sub-agent sessions and forks, so a link
+  // counts only on a session the engine lists as top level.
+  const link = parentID || readRecord(source, "fork") ? null : readSessionLink(metadata?.[SESSION_LINK_METADATA_KEY]);
+  // Smart replies' routing decisions ride along for the chat's "answered by" label.
+  const autoRoutes = autoRouterReplyRoutes(metadata?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
+  return Object.assign(mapped, link ? { [SESSION_LINK_METADATA_KEY]: link } : {}, autoRoutes.length ? { [AUTO_ROUTER_SESSION_ROUTES_KEY]: autoRoutes } : {});
 }
 
 function messageRole(value: Record<string, unknown>): V2MessageRole {
   const raw = readString(value, "role") ?? readString(value, "type");
   if (raw === "user") return "user";
-  if (raw === "system" || raw === "synthetic" || raw === "compaction") return "system";
+  // OpenCode 2.1+ ends every turn with an `idle` marker; like compaction it is
+  // bookkeeping, not a visible message.
+  if (raw === "system" || raw === "synthetic" || raw === "compaction" || raw === "idle") return "system";
   return "assistant";
 }
 
@@ -841,25 +941,53 @@ function mapV2ReplyModel(value: Record<string, unknown>) {
   };
 }
 
+function mapV2ReplyUsage(value: Record<string, unknown>) {
+  const tokens = readRecord(value, "tokens");
+  const cache = readRecord(tokens, "cache");
+  const number = (record: unknown, key: string) => {
+    const result = readNumber(record, key);
+    return result !== undefined && Number.isFinite(result) && result >= 0 ? result : undefined;
+  };
+  const cost = number(value, "cost");
+  // Preserve missing counters as unknown. A missing measurement is not zero.
+  return {
+    ...(tokens ? { tokens: { input: number(tokens, "input"), output: number(tokens, "output"),
+      reasoning: number(tokens, "reasoning"), ...(cache ? { cache: { read: number(cache, "read"), write: number(cache, "write") } } : {}),
+    } } : {}),
+    ...(cost === undefined ? {} : { cost }),
+  };
+}
+
 /**
  * A native user turn stores the whole prompt string. Return the parts v1 keeps
  * for the same send: the words, pasted text marked as pasted, and hidden
  * context as a synthetic part whose attachments the transcript shows as files.
  */
-function mapV2UserPart(part: Part): Part[] {
+export function mapV2UserPart(part: Part): Part[] {
   if (part.type !== "text") return [part];
   const { segments, context, attachments } = splitV2Prompt(part.text);
   if (!context && !segments.some((segment) => segment.kind !== "text")) return [part];
   // A marked attachment shows where it was attached; the rest follow the words.
   const unplaced: PromptAttachment[] = [...attachments];
-  const words = segments.map((segment, index): Part => {
-    const id = index === 0 ? part.id : `${part.id}:${index}`;
-    if (segment.kind !== "attachment") {
-      return { ...part, id, text: segment.text, ...(segment.kind === "pasted" ? { metadata: { openworkPastedText: true } } : {}) };
+  let count = 0;
+  const nextId = () => (count++ === 0 ? part.id : `${part.id}:${count - 1}`);
+  const words = segments.flatMap((segment): Part[] => {
+    if (segment.kind === "pasted") return [{ ...part, id: nextId(), text: segment.text, metadata: { openworkPastedText: true } }];
+    if (segment.kind === "text") {
+      // Chips whose instructions travelled in the context come back as the
+      // same tagged parts v1 stores (see sent-message-tokens).
+      return decodeSentWords(segment.text, context).map((piece): Part => {
+        if (typeof piece === "string") return { ...part, id: nextId(), text: piece };
+        if (piece.kind === "agent") {
+          return { id: nextId(), sessionID: part.sessionID, messageID: part.messageID, type: "agent", name: piece.name };
+        }
+        if (piece.kind === "file") return { ...part, id: nextId(), text: mentionText(piece.path), metadata: { openworkFileMention: piece.path } };
+        return { ...part, id: nextId(), text: composerPillText(piece.pill), metadata: composerPillTextMetadata(piece.pill) };
+      });
     }
     const at = unplaced.findIndex((item) => item.filename === segment.filename);
     const placed = at < 0 ? [] : unplaced.splice(at, 1);
-    return { ...part, id, text: "", synthetic: true, ...(placed.length ? { metadata: { openworkAttachments: placed } } : {}) };
+    return [{ ...part, id: nextId(), text: "", synthetic: true, ...(placed.length ? { metadata: { openworkAttachments: placed } } : {}) }];
   });
   return context === null ? words : [...words, {
     ...part,
@@ -876,17 +1004,27 @@ function mapV2UserPart(part: Part): Part[] {
  * sees one plain sentence, and the row keeps its details in part metadata.
  */
 function backgroundShellNoticeMessage(id: string, sessionID: string, created: number, notice: BackgroundShellNotice): V2MappedMessage {
+  return noticeMessage(id, sessionID, created, backgroundShellNoticeLabel(notice), { [BACKGROUND_SHELL_NOTICE_KEY]: notice });
+}
+
+/** A background sub-agent's completion notice, as one row that opens its chat. */
+function subagentNoticeMessage(id: string, sessionID: string, created: number, notice: SubagentNotice): V2MappedMessage {
+  return noticeMessage(id, sessionID, created, subagentNoticeLabel(notice), { [SUBAGENT_NOTICE_KEY]: notice });
+}
+
+function noticeMessage(id: string, sessionID: string, created: number, text: string, metadata: Record<string, unknown>): V2MappedMessage {
   return {
     info: { id, sessionID, role: "system", time: { created } },
-    parts: [{
-      id: `${id}:0`,
-      messageID: id,
-      sessionID,
-      type: "text",
-      text: backgroundShellNoticeLabel(notice),
-      metadata: { [BACKGROUND_SHELL_NOTICE_KEY]: notice },
-    }],
+    parts: [{ id: `${id}:0`, messageID: id, sessionID, type: "text", text, metadata }],
   };
+}
+
+/** The transcript row for an engine completion notice, if the message is one. */
+function completionNoticeMessage(id: string, sessionID: string, created: number, payload: unknown): V2MappedMessage | null {
+  const shell = readBackgroundShellCompletion(payload);
+  if (shell) return backgroundShellNoticeMessage(id, sessionID, created, shell);
+  const subagent = readSubagentCompletion(payload);
+  return subagent ? subagentNoticeMessage(id, sessionID, created, subagent) : null;
 }
 
 function mapV2Message(
@@ -897,14 +1035,13 @@ function mapV2Message(
   if (!isRecord(value)) return null;
   // Native instruction/catalog updates belong to the model context, not the
   // visible conversation. Filter by role so identical user text is preserved.
-  // The one exception is a background command's completion notice, which the
-  // chat shows as a short row while `backgroundShellTasks` is on.
+  // The exceptions are a background command's or sub-agent's completion
+  // notice, which the chat shows as a short row.
   if (messageRole(value) === "system") {
-    const notice = backgroundShellTasksEnabled() ? readBackgroundShellCompletion(value) : null;
     const id = readString(value, "id") ?? readString(value, "messageID");
-    if (!notice || !id) return null;
+    if (!id) return null;
     const created = readNumber(readRecord(value, "time"), "created") ?? readNumber(value, "timestamp") ?? 0;
-    return backgroundShellNoticeMessage(id, readString(value, "sessionID") ?? sessionID, created, notice);
+    return completionNoticeMessage(id, readString(value, "sessionID") ?? sessionID, created, value);
   }
   const id = readString(value, "id") ?? readString(value, "messageID");
   if (!id) return null;
@@ -928,7 +1065,8 @@ function mapV2Message(
         created,
         ...(completed === undefined ? {} : { completed }),
       },
-      ...(role === "assistant" ? mapV2ReplyModel(value) : {}),
+      ...(role === "assistant" ? { ...mapV2ReplyModel(value), finish: readString(value, "finish") } : {}),
+      ...(role === "assistant" ? mapV2ReplyUsage(value) : {}),
       ...(role === "assistant" && error
         ? { error: mapV2SessionError(error) }
         : {}),
@@ -1118,9 +1256,11 @@ export function mapV2SessionError(value: unknown): UnknownError | ApiError {
   const reportedStatus = readNumber(data, "statusCode") ?? readNumber(data, "status");
   const statuses = [readNumber(value, "statusCode"), readNumber(value, "status"), readNumber(data, "status"),
     readNumber(readRecord(value, "response"), "status"), readNumber(readRecord(data, "response"), "status")];
-  const statusCode = reportedStatus === 429 ? statuses.find((status) => status !== undefined && status !== 429) ?? reportedStatus : reportedStatus;
-  const responseBody = readString(data, "responseBody");
-  if (statusCode !== undefined && responseBody !== undefined) {
+  const statusCode = reportedStatus === 429 ? statuses.find((status) => status !== undefined && status !== 429) ?? reportedStatus : reportedStatus ?? statuses.find((status) => status !== undefined);
+  const responseBody = readString(data, "responseBody") ?? readString(value, "responseBody");
+  // A body is optional evidence. Dropping an otherwise explicit HTTP status
+  // makes authentication failures indistinguishable from arbitrary text.
+  if (statusCode !== undefined) {
     const rawHeaders = readRecord(data, "responseHeaders");
     const responseHeaders: Record<string, string> = {};
     for (const [key, header] of Object.entries(rawHeaders ?? {})) {
@@ -1480,7 +1620,7 @@ export function translateV2Event(
     const finished = readString(item, "type") === "synthetic" ? readBackgroundShellCompletion(payload) : null;
     if (sessionID && finished) {
       const created = readNumber(value, "created") ?? readNumber(properties, "timestamp") ?? Date.now();
-      const notice = messageID && backgroundShellTasksEnabled()
+      const notice = messageID
         ? backgroundShellNoticeMessage(messageID, sessionID, created, finished)
         : null;
       return [
@@ -1489,6 +1629,15 @@ export function translateV2Event(
           { type: "message.updated", properties: { info: notice.info } },
           ...notice.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
         ] : []),
+      ];
+    }
+    const subagent = readString(item, "type") === "synthetic" ? readSubagentCompletion(payload) : null;
+    if (sessionID && messageID && subagent) {
+      const created = readNumber(value, "created") ?? readNumber(properties, "timestamp") ?? Date.now();
+      const notice = subagentNoticeMessage(messageID, sessionID, created, subagent);
+      return [
+        { type: "message.updated", properties: { info: notice.info } },
+        ...notice.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
       ];
     }
     if (!sessionID || !messageID || readString(item, "type") !== "user" || !payload) return null;
@@ -1550,6 +1699,7 @@ export function translateV2Event(
     }
     return [{ type, properties: {
       ...properties, sequence: readNumber(value.durable, "seq"),
+      ...(type === "session.execution.started" ? { timestamp: readNumber(properties, "timestamp") ?? readNumber(value, "created") } : {}),
       ...(type === "session.execution.failed" ? {
         error: mapV2SessionError(properties.error),
       } : {}),
@@ -1572,9 +1722,20 @@ export function translateV2Event(
   if (type === "session.step.started") {
     if (isRetiredV2Event(state, value, properties)) return null;
     if (sessionID) trackV2Execution(state, value, properties);
-    return sessionID ? [{ type: "session.execution.progress", properties: {
-      sessionID, sequence: readNumber(value.durable, "seq"),
-    } }] : null;
+    if (!sessionID) return null;
+    // A step names its reply's model only here; later text and tool events carry no model.
+    // Forwarding it lets the Working line show the model while the reply is still being written.
+    const messageID = readMessageID(properties);
+    const modelInfo = mapV2ReplyModel(properties);
+    return [
+      ...(messageID && Object.keys(modelInfo).length ? [{ type: "message.updated", properties: { info: {
+        id: messageID, sessionID, role: "assistant", ...modelInfo,
+        time: { created: readNumber(properties, "started") ?? toolEventTimestamp(value, properties) },
+      } } }] : []),
+      { type: "session.execution.progress", properties: {
+        sessionID, sequence: readNumber(value.durable, "seq"),
+      } },
+    ];
   }
 
   const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
@@ -1848,10 +2009,24 @@ export function translateV2Event(
     }];
   }
 
+  if (type === "session.metadata.updated") {
+    // Only the Smart Routers' routing decisions are read from host metadata.
+    const routes = autoRouterReplyRoutes(readRecord(properties, "metadata")?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
+    return sessionID ? [{ type: AUTO_ROUTES_EVENT, properties: { sessionID, routes } }] : null;
+  }
+
   if (type === "session.renamed") {
     const title = readString(properties, "title");
     if (!sessionID || title === undefined) return null;
     return [{ type: "session.updated", properties: { info: { id: sessionID, title } } }];
+  }
+
+  if (type === "session.archived" || type === "session.unarchived") {
+    // OpenCode 2.1+ stamps both times with the event; 0 means not archived.
+    const at = readNumber(value, "created");
+    if (!sessionID || at === undefined) return null;
+    const archived = type === "session.archived" ? at : 0;
+    return [{ type: "session.updated", properties: { info: { id: sessionID, time: { updated: at, archived } } } }];
   }
 
   if (type === "session.revert.staged") {
@@ -1900,7 +2075,7 @@ function translateV2Events(
   fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
   taskSessions: TaskSessionAssociations,
   directory?: string,
-  onCatalogChanged?: (directory: string | undefined) => void,
+  onCatalogChanged?: (directory: string | undefined, reason?: "native") => void,
 ): AsyncGenerator<OpencodeEvent> {
   const reader = response.body?.getReader();
   const decoder = new TextDecoder();
@@ -2003,7 +2178,15 @@ function translateV2Events(
             continue;
           }
           const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
+          // Native catalog changes may be global. Consumers only act on
+          // these new notifications when the server confirms live ownership.
+          if (isRecord(event) && (event.type === "provider.updated" || event.type === "model.updated")) {
+            if (directory && eventDirectory && normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory)) continue;
+            onCatalogChanged?.(eventDirectory ?? directory, "native");
+            continue;
+          }
           if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
+          // Preserve the legacy catalog.updated filtering and refresh path.
           if (isRecord(event) && event.type === "catalog.updated") {
             onCatalogChanged?.(eventDirectory);
             continue;
@@ -2110,6 +2293,50 @@ export function mapV2McpStatuses(payload: unknown): McpStatusMap | null {
   return statuses;
 }
 
+type SessionCommandParameters = SessionParameters & {
+  command: string;
+  arguments: string;
+  messageID?: string;
+  agent?: string;
+  model?: string;
+  variant?: string;
+};
+
+/** v1 passes a command's model as `provider/model`; model IDs may contain `/`. */
+function parseCommandModel(value: string | undefined): { providerID: string; modelID: string } | null {
+  const separator = value?.indexOf("/") ?? -1;
+  if (!value || separator <= 0 || separator === value.length - 1) return null;
+  return { providerID: value.slice(0, separator), modelID: value.slice(separator + 1) };
+}
+
+export type V2CommandListItem = {
+  name: string;
+  description?: string;
+  source: "command" | "skill";
+};
+
+/**
+ * Native commands first, then workspace skills under their folder name (the
+ * ID promptAsync resolves). A command wins a name clash, as it does in v1.
+ * Cloud skills stay out: the composer lists those from Connect.
+ */
+export function mergeV2CommandCatalog(commands: readonly unknown[], skills: readonly unknown[]): V2CommandListItem[] {
+  const items: V2CommandListItem[] = [];
+  const names = new Set<string>();
+  const add = (name: string | undefined, description: string | undefined, source: V2CommandListItem["source"]) => {
+    if (!name || names.has(name)) return;
+    names.add(name);
+    items.push({ name, ...(description ? { description } : {}), source });
+  };
+  for (const command of commands) add(readString(command, "name"), readString(command, "description"), "command");
+  for (const skill of skills) {
+    const id = readString(skill, "id");
+    if (id?.startsWith("openwork-cloud-")) continue;
+    add(id, readString(skill, "description"), "skill");
+  }
+  return items;
+}
+
 function localResult<T>(baseUrl: string, path: string, data: T): FieldsResult<T> {
   return {
     data,
@@ -2124,6 +2351,32 @@ function unsupportedResult<T>(baseUrl: string, operation: string, message?: stri
     request: new Request(`${baseUrl}/unsupported/${encodeURIComponent(operation)}`),
     response: new Response(null, { status: 501, statusText: "Unsupported in OpenCode v2 preview" }),
   };
+}
+
+/** Model families the engine writes chat titles with, in its order (OpenCode `Model.small`). */
+const SMALL_MODEL_FAMILIES = ["gpt-luna", "gemini-flash-lite", "gemini-flash", "claude-haiku"];
+const LOW_EFFORT_VARIANTS = ["none", "minimal", "low"];
+
+/**
+ * The model the engine would title a chat on `chat` with, from native
+ * `/api/model` rows: the provider's small model, else the chat's own model.
+ * Either one runs at its lowest effort when it has one.
+ */
+export function smallModelRef(
+  models: readonly unknown[],
+  chat: { providerID: string; modelID: string },
+): { providerID: string; id: string; variant?: string } {
+  const provider = models.filter((model): model is Record<string, unknown> =>
+    isRecord(model) && readString(model, "providerID") === chat.providerID);
+  const text = (model: Record<string, unknown>, direction: "input" | "output") =>
+    stringArray(readRecord(model, "capabilities")?.[direction]).some((kind) => kind.startsWith("text"));
+  const usable = provider.filter((model) =>
+    readString(model, "status") === "active" && text(model, "input") && text(model, "output"));
+  const picked = SMALL_MODEL_FAMILIES.map((family) => usable.find((model) => readString(model, "family") === family)).find(Boolean)
+    ?? provider.find((model) => readString(model, "id") === chat.modelID);
+  const variants = (Array.isArray(picked?.variants) ? picked.variants : []).flatMap((variant) => readString(variant, "id") ?? []);
+  const variant = LOW_EFFORT_VARIANTS.find((candidate) => variants.includes(candidate));
+  return { providerID: chat.providerID, id: readString(picked, "id") ?? chat.modelID, ...(variant ? { variant } : {}) };
 }
 
 export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
@@ -2145,6 +2398,9 @@ export type SetSessionModelParameters = {
   model: { providerID: string; modelID: string };
   variant?: string | null;
 };
+
+/** Whether each engine (by base URL) can unarchive; see engineCanArchive. */
+const engineArchiveSupport = new Map<string, Promise<boolean>>();
 
 export function createClientV2(
   opencode2BaseUrl: string,
@@ -2195,21 +2451,23 @@ export function createClientV2(
     }
     return result;
   };
-  const checkedAgentSessions = new Set<string>();
+  // The agent each chat is known to be on after this client's last send, so
+  // later sends make no extra request unless the choice changed.
+  const sessionAgents = new Map<string, string | undefined>();
   const resolvePromptAgent = async (
     sessionID: string,
     picked: string | undefined,
     signal?: AbortSignal,
-  ): Promise<{ agent?: string; known: boolean } | { failed: TransportResult }> => {
-    if (!picked && checkedAgentSessions.has(sessionID)) return { known: true };
-    let current: string | undefined;
-    if (!picked) {
+  ): Promise<{ agent?: string; current?: string; known: boolean } | { failed: TransportResult }> => {
+    const remembered = sessionAgents.has(sessionID);
+    let current = sessionAgents.get(sessionID);
+    if (!picked && !remembered) {
       const session = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
       if (!session.response.ok) return { failed: session };
       current = readString(responseData(session.payload), "agent");
     }
     const wanted = picked ?? current;
-    if (!wanted) return { known: true };
+    if (!wanted) return { current, known: true };
     if (!agentCatalog.some((agent) => agent.name === wanted) && !agentsMissingFromCatalog.has(wanted)) {
       const agents = await readAgentCatalog(signal);
       if (!agents.response.ok) return { failed: agents };
@@ -2217,10 +2475,13 @@ export function createClientV2(
     }
     // A starting engine can list no agents yet; keep the choice then.
     if (!agentCatalog.length) return { agent: picked, known: false };
-    const agent = agentCatalog.some((candidate) => candidate.name === wanted)
-      ? wanted
-      : agentCatalog.find((candidate) => candidate.mode !== "subagent" && !candidate.hidden)?.name ?? "build";
-    return { agent: agent === current ? undefined : agent, known: true };
+    const defaultAgent = agentCatalog.find((candidate) => candidate.mode !== "subagent" && !candidate.hidden)?.name ?? "build";
+    const entry = agentCatalog.find((candidate) => candidate.name === wanted);
+    // v2 keeps a chat on its last agent, but no pick means the Default agent,
+    // as on v1: leave a primary agent such as Plan. A sub-agent's own chat
+    // keeps its agent.
+    const agent = !entry || (!picked && entry.mode !== "subagent") ? defaultAgent : wanted;
+    return { agent: picked || agent !== current ? agent : undefined, current: agent, known: true };
   };
 
   const listSessionPermissions = async (
@@ -2277,6 +2538,10 @@ export function createClientV2(
     const permissions: PermissionRequest[] = [];
     for (const sessionID of sessionIDs) {
       const result = await listSessionPermissions({ sessionID }, options);
+      // A session whose folder was deleted answers 404: the engine cannot open
+      // its location, so it has no request anyone could answer. One such
+      // session must not hide every other session's requests.
+      if (result.data === undefined && result.response.status === 404) continue;
       if (result.data === undefined) {
         return { error: result.error, request: result.request, response: result.response };
       }
@@ -2380,13 +2645,29 @@ export function createClientV2(
     return successfulResult(result, true);
   };
 
+  // Read once per engine; a failed read is retried rather than remembered.
+  const archiveSupported = (): Promise<boolean> => {
+    const known = engineArchiveSupport.get(baseUrl);
+    if (known) return known;
+    const forget = () => { engineArchiveSupport.delete(baseUrl); return false; };
+    const checked = request("GET", "/api/info", undefined).then(
+      (result) => result.response.ok ? engineCanArchive(readString(responseData(result.payload), "version")) : forget(),
+      forget,
+    );
+    engineArchiveSupport.set(baseUrl, checked);
+    return checked;
+  };
+
   const getSession = async (
     parameters: SessionParameters,
     options?: RequestOptions,
   ): Promise<FieldsResult<Session>> => {
-    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal);
+    const [result, showArchived] = await Promise.all([
+      request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal),
+      archiveSupported(),
+    ]);
     if (!result.response.ok) return failedResult(result);
-    const session = mapV2Session(result.payload, directory);
+    const session = mapV2Session(result.payload, directory, undefined, showArchived);
     if (session) return successfulResult(result, session);
     return failedResult({ ...result, payload: { name: "InvalidV2SessionResponse" } });
   };
@@ -2407,11 +2688,64 @@ export function createClientV2(
       ...(model ? { model } : {}),
       ...(parameters.title === undefined ? {} : { title: parameters.title }),
       ...(location ? { location: { directory: location } } : {}),
+      ...(parameters.link ? { metadata: sessionLinkMetadata(parameters.link) } : {}),
     }, options?.signal);
     if (!result.response.ok) return failedResult(result);
     const session = mapV2Session(result.payload, directory);
     if (session) return successfulResult(result, session);
     return failedResult({ ...result, payload: { name: "InvalidV2SessionResponse" } });
+  };
+
+  /** How the session's latest run ended; null while it has never finished one. */
+  const sessionRunEnd = async (
+    parameters: SessionParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<V2SessionRunEnd | null>> => {
+    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const data = responseData(result.payload);
+    const source = readRecord(data, "info") ?? data;
+    const idleAt = readNumber(readRecord(source, "time"), "idle");
+    const outcome = readString(source, "outcome");
+    return successfulResult(result, idleAt !== undefined && (outcome === "succeeded" || outcome === "failed" || outcome === "interrupted")
+      ? { idleAt, outcome }
+      : null);
+  };
+
+  /** The session's latest turn, from its newest messages. */
+  const sessionLastTurn = async (
+    parameters: SessionParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<V2SessionLastTurn>> => {
+    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}/message?limit=30`, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const items = responseData(result.payload);
+    if (!Array.isArray(items)) return failedResult({ ...result, payload: { name: "InvalidV2MessagePageResponse" } });
+    // A page with a cursor is newest first; one without is oldest first.
+    const hasCursor = isRecord(result.payload) && "cursor" in result.payload;
+    return successfulResult(result, readV2LastTurn(hasCursor ? items : items.toReversed()));
+  };
+
+  /**
+   * Add a note for the agent to a session, the way the engine reports a
+   * finished background sub-agent. True when this call added it; false when
+   * the engine already had a note with this id.
+   */
+  const addSessionNote = async (
+    parameters: SessionNoteParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/synthetic`, {
+      id: parameters.id,
+      text: parameters.text,
+      description: parameters.description,
+      metadata: parameters.metadata,
+      // The engine's default delivery, as for its own sub-agent notes: a
+      // running session reads the note at its next step.
+      ...(parameters.resume ? {} : { resume: false }),
+    }, options?.signal);
+    if (result.response.status === 409) return successfulResult(result, false);
+    return result.response.ok ? successfulResult(result, true) : failedResult(result);
   };
 
   const session = {
@@ -2423,14 +2757,17 @@ export function createClientV2(
       if (parameters.limit !== undefined) query.set("limit", String(parameters.limit));
       if (parameters.cursor !== undefined) query.set("cursor", parameters.cursor);
       const suffix = query.size ? `?${query.toString()}` : "";
-      const result = await request("GET", `/api/session${suffix}`, undefined, options?.signal);
+      const [result, showArchived] = await Promise.all([
+        request("GET", `/api/session${suffix}`, undefined, options?.signal),
+        archiveSupported(),
+      ]);
       if (!result.response.ok) return failedResult(result);
       const next = readRecord(result.payload, "cursor")?.next;
       if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
         return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
       }
       const data = responseItems(result.payload).flatMap((item) => {
-        const mapped = mapV2Session(item, directory);
+        const mapped = mapV2Session(item, directory, undefined, showArchived);
         return mapped ? [mapped] : [];
       });
       return { ...successfulResult(result, data), nextCursor: next ?? null };
@@ -2617,7 +2954,7 @@ export function createClientV2(
         );
         if (!agentResult.response.ok) return failedResult(agentResult);
       }
-      if (agentResolution.known) checkedAgentSessions.add(parameters.sessionID);
+      if (agentResolution.known) sessionAgents.set(parameters.sessionID, agentResolution.current);
       if (parameters.system !== undefined) {
         const instructions = await request("PUT",
           `/api/experimental/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
@@ -2628,9 +2965,20 @@ export function createClientV2(
       const promptResult = await request(
         "POST",
         `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
-        { text, ...(skills.length ? { skills } : {}) },
+        {
+          text,
+          ...(parameters.messageID ? { id: parameters.messageID } : {}),
+          delivery: "steer",
+          ...(skills.length ? { skills } : {}),
+          // Settings › Show model reasoning. The engine plugin asks the provider
+          // for readable reasoning only while this is on.
+          metadata: { openwork: { showReasoning: readShowThinkingPreference() } },
+        },
         options?.signal,
       );
+      if (promptResult.response.ok) {
+        for (const skill of skills) featureAnalytics.skillInvoked(nativeSkillAnalyticsIdentity(skill.id));
+      }
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (
@@ -2654,22 +3002,55 @@ export function createClientV2(
       parameters: SessionUpdateParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Session>> => {
-      // The native preview exposes archived state but no archive mutation.
-      // Reject the entire update before a rename or read can imply success.
-      if (parameters.time?.archived !== undefined) {
-        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
-        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
-      }
-      if (!parameters.title) return getSession(parameters, options);
+      // v1 callers archive by stamping `time.archived` (0 restores); v2 takes a boolean.
+      const archived = parameters.time?.archived;
+      if (!parameters.title && archived === undefined) return getSession(parameters, options);
       const result = await request(
         "PATCH",
         `/api/session/${encodeURIComponent(parameters.sessionID)}`,
-        { title: parameters.title },
+        {
+          ...(parameters.title ? { title: parameters.title } : {}),
+          ...(archived === undefined ? {} : { archived: archived > 0 }),
+        },
         options?.signal,
       );
       if (!result.response.ok) return failedResult(result);
-      const mapped = mapV2Session(result.payload, directory);
-      return mapped ? successfulResult(result, mapped) : getSession(parameters, options);
+      const mapped = mapV2Session(result.payload, directory, undefined, await archiveSupported());
+      const updated = mapped ? successfulResult(result, mapped) : await getSession(parameters, options);
+      // Engines before 2.1 accept `archived` but ignore it; never report that as archived.
+      if (archived !== undefined && updated.data && ((updated.data.time.archived ?? 0) > 0) !== (archived > 0)) {
+        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
+        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
+      }
+      return updated;
+    },
+    children: async (
+      parameters: SessionParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Session[]>> => {
+      const children: Session[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      while (true) {
+        const query = new URLSearchParams({ parentID: parameters.sessionID, limit: "100" });
+        if (cursor) query.set("cursor", cursor);
+        const result = await request("GET", `/api/session?${query.toString()}`, undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const next = readRecord(result.payload, "cursor")?.next;
+        if (!Array.isArray(responseData(result.payload)) || (next !== undefined && next !== null && typeof next !== "string")) {
+          return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse" } });
+        }
+        // Filter here too: an engine that ignores `parentID` returns every session.
+        children.push(...responseItems(result.payload).flatMap((item) => {
+          const session = mapV2Session(item, directory);
+          return session?.parentID === parameters.sessionID ? [session] : [];
+        }));
+        // Callers refuse trees past 256 sessions, so stop paging once that is certain.
+        if (typeof next !== "string" || !next || children.length > 256) return successfulResult(result, children);
+        if (seen.has(next)) return failedResult({ ...result, payload: { name: "InvalidV2SessionListResponse", message: "Session list pagination cursor did not advance." } });
+        seen.add(next);
+        cursor = next;
+      }
     },
     delete: async (
       parameters: SessionParameters,
@@ -2719,8 +3100,69 @@ export function createClientV2(
     },
     summarize: async (): Promise<FieldsResult<boolean>> => unsupportedResult(baseUrl, "session.summarize"),
     shell: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.shell"),
-    command: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.command"),
+    command: async (
+      parameters: SessionCommandParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Record<string, never>>> => {
+      const model = parseCommandModel(parameters.model);
+      const [modelResult, agentResolution] = await Promise.all([
+        model
+          ? request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/model`, { model: {
+            providerID: model.providerID,
+            id: model.modelID,
+            ...(parameters.variant === undefined ? {} : { variant: parameters.variant }),
+          } }, options?.signal)
+          : null,
+        parameters.agent ? resolvePromptAgent(parameters.sessionID, parameters.agent, options?.signal) : null,
+      ]);
+      if (modelResult && !modelResult.response.ok) return failedResult(modelResult);
+      if (agentResolution && "failed" in agentResolution) return failedResult(agentResolution.failed);
+      if (agentResolution?.agent) {
+        const agentResult = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/agent`,
+          { agent: agentResolution.agent }, options?.signal);
+        if (!agentResult.response.ok) return failedResult(agentResult);
+      }
+      // A command can run on an agent of its own; read the chat's agent again
+      // before the next send.
+      sessionAgents.delete(parameters.sessionID);
+      // The engine expands the command's template with `text` as $ARGUMENTS
+      // and starts the turn; it answers 404 for a name it does not register.
+      const result = await request(
+        "POST",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/command`,
+        { name: parameters.command, text: parameters.arguments },
+        options?.signal,
+      );
+      return result.response.ok ? successfulResult(result, {}) : failedResult(result);
+    },
   };
+
+  /**
+   * The composer's slash menu. v1 listed workspace skills as commands; v2
+   * keeps them in a separate registry, so merge them back in as `skill`
+   * entries. Picking one inserts a skill pill, which promptAsync attaches
+   * natively. Connect skills are listed by the composer itself.
+   */
+  const listCommands = async (options?: RequestOptions): Promise<FieldsResult<V2CommandListItem[]>> => {
+    // The engine loads a location's registries lazily: the first read of a
+    // folder it has not opened yet answers an empty list, even though the
+    // built-in commands always exist. Look again briefly before trusting it.
+    let commands = await request("GET", "/api/command", undefined, options?.signal);
+    for (const delay of [250, 750, 1_500]) {
+      if (!commands.response.ok || responseItems(commands.payload).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      commands = await request("GET", "/api/command", undefined, options?.signal);
+    }
+    if (!commands.response.ok) return failedResult(commands);
+    const skills = await request("GET", "/api/skill", undefined, options?.signal);
+    return successfulResult(commands, mergeV2CommandCatalog(
+      responseItems(commands.payload),
+      skills.response.ok ? responseItems(skills.payload) : [],
+    ));
+  };
+
+  // The engine calls its Claude Code provider "Claude Agent"; people connect and pick it as Claude Code.
+  const OPENWORK_PROVIDER_NAMES: Record<string, string> = { "claude-agent": "Claude Code" };
 
   const listProviders = async (
     _parameters: DirectoryParameters = {},
@@ -2754,7 +3196,7 @@ export function createClientV2(
       }
       providersByID.set(model.providerID, {
         id: model.providerID,
-        name: providerNames.get(model.providerID) ?? model.providerID,
+        name: OPENWORK_PROVIDER_NAMES[model.providerID] ?? providerNames.get(model.providerID) ?? model.providerID,
         source: "config",
         env: [],
         options: {},
@@ -2767,6 +3209,41 @@ export function createClientV2(
       connected: all.map((provider) => provider.id),
       default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
     });
+  };
+
+  /**
+   * One stateless generation outside any chat, on the small model the engine
+   * would title a chat on `model` with (see smallModelRef). Nothing is added
+   * to a chat's history.
+   */
+  const generateWithSmallModel = async (
+    parameters: { prompt: string; model: { providerID: string; modelID: string } },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const models = await request("GET", "/api/model", undefined, options?.signal);
+    if (!models.response.ok) return failedResult(models);
+    const result = await request(
+      "POST",
+      "/api/experimental/generate",
+      { prompt: parameters.prompt, model: smallModelRef(responseItems(models.payload), parameters.model) },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
+  };
+
+  const generateFromSession = async (
+    parameters: { sessionID: string; prompt: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const result = await request(
+      "POST",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/generate`,
+      { prompt: parameters.prompt },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
   };
 
   const adapter = {
@@ -2808,7 +3285,7 @@ export function createClientV2(
       },
     },
     command: {
-      list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/command", []),
+      list: (_parameters?: DirectoryParameters, options?: RequestOptions) => listCommands(options),
     },
     permission: {
       list: listPermissions,
@@ -2860,11 +3337,14 @@ export function createClientV2(
           Object.assign(error, { status: response.status, response });
           throw error;
         }
+        // V2 SSE is volatile and has no replay cursor. A reconnect can miss
+        // any number of catalog mutations, so reconcile after every open.
+        dispatchProviderCatalogChanged({ baseUrl, directory, reason: "reconnect" });
         return {
           stream: translateV2Events(response, options?.signal, async (sessionID, signal) => {
             const result = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
             return result.response.ok ? mapV2Session(result.payload, undefined) : null;
-          }, taskSessions, directory, (eventDirectory) => dispatchProviderCatalogChanged({ baseUrl, directory: eventDirectory ?? directory })),
+          }, taskSessions, directory, (eventDirectory, reason) => dispatchProviderCatalogChanged({ baseUrl, directory: eventDirectory ?? directory, ...(reason ? { reason } : {}) })),
         };
       },
     },
@@ -2899,11 +3379,38 @@ export function createClientV2(
     }));
   };
 
+  /** Terminate one command in this session, including its retained output (V2 shell.remove). */
+  const removeBackgroundShell = async (
+    parameters: { shellID: string; sessionID: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<void>> => {
+    const query = directory ? `?${new URLSearchParams({ "location[directory]": directory }).toString()}` : "";
+    const path = `/api/shell/${encodeURIComponent(parameters.shellID)}${query}`;
+    // Validate against the engine, not just a stale UI row: never stop another chat's command.
+    const current = await request("GET", path, undefined, options?.signal);
+    if (!current.response.ok) return failedResult(current);
+    const shell = readEngineShell(responseData(current.payload));
+    if (!shell || shell.sessionID !== parameters.sessionID) {
+      throw new Error("The background task does not belong to this conversation.");
+    }
+    const result = await request("DELETE", path, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    return successfulResult(result, undefined);
+  };
+
   const client = Object.assign(compatibilityClient, {
     listRunningShells,
+    removeBackgroundShell,
+    generateWithSmallModel,
+    generateFromSession,
+    sessionRunEnd,
+    sessionLastTurn,
+    addSessionNote,
     listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
+      settleQuestion(parameters, options),
+    rejectSessionQuestion: (parameters: SessionParameters & { requestID: string }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
   });
   // The SDK exposes session through a getter; its object is augmented above,

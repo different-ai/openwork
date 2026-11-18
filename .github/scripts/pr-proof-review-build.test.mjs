@@ -59,8 +59,19 @@ process.exit(Number(process.env.BUILD_EXIT || 0));
 
 test("only the secret-free proof lane opts in; review servers prepare before starting", () => {
   const workflow = readFileSync(join(root, ".github/workflows/pr-proof.yml"), "utf8");
-  const normal = workflow.split("\n  proof:\n")[1].split("\n  judge-vision:\n")[0];
+  const normal = workflow.split("\n  proof:\n")[1].split("\n  # Packaged specs")[0];
   assert.match(normal, /OPENWORK_EVAL_BUILD_REVIEW_APP: "1"/);
   assert.doesNotMatch(normal, /@openwork\/review-app build|secrets\./);
   assert.equal(workflow.match(/OPENWORK_EVAL_BUILD_REVIEW_APP:/g)?.length, 1);
+});
+
+test("proofs install and verify the locked Electron executable before native startup", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/pr-proof.yml"), "utf8");
+  const normal = workflow.split("\n  proof:\n")[1].split("\n  # Packaged specs")[0];
+  const install = normal.indexOf("pnpm --filter @openwork/desktop exec install-electron");
+  const verify = normal.indexOf("fs.accessSync(binary, fs.constants.X_OK)");
+  const run = normal.indexOf("- name: Run the selected changed spec on the PR head");
+  assert.ok(install > normal.indexOf("./.github/actions/setup-tests"));
+  assert.ok(verify > install);
+  assert.ok(run > verify);
 });

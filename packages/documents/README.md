@@ -6,16 +6,42 @@ provider/editor contracts without embedding Workbot.
 
 ## Documents workspace
 
-- Recent files from Drive API v3, ordered by `recency desc`, excluding folders.
-  The sidebar is not a fabricated list or local browsing history.
-- My Drive and folder breadcrumbs, folder-scoped search, pagination,
+- One navigation: a Recent / My Drive switch beside the search, then quiet list
+  controls (sort, list or grid, refresh). No second sidebar or list of recent files.
+- Recent files from Drive API v3, ordered by `recency desc`, excluding folders,
+  not a fabricated list or local browsing history.
+- Folder breadcrumbs (only inside a folder), folder-scoped search, pagination,
   list/grid views and name/date sorting of loaded files.
-- Files open in internal tabs with close buttons and an unsaved-change dot. Switching or reordering tabs retains unsaved edits; closing an edited tab offers save, keep editing, or discard. Drag tabs to reorder, or focus a tab and use Alt+Shift+Left/Right. Delete closes the focused tab. The Files tab stays fixed.
+- Files open in internal tabs with close buttons and an unsaved-change dot. Switching or reordering tabs retains unsaved edits; closing an edited tab offers save, keep editing, or discard. Drag tabs to reorder, or focus a tab and use Alt+Shift+Left/Right. Delete closes the focused tab. The tab row appears once a file is open, with All documents fixed first.
   Closing a dirty file or leaving Documents asks whether to keep/discard edits.
   Page unload uses the browser's unsaved-changes protection.
 - Missing/expired Drive access shows Connect/Reconnect through Den's existing
-  connections page. Returning to the page rechecks the listing.
+  connections page. Parent sign-in revalidation retains the document owners,
+  masked, instead of unmounting them. A different person or organization cannot
+  reveal a retained draft even when they can read the same file.
+- Directory denial remains latched even with no open tabs and after later
+  outages. Only a fresh identity and authorized directory read clear it.
+- Each locked file has a non-extending 15-minute recovery deadline. Files are
+  checked independently: an allowed draft can return while another stays
+  locked, retryable or individually discardable. Hosts must implement
+  `verifyScope`; without it recovery remains locked. A full page refresh does
+  not restore memory-only drafts.
+- Files open as lightweight read-only previews without an Office session or a
+  Cloud worker startup. Word and Excel use the existing bounded readers;
+  PowerPoint and OpenDocument show bounded text previews. PDF/images and native
+  Google previews continue through their existing routes.
+- `workbotDocumentEditing` (cloud and self-hosted, off by default) adds **Edit**
+  when the member also has write access. Native Google/text edits stay inline.
+  Office editing starts the full engine only after this action, keeps the
+  preview visible with progress until the document loads, and offers cancel,
+  retry and Open in Drive on failure. **Preview** closes a clean editing session.
+- Turning editing off blocks new sessions and saves without disabling previews
+  or unmounting existing drafts. Existing sessions can still be closed.
 - Explicit Save to Drive writes to the original file; no background writes.
+
+The Office recovery peer in these browser tests proves owner/session lifecycle,
+not engine fidelity or survival of edits still buffered inside Collabora.
+Representative engine and received-snapshot recovery require their own proofs.
 
 | File | Inline experience | Save path |
 | --- | --- | --- |
@@ -23,13 +49,15 @@ provider/editor contracts without embedding Workbot.
 | Excel `.xlsx` | OpenWork formatting controls, formula bar and worksheets; the engine retains formulas, recalculation, charts, sorting/filtering | Explicit Save to Drive updates the original Office file |
 | PowerPoint `.pptx` | Slide thumbnails, text/shapes, formatting, add/duplicate/delete, layouts, speaker notes and presentation mode | Explicit Save to Drive updates the original PowerPoint file |
 | OpenDocument `.odt` / `.ods` / `.odp` | Full document, spreadsheet or presentation engine with the same OpenWork controls | Explicit Save to Drive updates the original OpenDocument file in its original format |
-| Native Google Doc / Sheet / Slides | Exported Word / Excel / PowerPoint copy in the full editor, with a visible copy notice | First save creates an Office file in My Drive; later saves update that copy. The native original is preserved. Use Open original in Drive to edit it natively |
+| Native Google Doc / Sheet | Lightweight preview, with inline edits after choosing Edit | Explicit save updates the original through Google APIs |
+| Native Google Slides | PDF preview and Open in Google Slides | Edit in Google Slides; no Office copy |
 | UTF-8 text | Plain text editing, up to 1 MB | Explicit save to the original file |
 | PDF and common raster images | Read-only inline preview | No edits |
+| Video and audio (MP4, WebM, MOV, MP3, M4A, WAV…) | The browser's own player, read in byte ranges so it seeks (part of `workbotDocuments`) | No edits |
 | Other formats | Link to original editor | No edits |
 
-The Office editor is a real, separately hosted engine, loaded only when an
-Office tab opens. It is not bundled into chat or model context. It is not the
+The Office editor is a real server engine, loaded only after choosing **Edit**
+on an Office preview with editing enabled. It is not bundled into chat or model context. It is not the
 Microsoft Word/Excel product. Macro-enabled packages are refused, and the
 service must run with macro execution disabled. No third-party plugins are
 installed by the integration. Complex OOXML round trips can differ from desktop Office;
@@ -143,6 +171,24 @@ DEN_DOCUMENTS_HOST_ORIGIN=https://workbot.example.com
 DEN_DOCUMENTS_CALLBACK_BASE_URL=https://api.example.com
 DATABASE_REDIS_URL=rediss://<private shared Redis>
 ```
+
+### In each member's Cloud worker
+
+With `DEN_DOCUMENTS_EDITOR=cloud-worker`, OpenWork Cloud runs no shared editor.
+Den resolves the member's Cloud worker the way OpenWork Web, remote sessions and
+Cloud Automations do: it creates or wakes it on the explicit Edit action when the organization has OpenWork
+Web, and otherwise offers Open in Drive. The worker snapshot
+(`ee/apps/den-worker-runtime/Dockerfile.daytona-snapshot`) installs the unbranded
+CODE packages with this integration; its bootstrap starts the engine as the `cool`
+user with Den as the only WOPI host, Workbot as the only embedder, and macros and
+the admin console off. The engine listens on loopback behind a small proxy
+(`ee/apps/den-worker-runtime/documents-editor-proxy.mjs`) that restores the
+signed public host from `X-Forwarded-Host`; the provider's preview proxy rewrites
+`Host`, and the engine builds its editor and websocket URLs from it. Each session
+uses its own signed preview URL for the editor port, valid for the session. While the engine starts, Den answers `office_starting`
+and the tab retries for about two minutes. An open session marks the worker busy,
+so idle stop and image updates wait until the file closes or its editor traffic
+stops for 20 minutes. `DEN_DOCUMENTS_COLLABORA_URL` is not used in this mode.
 
 The callback origin defaults to `DEN_API_PUBLIC_URL`. All origins are operator
 configuration, never a request Host header or file metadata. Collabora must reach

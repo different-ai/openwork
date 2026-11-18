@@ -4,18 +4,23 @@ import { Blocks } from "lucide-react";
 
 import { readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
+import { McpAppWarmSandbox } from "@/components/chat/mcp-app-warm-sandbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner";
+import { CloudSignInEmptyState } from "@/react-app/domains/cloud/cloud-sign-in-banner";
 import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import type { DashboardLaunchEndpoint } from "./mcp-app-tile";
-import { DashboardApps, type CreateDashboardApp } from "./dashboard-apps";
+import type { CreateDashboardApp } from "./dashboard-apps";
 import { useSavedApps } from "../apps/use-apps";
+import { ArtifactsPage } from "./artifacts-page";
 
 /** The member's dashboard. Placement belongs to each member. */
-export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn, active = true }: {
   onCreateApp: CreateDashboardApp;
+  /** Retained pages refresh access when navigation makes them visible again. */
+  active?: boolean;
   /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void;
   /** Titlebar slot for the Add control, matching Library. */
@@ -24,6 +29,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
+  const { openworkServerClient } = useWorkspace();
   const personal = useSavedApps();
   // The active org lives in den settings, which change outside React; track
   // them through the settings-changed event so an org switch swaps the board
@@ -41,8 +47,8 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   );
 
   // The dashboard belongs to the signed-in member: signed out, no tile mounts
-  // and nothing is launched or fetched, and the page leads with the same
-  // sign-in banner as Library.
+  // and nothing is launched or fetched, and the page is one empty state whose
+  // action is signing in.
   if (denAuth.status !== "checking" && !denAuth.isSignedIn) return <DashboardSignedOut onSignIn={onSignIn} />;
 
   // Hold the board (and every launch) until its user/org scope and saved apps
@@ -51,7 +57,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
       <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
-        <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
+        <div className="space-y-2 pt-3" role="status" aria-label="Loading artifacts">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
         </div>
@@ -60,31 +66,25 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
   }
   return (
     <div
-      className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"
+      className="h-full w-full"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
     >
-      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
+      {openworkServerClient ? <McpAppWarmSandbox client={openworkServerClient} /> : null}
+      <ArtifactsPage key={cacheScopeKey} active={active} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
     </div>
   );
 }
 
 function DashboardSignedOut({ onSignIn }: { onSignIn?: () => void }) {
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-dashboard-page data-dashboard-signed-out>
-      <CloudSignInBanner
-        testId="dashboard-sign-in-banner"
-        media={<CloudSignInBannerIcon><Blocks /></CloudSignInBannerIcon>}
-        message={t("dashboard.sign_in_banner")}
+    <div className="h-full w-full" data-dashboard-page data-dashboard-signed-out>
+      <CloudSignInEmptyState
+        testId="dashboard-sign-in"
+        icon={<Blocks />}
+        title={t("dashboard.signed_out_title")}
         onSignIn={onSignIn}
       />
-      <section className="flex min-h-96 flex-col items-center justify-center text-center" data-dashboard-empty>
-        <div aria-hidden="true" className="mb-10 grid w-full max-w-xl grid-cols-[2fr_3fr_2fr] gap-4">{[0, 1, 2].map((index) => <div key={index} className="h-32 rounded-xl border border-dashed bg-muted/30 p-5">
-          <div className="h-2.5 w-3/5 rounded-full bg-muted" />
-          <div className="mt-3 h-6 w-10 rounded-md bg-muted" />
-        </div>)}</div>
-        <h2 className="text-xl font-semibold">Pin the artifacts you check every day</h2>
-      </section>
     </div>
   );
 }

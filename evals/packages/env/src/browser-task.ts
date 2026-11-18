@@ -40,3 +40,18 @@ export async function requestBrowserTask(app: Surface, input: BrowserTaskInput):
     return response.json();
   `));
 }
+
+/** Exercise the same authenticated endpoint the computer_run tool uses. */
+export async function requestComputerProgram(app: Surface, input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }): Promise<unknown> {
+  if (!app.handle.profileDir) throw new Error("The isolated desktop has no profile path.");
+  return runBrowserHost(app, `
+    const {readFile}=await import('node:fs/promises');
+    const bridge=JSON.parse(await readFile(${browserScriptValue(`${app.handle.profileDir}/electron-userdata/openwork-ui-control.json`)},'utf8'));
+    const response=await fetch(bridge.baseUrl+'/computer/program',{
+      method:'POST',headers:{Authorization:'Bearer '+bridge.token,'Content-Type':'application/json'},
+      body:${browserScriptValue(JSON.stringify(input))},signal:AbortSignal.timeout(65000)
+    });
+    if(!response.ok)throw new Error('Computer program transport failed');
+    return response.json();
+  `);
+}

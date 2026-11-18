@@ -23,6 +23,13 @@ test("only the OpenCode plugin may return the browser, and only to its own loopb
   assert.equal(deviceReturnUrl(null, plugin), null);
 });
 
+test("remote desktop approval never redirects to the laptop's loopback", () => {
+  const desktop = "openwork-desktop-device";
+  assert.equal(deviceReturnUrl("http://127.0.0.1:53121/openwork/callback", desktop), null);
+  assert.equal(deviceReturnUrl("http://localhost:53121/openwork/callback", desktop), null);
+  assert.equal(deviceReturnUrl("https://example.test/approved", desktop), null);
+});
+
 test("the return target carries only the outcome", () => {
   const url = deviceReturnUrl("http://127.0.0.1:9/openwork/callback", "openwork-opencode-plugin")!;
   assert.equal(deviceReturnTarget(url, "approved"), "http://127.0.0.1:9/openwork/callback?result=approved");

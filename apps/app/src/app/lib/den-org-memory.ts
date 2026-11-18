@@ -42,12 +42,12 @@ export function readRememberedDenOrganization(scope: OrganizationMemoryScope): s
 
 type OrganizationMemoryClient = Pick<
   ReturnType<typeof createDenClient>,
-  "listOrgs" | "getOrgFeatures" | "setActiveOrganization"
+  "listOrgs" | "setActiveOrganization"
 >;
 
 /**
  * Resolve a returning account's preference using its newly issued credential.
- * Membership and the live rollout must both allow it. Failure falls back to
+ * Current membership must allow it. Failure falls back to
  * the normal chooser without losing the preference or retrying the handoff.
  */
 export async function restoreRememberedDenOrganization(input: OrganizationMemoryScope & {
@@ -61,8 +61,6 @@ export async function restoreRememberedDenOrganization(input: OrganizationMemory
     const directory = await input.client.listOrgs();
     const organization = directory.orgs.find((org) => org.id === rememberedId);
     if (!organization || !input.isCurrent()) return null;
-    const features = await input.client.getOrgFeatures(organization.id);
-    if (features.rememberLastOrganization !== true || !input.isCurrent()) return null;
 
     // Align the new server session before publishing the remembered org locally.
     await input.client.setActiveOrganization({ organizationId: organization.id });

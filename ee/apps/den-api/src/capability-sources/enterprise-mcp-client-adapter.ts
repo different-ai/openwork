@@ -12,7 +12,9 @@ import {
   type EnterpriseMcpDiagnosticEvent,
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import { memberApiKeyStillCurrent, rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
 import { memberApiKeyAuthorization, usesMemberApiKey } from "./member-api-key.js"
 import {
@@ -43,6 +45,7 @@ function toEnterpriseConnection(
   member: ExternalMcpMemberContext | undefined,
   tracker: ExternalMcpDiagnosticTracker,
   memberApiKey: MemberApiKeyCredential | undefined,
+  requestSelectedScopesOnly: boolean,
 ): EnterpriseMcpConnection {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
@@ -69,6 +72,7 @@ function toEnterpriseConnection(
             : undefined,
           authorizationServerIssuer: connection.oauthConfiguration?.authorizationServerIssuer ?? undefined,
           requestedScopes: connection.oauthConfiguration?.requestedScopes ?? [],
+          requestSelectedScopesOnly,
         },
       },
     }
@@ -211,6 +215,7 @@ function translateEnterpriseMcpError(
 }
 
 type OperationInput = {
+  webhookEvents?: boolean
   connection: ExternalMcpConnectionRow
   member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
@@ -225,6 +230,13 @@ function createOperationClient(
   memberApiKey: MemberApiKeyCredential | undefined,
 ): EnterpriseMcpClient {
   const member = input.member
+  // Administrator request headers go on the innermost fetch, and only to the
+  // MCP URL itself, so OAuth servers, diagnostics and inspection never see them.
+  const networkFetch = withExternalMcpRequestHeaders(
+    guardedFetch,
+    input.connection.url,
+    parseStoredExternalMcpRequestHeaders(input.connection.requestHeaders),
+  )
   const fetchForCaller: typeof guardedFetch = memberApiKey && member
     ? async (resource, init) => {
       const credential = memberApiKey
@@ -238,7 +250,7 @@ function createOperationClient(
       if (request.url !== new URL(input.connection.url).href || request.headers.get("authorization") !== memberApiKeyAuthorization(credential.key, input.connection.apiKeyAuthScheme)) {
         throw new Error("Connection credentials or destination changed. Reconnect and retry.")
       }
-      const response = await guardedFetch(resource, { ...init, redirect: "error" })
+      const response = await networkFetch(resource, { ...init, redirect: "error" })
       if (response.status === 401) await rejectMemberApiKey(input.connection, member.orgMembershipId, credential)
       return response
     }
@@ -251,9 +263,9 @@ function createOperationClient(
           if (destination !== new URL(input.connection.url).href && destination !== tokenEndpoint) {
             throw new Error("Manual sign-in configuration does not allow discovery or another endpoint.")
           }
-          return guardedFetch(resource, { ...init, redirect: "manual" })
+          return networkFetch(resource, { ...init, redirect: "manual" })
         }
-      : guardedFetch
+      : networkFetch
   const diagnosticFetch = createExternalMcpDiagnosticFetch({
     fetch: fetchForCaller,
     endpoint: input.connection.url,
@@ -264,6 +276,7 @@ function createOperationClient(
     : diagnosticFetch
   return createEnterpriseMcpClient({
     fetch: observedFetch,
+    webhookEvents: input.webhookEvents,
     diagnosticSink: diagnosticSink(tracker),
     ...(input.operationTimeoutMs ? { operationTimeoutMs: input.operationTimeoutMs } : {}),
     ...(input.lifecycleDeadline ? {
@@ -290,8 +303,11 @@ async function runEnterpriseMcpOperation<T>(input: OperationInput & {
       if (!input.member) throw new Error("A member identity is required for this connection.")
       memberApiKey = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
     }
+    // A saved choice applies only while the feature is on, so turning the feature off restores the default sign-in.
+    const requestSelectedScopesOnly = input.connection.oauthConfiguration?.requestSelectedScopesOnly === true
+      && await organizationFeatureEnabled(input.connection.organizationId, "connectionSelectedScopesOnly")
     const client = createOperationClient(input, tracker, memberApiKey)
-    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey))
+    return await input.operation(client, toEnterpriseConnection(input.connection, input.member, tracker, memberApiKey, requestSelectedScopesOnly))
   } catch (error) {
     throw translateEnterpriseMcpError(error, tracker)
   }
@@ -512,4 +528,16 @@ export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri:
 
 export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
   return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
+}
+
+/** Events use the same member credentials, guarded fetch and OAuth lifecycle as tools. */
+export function requestExternalMcpEvents(input: ExternalMcpResourceInput & {
+  method: "events/list" | "events/subscribe" | "events/unsubscribe"
+  params: Record<string, unknown>
+}) {
+  return runEnterpriseMcpOperation({
+    ...input,
+    webhookEvents: true,
+    operation: (client, connection) => client.requestEvents({ connection, redirectUri: input.redirectUri, method: input.method, params: input.params }),
+  })
 }

@@ -7,19 +7,7 @@ FROM ${DOCUMENTS_EDITOR_BASE_IMAGE}
 USER root
 COPY dist/branding.js /tmp/openwork-branding.js
 COPY branding.css /tmp/openwork-branding.css
-# Preserve the engine's notices, About screen, and original branding source.
-# Content-address our assets: the engine otherwise caches branding under its own version.
-RUN command -v dpkg-query >/dev/null \
-    && for package in code-brand collabora-online-brand; do \
-      case "$(dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null)" in \
-        installed) echo "Use an open-source, unbranded engine base; $package is proprietary." >&2; exit 1 ;; \
-      esac; \
-    done \
-    && theme_version="$(cat /tmp/openwork-branding.js /tmp/openwork-branding.css | sha256sum | cut -c1-12)" \
-    && mv /tmp/openwork-branding.js /usr/share/coolwsd/browser/dist/openwork-$theme_version.js \
-    && mv /tmp/openwork-branding.css /usr/share/coolwsd/browser/dist/openwork-$theme_version.css \
-    && sed -i -e "s|<!--%BRANDING_JS%-->|<!--%BRANDING_JS%--><script src=\"%SERVICE_ROOT%/browser/%VERSION%/openwork-$theme_version.js\"></script>|" \
-        -e "s|<!--%BRANDING_CSS%-->|<!--%BRANDING_CSS%--><link rel=\"stylesheet\" href=\"%SERVICE_ROOT%/browser/%VERSION%/openwork-$theme_version.css\" />|" \
-        /usr/share/coolwsd/browser/dist/cool.html \
-    && test -s /usr/share/coolwsd/browser/dist/openwork-$theme_version.js
+COPY install-openwork-theme.sh /tmp/install-openwork-theme.sh
+RUN sh /tmp/install-openwork-theme.sh /tmp/openwork-branding.js /tmp/openwork-branding.css \
+    && rm /tmp/install-openwork-theme.sh
 USER cool

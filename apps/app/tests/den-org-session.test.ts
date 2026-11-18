@@ -52,7 +52,6 @@ describe("verified organization memory across sessions", () => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       requests.push({ path: url.pathname, token: new Headers(init?.headers).get("authorization"), body: typeof init?.body === "string" ? init.body : undefined });
       if (url.pathname.endsWith("/v1/me/orgs")) return Response.json({ orgs: [firstOrg, lastOrg], activeOrgId: firstOrg.id });
-      if (url.pathname.endsWith("/v1/org")) return Response.json({ features: { rememberLastOrganization: true } });
       if (url.pathname.endsWith("/v1/auth/desktop-handoff/exchange")) return Response.json({ user, token: "new-session", organization: firstOrg });
       if (url.pathname.endsWith("/v1/me/active-organization")) return Response.json({ ok: true });
       throw new Error(`Unexpected request: ${url.pathname}`);

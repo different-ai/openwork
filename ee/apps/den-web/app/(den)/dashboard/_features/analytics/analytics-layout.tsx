@@ -2,20 +2,32 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, Blocks, ScrollText } from "lucide-react";
+import { ArrowUpRight, BarChart3, Blocks, Bot, ScrollText } from "lucide-react";
 import { DenButton } from "../../../_components/ui/button";
-import { underlineTabClassName } from "../../../_components/ui/tabs";
+import { UnseenDot, underlineTabClassName } from "../../../_components/ui/tabs";
 import { DenPageHeader } from "../../../_components/ui/page-header";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
-import { ItemPanel, ItemRowsSkeleton } from "../../_components/item-list";
-import { getAnalyticsRoute, getModelsAnalyticsRoute, getLibraryUsageRoute, getWorkflowRunsRoute, orgFeatureEnabled } from "../../../_lib/den-org";
+import { RowListSkeleton } from "../computers/computer-rows";
+import { getAnalyticsRoute, getLibraryUsageRoute, getWorkbotUsageRoute, getWorkflowRunsRoute } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
-import { useDenFlow } from "../../../_providers/den-flow-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
+import { useFeatureIntroUnseen, type FeatureIntroKey } from "../feature-intros";
 
-export const analyticsSurfaceClass = "analytics-surface rounded-2xl border border-[#e3e7ee] bg-white";
-/** Same content inset as DashboardPageTemplate; header ownership stays separate. */
-export const analyticsPageClass = "mx-auto grid w-full max-w-[860px] gap-6 p-4 sm:p-6 md:p-8 [&_.analytics-surface]:border-[var(--dls-border)] [&_.analytics-surface]:bg-[var(--dls-surface)]";
+type AnalyticsView = "adoption" | "library" | "workbot" | "workflows";
+type AnalyticsViewLink = { id: AnalyticsView; label: string; href: string; icon: typeof BarChart3 };
+
+/** Each view's feature intro, for its quiet "not viewed yet" dot (DESIGN.md I9). Workbot has none. */
+const ANALYTICS_VIEW_INTROS: Record<AnalyticsView, FeatureIntroKey | null> = {
+  adoption: "analytics",
+  library: "analytics.library",
+  workbot: null,
+  workflows: "analytics.workflow-runs",
+};
+
+export const analyticsSurfaceClass = `analytics-surface ${AUTOMATION_CARD_CLASS}`;
+/** Same content inset as Computers; header ownership stays separate. */
+export const analyticsPageClass = `${DASHBOARD_PAGE_CLASS} grid gap-6`;
 
 /**
  * The header every Analytics view shares: the title (the tab already says what
@@ -25,33 +37,35 @@ export const analyticsPageClass = "mx-auto grid w-full max-w-[860px] gap-6 p-4 s
  * between views.
  */
 export function AnalyticsPageHeader({ orgSlug, active, title, action, caption }: {
-  orgSlug?: string | null; active: "adoption" | "models" | "library" | "workflows";
+  orgSlug?: string | null; active: AnalyticsView;
   title: string; action?: ReactNode; caption?: ReactNode;
 }) {
-  const { runtimeConfig } = useDenFlow();
   const { orgContext } = useOrgDashboard();
   const libraryUsage = useLibraryUsageAvailable();
+  const introUnseen = useFeatureIntroUnseen();
+  const adoption: AnalyticsViewLink = { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 };
+  const library: AnalyticsViewLink = { id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks };
+  // What Workbot spends on models, for the people who can see usage, where Workbot is available.
+  const workbot: AnalyticsViewLink = { id: "workbot", label: "Workbot", href: getWorkbotUsageRoute(orgSlug), icon: Bot };
+  const workflows: AnalyticsViewLink = { id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText };
   const pages = [
-    { id: "adoption", label: "Usage & adoption", href: getAnalyticsRoute(orgSlug), icon: BarChart3 },
-    ...(runtimeConfig.orgMode === "single_org" || !orgFeatureEnabled(orgContext, "modelsAnalyticsUi") ? [] : [{ id: "models", label: "Models & usage", href: getModelsAnalyticsRoute(orgSlug), icon: null }]),
-    ...(libraryUsage ? [{ id: "library", label: "Plugins & connectors", href: getLibraryUsageRoute(orgSlug), icon: Blocks }] : []),
-    ...(orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [{ id: "workflows", label: "Workflow Runs", href: getWorkflowRunsRoute(orgSlug), icon: ScrollText }] : []),
+    adoption,
+    ...(libraryUsage ? [library] : []),
+    ...(libraryUsage && orgContext?.capabilities.workbot ? [workbot] : []),
+    // Personal run history remains reachable by existing links.
+    ...((active === "workflows") && orgContext?.capabilities.workflows && orgContext.entitlements.analytics ? [workflows] : []),
   ];
-  return <header className="grid gap-5">
-    <p className="text-xs font-medium text-[#637291]">Analytics</p>
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div className="max-w-2xl">
-        <div data-dashboard-flat-header>
-          <DenPageHeader title={title} size="compact" className="break-words" />
-        </div>
-        <div className="mt-2 min-h-4 text-xs leading-4 text-[#637291]">{caption}</div>
-      </div>
-      {action}
+  return <header className="grid gap-6">
+    <div data-dashboard-flat-header>
+      {/* One page, one name: the heading is the section, and the tabs name its views. */}
+      <DenPageHeader title="Analytics" size="compact" state={caption} action={action} className="break-words" />
+      <span className="sr-only" data-analytics-view-title>{title}</span>
     </div>
-    <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[#e3e7ee]">
+    <nav aria-label="Analytics views" className="flex flex-wrap gap-x-6 border-b border-[var(--den-list-line)]">
       {pages.map(({ id, label, href, icon: Icon }) => <Link key={id} href={href} aria-current={active === id ? "page" : undefined}
         className={`-mb-px focus-visible:outline-offset-4 ${underlineTabClassName(active === id)}`}>
-        {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : <img src="/openwork-mark.svg" alt="" aria-hidden className="size-4" />}{label}
+        <Icon className="h-4 w-4" aria-hidden="true" />{label}
+        {active !== id && introUnseen(ANALYTICS_VIEW_INTROS[id]) ? <UnseenDot /> : null}
       </Link>)}
     </nav>
   </header>;
@@ -61,8 +75,8 @@ export function AnalyticsEmptyState({ title, children, action, testId }: {
   title: string; children?: ReactNode; action?: ReactNode; testId?: string;
 }) {
   return <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center" data-testid={testId}>
-    <h3 className="text-sm font-semibold text-[#07192C]">{title}</h3>
-    {children ? <div className="mt-2 max-w-md text-sm leading-6 text-[#637291]">{children}</div> : null}
+    <h3 className={CARD_TITLE_CLASS}>{title}</h3>
+    {children ? <div className="mt-2 max-w-md text-sm leading-6 text-[var(--dls-text-secondary)]">{children}</div> : null}
     {action ? <div className="mt-4">{action}</div> : null}
   </div>;
 }
@@ -70,11 +84,11 @@ export function AnalyticsEmptyState({ title, children, action, testId }: {
 export function AnalyticsLoading({ label }: { label: string }) {
   return <div role="status" aria-label={label} className="grid gap-6">
     <div aria-hidden className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
-      {[0, 1, 2, 3].map((index) => <div key={index} className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-surface)] p-5">
+      {[0, 1, 2, 3].map((index) => <div key={index} className={`${AUTOMATION_CARD_CLASS} p-4`}>
         <DenSkeleton className="h-4 w-24" /><DenSkeleton className="mt-3 h-8 w-16" /><DenSkeleton className="mt-2 h-4 w-32" />
       </div>)}
     </div>
-    <ItemPanel><ItemRowsSkeleton label={label} rows={4} /></ItemPanel>
+    <RowListSkeleton rows={4} />
   </div>;
 }
 

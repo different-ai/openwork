@@ -1,0 +1,76 @@
+---
+title: "Tool Tester"
+description: "Run any tool a connector offers from Settings › Tool Tester, see exactly what was sent and what came back, and turn tools off for your whole organization."
+keywords: ["Tool Tester", "test tools", "MCP tools", "connector", "tool policy", "disable tool", "destructive tool", "read-only", "debug MCP"]
+---
+
+The Tool Tester lets you try a connector's tools before your team's AI relies
+on them. You can run any tool by hand, see the exact request and the app's
+answer, and turn off tools nobody in your organization should use.
+
+Open it from **Settings › Tool Tester**, or from a connector's page with
+**⋯ › Test tools**.
+
+## Who can use it
+
+You need the **Manage connections** permission. Admins have it by default.
+
+The tester lists connectors that are ready to run:
+
+- connected with **One account for everyone**, or connected with your own
+  account when **Each person signs in**
+- not waiting for you to reconnect or finish setup
+
+If none are ready, the page says **No connected, testable MCP connections are
+available**. [Add or connect a connector](/cloud/share-with-your-team/shared-mcp-connections)
+first.
+
+## Run a tool
+
+1. Choose a **Connection**. A badge next to it shows whether it's
+   **Connected as you**.
+2. Pick a tool from the list. Use **Search tools** to find one.
+3. Fill in its **Arguments**. Use **Form** for a field per input, or **JSON**
+   to type them yourself.
+4. Click **Run tool**.
+
+Each tool shows what the app says about it: **Read-only**, **Destructive**, or
+**Not marked read-only**. Before running a destructive tool, you must tick the
+**Destructive tool warning** box. Destructive tools can change or delete data in
+the app.
+
+## Read the result
+
+After a run, choose a tab:
+
+- **Result**: what the tool returned.
+- **Request**: the exact request OpenWork sent to the app, with headers.
+- **Response**: the app's HTTP answer, with headers.
+
+A line across the top shows how far the call got: **OpenWork**, the connection
+to the app, and **Tool result**. If a call fails, this tells you whether it
+stopped in OpenWork, on the network, or at the app.
+
+Sign-in and session headers are hidden. Runs use the connection's account and
+are never written to OpenWork's logs.
+
+**Recent runs** lists this session's runs so you can **Load** one again. They're
+kept in this browser for this session only; OpenWork never stores run results.
+
+## Turn tools off for everyone
+
+Turned-off tools are blocked in OpenWork for your whole organization: agents
+can't find or call them, and members can't run them.
+
+- **One tool**: use the switch next to the tool in the list. A turned-off tool
+  shows **Disabled**. Click **Enable tool** to turn it back on.
+- **Every tool on a connector**: turn off **Tools enabled for your
+  organization**, then confirm **Disable all tools**.
+
+This is a good way to keep a connector's read-only tools while blocking the
+ones that delete or change things.
+
+## Related
+
+- [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections)
+- [MCP server compatibility](/cloud/share-with-your-team/mcp-server-compatibility)

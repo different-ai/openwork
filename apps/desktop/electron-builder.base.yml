@@ -7,9 +7,28 @@ files:
   - server/**/*
   - "!server/dist/opencode-plugins/**"
   - package.json
+  # The staged copy below is compiled JavaScript; leave the checkout's source out.
+  - "!node_modules/@openwork/types/{src,tsconfig*.json,tsup.config.ts}"
+  # The Swift helper ships under helpers; its build cache is checkout-only.
+  - "!node_modules/@openwork/computer-use/native/.build"
+  # Only a debugger or a compiler reads these, and nothing here runs one.
+  # The staged copy below repeats each rule so it cannot bring them back.
+  - &noSourceMaps "!**/*.{js,cjs,mjs,ts,cts,mts}.map"
+  - &noTypeDeclarations "!**/*.d.{ts,cts,mts}"
+  # Computer use transpiles scripts with lib/typescript.js alone. The compiler
+  # command, language server and translated messages are never loaded.
+  - &noTypeScriptTools "!**/typescript/{bin,lib/!(typescript.js)}"
+  # SQLite loads its prebuilt binary; the C sources only compile one.
+  - "!**/better-sqlite3/{deps,src}"
   - from: .electron-runtime/node_modules
     to: node_modules
+    filter: ["**/*", *noSourceMaps, *noTypeDeclarations, *noTypeScriptTools]
 extraResources:
+  - from: .electron-runtime/sandbox-image
+    to: sandbox-image
+    filter:
+      - alpine.oci.tar
+      - manifest.json
   - from: .electron-runtime/openwork-sentry.json
     to: openwork-sentry.json
   - from: ../app/dist
@@ -27,8 +46,19 @@ extraResources:
       - "docs.json"
 asar: true
 asarUnpack:
+  # Keep Windows native code outside ASAR so it can be signed and audited.
+  - "**/*.exe"
+  - "**/*.dll"
+  - "**/*.node"
+  # External tar cannot read an archive through Electron's virtual ASAR paths.
+  - server/dist/opencode-plugin-deps-*.tgz
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
+  # Rust opens/spawns these paths directly, outside Electron's ASAR filesystem.
+  # Keep msb beside its matching firmware library and N-API binding.
+  - "**/@superradcompany/microsandbox-*/**"
+  # Blender loads computer use's script bridge from a real file.
+  - electron/computer-scripting/**
 npmRebuild: false
 afterPack: scripts/electron-after-pack.cjs
 afterSign: scripts/electron-after-sign.cjs
@@ -45,8 +75,14 @@ mac:
   notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # afterPack signs this executable with its dedicated Hypervisor entitlement.
+  # Do not replace that signature with Electron's inherited entitlements.
+  signIgnore:
+    - "/@superradcompany/microsandbox-darwin-arm64/bin/msb$"
   extendInfo:
     NSMicrophoneUsageDescription: OpenWork uses the microphone when you allow a page to access audio input.
+    NSAppleEventsUsageDescription: OpenWork controls this app with a script when you approve a computer use task.
+    NSSpeechRecognitionUsageDescription: OpenWork turns your speech into text on this Mac when you dictate a message.
   extraResources:
     - from: resources/sidecars
       to: sidecars
@@ -60,6 +96,11 @@ mac:
         - versions.json
         - versions.json-aarch64-apple-darwin
         - versions.json-x86_64-apple-darwin
+    - from: resources/helpers
+      to: helpers
+      filter:
+        - "OpenWork Computer Use.app/**"
+        - openwork-dictation
   target:
     - dmg
     - zip
@@ -88,9 +129,18 @@ linux:
     - tar.gz
 win:
   icon: resources/icons/icon.ico
+  signExts: [".dll", ".node"]
+  signtoolOptions:
+    sign: scripts/windows-sign.cjs
+    signingHashAlgorithms: [sha256]
   extraResources:
     - from: resources/icons/icon.png
       to: icons/icon.png
+    - from: resources/helpers
+      to: helpers
+      filter:
+        - openwork-dictation.exe
+        - openwork-computer-use.exe
     - from: resources/sidecars
       to: sidecars
       filter:
@@ -101,8 +151,8 @@ win:
         - opencode-x86_64-pc-windows-msvc.exe
         - opencode2-x86_64-pc-windows-msvc.exe
         - versions.json
-        - versions.json-aarch64-pc-windows-msvc.exe
-        - versions.json-x86_64-pc-windows-msvc.exe
+        - versions.json-aarch64-pc-windows-msvc
+        - versions.json-x86_64-pc-windows-msvc
   target:
     - nsis
 nsis:

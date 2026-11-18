@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto"
 import type { McpServer } from "@modelcontextprotocol/server"
 import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, PrepareMcpAppOutput } from "@openwork/types/mcp-app"
+import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
+import { runsWithoutClick } from "./app-tool-access.js"
 
 /**
  * OpenWork's opinionated App starters. prepare_app returns the one that fits
@@ -15,7 +17,10 @@ export type AppStarterPattern = "lookup" | "action" | "standalone"
 export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
-/** A preparation never runs a tool or saves an App. */
+/**
+ * A preparation never runs a tool or saves an App. It lists the built-in
+ * libraries that may be imported in an MCP App.
+ */
 export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
@@ -23,7 +28,7 @@ export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppTool
     title: input.title,
     tools,
     starter: { reactSource: starter.reactSource, cssSource: starter.cssSource },
-    nextSteps: starter.nextSteps,
+    nextSteps: [...starter.nextSteps, generatedAppLibrariesNextStep()],
   }
 }
 
@@ -46,7 +51,7 @@ const MAX_OPTIONS = 20
 /** The pattern a set of verified tools calls for. */
 export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern {
   if (tools.length === 0) return "standalone"
-  return tools.some((tool) => !tool.readOnly) ? "action" : "lookup"
+  return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
 }
 
 export function appStarter(tools: McpAppToolBinding[]) {
@@ -58,14 +63,14 @@ export function appStarter(tools: McpAppToolBinding[]) {
       cssSource: STARTER_CSS,
       nextSteps: [
         "Starter: standalone. It has no tools: compute() turns the inputs in FIELDS (prefilled from the launch input) into the figures it shows, the first one largest.",
-        "Replace FIELDS and compute() with this App's inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
+        "Replace FIELDS and compute() with this artifact’s inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
         "Then call create_app with this preparationId.",
       ],
     }
   }
-  const change = pattern === "action" ? tools.find((tool) => !tool.readOnly) : undefined
+  const change = pattern === "action" ? tools.find((tool) => !runsWithoutClick(tool)) : undefined
   const load = change
-    ? tools.find((tool) => tool.readOnly && !starterTool(tool).fields.some((field) => field.required))
+    ? tools.find((tool) => runsWithoutClick(tool) && !starterTool(tool).fields.some((field) => field.required))
     : tools[0]
   const wired = [change, load].flatMap((tool) => tool ? [tool.name] : [])
   const unwired = tools.filter((tool) => !wired.includes(tool.name)).map((tool) => tool.name)
@@ -75,8 +80,8 @@ export function appStarter(tools: McpAppToolBinding[]) {
   ].filter(Boolean).join("\n")
   const body = change ? ACTION_SOURCE : LOOKUP_SOURCE
   const describe = change
-    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the App opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
-    : `Starter: lookup. ${load?.name} loads when the App opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
+    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the artifact opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
+    : `Starter: lookup. ${load?.name} loads when the artifact opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
   return {
     pattern,
     reactSource: [STARTER_HEADER, constants, SHARED_SOURCE, body].join("\n"),
@@ -135,7 +140,7 @@ function schemaFields(schema: Record<string, unknown>, placement?: "path" | "que
 /** "create_invoice" → "Create invoice"; a read with no verb gets "Find" or "Refresh". */
 function actionLabel(tool: McpAppToolBinding): string {
   const label = humanize(tool.name)
-  if (!tool.readOnly) return label
+  if (!runsWithoutClick(tool)) return label
   if (/^(?:find|search|get|list|look|load|show|read|check|fetch|query|lookup)\b/iu.test(label)) {
     return label.replace(/^(?:get|list|load|fetch|query|read|lookup)\b/iu, "Show")
   }
@@ -225,11 +230,17 @@ function textOf(response) {
   return (response?.content ?? []).filter((item) => item?.type === "text").map((item) => item.text).join("\\n").trim();
 }
 
+// A saved Workflow answers with its run receipt ({ kind: "workflow", status,
+// value, ... }); the data the App asked for is its value.
+function unwrapWorkflow(value) {
+  return isRecord(value) && value.kind === "workflow" && "value" in value ? value.value : value;
+}
+
 function valueOf(response) {
-  if (response?.structuredContent !== undefined) return response.structuredContent;
+  if (response?.structuredContent !== undefined) return unwrapWorkflow(response.structuredContent);
   const text = textOf(response);
   try {
-    return JSON.parse(text);
+    return unwrapWorkflow(JSON.parse(text));
   } catch {
     return text;
   }
@@ -248,6 +259,28 @@ function messageOf(response) {
 function dateOf(value) {
   const date = new Date(value);
   return value && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+// OpenWork's App server runs read-only tools that need no input as the App
+// opens and sends what they returned with the launch, under
+// "openwork/initialResults". One made with exactly these arguments is shown
+// instead of calling again; anything else is called as usual.
+function initialResultFor(result, name, args) {
+  const entries = result?._meta?.["openwork/initialResults"];
+  if (!Array.isArray(entries)) return null;
+  const asked = JSON.stringify(args);
+  return entries.find((entry) => entry?.name === name && JSON.stringify(entry.arguments ?? {}) === asked) ?? null;
+}
+
+// Shows the launch's result for these arguments, or calls the tool for one.
+// A checked matching snapshot seeds the view too. Older launch producers can
+// supply an earlier load time, in which case refresh behind the visible data.
+function loadWith(call, result, name, args) {
+  const loaded = initialResultFor(result, name, args);
+  if (!loaded) return call.call(args);
+  call.seed(args, loaded);
+  const loadedAt = dateOf(loaded.loadedAt);
+  if (loaded.kept && (!loadedAt || Date.now() - loadedAt.getTime() > 60000)) call.call(args);
 }
 
 // One declared tool, with every state the person can see. Only the latest
@@ -310,7 +343,15 @@ function useToolCall(app, name) {
     setState({ status: "ready", value: valueOf(response), updatedAt: dateOf(response?._meta?.["openwork/cachedAt"]) ?? new Date() });
     return true;
   }, [app, name, available]);
-  return { ...state, available, call, peek };
+  // A result that came with the launch answers like a call that just
+  // finished, and wins over any earlier peek or call still running.
+  const seed = React.useCallback((args, loaded) => {
+    latestArgs.current = JSON.stringify(args);
+    ++latest.current;
+    ++latestPeek.current;
+    setState({ status: "ready", value: valueOf(loaded.result), updatedAt: dateOf(loaded.loadedAt) ?? new Date() });
+  }, []);
+  return { ...state, available, call, peek, seed };
 }
 
 function humanize(key) {
@@ -448,7 +489,7 @@ function Fields({ fields, values, onChange, onEnter }) {
 
 // Blocked, approval and failure states, each with its next step.
 function ToolNotice({ call, retryLabel, onRetry, showBlocked = true }) {
-  if (!call.available) return showBlocked ? <p className="notice">Open this App in OpenWork to use its live data.</p> : null;
+  if (!call.available) return showBlocked ? <p className="notice">Open this artifact in OpenWork to use its live data.</p> : null;
   if (call.status === "approval") {
     return <p className="notice">This needs your approval first. <button type="button" onClick={onRetry}>{retryLabel}</button></p>;
   }
@@ -523,7 +564,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const next = initialValues(LOAD.fields, input);
     setValues(next);
-    if (delivered && isReady(LOAD.fields, next)) load.call(argumentsFor(LOAD, next));
+    if (delivered && isReady(LOAD.fields, next)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, next));
   }, [launch, delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load the same inputs again while the data stays on screen.
@@ -531,7 +572,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) load.call(argumentsFor(LOAD, values));
+    if (previous !== undefined && previous !== result && isReady(LOAD.fields, values)) loadWith(load, result, LOAD.name, argumentsFor(LOAD, values));
   }, [result]);
   // The last result for these inputs shows at once, from OpenWork's storage.
   const query = JSON.stringify(values);
@@ -577,14 +618,14 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     setValues(initialValues(CHANGE.fields, input));
   }, [launch]);
-  // The read loads when the App opens, showing its last result at once while
+  // The read loads when the artifact opens, showing its last result at once while
   // it refreshes, and again from its button. Only the change waits for a click.
   const delivered = result !== undefined;
   React.useEffect(() => {
     if (LOAD) load.peek(argumentsFor(LOAD, {}));
   }, []);
   React.useEffect(() => {
-    if (LOAD && delivered) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && delivered) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [delivered]);
   // A later launch result is the host refreshing the open App, as a dashboard
   // does: load again while the data stays on screen.
@@ -592,7 +633,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     const previous = refreshed.current;
     refreshed.current = result;
-    if (LOAD && previous !== undefined && previous !== result) load.call(argumentsFor(LOAD, {}));
+    if (LOAD && previous !== undefined && previous !== result) loadWith(load, result, LOAD.name, argumentsFor(LOAD, {}));
   }, [result]);
   const reload = () => {
     if (LOAD) load.call(argumentsFor(LOAD, {}));
@@ -742,7 +783,7 @@ type StarterSample = {
 const STARTER_SAMPLES: StarterSample[] = [
   {
     pattern: "lookup",
-    title: "Lookup App starter",
+    title: "Lookup artifact starter",
     useWhen: "Every bound tool only reads: a dashboard, list, status board, or search. Loads its data when it opens.",
     tools: [{
       name: "find_orders",
@@ -757,7 +798,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "action",
-    title: "Action App starter",
+    title: "Action artifact starter",
     useWhen: "At least one bound tool changes data: a form that creates, updates, or sends something, with a read that shows the result.",
     tools: [
       {
@@ -783,7 +824,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "standalone",
-    title: "Standalone App starter",
+    title: "Standalone artifact starter",
     useWhen: "No tools: calculators, converters, checklists, and planners that work from their inputs and the launch input alone.",
     tools: [],
     textFallback: "Splits an amount by a percentage and shows both parts.",

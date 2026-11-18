@@ -47,6 +47,17 @@ import { readInstalledOpencodeVersion, setInstalledOpencodeVersion } from "./rou
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
+if (process.argv[2] === "login") {
+  const { runDesktopDeviceLogin } = await import("./desktop-device-login.js");
+  process.exit(await runDesktopDeviceLogin(process.argv.slice(3)));
+}
+
+const command = process.argv[2];
+if (command && !command.startsWith("-") && command !== "web") {
+  console.error("Unknown command. Use --help.");
+  process.exit(1);
+}
+
 const args = parseCliArgs(process.argv.slice(2));
 
 if (args.help) {
@@ -131,7 +142,9 @@ const manageEngine = !config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPEN
 const server = await startServer(config, { deferManagedEngineStartup: manageEngine });
 config.port = server.port;
 const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
-const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger);
+const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger, {
+  onEnginePolicy: (policy) => { server.setEngineForcePolicy(policy); },
+});
 
 if (manageEngine) {
   // Reap engines recorded by servers that died without cleanup. Best
@@ -157,11 +170,15 @@ if (manageEngine) {
     OPENCODE_CONFIG: runtimeConfigPath,
     OPENCODE_MODELS_URL: opencodeModelsUrl,
   };
+  // Where engine v1 keeps a database or global config of its own when a
+  // standalone OpenCode v2 install owns the shared ones.
+  const engineStateDir = join(runtimeStorageDir(config), "opencode-v1", "state");
   const engineSpawnTemplate: EngineSpawnTemplate = {
     bin: process.env.OPENWORK_OPENCODE_BIN,
     cwd: managedOpencodeCwd,
     runtimeConfigPath,
     env: engineEnv,
+    stateDir: engineStateDir,
     reservedPorts: () => {
       const poolPorts = enginePool?.connections().map((connection) => Number(new URL(connection.baseUrl).port) || 0) ?? [];
       return [...new Set([config.port, ...poolPorts].filter((port) => port > 0))];
@@ -172,6 +189,7 @@ if (manageEngine) {
     cwd: managedOpencodeCwd,
     excludedPorts: [config.port],
     env: engineEnv,
+    stateDir: engineStateDir,
   });
   if (!readInstalledOpencodeVersion()) {
     setInstalledOpencodeVersion(readBinaryVersion(process.env.OPENWORK_OPENCODE_BIN?.trim() || "opencode"));
@@ -261,7 +279,7 @@ if (args.web) {
     logger.log("info", "Anyone who can reach this URL is signed in automatically. Keep it on a private network or pass --no-bootstrap-token.");
   }
   if (browserHost !== "localhost" && browserHost !== "127.0.0.1") {
-    logger.log("info", "Browsers require HTTPS for a non-localhost origin; put a TLS proxy (e.g. tailscale serve) in front.");
+    logger.log("info", "Browsers require HTTPS for a non-localhost origin; put a TLS proxy (e.g. tailscale serve) in front and pass its name with --allowed-hosts.");
   }
   if (args.open) openInBrowser(browserUrl);
   void checkForUpdate({ currentVersion: pkg.version, env: process.env }).then((latest) => {
@@ -295,6 +313,7 @@ if (args.verbose) {
   logger.log("info", `Read-only: ${config.readOnly ? "true" : "false"}`);
   logger.log("info", `Approval: ${config.approval.mode} (${config.approval.timeoutMs}ms)`);
   logger.log("info", `CORS origins: ${config.corsOrigins.join(", ")}`);
+  if (config.allowedHosts) logger.log("info", `Allowed hosts: loopback, IP addresses, ${[config.host, ...config.allowedHosts].join(", ")}`);
   logger.log("info", `Authorized roots: ${config.authorizedRoots.join(", ")}`);
   logger.log("info", `Token source: ${config.tokenSource}`);
   logger.log("info", `Host token source: ${config.hostTokenSource}`);

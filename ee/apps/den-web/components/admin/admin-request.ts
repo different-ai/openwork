@@ -21,7 +21,7 @@ export type AdminAccess = "ready" | "signed-out" | "forbidden" | "error";
 
 export type AdminResult<T> =
   | { access: "ready"; data: T }
-  | { access: Exclude<AdminAccess, "ready">; message: string };
+  | { access: Exclude<AdminAccess, "ready">; message: string; status?: number; code?: string };
 
 function errorMessage(payload: unknown, fallback: string) {
   if (payload && typeof payload === "object") {
@@ -31,11 +31,17 @@ function errorMessage(payload: unknown, fallback: string) {
   return fallback;
 }
 
+function responseCode(payload: unknown): string | undefined {
+  if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string") return payload.error;
+  return undefined;
+}
+
 /** GET an admin endpoint and map the response to the access states every admin page shows. */
 export async function requestAdmin<T>(path: string, parse: (payload: unknown) => T | null, signal?: AbortSignal): Promise<AdminResult<T>> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method: "GET",
+    cache: "no-store",
     credentials: denApiCredentials(endpoint),
     signal,
     headers: withStoredBearer({ Accept: "application/json" }),
@@ -45,23 +51,29 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
   try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
   if (response.status === 401) return { access: "signed-out", message: "Sign in with an OpenWork admin account to continue." };
   if (response.status === 403) return { access: "forbidden", message: "This account is not on the OpenWork admin allowlist." };
-  if (!response.ok) return { access: "error", message: errorMessage(payload, `The request failed with status ${response.status}.`) };
+  if (!response.ok) return { access: "error", message: errorMessage(payload, `The request failed with status ${response.status}.`), status: response.status, code: responseCode(payload) };
   const data = parse(payload);
   return data === null ? { access: "error", message: "The server returned data this page does not understand." } : { access: "ready", data };
 }
 
 /** PUT/POST JSON to an admin endpoint; returns the parsed payload or the server's error message. */
-export async function sendAdmin(path: string, method: "PUT" | "POST", body: unknown): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number }> {
+export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method,
     credentials: denApiCredentials(endpoint),
-    headers: withStoredBearer({ Accept: "application/json", "Content-Type": "application/json" }),
-    body: JSON.stringify(body),
+    signal,
+    headers: withStoredBearer(body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" }),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
   let payload: unknown = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
-  if (!response.ok) return { ok: false, message: errorMessage(payload, `The request failed with status ${response.status}.`), status: response.status };
+  if (!response.ok) {
+    const retryAfter = response.headers.get("Retry-After");
+    const seconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null;
+    const retryAfterSeconds = seconds !== null && Number.isSafeInteger(seconds) && seconds > 0 && seconds <= 3_600 ? seconds : undefined;
+    return { ok: false, message: errorMessage(payload, `The request failed with status ${response.status}.`), status: response.status, code: responseCode(payload), retryAfterSeconds };
+  }
   return { ok: true, payload };
 }

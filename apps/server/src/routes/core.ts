@@ -7,13 +7,17 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readOpenWorkConnectSkillCatalog, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
+import { readDiskSpace } from "../disk-space.js";
+import { runtimeStorageDir } from "../runtime-db.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
+import { takeApprovedDriveUpload } from "../extensions/approved-drive-upload.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
+import { takeFileSendApproved } from "../file-send-approval.js";
 import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
@@ -258,6 +262,12 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
+  // Free space on the disk that holds this server's saved data, so the app
+  // can warn before writes start failing.
+  addRoute(routes, "GET", "/disk-space", "client", async () => {
+    return jsonResponse(await readDiskSpace(runtimeStorageDir(config)));
+  });
+
   addRoute(routes, "GET", "/runtime/versions", "client", async () => {
     const snapshot = await fetchRuntimeControl("/runtime/versions");
     return jsonResponse(snapshot);
@@ -298,13 +308,34 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
 
   addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
     // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
-    const skills = await readOpenWorkConnectSkillCatalog(config);
+    const { skills, delivery } = await readOpenWorkConnectSkillIndex(config);
     return jsonResponse({
       ok: true,
       schemaVersion: 1,
       skills,
+      ...(delivery ? { delivery } : {}),
       instruction: renderOpenWorkConnectSkillInstruction(skills),
     });
+  });
+
+  addRoute(routes, "POST", "/experimental/connect/skills/read", "client", async (ctx) => {
+    // Listed skills' SKILL.md for native delivery; Den rechecks access.
+    const body = await readJsonBody(ctx.request);
+    const validUrl = (url: unknown): url is string => typeof url === "string" && url.startsWith("skill://") && url.length <= 2_048;
+    if (Array.isArray(body.urls)) {
+      // Several bodies on one Den session; `use` marks a message that uses them.
+      if (body.urls.length === 0 || body.urls.length > 150 || !body.urls.every(validUrl)) {
+        return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
+      }
+      const contents = await readOpenWorkConnectSkillContents(config, body.urls, { use: body.use === true });
+      return jsonResponse({ ok: true, contents: Object.fromEntries(contents) });
+    }
+    if (!validUrl(body.url)) {
+      return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
+    }
+    const content = await readOpenWorkConnectSkillContent(config, body.url);
+    if (content === null) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
+    return jsonResponse({ ok: true, content });
   });
 
   addRoute(routes, "GET", "/experimental/connect/automations", "client", async (_ctx) => {
@@ -341,12 +372,15 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
+    const approvedDriveFile = takeApprovedDriveUpload(ctx.request);
+    if (approvedDriveFile) ensureWritable(config);
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), ctx.request.signal));
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), ctx.request.signal, approvedDriveFile));
   });
 
   // Drive writes additionally require the in-process Desktop confirmation in
-  // callDriveFileAction. Neither an engine credential nor a request flag grants approval.
+  // callDriveFileAction, unless this host's shared file-send approval already
+  // approved the save in the chat. Neither an engine credential nor a request flag grants approval.
   addRoute(routes, "POST", "/experimental/drive-files/call", "client", async (ctx) => {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call Drive file actions");
@@ -356,7 +390,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     const args = isRecord(body.args) ? body.args : {};
     const context = isRecord(body.context) ? body.context : {};
     if (action === "drive_push_file" || action === "drive_pull_file") ensureWritable(config);
-    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal });
+    const approvedInChat = takeFileSendApproved(ctx.request) && action === "drive_push_file";
+    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal, ...(approvedInChat ? { approvedInChat } : {}) });
     if (!result) throw new ApiError(404, "extension_action_not_found", "Drive file action not found");
     return jsonResponse(result);
   });

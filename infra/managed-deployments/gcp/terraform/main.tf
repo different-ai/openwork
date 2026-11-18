@@ -1,14 +1,17 @@
-# Dedicated-project GCP root. Bootstrap owns identities, API enablement and
-# retained state; Terraform never needs project IAM administrator privileges.
+# Dedicated-project root: bootstrap owns identities, APIs and retained state.
 terraform {
   required_version = "= 1.16.5"
   backend "gcs" {}
   required_providers {
-    google = { source = "hashicorp/google", version = "= 6.49.0" }
-    random = { source = "hashicorp/random", version = "= 3.7.2" }
+    google = { source = "hashicorp/google", version = "~> 8.7" }
+    random = { source = "hashicorp/random", version = "~> 3.9" }
   }
 }
 
+variable "managed_maintenance" {
+  type    = bool
+  default = false
+}
 variable "deployment_id" { type = string }
 variable "domain_name" { type = string }
 variable "owner_email" { type = string }
@@ -50,33 +53,6 @@ locals {
   web_url       = module.contract.web_url
   api_url       = module.contract.api_url
   service_names = { den_api = "${local.name}-api", den_web = "${local.name}-web" }
-  api_env = {
-    NODE_ENV                       = "production", CI = "true", DB_MODE = "mysql", OPENWORK_DEV_MODE = "0"
-    DEN_ORG_MODE                   = "single_org", DEN_SINGLE_ORG_NAME = "OpenWork", DEN_SINGLE_ORG_SLUG = "openwork"
-    DEN_SINGLE_ORG_OWNER_EMAILS    = var.owner_email, DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP = "false"
-    DEN_REQUIRE_EMAIL_VERIFICATION = "false", DEN_BASE_URL = local.web_url, BETTER_AUTH_URL = local.web_url
-    DEN_API_PUBLIC_URL             = local.api_url, DEN_MCP_RESOURCE_URL = "${local.api_url}/mcp"
-    DEN_MCP_CLAIM_NAMESPACE        = local.web_url, DEN_BETTER_AUTH_TRUSTED_ORIGINS = local.web_url
-    DEN_WEB_APP_HOSTS              = var.domain_name, DEN_BOOTSTRAP_ADMIN_EMAILS = var.owner_email
-    DEN_CORS_ORIGINS               = "${local.web_url},${local.api_url}", CORS_ORIGINS = "${local.web_url},${local.api_url}"
-    DEN_AUTOMATIONS_ENABLED        = "false", DEN_AUTOMATIONS_RUNTIME_ENABLED = "false", PROVISIONER_MODE = "stub"
-  }
-  web_env = {
-    NODE_ENV        = "production", CI = "true", DEN_BASE_URL = local.web_url, DEN_WEB_PUBLIC_ORIGIN = local.web_url
-    DEN_AUTH_ORIGIN = local.web_url, DEN_WEB_OPENWORK_AUTH_CALLBACK_URL = local.web_url
-    DEN_API_BASE    = local.api_url, DEN_API_PUBLIC_URL = local.api_url
-  }
-  secret_env = {
-    DATABASE_URL                     = "database-url", BETTER_AUTH_SECRET = "auth", DEN_DB_ENCRYPTION_KEY = "encryption"
-    DEN_INITIAL_ADMIN_BOOTSTRAP_CODE = "bootstrap"
-  }
-  secret_keys = toset(["database-url", "auth", "encryption", "bootstrap"])
-  secret_values = {
-    database-url = "mysql://openwork:${urlencode(random_password.values["database"].result)}@localhost/openwork_den?socket=${urlencode("/cloudsql/${google_sql_database_instance.main.connection_name}")}"
-    auth         = random_password.values["auth"].result
-    encryption   = random_password.values["encryption"].result
-    bootstrap    = random_password.values["bootstrap"].result
-  }
 }
 provider "google" {
   project                     = var.project_id
@@ -87,7 +63,6 @@ provider "google" {
 
 data "google_project" "target" { project_id = var.project_id }
 data "google_dns_managed_zone" "target" { name = var.dns_zone_name }
-# Hard preconditions, not advisory Terraform check blocks.
 resource "terraform_data" "target" {
   lifecycle {
     precondition {
@@ -105,223 +80,48 @@ resource "terraform_data" "target" {
   }
 }
 
-resource "random_password" "values" {
-  for_each = toset(["database", "auth", "encryption", "bootstrap"])
-  length   = 48
-  special  = false
-  lifecycle { prevent_destroy = true }
-}
-resource "google_sql_database_instance" "main" {
-  name                = "${local.name}-mysql"
-  region              = var.region
-  database_version    = "MYSQL_8_0"
-  deletion_protection = true
-  settings {
-    tier                        = "db-custom-1-3840"
-    availability_type           = "ZONAL"
-    disk_size                   = 20
-    disk_autoresize             = true
-    deletion_protection_enabled = true
-    user_labels                 = local.labels
-    ip_configuration { ipv4_enabled = true }
-    backup_configuration {
-      enabled            = true
-      binary_log_enabled = true
-      start_time         = "03:00"
-      backup_retention_settings {
-        retained_backups = 7
-        retention_unit   = "COUNT"
-      }
-    }
+module "platform" {
+  source                            = "../../../terraform/modules/openwork-gcp-cloud-run"
+  project_id                        = var.project_id
+  region                            = var.region
+  name                              = local.name
+  labels                            = local.labels
+  openwork_version                  = var.openwork_version
+  owner_emails                      = [var.owner_email]
+  org_slug                          = "openwork"
+  domain_name                       = var.domain_name
+  den_api_image                     = var.images.den_api
+  den_web_image                     = var.images.den_web
+  create_image_mirror               = false
+  service_account_email             = local.runtime_sa
+  web_service_account_email         = local.web_sa
+  grant_iam_roles                   = true # Secret-scoped access only; bootstrap owns Cloud SQL IAM.
+  managed_legacy                    = true
+  managed_maintenance               = var.managed_maintenance
+  write_only_secrets                = false
+  deletion_protection               = true
+  restrict_ingress_to_load_balancer = true
+  # Retain existing allUsers bindings in the managed root.
+  public_access = false
+  # No automatic major-version upgrade, including on adoption of existing state.
+  # Moving managed customers to 8.4 is a separate owner-approved operation.
+  database = {
+    database_version = "MYSQL_8_0"
+    tier             = "db-custom-1-3840"
+    disk_size_gb     = 20
   }
+  den_api    = { cpu = "2", memory = "2Gi", min_instances = 1, max_instances = 10 }
+  den_web    = { cpu = "1", memory = "1Gi", min_instances = 1, max_instances = 10 }
   depends_on = [terraform_data.target]
-  lifecycle { prevent_destroy = true }
-}
-resource "google_sql_database" "main" {
-  name     = "openwork_den"
-  instance = google_sql_database_instance.main.name
-  lifecycle { prevent_destroy = true }
-}
-resource "google_sql_user" "main" {
-  name     = "openwork"
-  instance = google_sql_database_instance.main.name
-  password = random_password.values["database"].result
-  lifecycle { prevent_destroy = true }
-}
-resource "google_secret_manager_secret" "values" {
-  for_each  = local.secret_keys
-  secret_id = "${local.name}-${each.key}"
-  labels    = local.labels
-  replication {
-    auto {}
-  }
-  lifecycle { prevent_destroy = true }
-}
-resource "google_secret_manager_secret_version" "values" {
-  for_each    = local.secret_keys
-  secret      = google_secret_manager_secret.values[each.key].id
-  secret_data = local.secret_values[each.key]
-  lifecycle { prevent_destroy = true }
-}
-resource "google_secret_manager_secret_iam_member" "runtime" {
-  for_each  = local.secret_keys
-  secret_id = google_secret_manager_secret.values[each.key].id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:${local.runtime_sa}"
 }
 
-resource "google_cloud_run_v2_job" "migrate" {
-  name     = "${local.name}-migrate"
-  location = var.region
-  template {
-    template {
-      service_account = local.runtime_sa
-      max_retries     = 0
-      timeout         = "1800s"
-      containers {
-        image   = var.images.den_api
-        command = ["node"]
-        args    = ["/app/ee/packages/den-db/dist/scripts/bootstrap.js"]
-        resources { limits = { cpu = "2", memory = "2Gi" } }
-        env {
-          name  = "DB_MODE"
-          value = "mysql"
-        }
-        dynamic "env" {
-          for_each = { DATABASE_URL = "database-url", DEN_DB_ENCRYPTION_KEY = "encryption" }
-          content {
-            name = env.key
-            value_source {
-              secret_key_ref {
-                secret  = google_secret_manager_secret.values[env.value].secret_id
-                version = google_secret_manager_secret_version.values[env.value].version
-              }
-            }
-          }
-        }
-        volume_mounts {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
-      }
-      volumes {
-        name = "cloudsql"
-        cloud_sql_instance { instances = [google_sql_database_instance.main.connection_name] }
-      }
-    }
-  }
-  depends_on = [google_sql_database.main, google_sql_user.main, google_secret_manager_secret_iam_member.runtime]
-}
-
-resource "google_cloud_run_v2_service" "services" {
-  for_each            = local.service_names
-  name                = each.value
-  location            = var.region
-  ingress             = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
-  deletion_protection = true
-  traffic {
-    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
-    percent = 100
-  }
-  template {
-    # Web proxies authenticated browser requests but never needs database or
-    # Secret Manager access. A compromised web revision must not inherit API IAM.
-    service_account = each.key == "den_api" ? local.runtime_sa : local.web_sa
-    timeout         = "300s"
-    scaling {
-      min_instance_count = 1
-      max_instance_count = 10
-    }
-    containers {
-      image = var.images[each.key]
-      ports { container_port = each.key == "den_api" ? 8788 : 3005 }
-      resources { limits = { cpu = each.key == "den_api" ? "2" : "1", memory = each.key == "den_api" ? "2Gi" : "1Gi" } }
-      dynamic "env" {
-        for_each = each.key == "den_api" ? local.api_env : local.web_env
-        content {
-          name  = env.key
-          value = env.value
-        }
-      }
-      dynamic "env" {
-        for_each = each.key == "den_api" ? local.secret_env : {}
-        content {
-          name = env.key
-          value_source {
-            secret_key_ref {
-              secret  = google_secret_manager_secret.values[env.value].secret_id
-              version = google_secret_manager_secret_version.values[env.value].version
-            }
-          }
-        }
-      }
-      dynamic "volume_mounts" {
-        for_each = each.key == "den_api" ? [1] : []
-        content {
-          name       = "cloudsql"
-          mount_path = "/cloudsql"
-        }
-      }
-    }
-    dynamic "volumes" {
-      for_each = each.key == "den_api" ? [1] : []
-      content {
-        name = "cloudsql"
-        cloud_sql_instance { instances = [google_sql_database_instance.main.connection_name] }
-      }
-    }
-  }
-  depends_on = [google_cloud_run_v2_job.migrate]
-}
 resource "google_cloud_run_v2_service_iam_member" "public" {
-  for_each = local.service_names
-  name     = google_cloud_run_v2_service.services[each.key].name
-  location = var.region
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
-resource "google_compute_region_network_endpoint_group" "services" {
-  for_each              = local.service_names
-  name                  = "${each.value}-neg"
-  region                = var.region
-  network_endpoint_type = "SERVERLESS"
-  cloud_run { service = google_cloud_run_v2_service.services[each.key].name }
-}
-resource "google_compute_backend_service" "services" {
-  for_each              = local.service_names
-  name                  = "${each.value}-backend"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
-  protocol              = "HTTP"
-  backend { group = google_compute_region_network_endpoint_group.services[each.key].id }
-}
-resource "google_compute_global_address" "main" { name = "${local.name}-ip" }
-resource "google_compute_managed_ssl_certificate" "main" {
-  name = "${local.name}-tls"
-  managed { domains = [var.domain_name, "api.${var.domain_name}"] }
-}
-resource "google_compute_url_map" "main" {
-  name            = "${local.name}-routes"
-  default_service = google_compute_backend_service.services["den_web"].id
-  host_rule {
-    hosts        = ["api.${var.domain_name}"]
-    path_matcher = "api"
-  }
-  path_matcher {
-    name            = "api"
-    default_service = google_compute_backend_service.services["den_api"].id
-  }
-}
-resource "google_compute_target_https_proxy" "main" {
-  name             = "${local.name}-https"
-  url_map          = google_compute_url_map.main.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.main.id]
-}
-resource "google_compute_global_forwarding_rule" "https" {
-  name                  = "${local.name}-https"
-  target                = google_compute_target_https_proxy.main.id
-  ip_address            = google_compute_global_address.main.address
-  port_range            = "443"
-  load_balancing_scheme = "EXTERNAL_MANAGED"
+  for_each   = local.service_names
+  name       = each.value
+  location   = var.region
+  role       = "roles/run.invoker"
+  member     = "allUsers"
+  depends_on = [module.platform]
 }
 resource "google_dns_record_set" "services" {
   for_each     = toset([var.domain_name, "api.${var.domain_name}"])
@@ -329,7 +129,7 @@ resource "google_dns_record_set" "services" {
   name         = "${each.value}."
   type         = "A"
   ttl          = 300
-  rrdatas      = [google_compute_global_address.main.address]
+  rrdatas      = [module.platform.load_balancer_ip]
 }
 
 resource "google_cloud_run_v2_job" "health" {
@@ -349,8 +149,8 @@ resource "google_cloud_run_v2_job" "health" {
           for_each = {
             DEPLOYMENT_ID    = var.deployment_id, CONTROL_PLANE_ORIGIN = var.control_plane_origin
             PROJECT_ID       = var.project_id, REGION = var.region, API_URL = local.api_url, WEB_URL = local.web_url
-            SERVICE_NAMES    = jsonencode(local.service_names), DATABASE_INSTANCE = google_sql_database_instance.main.name
-            CERTIFICATE_NAME = google_compute_managed_ssl_certificate.main.name, OPENWORK_VERSION = var.openwork_version
+            SERVICE_NAMES    = jsonencode(local.service_names), DATABASE_INSTANCE = module.platform.database_instance_name
+            CERTIFICATE_NAME = "${local.name}-tls", OPENWORK_VERSION = var.openwork_version
             EXPECTED_IMAGES  = jsonencode({ den_api = var.images.den_api, den_web = var.images.den_web })
           }
           content {

@@ -40,12 +40,14 @@ import {
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { clearOrgSelectionPending, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { completeSignInReturn } from "./sign-in-return";
 import { usePlatform } from "../../kernel/platform";
 import { useBootState } from "../../shell/boot-state";
 import { resolveModelDisplayName, resolveProviderDisplayName } from "@/app/utils";
 import { ProviderIcon } from "../../design-system/provider-icon";
 import { writeStoredDefaultModel } from "../../kernel/model-config";
 import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
+import { setOrgOnboardingOnScreen } from "../../shell/org-onboarding-visibility";
 import {
   Page,
   PageBackground,
@@ -87,6 +89,9 @@ import {
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
 
+import { useOnboardingStep } from "../../shell/use-onboarding-step";
+import { captureOnboardingEvent, updateAnalytics } from "../../../app/lib/analytics";
+
 const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
 const APPLIED_BRANDING_FINGERPRINT_KEY = "openwork.den.appliedBrandingFingerprint";
 const BRANDING_RESTART_RESUME_KEY = "openwork.den.brandingRestartResume";
@@ -118,40 +123,55 @@ async function stageOnboardingUpdate(
   const updater = onboardingUpdaterBridge();
   if (!updater?.getChannel || !updater.check || !updater.download) return false;
 
-  const channelState = await updater.getChannel();
-  if (
-    channelState.channel === "alpha" &&
-    !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
-  ) {
-    await updater.setChannel?.("stable");
-    return false;
-  }
-  let targetVersion: string | undefined;
-  if (channelState.channel === "stable") {
-    const selection = await resolveFreshStableDesktopUpdate({
-      currentVersion: channelState.currentVersion,
-      refreshDesktopConfig: async () => desktopConfig,
-    });
-    if (selection?.kind !== "update") return false;
-    targetVersion = selection.targetVersion;
-  }
+  let action: "check" | "download" = "check";
+  let currentVersion: string | null = null;
+  try {
+    const channelState = await updater.getChannel();
+    currentVersion = channelState.currentVersion;
+    if (
+      channelState.channel === "alpha" &&
+      !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
+    ) {
+      await updater.setChannel?.("stable");
+      return false;
+    }
+    let targetVersion: string | undefined;
+    if (channelState.channel === "stable") {
+      const selection = await resolveFreshStableDesktopUpdate({
+        currentVersion: channelState.currentVersion,
+        refreshDesktopConfig: async () => desktopConfig,
+      });
+      if (selection?.kind !== "update") return false;
+      targetVersion = selection.targetVersion;
+    }
 
-  const update = await updater.check(channelState.channel, targetVersion);
-  if (!update.available || update.reason) return false;
-  if (
-    channelState.channel === "alpha" &&
-    update.latestVersion &&
-    !(await isAlphaUpdateAllowed(
-      update.latestVersion,
-      desktopConfig,
-      channelState.currentVersion,
-    ))
-  ) {
-    return false;
-  }
+    const update = await updater.check(channelState.channel, targetVersion);
+    if (update.reason) {
+      if (update.reason !== "unavailable") updateAnalytics.failed(currentVersion, "check");
+      return false;
+    }
+    if (!update.available) return false;
+    if (
+      channelState.channel === "alpha" &&
+      update.latestVersion &&
+      !(await isAlphaUpdateAllowed(
+        update.latestVersion,
+        desktopConfig,
+        channelState.currentVersion,
+      ))
+    ) {
+      return false;
+    }
 
-  const download = await updater.download();
-  return download.ok;
+    updateAnalytics.offered(currentVersion, update.latestVersion ?? undefined);
+    action = "download";
+    const download = await updater.download();
+    if (!download.ok) updateAnalytics.failed(currentVersion, "download");
+    return download.ok;
+  } catch (error) {
+    updateAnalytics.failed(currentVersion, action);
+    throw error;
+  }
 }
 
 function subscribeToDenSettings(onStoreChange: () => void) {
@@ -381,6 +401,8 @@ function markProvidersSeen(providers: ReadonlyArray<{ id: string }>) {
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
   const { authToken, denClient, orgId, settings } = useDenClient();
+  // The organization this visit started in; finishing in another one is a switch.
+  const [startingOrgId] = useState(orgId);
   const { markRouteReady } = useBootState();
   const prepared = usePreparedBootstrap();
   const initialSelectionState = initialOrgOnboardingSelectionState();
@@ -403,8 +425,10 @@ export function OrgOnboardingPage() {
     : undefined;
 
   useEffect(() => {
+    setOrgOnboardingOnScreen(true);
     window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: true } }));
     return () => {
+      setOrgOnboardingOnScreen(false);
       window.dispatchEvent(new CustomEvent(orgOnboardingVisibilityEvent, { detail: { visible: false } }));
     };
   }, []);
@@ -436,6 +460,9 @@ export function OrgOnboardingPage() {
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
     refetchOnMount: "always",
+    // A request that timed out while the app was busy starting recovers by
+    // itself; Retry stays on screen meanwhile.
+    refetchInterval: (query) => (query.state.status === "error" ? 10_000 : false),
     queryFn: () => denClient.listOrgs(),
   });
   const orgs = data?.orgs ?? [];
@@ -464,11 +491,15 @@ export function OrgOnboardingPage() {
     void selectDenActiveOrganization(autoSelectOrg, settings)
       .then(() => {
         if (cancelled) return;
+        captureOnboardingEvent("onboarding_organization_selected", { choice: "automatic" });
         setAutoContinueResources(true);
         setHasSelectedOrganization(true);
       })
       .catch(() => {
-        if (!cancelled) setAutoSelectFailedOrgId(autoSelectOrg.id);
+        if (!cancelled) {
+          captureOnboardingEvent("onboarding_organization_failed", { reason: "selection_failed" });
+          setAutoSelectFailedOrgId(autoSelectOrg.id);
+        }
       })
       .finally(() => {
         if (autoSelectingOrgIdRef.current === autoSelectOrg.id) {
@@ -573,11 +604,15 @@ export function OrgOnboardingPage() {
   return (
     <ResourceSelectionPage
       autoContinue={postListStep.autoContinue}
+      previousOrgId={startingOrgId}
     />
   );
 }
 
-export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
+export function ResourceSelectionPage({ autoContinue = false, previousOrgId = "" }: {
+  autoContinue?: boolean;
+  previousOrgId?: string;
+}) {
   const navigate = useNavigate();
   const platform = usePlatform();
   const { markRouteReady } = useBootState();
@@ -633,7 +668,10 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     }),
   });
 
+  const resourcesRef = useOnboardingStep("resources", Boolean(authToken && orgId && !loading && !error && !autoContinue));
+
   const finishOnboarding = useCallback((optionsArg?: { requestReload?: boolean }) => {
+    captureOnboardingEvent("onboarding_resources_completed", { choice: autoContinue ? "automatic" : "manual", model_selected: Boolean(selectedDefault) });
     // If user picked a default model, write it
     if (selectedDefault) {
       writeStoredDefaultModel({
@@ -652,8 +690,12 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    navigate("/session", { replace: true });
-  }, [gatewayProviders, navigate, providers, selectedDefault]);
+    // A sign-in started from a conversation returns there.
+    if (!completeSignInReturn(navigate)) navigate("/session", { replace: true });
+    // Stores and caches across the app still hold the previous organization's
+    // providers, skills and connections. Start over at the route above.
+    if (previousOrgId && previousOrgId !== orgId) window.location.reload();
+  }, [autoContinue, gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
 
   const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
@@ -721,8 +763,17 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
     window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
     if (brandingRestart.updateReady) {
-      const result = await onboardingUpdaterBridge()?.installAndRestart?.();
-      if (result?.ok) return;
+      updateAnalytics.installing();
+      try {
+        const result = await onboardingUpdaterBridge()?.installAndRestart?.();
+        if (result?.ok) return;
+        updateAnalytics.cancelInstall();
+        updateAnalytics.failed(null, "install");
+      } catch (error) {
+        updateAnalytics.cancelInstall();
+        updateAnalytics.failed(null, "install");
+        throw error;
+      }
     }
     await relaunchDesktopApp();
   }, [brandingRestart, orgId]);
@@ -833,7 +884,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   }
 
   return (
-    <Page>
+    <Page ref={resourcesRef}>
       <PageBackground />
       <PageTitlebarRegion />
 
@@ -1179,15 +1230,20 @@ function OrganizationSelectionPage({
   onContinue,
   onCancel,
 }: OrganizationSelectionPageProps) {
+  const organizationRef = useOnboardingStep("organization");
   const { settings } = useDenClient();
   const [selected, setSelected] = useState(defaultOrganization);
   const { error, isPending, mutate } = useMutation({
     mutationFn: (nextOrg: DenOrgSummary) => selectDenActiveOrganization(nextOrg, settings),
-    onSuccess: () => onContinue(),
+    onSuccess: () => {
+      captureOnboardingEvent("onboarding_organization_selected", { choice: "manual" });
+      onContinue();
+    },
+    onError: () => captureOnboardingEvent("onboarding_organization_failed", { reason: "selection_failed" }),
   });
 
   return (
-    <Page>
+    <Page ref={organizationRef}>
       <PageBackground />
       <PageTitlebarRegion />
       <PageContainer>

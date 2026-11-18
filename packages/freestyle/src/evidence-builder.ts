@@ -9,9 +9,10 @@ import { digest, sourceTree, dependencyFingerprint, ensureLayer, type SourceEntr
  * runtime input: changing it rebuilds the world. Keep this list conservative;
  * a missing exclusion only costs a rebuild, a wrong one reuses stale code.
  * Controller files that do enter the VM are digested separately. Shared with
- * the Daytona builder, so both providers rebuild for the same changes.
+ * the Daytona builder, so both providers rebuild for the same changes. The
+ * UI-guardrail checker/baseline run only in CI, never inside the guest runtime.
  */
-const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|packages\/daytona-evidence\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:prove|prepare|publish|verify|soak)-[^/]+$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
+const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|packages\/daytona-evidence\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:(?:prove|prepare|publish|verify|soak)-[^/]+|check-ui-guardrails(?:\.test)?\.mjs|ui-guardrails-baseline\.json)$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
 
 /** Bump the version when the template layout changes; cleanup reclaims older ones. */
 export const EVIDENCE_TEMPLATE_PREFIX = "ow-evidence-web-v3-";
@@ -163,7 +164,6 @@ printf %s ${sha} > /opt/openwork-preview/built-from-sha
 ${EVIDENCE_DEPENDENCIES_RECIPE}
 pnpm --filter @openwork-ee/den-api run build:workspace-dependencies
 pnpm --filter openwork-server build
-pnpm --filter @openwork/sdk build
 systemctl daemon-reload
 systemctl start openwork-evidence
 for attempt in $(seq 1 480); do

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
 import type { DenOrgContext } from "../../_lib/den-org";
-import { getLibraryConnectorRoute, getLibraryPluginRoute, getLibraryRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getLibraryPluginRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type AccessDraft,
@@ -63,8 +63,8 @@ function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft,
       </section>
       {error ? <p className="text-[13px] text-red-600">{error}</p> : null}
       <StepFooter note={shareConsequence(draft, orgContext, ownerId)}>
-        <LinkButton href={back.href}>Cancel</LinkButton>
-        <DenButton loading={saving} disabled={unchanged} onClick={onSave}>
+        <LinkButton size="sm" href={back.href}>Cancel</LinkButton>
+        <DenButton size="sm" loading={saving} disabled={unchanged} onClick={onSave}>
           {count > 0 ? `Share with ${peopleLabel(count)}` : "Save"}
         </DenButton>
       </StepFooter>
@@ -128,7 +128,8 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
         description: sharedToastDescription(draft, orgContext, orgContext.currentMember.id),
         action: { label: "Undo", onClick: () => saveAccess(connectionId, previous) },
       });
-      router.push(getLibraryRoute(orgSlug));
+      // Back to the item that was shared, where "Who can use it" shows the change.
+      router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");
       setSaving(false);
@@ -198,7 +199,8 @@ export function SharePluginScreen({ pluginId }: { pluginId: string }) {
           },
         },
       });
-      router.push(getLibraryRoute(orgSlug));
+      // Back to the item that was shared, where "Who can use it" shows the change.
+      router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");
       setSaving(false);

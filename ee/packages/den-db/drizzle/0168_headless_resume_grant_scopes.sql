@@ -1,0 +1,1 @@
+ALTER TABLE `headless_resume_grant` ADD `scopes` json;

@@ -18,6 +18,7 @@ type ResolveDashboardMcpAppOptions<TEndpoint extends McpAppResolutionEndpoint> =
   launch?: OpenworkMcpAppLaunchReference
   isActive?: (endpoint: TEndpoint) => boolean
   wait?: (delayMs: number) => Promise<void>
+  signal?: AbortSignal
 }
 
 /** Resolve the exact saved app before sending its arguments or launch approval. */
@@ -28,6 +29,7 @@ export async function resolveDashboardMcpApp<TEndpoint extends McpAppResolutionE
   launch,
   isActive = () => true,
   wait = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+  signal,
 }: ResolveDashboardMcpAppOptions<TEndpoint>): Promise<{ endpoint: TEndpoint; app: OpenworkMcpAppResource } | null> {
   let attemptIndex = 0
   let pending = endpoints
@@ -40,7 +42,7 @@ export async function resolveDashboardMcpApp<TEndpoint extends McpAppResolutionE
       try {
         // Discovery needs the binding, never the saved tool input or approval.
         const reference = launch ? { ...launch, arguments: {} } : undefined
-        const { app } = await timeMcpApp("dashboard.discovery-resolve", () => endpoint.client.resolveMcpApp(endpoint.workspaceId, projectedToolName, reference, { sessionId: null, readOnly: false }))
+        const { app } = await timeMcpApp("dashboard.discovery-resolve", () => endpoint.client.resolveMcpApp(endpoint.workspaceId, projectedToolName, reference, { sessionId: null, readOnly: false }, { signal }))
         if (isActive(endpoint) && app && app.serverName === expected.serverName
           && app.toolName === expected.toolName && app.resourceUri === expected.resourceUri) return { endpoint, app }
         if (app?.launchId) await endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined)

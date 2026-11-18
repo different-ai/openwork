@@ -1,8 +1,14 @@
+import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudComputerBridge } from "./cloud-computer.js";
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { createFileSendApprovals, markFileSendApproved, type FileSendApprovals } from "./file-send-approval.js";
+import { runtimeStorageDir } from "./runtime-db.js";
+import { readHostResponse } from "./host-response.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
+import { enterEngineMutation, withEngineSwitchFence } from "./engine-switch-fence.js";
+import { originalHistoryUsesV2 } from "./opencode-history.js";
 import { beginOpencodeStop, opencodeSessionIsStopping } from "./opencode-stop-fence.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
@@ -12,6 +18,7 @@ import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
 import { ApprovalService } from "./approvals.js";
+import { attachApprovedDriveUpload, createDriveUploadPreflight, type PreparedDriveUploadFile } from "./extensions/approved-drive-upload.js";
 import {
   BoundedSseFrameBuffer,
   EnginePool,
@@ -41,7 +48,13 @@ import { warmEngineFolder, type EngineFolderWarmupResult } from "./engine-folder
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
-import { buildOpenWorkV2Instructions, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
+import {
+  buildOpenWorkV2Instructions,
+  ENGINE_IGNORES_CONFIGURED_INSTRUCTIONS,
+  OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY,
+  OPENWORK_V2_INSTRUCTION_KEY,
+  readConfiguredInstructions,
+} from "./opencode-v2-instructions.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -54,15 +67,18 @@ import {
 } from "./mcp-app-host.js";
 import { CONNECT_MCP_SERVER_NAME_PREFIX } from "./connect-mcp-server-catalog.js";
 import {
-  buildMcpAppSandboxCsp,
   MCP_APP_SANDBOX_PROXY_CSS,
   MCP_APP_SANDBOX_PROXY_HTML,
   MCP_APP_SANDBOX_PROXY_SCRIPT,
-  parseMcpAppSandboxCsp,
+  mcpAppSandboxPageHeaders,
 } from "./mcp-app-sandbox.js";
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { unexpectedApiError, watchDiskSpace } from "./disk-space.js";
+import { createClaudeCodeLogin } from "./claude-code-login.js";
+import { inheritedEngineEnv } from "./managed-opencode-v2.js";
+import { opencodeConfigApiError } from "./opencode-config-error.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
@@ -77,7 +93,7 @@ import {
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { defaultWorkspaceOpenworkConfig, ensureWorkspaceFiles, readRawOpencodeConfig } from "./workspace-init.js";
-import { sanitizeCommandName, validateMcpName, validateUserMcpName } from "./validators.js";
+import { sanitizeCommandName, validateMcpName, validateUserMcpName, validateUserOpencodeConfigText, validateUserProviderUpdate } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { resetManagedProviderAuthCache, syncManagedProviderAuth } from "./managed-provider-auth.js";
 import { EnvService } from "./env-file.js";
@@ -99,13 +115,19 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
+import { withSseHeartbeat } from "./sse-heartbeat.js";
+import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
 import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
+import { createNativeClaudeImportEngine, registerClaudeImportRoutes } from "./routes/claude-import.js";
+import { registerOpencodeConnectionsImportRoutes } from "./routes/opencode-connections-import.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -158,10 +180,13 @@ import {
   writeOpenworkWorkspaceConfig,
 } from "./openwork-workspace-config-store.js";
 import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
-import { findManagedEngineWorkspace, managedEngineRootWorkspace } from "./workspaces.js";
+import { findManagedEngineWorkspace, hasExternalOpencode, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
-import { createEngineV2Preview, type EngineV2Preview } from "./engine-v2-preview.js";
+import { shareDeviceProvider } from "./device-provider-share.js";
+import { readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
+import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, type EngineV2Preview } from "./engine-v2-preview.js";
+import { MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, providerConfigFingerprint } from "./provider-config-templates.js";
 import pkg from "../package.json" with { type: "json" };
 import constants from "../../../constants.json" with { type: "json" };
 
@@ -657,6 +682,8 @@ async function assertWorkspaceOwnsProxiedSessionRead(
     if (result.response?.status === 404) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+    const configError = opencodeConfigApiError(result.error, `/session/${encodeURIComponent(sessionId)}`);
+    if (configError) throw configError;
     throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
       ...(result.response ? { status: result.response.status } : {}),
       body: result.error,
@@ -773,7 +800,10 @@ export async function startServer(
   // Callers that spawn a managed engine after binding must complete startup
   // once its primary is registered; ordinary attached servers stay ready.
   options: { deferManagedEngineStartup?: boolean } = {},
-): Promise<ServeResult & { completeManagedEngineStartup: () => Promise<void> }> {
+): Promise<ServeResult & {
+  completeManagedEngineStartup: () => Promise<void>;
+  setEngineForcePolicy: EngineV2Preview["setForcePolicy"];
+}> {
   let managedEngineReady = options.deferManagedEngineStartup !== true;
   let stopped = false;
   let taskRecovery: Awaited<ReturnType<typeof createTaskRecovery>> | undefined;
@@ -784,6 +814,7 @@ export async function startServer(
   const env = new EnvService();
   envServicesByConfig.set(config, env);
   const logger = createServerLogger(config);
+  watchDiskSpace(runtimeStorageDir(config));
   try {
     await reconcileLocalManagedMcpRuntimeEntries(config);
   } catch (error) {
@@ -814,21 +845,33 @@ export async function startServer(
     logger,
   });
   setEngineInstanceReaperForConfig(config, engineInstanceReaper);
-  const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
-    hostReadRequest: async (path, init) => {
-      // Internal dispatch retains the host credential in this process. The
-      // native plugin receives only the context bridge's restricted token.
-      const response = await serverOptions.fetch(new Request(`http://127.0.0.1${path}`, {
-        ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
-      }));
-      const payload: unknown = await response.json();
-      if (!response.ok) throw new Error(`OpenWork read failed (${response.status})`);
-      return payload;
-    },
+  const fileSendApprovals = createFileSendApprovals({
+    policy: () => managedDesktopPolicy(config).fileSendPolicy(),
+    storageDir: join(runtimeStorageDir(config), "file-send-grants"),
+  });
+  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile, approvedInChat?: boolean) => {
+    // Internal dispatch retains credentials and exact-file capabilities in this
+    // process. Neither is serialized to the native plugin or accepted over HTTP.
+    const request = new Request(`http://127.0.0.1${path}`, {
+      ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
+    });
+    if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
+    if (approvedInChat) markFileSendApproved(request);
+    const response = await serverOptions.fetch(request);
+    return readHostResponse(response);
+  };
+  const engineV2Preview: EngineV2Preview = createEngineV2Preview({ config, env, deferStart: true,
+    autoUpgradeIdle: async () => (await describeV1EngineActivity(config)).verdict === "idle",
+    autoUpgradeError: (error) => logger.log("warn", "Automatic engine upgrade failed; keeping v1", { error }),
+    providerSession: () => cloudProviderSync.providerBridgeSession(),
+    hostReadRequest,
+    prepareDriveUpload: createDriveUploadPreflight(config, hostReadRequest),
+    fileSends: { approvals: fileSendApprovals, approvedRequest: (path, init) => hostReadRequest(path, init, undefined, true) },
   });
   const cloudProviderSync = new CloudProviderSync({
     config,
     env,
+    liveProviderSync: async () => engineV2Preview.status().liveProviderSync,
     reloadEngine: async () => {
       if (engineV2Preview.status().chatRouting) {
         await engineV2Preview.refreshProviders();
@@ -848,6 +891,9 @@ export async function startServer(
   });
   const anonymousInference = new AnonymousInferenceService(config, logger);
   anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };
+  managedDesktopPolicy(config).onV2OnlyChange = (enabled) => {
+    void engineV2Preview.setV2Only(enabled).catch(() => undefined);
+  };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -857,6 +903,7 @@ export async function startServer(
     // workspace has no engine to reload.
     if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending();
   };
+  const stopCloudComputer = await startCloudComputerBridge(config);
   const routes = createRoutes(
     config,
     approvals,
@@ -869,6 +916,7 @@ export async function startServer(
     engineV2Preview,
     () => managedEngineReady,
     anonymousInference,
+    fileSendApprovals,
   );
 
   const serverOptions: {
@@ -903,8 +951,8 @@ export async function startServer(
         errorCause = error instanceof Error ? error.message : String(error);
       };
 
-      const finalize = (response: Response) => {
-        const wrapped = withCors(response, request, config);
+      const finalize = (response: Response, options: { cors?: boolean } = {}) => {
+        const wrapped = options.cors === false ? response : withCors(response, request, config);
         if (config.logRequests) {
             logRequest({
               logger,
@@ -951,11 +999,26 @@ export async function startServer(
           const response = await sendWithOwnershipProof(ownership,
             () => taskRecovery ? taskRecovery.forward(workspace, "v1", mount.restPath, request, send) : send());
           if (response.ok && engineV2Preview.status().chatRouting
-            && ["PUT", "DELETE"].includes(request.method)
-            && /^\/opencode\/auth\/[^/]+$/.test(mount.restPath)) {
-            // The ordinary local-provider form writes v1's credential store.
-            // Join v2 catalog reconciliation before reporting that save complete.
+            && ((["PUT", "DELETE"].includes(request.method) && /^\/opencode\/auth\/[^/]+$/.test(mount.restPath))
+              || (request.method === "POST" && /^\/opencode\/provider\/[^/]+\/oauth\/callback$/.test(mount.restPath)))) {
+            // The ordinary local-provider form and provider sign-in write v1's
+            // credential store. Join v2 catalog reconciliation before reporting
+            // that save complete, so the engine's status already explains it.
             await engineV2Preview.refreshProviders();
+            // Also rebuild v1's provider state for this folder:
+            // AI Providers lists providers from v1, which caches them per
+            // folder and otherwise keeps the old list until a restart.
+            // Disposed in place, not through the engine pool: the pool skips a
+            // folder already reloaded onto the same config file, and saved
+            // credentials are not part of that file, so every save after the
+            // first was skipped. Never spawns an engine, and never while v1 is
+            // running work.
+            if (!await engineHasActiveSessions(config, workspace)) {
+              await reloadOpencodeEngineInPlace(config, workspace, engineMcpServerState, { awaitPostRefreshSync: false })
+                .catch((error) => logger.log("warn", "Could not refresh OpenCode v1 providers after a provider change.", {
+                  error: error instanceof Error ? error.message : String(error),
+                }));
+            }
           }
           return finalizeProxyResponse(response);
         } catch (error) {
@@ -968,7 +1031,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -983,17 +1046,27 @@ export async function startServer(
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
+          const currentTaskAccess = isV2CurrentTaskRequest(request.method, mount.restPath);
+          if (!currentTaskAccess) await engineV2Preview.ensureProjectIsolation();
+          if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
+            await engineV2Preview.assertSandboxReady(workspace.path);
+          }
+          // Isolation may have replaced the process and its credentials.
           const connection = engineV2Preview.connection();
           if (!connection) {
             return finalize(jsonResponse({ error: "engine_v2_preview_not_running" }, 503));
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
+          // Reads can initialize a location and import its project plugins.
+          // Enforce process isolation before warmups or any native forwarding,
+          // not merely after a prompt's provider preparation has already run.
+          if (!currentTaskAccess) await engineV2Preview.assertProjectConfigReady();
           // As in v1, requests go straight to the engine: OpenWork upkeep
           // (provider mirroring, MCP registration) runs when configuration
           // changes, and never holds reads. A folder's upkeep starts in the
           // background the first time it is seen.
-          engineV2Preview.warmWorkspace(workspace.id, workspace.path);
+          if (!currentTaskAccess) engineV2Preview.warmWorkspace(workspace.id, workspace.path);
           if (needsV2ProviderCatalog(request.method, mount.restPath)) {
             // For ~200 ms a folder the engine has not loaded omits configured
             // providers from its catalog; v1's engine waits for its own folder
@@ -1007,7 +1080,10 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
-            describeUncopiedChat: (sessionId) => engineV2Preview.describeUncopiedChat(sessionId),
+            resolveConnection: () => engineV2Preview.connection(),
+            currentTaskAccess,
+            assertAdmission: currentTaskAccess ? undefined : () => engineV2Preview.assertProjectConfigReady(),
+            logWarning: (message, attributes) => logger.log("warn", message, attributes),
             // A turn uses the connections that are ready; MCP upkeep runs in
             // the background and the engine adds tools as connections finish.
             prepareExecution: async (directory) => {
@@ -1032,11 +1108,18 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
       };
+
+      if (!isAllowedHost(request, config)) {
+        const apiError = new ApiError(403, "host_not_allowed",
+          "This server does not answer to this host name. Add it with --allowed-hosts or OPENWORK_ALLOWED_HOSTS.");
+        recordApiError(apiError);
+        return finalize(jsonResponse(formatError(apiError), apiError.status));
+      }
 
       if (request.method === "OPTIONS") {
         return finalize(new Response(null, { status: 204 }));
@@ -1103,7 +1186,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1112,7 +1195,8 @@ export async function startServer(
       const route = matchRoute(routes, request.method, url.pathname);
       if (!route) {
         const staticUiResponse = await serveStaticUi(request, config);
-        if (staticUiResponse) return finalize(staticUiResponse);
+        // The web UI loads from its own origin; other sites never read its pages.
+        if (staticUiResponse) return finalize(staticUiResponse, { cors: false });
         errorMessage = "not_found";
         return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
       }
@@ -1150,7 +1234,7 @@ export async function startServer(
           ? error
           : requestCanceled
             ? new ApiError(499, "request_aborted", "Request was canceled")
-            : new ApiError(500, "internal_error", "Unexpected server error");
+            : unexpectedApiError(error);
         recordApiError(apiError);
         const response = jsonResponse(formatError(apiError), apiError.status);
         const isAgentDiagnosticsRequest =
@@ -1191,6 +1275,7 @@ export async function startServer(
     anonymousInference.stop();
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
+    await stopCloudComputer();
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
     invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -1263,6 +1348,7 @@ export async function startServer(
 
   return {
     ...server,
+    setEngineForcePolicy: (policy) => engineV2Preview.setForcePolicy(policy),
     completeManagedEngineStartup: async () => {
       if (managedEngineReady) return;
       const pool = enginePoolForConfig(config);
@@ -1312,6 +1398,7 @@ export async function startServer(
       invalidateEngineMcpServerState(config, engineMcpServerState);
       watcherHandle.close();
       reloadBaselineRefreshers.delete(config);
+      await stopCloudComputer();
       await server.stop();
       if (recoveryError) throw recoveryError;
     },
@@ -1357,7 +1444,38 @@ async function resolveV2SessionExecutionDirectory(
   }
 }
 
-export async function proxyOpencodeV2Request(input: {
+function isV2CurrentTaskRequest(method: string, path: string): boolean {
+  const nativePath = decodeURIComponent(path).replace(/^\/opencode2/, "");
+  if (["GET", "HEAD"].includes(method.toUpperCase())) {
+    return /^\/api\/(?:session\/active|experimental\/job)\/?$/.test(nativePath)
+      || /^\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?\/?$/.test(nativePath);
+  }
+  return method.toUpperCase() === "POST" && /^\/api\/session\/ses_[A-Za-z0-9_-]+\/interrupt\/?$/.test(nativePath);
+}
+
+export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpencodeV2Request>[0]) {
+  const current = () => {
+    if (!input.resolveConnection) return input;
+    const connection = input.resolveConnection();
+    if (!connection) throw new ApiError(503, "engine_v2_preview_not_running", "The engine is restarting. Retry this request.");
+    return { ...input, connection };
+  };
+  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) {
+    await input.assertAdmission?.();
+    return forwardOpencodeV2Request(current());
+  }
+  const release = await enterEngineMutation(input.config, "v2", input.request.signal);
+  try {
+    // The setting may have changed while this request waited behind a restart.
+    await input.assertAdmission?.();
+    return await forwardOpencodeV2Request(current());
+  } finally { await release(); }
+}
+
+/** Chats resolved at once when a workspace lists its v2 sessions. */
+const SESSION_LIST_HOME_CONCURRENCY = 8;
+
+async function forwardOpencodeV2Request(input: {
   actor: Actor;
   config: ServerConfig;
   request: Request;
@@ -1365,15 +1483,23 @@ export async function proxyOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
+  /** Re-read after a queued mutation crosses a same-engine process restart. */
+  resolveConnection?: () => { url: string; username: string; password: string } | undefined;
+  /** Activity/history and Stop use only native global APIs, never a caller's location. */
+  currentTaskAccess?: boolean;
+  /** Recheck desired/process policy after entering the engine mutation fence. */
+  assertAdmission?: () => Promise<void>;
   /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
   prepareExecution?: (directory: string) => Promise<void>;
   /** Restart one connection that is not healthy (v1's `POST /mcp/:name/connect`). */
   reconnectMcp?: (directory: string, name: string) => Promise<void>;
   /** Why v2 has no such chat when it is a v1 chat not copied yet. */
-  describeUncopiedChat?: (sessionId: string) => Promise<string | null>;
   recoverySignal?: AbortSignal;
+  /** Reports a chat left out of a list because the engine could not read it. */
+  logWarning?: (message: string, attributes: Record<string, string | null>) => void;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const currentTaskAccess = input.currentTaskAccess === true && isV2CurrentTaskRequest(method, input.proxyPath);
   const readRequest = method === "GET" || method === "HEAD";
   const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
@@ -1383,6 +1509,20 @@ export async function proxyOpencodeV2Request(input: {
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
   const forwardedPath = withoutPrefix || "/";
+  const decodedPath = decodeURIComponent(forwardedPath);
+  // Native credential reads include secret values. The renderer may remove a
+  // Claude Code connection reference, but never list or write credentials.
+  const credentialDelete = method === "DELETE" ? /^\/api\/credential\/([^/]+)$/.exec(decodedPath) : null;
+  if (/^\/api\/(?:experimental\/)?credential(?:\/|$)/.test(decodedPath) && !credentialDelete) {
+    throw new ApiError(403, "engine_credentials_private", "Provider credentials are private");
+  }
+  if (!readRequest && /^\/api\/integration\/claude-agent(?:\/|$)/.test(decodedPath)) {
+    const body: unknown = await input.request.clone().json().catch(() => null);
+    if (method !== "POST" || decodedPath !== "/api/integration/claude-agent/connect/external"
+      || !isRecord(body) || body.methodID !== "claude-login" || Object.keys(body).length !== 1) {
+      throw new ApiError(400, "invalid_provider_connection", "Use the Claude Code login to connect Claude Agent");
+    }
+  }
   // Runtime provider configuration contains server-owned credentials. The
   // renderer uses the catalog/status APIs; it must not read or mutate this file.
   if (/^\/api\/(?:experimental\/)?config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
@@ -1404,7 +1544,7 @@ export async function proxyOpencodeV2Request(input: {
     for (const key of [...target.searchParams.keys()]) {
       if (key === "location" || key.startsWith("location[")) target.searchParams.delete(key);
     }
-    target.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", input.workspace.path);
   }
 
   const headers = new Headers(input.request.headers);
@@ -1413,6 +1553,7 @@ export async function proxyOpencodeV2Request(input: {
   headers.delete("x-openwork-client-id");
   headers.delete("host");
   headers.delete("origin");
+  headers.delete("transfer-encoding");
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
 
   // Like the v1 proxy: an engine that is down or restarting is an expected
@@ -1429,7 +1570,7 @@ export async function proxyOpencodeV2Request(input: {
 
   const readNative = async (path: string): Promise<unknown> => {
     const url = new URL(path, input.connection.url);
-    url.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) url.searchParams.set("location[directory]", input.workspace.path);
     const result = await engineFetch(url.toString(), {
       headers: { authorization: headers.get("authorization") ?? "" },
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
@@ -1437,6 +1578,16 @@ export async function proxyOpencodeV2Request(input: {
     if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
     return result.json();
   };
+  if (credentialDelete) {
+    // Use the public integration projection, not GET /credential. Other
+    // providers' keys and tokens must not be readable or removable here.
+    const integration = await readNative("/api/integration/claude-agent");
+    const claude = isRecord(integration) && isRecord(integration.data) ? integration.data : null;
+    const connections = claude?.id === "claude-agent" && Array.isArray(claude.connections) ? claude.connections : [];
+    const owned = connections.some((connection) => isRecord(connection) && connection.type === "credential"
+      && connection.method === "external" && connection.id === credentialDelete[1]);
+    if (!owned) throw new ApiError(403, "engine_credentials_private", "Only Claude Code connection references can be removed here");
+  }
   const homes = createV2SessionHomes(input.config, readNative);
   const expectedHome = await homes.canonical(input.workspace.path);
   const sessionMatch = forwardedPath.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/);
@@ -1445,20 +1596,16 @@ export async function proxyOpencodeV2Request(input: {
   // Authorization follows the persistent home, not the agent's mutable CWD.
   // The actual native location still controls execution and tool discovery.
   if (sessionId?.startsWith("ses_")) {
-    const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`).catch(async (error: unknown) => {
-      // A v1 chat v2 has not copied yet: say so instead of a bare "could not be read".
-      const reason = error instanceof ApiError && error.status === 404 ? await input.describeUncopiedChat?.(sessionId) : null;
-      throw reason ? new ApiError(404, "engine_chat_not_copied", reason) : error;
-    });
+    const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`);
     if (await homes.resolve(session) !== expectedHome) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
     executionDirectory = nativeSessionDirectory(session) ?? input.workspace.path;
-    target.searchParams.set("location[directory]", executionDirectory);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", executionDirectory);
   }
 
-  if (method !== "GET" && method !== "HEAD"
-    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
+  if (method !== "GET" && method !== "HEAD" && [OPENWORK_V2_INSTRUCTION_KEY, OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY]
+    .some((key) => decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${key}`))) {
     throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
   }
 
@@ -1475,12 +1622,29 @@ export async function proxyOpencodeV2Request(input: {
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
     // Keep organization skill discovery on demand through Connect. The full
     // catalog can exceed the engine's instruction-entry request limit.
-    const value = buildOpenWorkV2Instructions(connectReady);
-    const instructionUrl = new URL(target);
-    instructionUrl.pathname = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
-    const synced = await engineFetch(instructionUrl.toString(), {
-      method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
-    });
+    // The organization's Prompts arrive with the cloud provider sync.
+    const organizationPrompts = (await readGlobalRuntimeOpencodeConfig(input.config)).managedPrompt;
+    const value = buildOpenWorkV2Instructions(connectReady, organizationPrompts);
+    // The pinned engine never loads the config's `instructions` files, so send
+    // them as their own entry, and clear it once the engine does. Best effort:
+    // a failure leaves the entry as it was and never blocks the turn.
+    const configured = ENGINE_IGNORES_CONFIGURED_INSTRUCTIONS
+      ? await readConfiguredInstructions(input.workspace.path).catch(() => undefined)
+      : null;
+    const entryUrl = (key: string) => {
+      const url = new URL(target);
+      url.pathname = `/api/experimental/session/${encodeURIComponent(sessionId)}/instructions/entries/${key}`;
+      return url.toString();
+    };
+    const [synced] = await Promise.all([
+      engineFetch(entryUrl(OPENWORK_V2_INSTRUCTION_KEY), {
+        method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
+      }),
+      configured !== undefined && engineFetch(entryUrl(OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY), configured === null
+        ? { method: "DELETE", headers: internalHeaders, signal: AbortSignal.timeout(15_000) }
+        : { method: "PUT", headers: internalHeaders, body: JSON.stringify({ value: configured }), signal: AbortSignal.timeout(15_000) })
+        .catch(() => null),
+    ]);
     if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
   }
 
@@ -1614,7 +1778,10 @@ export async function proxyOpencodeV2Request(input: {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
+    // Only this home's events pass the filter, so an idle workspace sends
+    // nothing, and the app reopens a stream that stays silent for 30 seconds.
+    const liveBody = withSseHeartbeat(scopedBody, engineEventStreamHeartbeatIntervalMs());
+    return sanitizeProxyResponse(new Response(liveBody, { status: response.status, headers: responseHeaders }));
   }
   const pendingKind = /^\/api\/form\/?$/.test(forwardedPath) ? "form"
     : /^\/api\/permission\/request\/?$/.test(forwardedPath) ? "permission" : undefined;
@@ -1691,10 +1858,31 @@ export async function proxyOpencodeV2Request(input: {
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;
     const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
     if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
-    const scoped = (await Promise.all(items.map(async (item: unknown) =>
-      await homes.resolve(item) === expectedHome ? homes.project(item) : null,
-    ))).filter((item) => item !== null);
+    // Like the pending lists above: a chat the engine cannot read (deleted while
+    // listing, or history it cannot decode) is left out, never the whole list.
+    // A bounded number at a time, so a large migrated set does not flood the engine.
+    const results: unknown[] = new Array(items.length).fill(null);
+    let nextIndex = 0;
+    const resolveNext = async (): Promise<void> => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++;
+        const item: unknown = items[index];
+        try {
+          results[index] = await homes.resolve(item) === expectedHome ? await homes.project(item) : null;
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          const session = nativeSession(item);
+          input.logWarning?.("Left an unreadable chat out of the v2 session list", {
+            sessionId: typeof session?.id === "string" ? session.id : null,
+            workspaceId: input.workspace.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SESSION_LIST_HOME_CONCURRENCY, items.length) }, resolveNext));
     signal?.throwIfAborted();
+    const scoped = results.filter((item) => item !== null);
     const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
     const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
     const responseHeaders = new Headers(response.headers);
@@ -1706,8 +1894,14 @@ export async function proxyOpencodeV2Request(input: {
     const payload: unknown = await response.json();
     const data = isRecord(payload) && isRecord(payload.data) ? payload.data : {};
     const entries = await Promise.all(Object.entries(data).map(async ([id, status]) => {
-      const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
-      return home === expectedHome ? [id, status] : null;
+      try {
+        const home = await homes.stored(id) ?? await homes.resolve(await readNative(`/api/session/${encodeURIComponent(id)}`));
+        return home === expectedHome ? [id, status] : null;
+      } catch (error) {
+        // One unreadable chat must not hide every other running chat.
+        if (signal?.aborted) throw error;
+        return null;
+      }
     }));
     return jsonResponse({ data: Object.fromEntries(entries.filter(entry => entry !== null)) });
   }
@@ -1801,16 +1995,24 @@ export function createWorkspaceOpencodeClient(
     });
   }
   const directory = resolveOpencodeDirectory(workspace);
-  touchEngineWorkspaceInstance(config, workspace, baseUrl);
   const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
     : directory ? baseFetch : undefined;
 
+  const transport = clientFetch ?? globalThis.fetch;
+  const guardedFetch: typeof fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const policy = managedDesktopPolicy(config);
+    if (await policy.requiresSandbox()) await policy.assertHostExecution();
+    // Even legacy SDK reads initialize a project. Do not register a reaper
+    // location (which may later probe it) until host authority was checked.
+    touchEngineWorkspaceInstance(config, workspace, baseUrl);
+    return transport(input, init);
+  }, { preconnect: transport.preconnect });
   return createOpencodeClient({
     baseUrl,
     ...(directory ? { directory } : {}),
-    ...(clientFetch ? { fetch: clientFetch } : {}),
+    fetch: guardedFetch,
     ...(connection.authHeader ? { headers: { Authorization: connection.authHeader } } : {}),
   });
 }
@@ -1819,6 +2021,7 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
   if (result.data != null) {
     return result.data;
   }
+  if (result.error instanceof ApiError) throw result.error;
   if (result.error === undefined) {
     throw new ApiError(502, "opencode_empty_response", "OpenCode returned an empty response", { path });
   }
@@ -1828,6 +2031,8 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
       path,
     });
   }
+  const configError = opencodeConfigApiError(result.error, path);
+  if (configError) throw configError;
   throw new ApiError(502, "opencode_request_failed", "OpenCode request failed", {
     status: result.response.status,
     body: result.error,
@@ -1843,7 +2048,25 @@ async function validateEngineRequestBody(request: Request): Promise<void> {
   catch { throw new ApiError(400, "invalid_request", "Expected a JSON request body."); }
 }
 
-export async function proxyOpencodeRequest(input: {
+export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpencodeRequest>[0]) {
+  // All v1 mounts (including background/recovery sends) converge here. Check
+  // before forwarding or acquiring a mutation lease; local engine config cannot
+  // weaken the verified organization policy. v2 keeps its native/plugin checks.
+  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname);
+  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeRequest(input);
+  const release = await enterEngineMutation(input.config, "v1", input.request.signal);
+  try {
+    const path = decodeURIComponent(input.proxyPath ?? input.url.pathname);
+    const chatMutation = /\/(?:session|experimental\/session)(?:\/|$)/.test(path)
+      && !/\/session\/[^/]+\/abort\/?$/.test(path);
+    if (chatMutation && !hasExternalOpencode(input.config) && await originalHistoryUsesV2(input.config)) {
+      throw new ApiError(409, "engine_v1_history_adopted", "This history is owned by OpenCode v2. Continue the chat on v2 so new messages stay readable.");
+    }
+    return await forwardOpencodeRequest(input);
+  } finally { await release(); }
+}
+
+async function forwardOpencodeRequest(input: {
   config: ServerConfig;
   request: Request;
   url: URL;
@@ -1879,6 +2102,7 @@ export async function proxyOpencodeRequest(input: {
   headers.delete("x-openwork-client-id");
   headers.delete("host");
   headers.delete("origin");
+  headers.delete("transfer-encoding");
 
   const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
   let search = input.url.search;
@@ -2473,10 +2697,9 @@ function resolveInboxMaxBytes(): number {
   if (Number.isFinite(parsed) && parsed > 0) {
     return Math.trunc(parsed);
   }
-  // Generous default: the composer no longer caps attachment sizes, so large
-  // uploads should be bounded here (memory: formData buffers the body) and by
-  // downstream provider/tool limits rather than an arbitrary small cap.
-  return 250_000_000;
+  // The composer does not cap attachment sizes and uploads stream to disk, so
+  // this only keeps one file from filling a worker's disk.
+  return 10_000_000_000;
 }
 
 // Dev-only log sink target. When OPENWORK_DEV_LOG_FILE is set to a path, the
@@ -2490,6 +2713,7 @@ function resolveDevLogPath(): string | null {
 
 function resolveBrowserProvider(): Capabilities["toolProviders"]["browser"] {
   const raw = (process.env.OPENWORK_BROWSER_PROVIDER ?? "").trim().toLowerCase();
+  if (raw === "sandbox-interactive") return { enabled: true, placement: "in-sandbox", mode: "interactive" };
   if (raw === "sandbox-headless") {
     return { enabled: true, placement: "in-sandbox", mode: "headless" };
   }
@@ -2668,8 +2892,11 @@ function createRoutes(
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
   anonymousInference: AnonymousInferenceService,
+  fileSendApprovals: FileSendApprovals,
 ): Route[] {
   const routes: Route[] = [];
+  // The login runs with what the engine's own `claude` gets: OS paths, never this server's credentials.
+  const claudeCodeLogin = createClaudeCodeLogin({ env: inheritedEngineEnv(undefined) });
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
     jsonResponse(await anonymousInference.status()));
   for (const action of ["preflight", "refresh"]) {
@@ -2724,6 +2951,15 @@ function createRoutes(
     const preferences = await anonymousInference.setEnabled(body.enabled);
     const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
     return jsonResponse({ ...preferences, refresh });
+  });
+  // The app's analytics setting. Free Auto sends its analytics journey only after the app reports it is on.
+  // Not gated on writability: turning analytics off must always take effect.
+  addRoute(routes, "PUT", "/anonymous-inference/analytics", "host-token", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.enabled !== "boolean" || Object.keys(body).some((key) => key !== "enabled")) {
+      throw new ApiError(400, "invalid_payload", "Only enabled is accepted.");
+    }
+    return privateProviderResponse(await anonymousInference.setAnalyticsEnabled(body.enabled));
   });
   const nativeEngineForWorkspace = createNativeCloudMcpResolver(engineV2Preview);
   registerCoreRoutes({
@@ -2793,6 +3029,55 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerClaudeImportRoutes({
+    routes,
+    config,
+    engineForWorkspace: () => createNativeClaudeImportEngine(engineV2Preview),
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerOpencodeConnectionsImportRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    requireApproval: (ctx, workspace, names) => requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.add",
+      summary: `Import ${names.length} MCP${names.length === 1 ? "" : "s"} from OpenCode`,
+      paths: [openworkConfigPath(workspace.path)],
+    }),
+    // The same steps as POST /workspace/:id/mcp, so an imported connection is
+    // validated, policy-checked and registered exactly like a hand-added one.
+    targetFor: (ctx, workspace) => ({
+      existingNames: async () => new Set(Object.keys(runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspace.id)))),
+      checkPolicy: (name) => managedDesktopPolicy(config).assertAgentPermission("mcp", name),
+      add: async (name, connection) => {
+        validateUserMcpName(name);
+        const result = await addMcp(config, workspace.id, name, connection);
+        await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
+        await recordAudit(workspace.path, {
+          id: shortId(),
+          workspaceId: workspace.id,
+          actor: ctx.actor ?? { type: "remote" },
+          action: "mcp.add",
+          target: openworkConfigPath(workspace.path),
+          summary: `Imported MCP ${name} from OpenCode`,
+          timestamp: Date.now(),
+        });
+        await engineV2Preview.settleWorkspaceMcp(workspace.id, workspace.path, name);
+        emitReloadEvent(ctx.reloadEvents, workspace, "mcp", { type: "mcp", name, action: result.action });
+      },
+    }),
   });
 
   registerCloudMcpRoutes({
@@ -3109,6 +3394,34 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+  });
+  addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const parsed = sandboxSettingsSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "allowHostExecution must be a boolean");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
+    });
+    // Save intent before checking activity. An active task keeps its process;
+    // new work must pass the desired policy and the process-isolation boundary.
+    await writeSandboxSettings(config, parsed.data);
+    await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
+    await recordAudit(workspace.path, {
+      id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
+      action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
+    });
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = mergeOpencodeConfigs(
@@ -3228,6 +3541,25 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  // Host only: Claude Code opens its browser sign-in on the computer this
+  // server runs on, so a remote viewer can never start one here.
+  const claudeCodeLoginStatus = (state: ReturnType<typeof claudeCodeLogin.state>) => {
+    const response = jsonResponse({ ...state, installed: claudeCodeLogin.installed() });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
+  addRoute(routes, "GET", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.state()));
+  addRoute(routes, "POST", "/claude-code/sign-in", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || (body.force !== undefined && typeof body.force !== "boolean") || Object.keys(body).some((key) => key !== "force")) {
+      throw new ApiError(400, "invalid_payload", "Only force is accepted");
+    }
+    await managedDesktopPolicy(config).assert("provider", { providerID: "claude-agent" });
+    return claudeCodeLoginStatus(claudeCodeLogin.start({ force: body.force === true }));
+  });
+  addRoute(routes, "DELETE", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.cancel()));
+
   // The host that owns this instance's lifecycle asks before stopping or
   // restarting it. Counts only; no session content leaves the instance.
   addRoute(routes, "GET", "/runtime/activity", "host-token", async () => {
@@ -3241,7 +3573,10 @@ function createRoutes(
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
     anonymousInference.setMemberSession(session);
-    const suspended = cloudProviderSync.suspend();
+    // Repeated identity delivery for the sign-in already active must not pause
+    // provider sync or revoke the provider bridge: that cuts every live
+    // Gateway reply (ENG-994). A different sign-in still revokes synchronously.
+    const suspended = cloudProviderSync.suspendForSession(session);
     try {
       await managedDesktopPolicy(config).setSession(session);
     } finally {
@@ -3255,7 +3590,13 @@ function createRoutes(
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
     anonymousInference.setMemberSession(session);
-    await managedDesktopPolicy(config).setSession(session);
+    // Revoke the old bridge identity synchronously, before policy/network work.
+    const suspended = cloudProviderSync.suspendForSession(session);
+    try {
+      await managedDesktopPolicy(config).setSession(session);
+    } finally {
+      await suspended;
+    }
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
   });
@@ -3263,10 +3604,24 @@ function createRoutes(
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
     anonymousInference.setMemberSession(null);
-    await managedDesktopPolicy(config).clearSession();
-    await cloudProviderSync.clearSession();
+    const clearing = cloudProviderSync.clearSession();
+    try {
+      await managedDesktopPolicy(config).clearSession();
+    } finally {
+      await clearing;
+    }
+    // Signed out, no organization rollout applies. The engine selection stays.
+    await engineV2Preview.setV2Only(false);
     await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
+  });
+
+  addRoute(routes, "POST", "/cloud-provider-sync/gateway/refresh", "host-token", async () => {
+    ensureWritable(config);
+    // Wake the native inventory owner, never the legacy config writer. This is
+    // an invalidation only; the caller still verifies arrival in the catalog.
+    engineV2Preview.refreshGatewayInventory();
+    return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {
@@ -3294,6 +3649,38 @@ function createRoutes(
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
   });
 
+  // Device provider sharing: the person confirmed in the app; the key
+  // goes from this computer's credential store straight to the Den it is
+  // signed in to, never through the app's window (device-provider-share.ts).
+  addRoute(routes, "POST", "/cloud-provider-sync/device-providers/:id/share", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const origin = ctx.request.headers.get("origin");
+    if (origin && origin !== new URL(ctx.request.url).origin && !config.corsOrigins.includes("*") && !config.corsOrigins.includes(origin)) {
+      throw new ApiError(403, "invalid_origin", "This origin cannot share a provider");
+    }
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") {
+      throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.orgId !== "string" || (body.token !== undefined && (typeof body.token !== "string" || !body.token.trim())) || Object.keys(body).some((key) => key !== "orgId" && key !== "token")) {
+      throw new ApiError(400, "invalid_payload", "Only the active orgId and an optional freshly verified token are accepted");
+    }
+    const session = cloudProviderSync.currentSession();
+    if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
+    if (session.orgId !== body.orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
+    return jsonResponse(await shareDeviceProvider({
+      session,
+      // The share service verifies this belongs to the same account, before reading a key.
+      verifiedToken: typeof body.token === "string" ? body.token.trim() : undefined,
+      providerId: ctx.params.id,
+      isCurrentSession: () => {
+        const current = cloudProviderSync.currentSession();
+        return current?.baseUrl === session.baseUrl && current.orgId === session.orgId && current.token === session.token;
+      },
+      readApiKey: async (providerId) => (await readLocalProviderApiKeys()).get(providerId) ?? null,
+    }));
+  });
+
   addRoute(routes, "POST", "/experimental/session-stop-fence/check", "client", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     if (typeof body.directory !== "string" || !body.directory || typeof body.sessionID !== "string" || !body.sessionID) {
@@ -3305,9 +3692,47 @@ function createRoutes(
 
   addRoute(routes, "GET", "/managed-policy", "client", async () =>
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
+  addRoute(routes, "GET", "/cloud-computer/status", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).snapshot()));
+  });
+  addRoute(routes, "GET", "/cloud-computer/frame", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).frame()));
+  });
+  addRoute(routes, "POST", "/cloud-computer/interact", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    ensureWritable(config);
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    const body = await readJsonBody(ctx.request);
+    return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).interact(body)));
+  });
+  // Electron verifies remote rollout authority here, independent of renderer state.
+  addRoute(routes, "GET", "/managed-policy/remote-computers", "client", async () =>
+    jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));
   // The desktop process reads the built-in browser's website rules here itself.
   addRoute(routes, "GET", "/managed-policy/website-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));
+  addRoute(routes, "GET", "/managed-policy/browser-upload-permissions", "client", async () =>
+    jsonResponse(await managedDesktopPolicy(config).browserUploadPolicy()));
+  // "Always allow" on a file-send approval: the app names the open question
+  // just before answering it. Only a question this host is showing counts.
+  addRoute(routes, "POST", "/experimental/file-send/remember", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.requestId !== "string" || !fileSendApprovals.chooseAlways(body.requestId)) {
+      throw new ApiError(409, "file_send_not_open", "That approval is no longer open, so nothing was remembered.");
+    }
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "GET", "/experimental/file-send/grants", "client", async () =>
+    jsonResponse(await fileSendApprovals.grants()));
+  addRoute(routes, "DELETE", "/experimental/file-send/grants/:id", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return jsonResponse(await fileSendApprovals.revoke(ctx.params.id ?? ""));
+  });
+  addRoute(routes, "GET", "/managed-policy/computer-rules", "client", async () =>
+    jsonResponse({ rules: await managedDesktopPolicy(config).computerRules() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     const action = managedPolicyActionSchema.safeParse(body.action);
@@ -3332,25 +3757,14 @@ function createRoutes(
     return response;
   });
 
-  addRoute(routes, "POST", "/experimental/engine-v2-preview/migrate", "host-token", async (ctx) => {
+  addRoute(routes, "POST", "/experimental/engine-v2-preview/force", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
-    if (!isRecord(body) || body.confirm !== true) throw new ApiError(400, "invalid_payload", "Confirm history migration first");
-    if (body.allowActiveSessions !== undefined && typeof body.allowActiveSessions !== "boolean") {
-      throw new ApiError(400, "invalid_payload", "allowActiveSessions must be a boolean");
+    if (!isRecord(body) || typeof body.upgrade !== "boolean"
+      || Object.keys(body).some(key => key !== "upgrade")) {
+      throw new ApiError(400, "invalid_payload", "upgrade must be a boolean");
     }
-    // A chat copied while its turn is still running lands in v2 half-finished
-    // while v1 keeps running it. Make that an explicit choice.
-    if (body.allowActiveSessions !== true && engineV2Preview.status().migration.state !== "running") {
-      const v1 = await describeV1EngineActivity(config);
-      if (v1.verdict === "busy") {
-        throw new ApiError(409, "engine_migration_active_sessions", "Wait for running tasks to finish before migrating chats.", {
-          busySessions: v1.busySessions,
-          waitingRequests: v1.waitingRequests,
-        });
-      }
-    }
-    return jsonResponse(engineV2Preview.migrateHistory());
+    return jsonResponse(engineV2Preview.setForcePolicy({ upgrade: body.upgrade }));
   });
 
   addRoute(routes, "PUT", "/experimental/engine-v2-preview", "client", async (ctx) => {
@@ -3366,13 +3780,27 @@ function createRoutes(
     if (body.chatRouting !== undefined && typeof body.chatRouting !== "boolean") {
       throw new ApiError(400, "invalid_payload", "chatRouting must be a boolean");
     }
-    // Check before starting the v2 process, so a refused switch changes nothing.
-    if (body.chatRouting === true) await engineV2Preview.requireV1HistoryCopied();
     let status = engineV2Preview.status();
-    // Stop routing before stopping the v2 process; enable the process before routing to it.
-    if (body.chatRouting === false) status = await engineV2Preview.setChatRouting(false);
-    if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
-    if (body.chatRouting === true) status = await engineV2Preview.setChatRouting(true);
+    const previouslyLiveProviderSync = status.liveProviderSync;
+    const apply = async () => {
+      if (body.chatRouting === false) status = await engineV2Preview.setChatRouting(false);
+      // Commit v2 routing before starting a process that can migrate the shared
+      // database. No request may continue writing v1 during that handoff.
+      if (body.chatRouting === true) status = await engineV2Preview.setChatRouting(true);
+      if (typeof body.enabled === "boolean") status = await engineV2Preview.setEnabled(body.enabled);
+    };
+    if (!status.chatRouting && (body.chatRouting === true || body.enabled === true)) {
+      await withEngineSwitchFence(config, { from: "v1", to: "v2", operation: async () => {
+        const activity = await describeV1EngineActivity(config);
+        if (activity.verdict !== "idle") {
+          throw new ApiError(409, "engine_active_sessions", "Wait for OpenCode v1 tasks and requests to finish before starting v2.");
+        }
+        await apply();
+      } });
+    } else await apply();
+    if (shouldSyncLiveProviderOwnerTransition(previouslyLiveProviderSync, status.liveProviderSync)) {
+      void cloudProviderSync.run("engine_routing_changed");
+    }
     return jsonResponse(status);
   });
 
@@ -3381,11 +3809,26 @@ function createRoutes(
     const workspace = resolveEngineRuntimeWorkspace(config);
     const body = await readJsonBody(ctx.request);
     const providerPatch = parseRuntimeProviderPatchPayload(body);
+    validateUserProviderUpdate(providerPatch);
     const result = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
       ...current,
       provider: mergeRuntimeProviderUpdate(current.provider, providerPatch),
     }));
 
+    // Only this host-token route can approve local process/file sources. Bind
+    // approval to the exact definition so a later collaborator write cannot
+    // retain privileges merely by reusing its provider ID.
+    const previousOwnership = await readOpenworkWorkspaceConfig(config, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP);
+    const providers = runtimeProviderMap(result.config);
+    const ownership = await writeOpenworkWorkspaceConfig(config, MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, current => {
+      const next = new Map(Object.entries(current));
+      for (const id of Object.keys(providerPatch)) {
+        if (providers[id]) next.set(id, providerConfigFingerprint(providers[id]));
+        else next.delete(id);
+      }
+      return Object.fromEntries(next);
+    });
+    const templateOwnershipChanged = providerConfigFingerprint(previousOwnership) !== providerConfigFingerprint(ownership);
     const fileResult = await writeOpenworkRuntimeConfigFile(config);
     // Auth must land before the reload so the replacement provider instance is
     // constructed with its credential. This also refreshes SDK clients after
@@ -3396,6 +3839,7 @@ function createRoutes(
       logger: toManagedProviderAuthLogger(logger),
     });
     const shouldReload = result.changed
+      || templateOwnershipChanged
       || fileResult.changed
       || authResult.delivered.length > 0
       || authResult.removed.length > 0;
@@ -3478,6 +3922,7 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "content must be a string");
     }
 
+    validateUserOpencodeConfigText(content);
     const configPath = resolveOpencodeConfigFilePath(scope, workspace.path);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
@@ -3573,6 +4018,7 @@ function createRoutes(
       const mergeProviderModels = new Set(Array.isArray(body.mergeProviderModels)
         ? body.mergeProviderModels.filter((id): id is string => typeof id === "string")
         : []);
+      validateUserProviderUpdate(providerUpdate);
       // Removing a provider is always allowed; adding or changing one must fit the organization's model access.
       if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider", {
         providerIDs: Object.entries(providerUpdate).filter(([, value]) => value !== null).map(([id]) => id),
@@ -3859,13 +4305,7 @@ function createRoutes(
   });
 
   addRoute(routes, "GET", "/mcp-apps/sandbox.html", "none", async (ctx) => new Response(MCP_APP_SANDBOX_PROXY_HTML, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": buildMcpAppSandboxCsp(parseMcpAppSandboxCsp(ctx.url.searchParams.get("csp"))),
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "strict-origin",
-      "X-Content-Type-Options": "nosniff",
-    },
+    headers: mcpAppSandboxPageHeaders(ctx.url.searchParams),
   }));
   addRoute(routes, "GET", "/mcp-apps/sandbox.js", "none", async () => new Response(MCP_APP_SANDBOX_PROXY_SCRIPT, {
     headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
@@ -3941,6 +4381,8 @@ function createRoutes(
             workspaceRoot: workspace.path,
             projectedToolName,
           });
+      // The App closed while this resolved, so nothing will use or release this lease.
+      if (ctx.request.signal.aborted && app?.launchId) releaseMcpAppLaunch(config, workspace.id, app.launchId);
       return jsonResponse({ app });
     } catch (error) {
       rethrowMcpAppHostError(error);
@@ -4480,7 +4922,7 @@ async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspace = await resolveWorkspaceWithoutBootstrap(config, id);
   const resolvedWorkspace = workspace.path;
-  if (!config.readOnly) {
+  if (!config.readOnly && !await managedDesktopPolicy(config).requiresSandbox()) {
     const ensured = await ensureWorkspaceFiles(resolvedWorkspace, workspace.preset ?? "starter");
     const bootstrapReloadReasons = new Set<ReloadReason>(ensured.reloadReasons);
     if (await repairCommands(resolvedWorkspace)) {
@@ -5144,6 +5586,7 @@ async function reloadOpencodeEngine(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<RolloverOutcome> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const pool = enginePoolForConfig(config);
   if (pool) {
     // The outcome is the caller's proof: only an applied action means the
@@ -5166,6 +5609,7 @@ async function reloadOpencodeEngineInPlace(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean },
 ): Promise<void> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const activeState = activeEngineMcpServerState(config, serverState);
   if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);

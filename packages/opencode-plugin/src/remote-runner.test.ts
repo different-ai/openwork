@@ -76,7 +76,7 @@ test("registers a standalone remote-only runner and reports just the approved na
   await f.controller.poll()
   const registration = f.calls.find(call => call.path.endsWith("/token"))
   assert.ok(isRecord(registration?.body))
-  assert.deepEqual(registration.body.capabilities, ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1"])
+  assert.deepEqual(registration.body.capabilities, ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1", "remote_session_answer_v1"])
   assert.equal(registration.body.protocolVersion, 1)
   assert.equal(registration.body.concurrency, 1)
   assert.equal(registration.auth, "Bearer member-one")

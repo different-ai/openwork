@@ -3,8 +3,8 @@ import subprocess
 import unittest
 
 
-class FrozenInstallerReleaseTests(unittest.TestCase):
-    def test_frozen_snapshot_and_archive_bytes(self):
+class AwsInstallerReleaseTests(unittest.TestCase):
+    def test_shared_module_dependencies_and_archive_bytes(self):
         test_file = Path(__file__).with_name("build-release.test.mjs")
         result = subprocess.run(
             ["node", "--test", str(test_file)],

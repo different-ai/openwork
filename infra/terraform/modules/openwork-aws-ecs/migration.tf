@@ -1,6 +1,11 @@
 # AWS has no declarative RunTask-and-wait resource. A synchronous Lambda
 # invocation is the native completion gate; no workstation provisioner is used.
-resource "aws_ecs_task_definition" "migrate" {
+removed {
+  from = aws_ecs_task_definition.migrate
+  lifecycle { destroy = false }
+}
+resource "aws_ecs_task_definition" "migrate_v1" {
+  skip_destroy             = true
   depends_on               = [terraform_data.security_contract]
   family                   = "${var.name}-migrate"
   requires_compatibilities = ["FARGATE"]
@@ -111,7 +116,7 @@ resource "aws_lambda_invocation" "migrate" {
   lifecycle_scope = "CREATE_ONLY"
   input = jsonencode({
     cluster        = local.cluster_arn
-    taskDefinition = aws_ecs_task_definition.migrate.arn
+    taskDefinition = aws_ecs_task_definition.migrate_v1.arn
     image          = local.den_api_image
     deployment     = var.migration_run_id
     networkConfiguration = {
@@ -125,6 +130,7 @@ resource "aws_lambda_invocation" "migrate" {
   triggers = { source = data.archive_file.migration.output_base64sha256 }
   depends_on = [
     aws_secretsmanager_secret_version.app,
+    aws_secretsmanager_secret_version.tls,
     aws_secretsmanager_secret_version.runner,
     aws_iam_role_policy.execution_secrets,
     aws_iam_role_policy_attachment.execution,

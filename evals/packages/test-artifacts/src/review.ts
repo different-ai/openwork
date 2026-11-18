@@ -72,6 +72,7 @@ export async function assembleReview(options: {
   testRunDirs: string[];
   docShots?: string[];
   title?: string;
+  notice?: string;
   gaps?: string[];
 }): Promise<{ report: ReviewReport; assets: ReviewAsset[] }> {
   const sources: ReviewReport["sources"] = [];
@@ -88,7 +89,10 @@ export async function assembleReview(options: {
       throw new Error(`Invalid PNG: ${basename(path)}`);
     const name = `${createHash("sha256").update(body).digest("hex")}.png`;
     assets.set(name, { name, body });
-    return name;
+    // IHDR is the first chunk: width and height follow the signature and chunk header.
+    const width = body.length >= 24 ? body.readUInt32BE(16) : 0;
+    const height = body.length >= 24 ? body.readUInt32BE(20) : 0;
+    return { name, ...(width > 0 && height > 0 ? { size: { width, height } } : {}) };
   }
   for (const directory of [...new Set(options.testRunDirs)]) {
     const stored = await readTestRunDirectory(directory);
@@ -138,6 +142,7 @@ export async function assembleReview(options: {
           !artifact.fileName.endsWith(".png")
         )
           throw new Error("Invalid screenshot path.");
+        const stored = await image(join(directory, artifact.fileName));
         evidence.push({
           id,
           sourceId,
@@ -145,11 +150,17 @@ export async function assembleReview(options: {
           caption: artifact.caption,
           description: artifact.description,
           judgments,
-          asset: await image(join(directory, artifact.fileName)),
+          asset: stored.name,
+          ...(stored.size ? { size: stored.size } : {}),
           ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
           ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
           ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
           ...(designNotes[artifact.fileName]?.length ? { designNotes: designNotes[artifact.fileName]?.slice(0, 20) } : {}),
+          ...(artifact.step === undefined ? {} : { step: artifact.step }),
+          ...(artifact.change ? { change: artifact.change } : {}),
+          ...(artifact.focus ? { focus: artifact.focus } : {}),
+          ...(artifact.settle ? { settled: artifact.settle.settled } : {}),
+          ...(artifact.failure ? { failure: true } : {}),
         });
       } else {
         if (judgments.length === 0) continue;
@@ -159,6 +170,7 @@ export async function assembleReview(options: {
           kind: "assertion",
           caption: artifact.caption,
           judgments,
+          ...(artifact.step === undefined ? {} : { step: artifact.step }),
         });
       }
       evidenceIds.push(id);
@@ -188,7 +200,7 @@ export async function assembleReview(options: {
       caption: shot.name,
       description: "Documentation reference",
       judgments: [],
-      asset: await image(join(dirname(path), shot.fileName)),
+      asset: (await image(join(dirname(path), shot.fileName))).name,
     });
     sections.push({
       id: sourceId,
@@ -202,6 +214,7 @@ export async function assembleReview(options: {
   const report = reviewSchema.parse({
     schemaVersion: 1,
     title: options.title ?? "Selected evidence",
+    notice: options.notice,
     gitSha: first.gitSha,
     createdAt: new Date().toISOString(),
     gaps: options.gaps ?? [],
@@ -224,6 +237,7 @@ export function renderReviewComment(
     `Commit \`${report.gitSha}\` · selected evidence`,
     "Required verification is reported separately by the current-head Required verification check.",
   ];
+  if (report.notice) lines.push("", report.notice);
   if (url) lines.push("", `[Open review report](${url})`);
   if (report.gaps.length > 0)
     lines.push("", `Coverage gaps: ${report.gaps.join("; ")}`);

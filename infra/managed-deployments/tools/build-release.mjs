@@ -9,11 +9,22 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-export const GCP_REPOSITORIES = Object.freeze({
+export const AWS_REPOSITORIES = Object.freeze({
   den_api: "ghcr.io/different-ai/openwork-den-api",
   den_web: "ghcr.io/different-ai/openwork-den-web",
+  headless_runner: "ghcr.io/different-ai/openwork-headless-runner",
+  workbot: "ghcr.io/different-ai/openwork-workbot",
+  ai_gateway: "ghcr.io/different-ai/openwork-inference",
+});
+export const GCP_REPOSITORIES = Object.freeze({
+  den_api: AWS_REPOSITORIES.den_api,
+  den_web: AWS_REPOSITORIES.den_web,
   health: "docker.io/library/python",
 });
+const coreAwsImages = ["den_api", "den_web"];
+const legacyAssistantImages = [...coreAwsImages, "headless_runner", "workbot"];
+const completeAwsImages = [...legacyAssistantImages, "ai_gateway"];
+const inventoryKey = (kinds) => kinds.toSorted().join(",");
 export const HEALTH_SOURCE = GCP_REPOSITORIES.health + "@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 
@@ -56,16 +67,72 @@ export function resolveGcpImages(version, approvedPins, inspect) {
   }));
 }
 
-export function buildRelease(argv = process.argv.slice(2)) {
-  const [provider, version, outputArgument, ...options] = argv;
-  if (options.length && (provider !== "gcp" || options.length !== 2 || options[0] !== "--image-pins")) {
-    throw new Error("Only GCP supports --image-pins <approved-json-file> (registry verification is mandatory).");
+export function resolveAwsImages(versionOrPins, approvedPinsOrInspect, inspect, includeAssistants = false) {
+  // Preserve the explicit-pin API used by approved rebuilds and existing callers.
+  const version = typeof versionOrPins === "string" ? versionOrPins : undefined;
+  const approvedPins = version === undefined ? versionOrPins : approvedPinsOrInspect;
+  if (version === undefined) inspect = approvedPinsOrInspect;
+  if (version !== undefined && approvedPins === undefined) {
+    return Object.fromEntries((includeAssistants ? completeAwsImages : coreAwsImages).map((kind) => {
+      const repository = AWS_REPOSITORIES[kind];
+      return [kind, resolveImage(repository + ":" + version, repository, inspect)];
+    }));
   }
-  if (!["aws", "gcp"].includes(provider)) throw new Error("Usage: build-release.mjs <aws|gcp> <published-version> [output-directory]");
+  const inventory = approvedPins && !Array.isArray(approvedPins) && typeof approvedPins === "object"
+    ? Object.keys(approvedPins).sort().join(",") : "";
+  const kinds = [coreAwsImages, legacyAssistantImages, completeAwsImages].find((candidate) => inventoryKey(candidate) === inventory);
+  if (!kinds || (includeAssistants && inventory !== inventoryKey(completeAwsImages))) {
+    throw new Error("Approved AWS image pins must contain the exact legacy core pair, legacy four-image set, or complete five-image Gateway runtime set; --include-assistants requires all five.");
+  }
+  // Validate the whole inventory before contacting the registry.
+  for (const kind of kinds) {
+    const repository = AWS_REPOSITORIES[kind];
+    const source = approvedPins[kind];
+    if (typeof source !== "string" || !source.startsWith(repository + "@")
+        || !digestPattern.test(source.slice(repository.length + 1))) throw new Error(`Invalid approved image pin: ${kind}`);
+  }
+  return Object.fromEntries(kinds.map((kind) => {
+    const source = approvedPins[kind];
+    const pinned = resolveImage(source, AWS_REPOSITORIES[kind], inspect);
+    if (pinned !== source) throw new Error(`Approved pin must be a Linux/amd64 manifest: ${kind}`);
+    return [kind, pinned];
+  }));
+}
+
+// Check operational module-local references against the actual payload allowlist.
+// A release must not succeed just because the source checkout has the file.
+export function validateModuleReferences(moduleFiles, read = (path) => readFileSync(resolve(root, path), "utf8")) {
+  const included = new Set(moduleFiles);
+  for (const file of moduleFiles.filter((name) => name.endsWith(".tf"))) {
+    const source = read(file);
+    for (const match of source.matchAll(/\$\{path\.module\}\/([^"\s]+)"/g)) {
+      const target = join(dirname(file), match[1]);
+      if (!included.has(target)) throw new Error(`Missing packaged module reference: ${target}`);
+    }
+  }
+}
+
+export function buildRelease(argv = process.argv.slice(2), inspect) {
+  const [provider, version, ...options] = argv;
+  if (!["aws", "gcp"].includes(provider)) throw new Error("Usage: build-release.mjs <aws|gcp> <published-version> [output-directory] [--image-pins <approved-json-file>] [--include-assistants]");
   if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("Supply an exact published OpenWork image version.");
+  const outputArgument = options[0] && !options[0].startsWith("--") ? options.shift() : undefined;
+  let pinsFile;
+  let includeAssistants = false;
+  while (options.length) {
+    const option = options.shift();
+    if (option === "--image-pins" && pinsFile === undefined && options[0] && !options[0].startsWith("--")) {
+      pinsFile = options.shift();
+    } else if (option === "--include-assistants" && !includeAssistants && provider === "aws") {
+      includeAssistants = true;
+    } else {
+      throw new Error("Use --image-pins <approved-json-file> and AWS-only --include-assistants (registry verification is mandatory).");
+    }
+  }
   // Resolve before writing artifacts; no customer-time source tag resolution.
-  const images = provider === "gcp" ? resolveGcpImages(version,
-    options.length ? JSON.parse(readFileSync(resolve(options[1]), "utf8")) : undefined) : undefined;
+  const approvedPins = pinsFile === undefined ? undefined : JSON.parse(readFileSync(resolve(pinsFile), "utf8"));
+  const images = provider === "gcp" ? resolveGcpImages(version, approvedPins, inspect)
+    : resolveAwsImages(version, approvedPins, inspect, includeAssistants);
   const output = resolve(outputArgument ?? resolve(root, "dist/managed-deployments", provider, version));
   mkdirSync(output, { recursive: true });
   const templateName = provider === "aws" ? "cloudformation.json" : "tutorial.md";
@@ -86,7 +153,7 @@ export function buildRelease(argv = process.argv.slice(2)) {
   }
   function files(directory, accept) {
     assertRegularInsideRoot(directory);
-    return readdirSync(resolve(root, directory)).flatMap((name) => {
+    return readdirSync(resolve(root, directory)).sort().flatMap((name) => {
       const path = join(directory, name);
       const info = assertRegularInsideRoot(path);
       if (info.isDirectory()) return name === ".terraform" || name === "build" || name === "__pycache__" ? [] : files(path, accept);
@@ -100,16 +167,22 @@ export function buildRelease(argv = process.argv.slice(2)) {
     ...(provider === "aws" ? [
       "infra/managed-deployments/aws/runner/runner.py",
       "infra/managed-deployments/aws/health/health_agent.py",
-      // Package only the managed root's frozen implementation, not the
-      // independently evolving direct-user module or its examples/tests.
-      ...files("infra/managed-deployments/aws/terraform", terraform).filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
+      "infra/managed-deployments/aws/health/assistant_health_agent.py",
+       ...files("infra/managed-deployments/aws/terraform", terraform).filter((path) => !path.includes("/examples/") && !path.includes("/tests/") && !path.includes("/modules/openwork-aws-ecs/")),
+       ...files("infra/terraform/modules/openwork-aws-ecs", (name) => name.endsWith(".tf") || name === "migration.py")
+         .filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
+
     ] : [
       "infra/managed-deployments/gcp/runner/install.py",
       "infra/managed-deployments/gcp/runner/runner.py",
       "infra/managed-deployments/gcp/health/health_agent.py",
-      ...files("infra/managed-deployments/gcp/terraform", terraform),
+      ...files("infra/managed-deployments/gcp/terraform", terraform).filter((path) => !path.includes("/tests/")),
+      ...files("infra/terraform/modules/openwork-gcp-cloud-run", (name) => name.endsWith(".tf"))
+        .filter((path) => !path.includes("/examples/") && !path.includes("/tests/")),
     ]),
   ];
+  const sharedModule = provider === "aws" ? "openwork-aws-ecs" : "openwork-gcp-cloud-run";
+  validateModuleReferences(included.filter((path) => path.startsWith(`infra/terraform/modules/${sharedModule}/`)));
   assertRegularInsideRoot(`infra/managed-deployments/${provider}/terraform/.terraform.lock.hcl`);
   if (provider === "gcp") {
     assertRegularInsideRoot("infra/managed-deployments/gcp/bootstrap/tutorial.md");
@@ -118,15 +191,15 @@ export function buildRelease(argv = process.argv.slice(2)) {
   const stage = mkdtempSync(resolve(tmpdir(), "openwork-managed-release-"));
   try {
     const checksums = {};
-    for (const file of included) {
+    for (const file of included.sort()) {
       assertRegularInsideRoot(file);
       const destination = resolve(stage, file);
       mkdirSync(dirname(destination), { recursive: true });
       copyFileSync(resolve(root, file), destination);
       checksums[relative(stage, destination)] = createHash("sha256").update(readFileSync(destination)).digest("hex");
     }
-    writeFileSync(resolve(stage, "release.json"), JSON.stringify({ provider, version, protocolVersion: 1, files: checksums, ...(images ? { images } : {}) }, null, 2) + "\n");
-    execFileSync("tar", ["-czf", resolve(output, "bundle.tar.gz"), "-C", stage, "infra", "release.json"], { env: { ...process.env, COPYFILE_DISABLE: "1" } });
+    writeFileSync(resolve(stage, "release.json"), JSON.stringify({ provider, version, protocolVersion: 1, files: checksums, images }, null, 2) + "\n");
+    execFileSync("python3", [resolve(root, "infra/managed-deployments/tools/deterministic-archive.py"), stage, resolve(output, "bundle.tar.gz")]);
     const digest = (name) => createHash("sha256").update(readFileSync(resolve(output, name))).digest("hex");
     writeFileSync(resolve(output, "manifest.json"), JSON.stringify({ provider, version, protocolVersion: 1, bundleSha256: digest("bundle.tar.gz"), templateSha256: digest(templateName) }, null, 2) + "\n");
     console.log(`Built ${provider} installer ${version}: ${output}`);

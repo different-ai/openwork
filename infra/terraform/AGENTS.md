@@ -14,14 +14,14 @@ one shared contract; document platform exceptions instead of hiding them.
 - Keep secrets out of state where supported; document unsupported paths.
   Never rotate authentication/encryption keys by surprise. Guard existing
   deployments with explicit value preservation before conversion.
-- The managed AWS installer consumes its own frozen `openwork-aws-ecs` copy,
-  not the evolving direct-user module. Preserve its pinned source tree and
-  original AWS/random/archive pins; refresh only deliberately. Its
-  TLS/ordering overlay adds CA trust, strict mode, retained API/web revision
-  addresses and a CA-first deployment barrier. Never deregister those revisions
-  or widen bootstrap permissions. Direct migration orchestration/write-only
-  secret mode are not adopted. Further contract adoption
-  requires separate installer-owner review.
+- The managed AWS installer consumes the shared AWS module with explicit
+  legacy-secret compatibility mode. Never rotate existing keys or demote its
+  strict current SecretVersion. Preserve native address moves/forget blocks and
+  skip_destroy for core revisions; never add wildcard deregistration rights.
+  Its runner must drain legacy tasks before strict promotion/migration, replan
+  desired counts, and verify completed strict redeployment. Bootstrap permission
+  changes require scoped grants, customer re-approval and installer-owner review.
+  Direct users still default to write-only; managed live proof is separate.
 - Keep provider/backend configuration in executable roots, not library modules.
 - Use approved branches for stacked PRs; do not rewrite or push to their bases.
   Sign commits and include a DCO sign-off (`git commit -S -s`).

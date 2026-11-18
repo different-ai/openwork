@@ -17,7 +17,8 @@ export function OrgLimitDialog({
   onClose,
 }: {
   open: boolean;
-  eyebrow?: string;
+  /** Small label above the title; null leaves it out. */
+  eyebrow?: string | null;
   title: string;
   message: string;
   detail?: string | null;
@@ -37,7 +38,7 @@ export function OrgLimitDialog({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6">
       <div className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
         <div className="grid gap-3">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>
+          {eyebrow ? <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p> : null}
           <div className="grid gap-2">
             <h2 className="text-[24px] font-semibold tracking-[-0.03em] text-gray-950">{title}</h2>
             <p className="text-[15px] leading-7 text-gray-600">{message}</p>

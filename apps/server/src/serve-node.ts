@@ -20,6 +20,10 @@ export type ServeResult = {
   stop: () => void | Promise<void>;
 };
 
+// Attachments stream through the request body, so Node's 5-minute default would
+// cut a large one off on a slow connection.
+const REQUEST_BODY_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+
 function isResponseWritable(nodeRes: ServerResponse): boolean {
   return !nodeRes.destroyed && !nodeRes.closed && !nodeRes.writableEnded;
 }
@@ -247,6 +251,7 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
   if (options.idleTimeout) {
     server.keepAliveTimeout = options.idleTimeout * 1000;
   }
+  server.requestTimeout = REQUEST_BODY_TIMEOUT_MS;
 
   let boundPort = port;
 

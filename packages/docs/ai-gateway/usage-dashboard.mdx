@@ -1,0 +1,66 @@
+---
+title: "Overview tab: spend and usage"
+sidebarTitle: "Overview tab"
+description: "See what your organization spends on AI through AI Gateway: daily usage and estimated cost for the last 31 days, by model, team and person."
+keywords: ["AI Gateway overview", "usage dashboard", "spend", "cost", "tokens", "who spends it", "models people use", "group by", "last 31 days"]
+---
+
+The **Overview** tab is where you see what your organization spends on AI: how
+much, on which models, and by whom.
+
+## Where to find it
+
+In OpenWork Cloud, open **AI Gateway**. **Overview** is the first tab.
+
+Seeing it needs the **View Gateway providers** and **View Gateway usage**
+permissions. Organization owners and admins have them by default.
+
+Until you [add a provider](/ai-gateway/overview#set-it-up), the tab shows **No
+usage yet**, with **Add provider** and **Or subscribe to OpenWork Models**.
+Usage shows up after the first request.
+
+## Usage
+
+The **Usage** chart covers the **Last 31 days**, by UTC calendar day. The total
+at the top covers all Gateway providers, including
+[OpenWork Models](/ai-gateway/openwork-models).
+
+Change what the chart shows:
+
+- **Show**: **Tokens** or **Cost**.
+- **Group By**: **Model**, **Team**, or **Person**.
+- **Filter**: pick only some models, teams, or people. Click **Clear filters**
+  to see everything again.
+
+When you group by team, each person counts toward every team they're in, so
+team totals can be higher than the model or person totals. People in no team
+aren't shown in the team view.
+
+## Who spends it
+
+**Who spends it** lists the people with the most spend in the last 31 days and
+their share of the total. Click a person to open their page on
+[Users & Teams](/ai-gateway/users-and-teams#open-a-person), with what they can
+use, their limit, and the models they use.
+
+## Models people use
+
+**Models people use** lists the models with the most spend in the last 31 days
+and each one's share.
+
+## How accurate are the numbers?
+
+- **Tokens** come from what each provider reports. See
+  [Counting usage](/ai-gateway/counting-usage), including requests that report
+  no tokens.
+- **Cost** is an estimate from public model prices when each request was made,
+  or the cost a provider reports. It isn't your provider's bill. **Unknown**
+  means OpenWork has no price for that model. See
+  [Token costs](/ai-gateway/token-costs).
+
+## Keep spend in check
+
+- Set daily, weekly, or monthly [limits](/ai-gateway/limits) for everyone, a
+  team, or a person.
+- See each person's and team's limit and spend on
+  [Users & Teams](/ai-gateway/users-and-teams).

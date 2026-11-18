@@ -1,5 +1,7 @@
 "use client";
 
+import { DASHBOARD_PAGE_CLASS } from "../../_components/ui/dashboard-styles";
+import { BackLink } from "./item-header";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { ArrowLeft, LockKeyhole } from "lucide-react";
@@ -10,21 +12,17 @@ import {
   type PermissionAreaKey,
   type PermissionKey,
 } from "@openwork/types/den/permissions";
-import { buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getOrgAccessFlags, orgFeatureEnabled, type DenOrgAccessFlags } from "../../_lib/den-org";
+import { getOrgAccessFlags, type DenOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput } from "./item-list";
 import type { PermissionStatus } from "./permissions-data";
 
-export const ENTERPRISE_CONTACT_URL =
-  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://openworklabs.com/enterprise#book";
-
 export type PermissionsAccess =
-  | { state: "checking" | "error" | "feature_off" }
+  | { state: "checking" | "error" }
   | {
     state: "ready";
     orgId: string;
@@ -40,7 +38,7 @@ export function usePermissionsAccess(): PermissionsAccess {
   const { orgId, orgSlug, orgContext, orgBusy, orgError } = useOrgDashboard();
   if (orgError && !orgBusy) return { state: "error" };
   if (orgBusy || !orgContext || !orgId || orgContext.organization.id !== orgId) return { state: "checking" };
-  if (!orgFeatureEnabled(orgContext, "permissions")) return { state: "feature_off" };
+
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
   const held = new Set<string>(access.isOwner ? PERMISSION_KEYS : orgContext.currentMember.permissions ?? []);
   return { state: "ready", orgId, orgSlug, access, currentMemberId: orgContext.currentMember.id, held };
@@ -55,39 +53,21 @@ export function PermissionsPage({ title, back, action, caption, children, testId
   testId?: string;
 }) {
   return (
-    <section className="mx-auto flex w-full max-w-[860px] flex-col gap-6 px-4 py-6 text-[13px] sm:px-6 md:px-8" data-testid={testId}>
-      {back ? (
-        <Link href={back.href} className="inline-flex w-fit items-center gap-1.5 rounded text-[13px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
-          <ArrowLeft className="size-4" aria-hidden="true" strokeWidth={1.5} />
-          {back.label}
-        </Link>
-      ) : null}
-      <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-gray-500">{caption}</span> : undefined} />
-      {children}
+    // The same column, way back and heading as a team's page, so moving between a team and its role does not shift the page.
+    <section className={`${DASHBOARD_PAGE_CLASS} text-[13px]`} data-testid={testId}>
+      <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          {back ? <BackLink href={back.href} label={back.label} /> : null}
+          <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-[var(--dls-text-secondary)]">{caption}</span> : undefined} />
+        </div>
+        {children}
+      </div>
     </section>
   );
 }
 
-/** Feature off: the reason and who can change it (DESIGN.md P4, C5). */
-export function PermissionsFeatureOff() {
-  return (
-    <div className="flex flex-col items-start gap-3" data-testid="permissions-feature-off">
-      <DenNotice
-        tone="neutral"
-        icon={LockKeyhole}
-        message="Permissions is an Enterprise feature. Contact us to turn it on for your organization."
-        className="w-full"
-      />
-      <a href={ENTERPRISE_CONTACT_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>
-        Contact us
-      </a>
-    </div>
-  );
-}
-
-/** The page body for states that come before data: checking, error, feature off. */
+/** The page body for states that come before data: checking and error. */
 export function PermissionsAccessState({ access }: { access: PermissionsAccess }) {
-  if (access.state === "feature_off") return <PermissionsFeatureOff />;
   if (access.state === "error") return <DenNotice tone="error" message="Couldn't check your access to Permissions. Reload the page to try again." />;
   return <PermissionRowsSkeleton />;
 }

@@ -9,6 +9,7 @@ import {
   ensureDefaultPermissionSets,
   getDefaultPermissionSets,
   isDefaultPermissionSetsMissingError,
+  listActiveMemberPermissionSets,
   listActiveTeamPermissionSetsForTeams,
   listAuthoritativeTeamMemberships,
   readPermissionSetStates,
@@ -21,13 +22,11 @@ import {
 import { MemberTable, TeamMemberTable, TeamTable, type OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { appLogger } from "../observability/logger.js"
 import { roleIncludesOwner } from "../organization-member-guards.js"
-import { isEffectiveOrganizationAdmin } from "../organization-role-hierarchy.js"
+import { isEffectiveOrganizationAdmin, isOrganizationSuperAdminRole } from "../organization-role-hierarchy.js"
 import type { OrganizationContext } from "../orgs.js"
 import {
-  codeDefaultPermissionGrants,
   createMemberPermissions,
   explainPermissionGrants,
   memberPermissionsFromGrants,
@@ -42,10 +41,12 @@ import {
  * Server-side permission resolution (docs/permissions/overview.md, section 6).
  *
  * - Owner: every catalog key.
- * - Feature off: code defaults for Member, plus Admin for effective admins.
- *   The permission tables are not read.
- * - Feature on: the union of the Member default set, the Admin default set
- *   (effective admins only) and the active team sets of the member's teams.
+ * - Everyone else: the union of the Member default set, the Admin default set
+ *   (effective admins only), the Super admin default set (direct super-admin
+ *   role; seeded with every catalog key),
+ *   the active sets of the member's teams (a custom role, or a built-in set
+ *   such as Billing manager given to the team) and the sets given to the
+ *   member directly (permission_set_member).
  *   Team sets apply only through memberships that carry authority (the same
  *   SCIM projection rule as Admin teams; listAuthoritativeTeamMemberships).
  *   Default sets are created on first use. Only when they are missing and
@@ -84,11 +85,9 @@ export type ResolveMemberPermissionsInput = {
   /**
    * Teams the member belongs to. Team sets apply only through those of these
    * memberships that carry authority (listAuthoritativeTeamMemberships).
-   * Not read when the feature is off or the member is the owner.
+   * Not read when the member is the owner.
    */
   teamIds: readonly string[]
-  /** The organization's `permissions` feature, when already known (e.g. from OrganizationContext.features). */
-  featureEnabled?: boolean
 }
 
 export type ExplainMemberPermissionsInput = Omit<ResolveMemberPermissionsInput, "adminTeamIds" | "teamIds"> & {
@@ -99,6 +98,7 @@ export type ExplainMemberPermissionsInput = Omit<ResolveMemberPermissionsInput, 
 export type MemberPermissionExplanation = {
   featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   permissions: PermissionExplanation[]
 }
@@ -110,7 +110,6 @@ type PermissionSubject = {
   directRole: string
   adminTeams: readonly { id: string; name: string | null }[]
   teamIds: readonly string[]
-  featureEnabled?: boolean
 }
 
 /**
@@ -133,9 +132,15 @@ function readLock(reads: PermissionReads): { lock?: "share" } {
   return reads.transaction ? { lock: "share" } : {}
 }
 
+/** Which default sets apply to a member, beyond Member (which always does). */
+type DefaultSetMembership = {
+  isAdmin: boolean
+  isSuperAdmin: boolean
+}
+
 type CollectedGrants = {
-  featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   grants: PermissionGrant[]
 }
@@ -168,23 +173,52 @@ async function authoritativeTeamIds(subject: PermissionSubject, reads: Permissio
   return [...new Set(memberships.map((membership) => membership.teamId))].filter((teamId) => requested.has(teamId))
 }
 
-/** The default sets. Created on first use, except in a transaction, where missing sets throw. */
-async function defaultPermissionSets(organizationId: OrganizationId, reads: PermissionReads): Promise<DefaultPermissionSets> {
+/**
+ * The default sets. Created on first use, except in a transaction, where a
+ * missing set the member needs throws. Super admin is only required for
+ * super-admins, so organizations whose Super admin set has not been created
+ * yet (it is created lazily after the upgrade) resolve as before for others.
+ */
+async function defaultPermissionSets(
+  organizationId: OrganizationId,
+  membership: DefaultSetMembership,
+  reads: PermissionReads,
+): Promise<Pick<DefaultPermissionSets, "member" | "admin"> & { "super-admin": PermissionSetSummary | null }> {
   if (!reads.transaction) return ensureDefaultPermissionSets(db, organizationId)
   const stored = await getDefaultPermissionSets(reads.database, organizationId, readLock(reads))
   if (!stored.member || !stored.admin) throw new DefaultPermissionSetsMissingError(organizationId)
-  return { member: stored.member, admin: stored.admin }
+  if (membership.isSuperAdmin && !stored["super-admin"]) throw new DefaultPermissionSetsMissingError(organizationId)
+  return { member: stored.member, admin: stored.admin, "super-admin": stored["super-admin"] }
 }
 
-async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, reads: PermissionReads): Promise<PermissionGrant[]> {
-  const sets = await defaultPermissionSets(subject.organizationId, reads)
+async function databaseGrants(subject: PermissionSubject, membership: DefaultSetMembership, reads: PermissionReads): Promise<PermissionGrant[]> {
+  const { isAdmin, isSuperAdmin } = membership
+  const sets = await defaultPermissionSets(subject.organizationId, membership, reads)
+  const superAdminSet = isSuperAdmin ? sets["super-admin"] : null
   const teamIds = await authoritativeTeamIds(subject, reads)
   const teamSets = teamIds.length > 0
     ? await listActiveTeamPermissionSetsForTeams(reads.database, subject.organizationId, teamIds, readLock(reads))
     : []
-  const defaultSets: { key: PermissionDefaultSetKey; set: PermissionSetSummary }[] = [{ key: "member", set: sets.member }]
+  // Sets given to this person directly: a custom role, or Billing manager.
+  const directSets = await listActiveMemberPermissionSets(reads.database, {
+    organizationId: subject.organizationId,
+    memberId: subject.memberId,
+    ...readLock(reads),
+  })
+  const defaultSets: { key: PermissionDefaultSetKey; set: Pick<PermissionSetSummary, "id"> }[] = [{ key: "member", set: sets.member }]
   if (isAdmin) defaultSets.push({ key: "admin", set: sets.admin })
-  const setIds = [...defaultSets.map(({ set }) => set.id), ...teamSets.map((teamSet) => teamSet.permissionSetId)]
+  if (superAdminSet) defaultSets.push({ key: "super-admin", set: superAdminSet })
+  // Built-in sets reached through a team or directly are kept current like the role-based ones.
+  for (const linked of [...teamSets, ...directSets]) {
+    if (linked.defaultKey && !defaultSets.some(({ set }) => set.id === linked.permissionSetId)) {
+      defaultSets.push({ key: linked.defaultKey, set: { id: linked.permissionSetId } })
+    }
+  }
+  const setIds = [...new Set([
+    ...defaultSets.map(({ set }) => set.id),
+    ...teamSets.map((teamSet) => teamSet.permissionSetId),
+    ...directSets.map((directSet) => directSet.permissionSetId),
+  ])]
 
   let states = await readPermissionSetStates(reads.database, setIds, readLock(reads))
   const needsReconcile = defaultSets.some(({ key, set }) => {
@@ -199,7 +233,8 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
     try {
       const result = await reconcileDefaultPermissionSets(db, { organizationId: subject.organizationId })
       logger.info("permission default sets reconciled on read", { organization_id: subject.organizationId, rows_inserted: result.rowsInserted })
-      states = await readPermissionSetStates(db, setIds)
+      // In a transaction so it reads the primary: a replica can lag the rows just reconciled.
+      states = await db.transaction((tx) => readPermissionSetStates(tx, setIds))
     } catch (error) {
       logger.error("reconciling default permission sets on read failed; using the stored state", {
         organization_id: subject.organizationId,
@@ -218,27 +253,36 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
     const directAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: [] })
     for (const source of adminDefaultSources(subject, sets.admin, directAdmin)) grants.push({ source, keys: adminKeys })
   }
+  if (superAdminSet) {
+    grants.push({
+      source: { kind: "super_admin_default", setId: superAdminSet.id, setName: superAdminSet.name },
+      keys: allowedKeys(states.get(superAdminSet.id)),
+    })
+  }
   for (const teamSet of teamSets) {
     grants.push({
       source: { kind: "team", setId: teamSet.permissionSetId, setName: teamSet.permissionSetName, teamId: teamSet.teamId, teamName: teamSet.teamName },
       keys: allowedKeys(states.get(teamSet.permissionSetId)),
     })
   }
+  for (const directSet of directSets) {
+    grants.push({
+      source: { kind: "direct", setId: directSet.permissionSetId, setName: directSet.permissionSetName },
+      keys: allowedKeys(states.get(directSet.permissionSetId)),
+    })
+  }
   return grants
 }
 
-function permissionsFeatureEnabled(organizationId: OrganizationId, reads: PermissionReads) {
-  return organizationFeatureEnabled(organizationId, "permissions", reads.transaction ? { database: reads.database, lock: "share" } : {})
-}
-
 async function collectPermissionGrants(subject: PermissionSubject, reads: PermissionReads = ROOT_READS): Promise<CollectedGrants> {
-  const featureEnabled = subject.featureEnabled ?? await permissionsFeatureEnabled(subject.organizationId, reads)
-  const isAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
-  if (subject.isOwner) return { featureEnabled, isOwner: true, isAdmin, grants: ownerPermissionGrants() }
-  if (!featureEnabled) return { featureEnabled, isOwner: false, isAdmin, grants: codeDefaultPermissionGrants({ isAdmin }) }
+  const effectiveAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
+  if (subject.isOwner) return { isOwner: true, isSuperAdmin: false, isAdmin: effectiveAdmin, grants: ownerPermissionGrants() }
+  const isSuperAdmin = isOrganizationSuperAdminRole(subject.directRole)
+  // Every super-admin is also an admin, so the Admin set applies to them too.
+  const isAdmin = effectiveAdmin || isSuperAdmin
 
   try {
-    return { featureEnabled, isOwner: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
+    return { isOwner: false, isSuperAdmin, isAdmin, grants: await databaseGrants(subject, { isAdmin, isSuperAdmin }, reads) }
   } catch (error) {
     // Fail closed: only missing default sets (which should never happen, and
     // would otherwise lock the org out) fall back to code defaults, and only
@@ -251,7 +295,7 @@ async function collectPermissionGrants(subject: PermissionSubject, reads: Permis
       member_id: subject.memberId,
       error,
     })
-    return { featureEnabled, isOwner: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
+    return { isOwner: false, isSuperAdmin, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, isSuperAdmin, transaction: reads.transaction }) }
   }
 }
 
@@ -275,7 +319,6 @@ export function resolveMemberPermissionsFromContext(
     directRole: context.currentMember.directRole,
     adminTeamIds: context.currentMember.adminTeams.map((team) => team.id),
     teamIds,
-    featureEnabled: context.features.permissions,
   })
 }
 
@@ -283,8 +326,9 @@ export function resolveMemberPermissionsFromContext(
 export async function explainMemberPermissions(input: ExplainMemberPermissionsInput): Promise<MemberPermissionExplanation> {
   const collected = await collectPermissionGrants({ ...input, teamIds: input.teams.map((team) => team.id) })
   return {
-    featureEnabled: collected.featureEnabled,
+    featureEnabled: true,
     isOwner: collected.isOwner,
+    isSuperAdmin: collected.isSuperAdmin,
     isAdmin: collected.isAdmin,
     permissions: explainPermissionGrants(collected.grants),
   }
@@ -347,19 +391,16 @@ export async function loadPermissionSubject(
 export async function resolvePermissionsForMember(input: {
   organizationId: OrganizationId
   memberId: MemberId
-  featureEnabled?: boolean
   database?: PermissionDatabase
 }): Promise<MemberPermissions> {
   const reads = permissionReads(input.database)
   const subject = await loadPermissionSubject(input, reads)
   if (!subject) {
-    const featureEnabled = input.featureEnabled ?? await permissionsFeatureEnabled(input.organizationId, reads)
-    return createMemberPermissions({ featureEnabled, isOwner: false, isAdmin: false, keys: [] })
+    return createMemberPermissions({ isOwner: false, isAdmin: false, keys: [] })
   }
   return memberPermissionsFromGrants(await collectPermissionGrants({
     ...subject,
     teamIds: subject.teams.map((team) => team.id),
-    ...(input.featureEnabled !== undefined ? { featureEnabled: input.featureEnabled } : {}),
   }, reads))
 }
 

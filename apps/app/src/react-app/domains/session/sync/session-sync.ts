@@ -7,12 +7,17 @@ import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
 import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
 import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
+import { providerCredentialScope, useProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
+import { isProviderCredentialRejection } from "./session-error";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
-import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, takeTaskRunStart, taskRunQuality, observeFeatureTool, captureOnboardingEvent } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
+import { noteActivationRunCompleted } from "../../cloud/activation/use-activation";
 import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { AUTO_ROUTES_EVENT, createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { useAutoRouteStore } from "./auto-route-store";
+import { autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
 import { isGeneratedSessionTitle } from "@/app/lib/session-title";
 import { normalizeEvent } from "@/app/utils";
@@ -26,16 +31,19 @@ import {
 import {
   describeOpencodeSessionError,
   presentOpencodeSessionError,
+  sessionErrorAnalyticsProperties,
 } from "./session-error";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
-import { upsertMessageByChronology } from "./message-merge";
+import { messageCreated, upsertMessageByChronology } from "./message-merge";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -137,7 +145,7 @@ type SyncEntry = {
   statusReconcileFailures: number;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
-  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean }>;
+  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; modelId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean }>;
   nativeSequenceBySession: Map<string, { sequence: number; revision: number }>;
   nativeSequenceRevision: number;
   nativeTerminalSessions: Set<string>;
@@ -157,14 +165,24 @@ type DeltaFlushScheduler = (
 ) => () => void;
 
 let gatewayUsageRunSequence = 0;
-function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean } {
-  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false };
+function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; modelId: string | null; completed: boolean; startedAt: number; failed: boolean; responseCompleted: boolean } {
+  return { scope: readGatewayUsageScope().generation, key, providerId: null, modelId: null, completed: false, startedAt: 0, failed: false, responseCompleted: false };
 }
 
 function gatewayUsageProviderId(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   if ("providerID" in value && typeof value.providerID === "string") return value.providerID;
   if ("model" in value && value.model && typeof value.model === "object" && "providerID" in value.model && typeof value.model.providerID === "string") return value.model.providerID;
+  return null;
+}
+
+function gatewayUsageModelId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  if ("modelID" in value && typeof value.modelID === "string") return value.modelID;
+  if ("model" in value && value.model && typeof value.model === "object") {
+    if ("modelID" in value.model && typeof value.model.modelID === "string") return value.model.modelID;
+    if ("id" in value.model && typeof value.model.id === "string") return value.model.id;
+  }
   return null;
 }
 
@@ -580,6 +598,12 @@ function partHasVisibleAssistantOutput(part: Part) {
   return partType === "tool" || partType === "file" || partType === "agent";
 }
 
+function observeAnalyticsOutput(workspaceId: string, sessionId: string, messageId: string) {
+  const role = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.messageRoles[messageId];
+  if (role !== "assistant") return;
+  if (taskRunQuality.output(sessionId)) captureOnboardingEvent("onboarding_reply_received");
+}
+
 function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: string) {
   if ((entry.trackedSessionRefs.get(sessionId) ?? 0) > 0) return;
   const queryClient = getReactQueryClient();
@@ -957,7 +981,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "reasoning",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
     };
   }
   if (part.type === "file") {
@@ -988,16 +1012,28 @@ function toUIParts(part: Part): UIMessage["parts"] {
   if (!mapped) return [];
   if (part.type === "tool" && part.tool === STRUCTURED_OUTPUT_TOOL) return [mapped];
   if (part.type === "tool" && part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(toFileUIParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(toFileUIParts), part.callID)];
   }
   return [mapped];
+}
+
+/**
+ * A message is created once. OpenCode v2 reports the start of each new text,
+ * reasoning or tool stream as the reply's `created`; keeping the first stops a
+ * reply from jumping below a follow-up sent while it was being written, which
+ * is also the order history shows after a reload.
+ */
+function keepFirstCreated<T extends { opencode: object }>(metadata: T, firstCreated: number | null): T {
+  const created: unknown = Reflect.get(metadata.opencode, "created");
+  if (firstCreated === null || typeof created !== "number" || created <= firstCreated) return metadata;
+  return { ...metadata, opencode: { ...metadata.opencode, created: firstCreated } };
 }
 
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
   if (next.metadata !== undefined) {
     const existing = messages[index];
-    const merged = existing ? { ...existing, ...next, metadata: mergeReplyMetadata(existing.metadata, next.metadata), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    const merged = existing ? { ...existing, ...next, metadata: keepFirstCreated(mergeReplyMetadata(existing.metadata, next.metadata), messageCreated(existing)), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
     return upsertMessageByChronology(messages, merged);
   }
   if (index === -1) return [...messages, next];
@@ -1040,13 +1076,13 @@ function stringField(record: Record<string, unknown>, key: string): string {
 }
 
 /**
- * Background commands (`backgroundShellTasks`): a background tool call adds
+ * Background commands: a background tool call adds
  * one, and its exit, deletion or completion notice settles it. A foreground
  * call never reports a running shell id, so it is never added.
  */
 function applyBackgroundShellEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
   const store = useBackgroundShellStore.getState();
-  if (!store.enabled || !isOpencodeV2BaseUrl(entry.input.baseUrl)) return;
+  if (!isOpencodeV2BaseUrl(entry.input.baseUrl)) return;
   const props = eventRecord(event);
   if (event.type === SHELL_CREATED_EVENT) {
     const shell = readEngineShell(props);
@@ -1129,7 +1165,7 @@ function rememberHistoryBackgroundShells(workspaceId: string, snapshot: Openwork
  * this read is the source of truth on connect, revalidation and session open.
  */
 async function reconcileBackgroundShells(entry: SyncEntry, scope: "all" | string) {
-  if (!useBackgroundShellStore.getState().enabled || !isOpencodeV2BaseUrl(entry.input.baseUrl)) return;
+  if (!isOpencodeV2BaseUrl(entry.input.baseUrl)) return;
   const controller = new AbortController();
   entry.backgroundShellReads.add(controller);
   const startedAt = Date.now();
@@ -1156,27 +1192,6 @@ async function reconcileBackgroundShells(entry: SyncEntry, scope: "all" | string
   } finally {
     entry.backgroundShellReads.delete(controller);
   }
-}
-
-/**
- * Apply the `backgroundShellTasks` switch. Turning it on reads every
- * workspace's running commands at once instead of waiting for a reconnect.
- */
-export function setBackgroundShellTasksEnabled(enabled: boolean) {
-  const store = useBackgroundShellStore.getState();
-  if (store.enabled === enabled) return;
-  store.setEnabled(enabled);
-  if (!enabled) {
-    historyBackgroundShellIds.clear();
-    for (const entry of syncs.values()) entry.shellInfo.clear();
-    return;
-  }
-  for (const entry of syncs.values()) void reconcileBackgroundShells(entry, "all");
-  // History read while the feature was off left completion notices out.
-  // Read open conversations again so their rows appear where they belong.
-  const queryClient = getReactQueryClient();
-  void queryClient.invalidateQueries({ queryKey: ["react-session-snapshot"] });
-  void queryClient.invalidateQueries({ queryKey: ["react-session-latest"] });
 }
 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
@@ -1222,7 +1237,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       entry.nativeTerminalSessions.delete(sessionId);
       applySessionRunStatus(entry, workspaceId, sessionId, { type: "busy" });
       const usageRun = entry.gatewayUsageRuns.get(sessionId);
-      if (usageRun) usageRun.providerId = gatewayUsageProviderId(event.properties);
+      if (usageRun) {
+        usageRun.providerId = gatewayUsageProviderId(event.properties);
+        usageRun.modelId = gatewayUsageModelId(event.properties);
+        const props = event.properties;
+        const timestamp = props && typeof props === "object" && "timestamp" in props ? props.timestamp : undefined;
+        // Receiving/reconciling a busy run is not its start time. Unknown or
+        // replayed starts cannot provide evidence about a replacement key.
+        if (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0) usageRun.startedAt = timestamp;
+      }
     } else if (event.type === "session.execution.progress") {
       clearSessionRetry(entry, workspaceId, sessionId);
     } else if (event.type === "session.execution.failed") {
@@ -1258,6 +1281,16 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       discoverTaskSessions(entry, session.id);
     }
     for (const listener of entry.sessionCreatedListeners.keys()) listener(session);
+    return;
+  }
+
+  if (event.type === AUTO_ROUTES_EVENT) {
+    // Smart replies' routing decisions; any session, tracked or not, so a
+    // background chat shows them once opened.
+    const props = event.properties;
+    if (!props || typeof props !== "object") return;
+    const sessionId = Reflect.get(props, "sessionID");
+    if (typeof sessionId === "string") useAutoRouteStore.getState().publish(sessionId, autoRouterReplyRoutes(Reflect.get(props, "routes")));
     return;
   }
 
@@ -1328,11 +1361,23 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (sessionId) {
       const sessionError = sessionErrorFromProperties(event.properties);
       const errorPresentation = presentOpencodeSessionError(sessionError);
+      const credentialRun = entry.gatewayUsageRuns.get(sessionId);
+      if (credentialRun) {
+        credentialRun.failed = true;
+        if (credentialRun.providerId && isProviderCredentialRejection(sessionError)) {
+          useProviderCredentialHealth.getState().observe(workspaceId, credentialRun.providerId, "rejected", credentialRun.startedAt);
+        }
+      }
       if (errorPresentation.gatewayUsage) void queryClient.invalidateQueries({ queryKey: gatewayUsageQueryPrefix });
       const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
         captureAnalyticsEvent("task_run_errored", {
+          ...sessionErrorAnalyticsProperties(errorPresentation.kind, {
+            providerId: credentialRun?.providerId ?? taskRunQuality.model(sessionId)?.providerId,
+            modelId: credentialRun?.modelId ?? taskRunQuality.model(sessionId)?.modelId,
+          }),
+          ...taskRunQuality.finish(sessionId),
           duration_ms: Date.now() - runStartedAt,
         });
         trackTaskFailed(sessionId, Date.now() - runStartedAt);
@@ -1409,6 +1454,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const permission = event.properties as PermissionRequest;
     if (!permission?.id || !permission.sessionID) return;
     if (queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, permission.sessionID))?.includes(permission.id)) return;
+    taskRunQuality.permission(permission.sessionID, permission.id);
     notifyDesktopEvent({
       type: "permission.asked",
       sessionId: permission.sessionID,
@@ -1431,6 +1477,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const permission = event.properties as PermissionV2Request;
     if (!permission?.id || !permission.sessionID) return;
     if (queryClient.getQueryData<string[]>(settledPermissionsKey(workspaceId, permission.sessionID))?.includes(permission.id)) return;
+    taskRunQuality.permission(permission.sessionID, permission.id);
     notifyDesktopEvent({
       type: "permission.asked",
       sessionId: permission.sessionID,
@@ -1494,9 +1541,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       return;
     }
     const usageRun = entry.gatewayUsageRuns.get(info.sessionID);
-    if (usageRun && info.role === "assistant") usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
+    if (usageRun && info.role === "assistant") {
+      usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
+      usageRun.modelId = gatewayUsageModelId(info) ?? usageRun.modelId;
+      if (usageRun.startedAt === 0 && typeof info.time?.created === "number" && info.time.created > 0) usageRun.startedAt = info.time.created;
+    }
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (info.role === "assistant" && typeof info.time?.completed === "number") {
+      if (usageRun && !("error" in info && info.error)) usageRun.responseCompleted = true;
       const observedAt = perfNow();
       entry.assistantMessageCompletedAt.set(info.sessionID, observedAt);
       const runActiveAt = entry.runActiveObservedAt.get(info.sessionID);
@@ -1591,12 +1643,15 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const props = (event.properties ?? {}) as { part?: Part };
     const part = props.part;
     if (!part?.sessionID || !part.messageID) return;
+    if (part.type === "tool") taskRunQuality.tool(part.sessionID, part.callID);
     if (partHasVisibleAssistantOutput(part)) {
+      observeAnalyticsOutput(workspaceId, part.sessionID, part.messageID);
       clearSessionRetry(entry, workspaceId, part.sessionID);
       useSessionActivityStore.getState().markAssistantOutput(workspaceId, part.sessionID, part.messageID);
     }
     if (isTerminalToolPart(part)) settleOrphanedInteractions(workspaceId, part.sessionID, new Set([part.callID]));
     if (!isTrackedSession(entry, part.sessionID)) return;
+    if (part.type === "tool") observeFeatureTool(entry, part);
     const [mapped, ...attachments] = toUIParts(part);
     if (!mapped) return;
     const pendingKey = JSON.stringify([part.sessionID, part.messageID, part.id]);
@@ -1662,6 +1717,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       delta?: string;
     };
     if (!props.sessionID || !props.messageID || !props.partID || typeof props.delta !== "string" || !props.delta) return;
+    observeAnalyticsOutput(workspaceId, props.sessionID, props.messageID);
     const activity = useSessionActivityStore.getState();
     if (activity.recordsByWorkspaceId[workspaceId]?.[props.sessionID]?.runActive) {
       clearSessionRetry(entry, workspaceId, props.sessionID);
@@ -1864,6 +1920,7 @@ function applySessionRunStatus(
 
   const live = isLiveStatus(status);
   if (live && (!wasLive || !entry.gatewayUsageRuns.has(sessionId))) {
+    useProviderCredentialHealth.getState().bindWorkspace(workspaceId, providerCredentialScope(entry.input.baseUrl));
     entry.gatewayUsageRuns.set(sessionId, newGatewayUsageRun(`${workspaceId}:${sessionId}:run:${++gatewayUsageRunSequence}`));
   }
   if (v2 && !live) {
@@ -1884,12 +1941,15 @@ function applySessionRunStatus(
     // A level-triggered idle response is as authoritative as the SSE edge.
     // Converge through the same terminal path so a missed status event also
     // flushes final deltas and refreshes any final persisted message parts.
-    const runStartedAt = takeTaskRunStart(sessionId);
+    const runStartedAt = taskRunQuality.isStopping(sessionId) || !(options.completed ?? !v2)
+      ? null : takeTaskRunStart(sessionId);
     if (runStartedAt !== null && (options.completed ?? !v2)) {
       captureAnalyticsEvent("task_run_completed", {
+        ...taskRunQuality.finish(sessionId, true),
         duration_ms: Date.now() - runStartedAt,
       });
       trackTaskCompleted(sessionId, Date.now() - runStartedAt);
+      noteActivationRunCompleted(sessionId, Date.now() - runStartedAt);
       notifyDesktopEvent({ type: "task.completed", sessionId });
       entry.titleRecovery?.observe(sessionId);
     }
@@ -1900,6 +1960,9 @@ function applySessionRunStatus(
       entry.gatewayUsageRuns.set(sessionId, usageRun);
       if (!usageRun.completed) {
         usageRun.completed = true;
+        if (usageRun.providerId && !usageRun.failed && (options.completed === true || usageRun.responseCompleted)) {
+          useProviderCredentialHealth.getState().observe(workspaceId, usageRun.providerId, "verified", usageRun.startedAt);
+        }
         if (usageRun.providerId === null || usageRun.providerId.startsWith("ipr_")) {
           refreshGatewayUsageAfterCompletion(usageRun.scope, usageRun.key);
         }
@@ -1973,6 +2036,7 @@ async function reconcileSessionMessages(entry: SyncEntry, sessionId: string, mes
       if (messages.some(({ info, parts }) => info.sessionID !== sessionId || (messageId && info.id !== messageId)
         || parts.some((part) => part.sessionID !== sessionId || part.messageID !== info.id))) return;
       const workspaceId = entry.input.workspaceId;
+      observeProviderCredentialMessages(workspaceId, messages);
       const queryClient = getReactQueryClient();
       flushSessionDeltas(entry, workspaceId, sessionId);
       queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionId), (current = []) => applyRevertCursor(
@@ -2434,6 +2498,22 @@ async function refreshSessionTodos(workspaceId: string, sessionId: string) {
   await queryClient.invalidateQueries({ queryKey });
 }
 
+/** Durable messages recover authentication evidence even when the new task's
+ * first lifecycle events arrived before its chat route attached to the stream. */
+export function observeProviderCredentialMessages(workspaceId: string, messages: ReadonlyArray<{
+  info: { role: string; providerID?: string; time?: { created?: number; completed?: number }; finish?: string; error?: unknown };
+}>) {
+  for (const { info } of messages) {
+    if (info.role !== "assistant" || !info.providerID || !info.time?.created) continue;
+    const observedAt = info.time.completed ?? info.time.created;
+    if (info.error && isProviderCredentialRejection(info.error)) {
+      useProviderCredentialHealth.getState().observe(workspaceId, info.providerID, "rejected", info.time.created, observedAt);
+    } else if (!info.error && info.time.completed && info.finish && !["error", "aborted"].includes(info.finish)) {
+      useProviderCredentialHealth.getState().observe(workspaceId, info.providerID, "verified", info.time.created, observedAt);
+    }
+  }
+}
+
 export function seedSessionState(
   workspaceId: string,
   snapshot: OpenworkSessionHistory,
@@ -2443,6 +2523,7 @@ export function seedSessionState(
   if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
   const key = transcriptKey(workspaceId, snapshot.session.id);
+  observeProviderCredentialMessages(workspaceId, snapshot.messages);
   const projected = snapshotToUIMessages(snapshot);
   let incoming = projected;
   // Commit against the old text before merging a cumulative snapshot, never
@@ -2518,14 +2599,13 @@ export function seedSessionState(
   useSessionActivityStore.getState().observeTranscript(workspaceId, snapshot.session.id, transcript, true, {
     snapshotStartedAt,
   });
-  const backgroundShells = useBackgroundShellStore.getState().enabled;
-  if (backgroundShells) rememberHistoryBackgroundShells(workspaceId, snapshot);
+  rememberHistoryBackgroundShells(workspaceId, snapshot);
   for (const entry of syncs.values()) {
     if (entry.input.workspaceId !== workspaceId) continue;
     discoverTaskSessions(entry, snapshot.session.id);
     // Opening a conversation (or refreshing it after a run) reads which of its
     // background commands still run, now that its run state is seeded.
-    if (backgroundShells && (!options.engine || syncEngine(entry.input.baseUrl) === options.engine)) {
+    if (!options.engine || syncEngine(entry.input.baseUrl) === options.engine) {
       void reconcileBackgroundShells(entry, snapshot.session.id);
     }
   }

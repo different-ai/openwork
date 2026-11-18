@@ -70,7 +70,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
-    "zod": "^4.3.6",
+    "zod": "^4.6.6",
     "lucide-react": "^0.577.0",
     "@openwork/workbook": "workspace:*",
     "htmlparser2": "8.0.2"

@@ -14,13 +14,22 @@ A single-organization OpenWork control plane (Den), without Kubernetes:
 | HTTPS | Default run.app URLs; optional global HTTPS load balancer and managed certificate |
 | Identity / logs | Dedicated runtime service account, per-secret accessor grants; Cloud Logging |
 | Optional network | Direct VPC egress into an existing VPC/subnet |
+| AI Gateway (optional, off by default) | `openwork-inference` Cloud Run service on 8791, HTTPS LB host/NEG/backend and certificate |
 
-Uses the environment described in [the manual Cloud Run guide](../../../../docs/gcp-cloud-run.md), `packaging/cloud-run`, and the Helm chart. Workbot, the runner, Slack, OpenWork Web/gateway, Redis and headless Automations are outside this module; their existing inputs are unchanged.
+The **AI Gateway** handles inference, **den-gateway** handles OpenWork Web/sandboxes,
+and Den API's **MCP gateway** handles tools; they are not interchangeable.
+See [AI Gateway setup and networking limits](../../AI_GATEWAY.md), including the
+Cloud SQL socket adapter and the HTTPS (not private DNS) service-call boundary.
+A separate managed AI Gateway certificate avoids replacing the existing Den
+certificate when adding its hostname; supplied certificates must cover it.
+
+Uses the environment described in [the manual Cloud Run guide](../../../../docs/gcp-cloud-run.md), `packaging/cloud-run`, and the Helm chart. Workbot, the runner, Slack, OpenWork Web/den-gateway, Redis and headless Automations are outside this module; their existing inputs are unchanged.
 
 ## Tested scenarios
 
 | Date | Tools | Images | Scenario / result |
 | --- | --- | --- | --- |
+| 2026-11-13 | Offline-only implementation | Synthetic fixture digests | AI Gateway live DNS/TLS, admin/provider/Desktop, unchanged apply, disable/data retention and teardown: **NotRun**; no provisioning |
 | 2026-10-14 | Terraform 1.16.5 | 0.18.58 → dev b8efc5b (digests) | Earlier module: setup, browser, isolated desktop, same-database upgrade and destroy passed; one API instance |
 | 2026-10-15 | Terraform 1.16.5 / OpenTofu 1.11.14 | Mocked Google provider | Init, validate and 32 offline test runs per tool passed; write-only fields, protected DB, 2-instance singleton migration topology |
 | 2026-10-15 | Terraform 1.16.5; local testkit | 0.18.58 → dev f450b1a (digests) | Two API instances observed in both revisions; one migrator/task per deployment, exit 0; setup, browser, exact admin/org preservation, isolated source Electron, no secret rotation/state values, 21-resource destroy and independent empty inventory passed |
@@ -75,6 +84,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `create_image_mirror` | `true` (not used when both custom images are supplied) |
 | `allow_mutable_image_tags` | `false`: digest pinning is the only default; explicit tag opt-in is not recommended or contract-conformant |
 | `service_account_email`, `grant_iam_roles` | Empty creates an identity; grants default `true` |
+| `managed_legacy`, `managed_maintenance`, `web_service_account_email` | Managed installer only: defaults `false`, `false`, empty; preserve legacy names/generators and a separate unprivileged web identity; keep disabled until verified API-only promotion |
 | `deletion_protection` | `true` for database, services and job; explicitly disable for disposable tests |
 | `domain_name`, `api_domain_name` | Empty: HTTPS run.app; custom API default `api.<domain_name>` |
 | `ssl_certificate_ids`, `load_balancer_ip_address` | `[]`, empty: create managed cert and global IP |
@@ -89,10 +99,11 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `smtp` | Host/user/password empty, port `587`, secure `false`; password stored in Secret Manager |
 | `create_database`, `database_url`, `cloud_sql_connection_name` | `true`, empty, empty; bring an existing database by setting create false and a verified URL |
 | `database.tier`, `database.edition`, `database.database_version` | `db-g1-small` (**1.7 GB**), `ENTERPRISE`, `MYSQL_8_4`; micro reached its memory quota at idle |
-| `database.disk_size_gb`, `database.availability_type`, `database.backup_enabled` | `10`, `ZONAL`, `true` |
+| `database.disk_size_gb`, `database.availability_type`, `database.backup_enabled` | `20`, `ZONAL`, `true` |
 | `database.deletion_protection` | Deprecated nullable alias; when explicitly set it overrides the common input for Cloud SQL only |
 | `den_api` | CPU `1`, memory `2Gi`, min `1`, max `3` |
 | `den_web` | CPU `1`, memory `1Gi`, min `1`, max `3` (Cloud Run request-driven service floor uses one CPU) |
+| `ai_gateway_enabled`, `ai_gateway_domain_name`, `ai_gateway_image` | `false`, `""`, `""`; enabled requires a dedicated hostname and mirrored inference image@digest; creates HTTPS LB even without Den custom domains |
 | `migration_run_id` | `"1"`; changing it deliberately runs another migration |
 | `write_only_secrets` | `true`; ephemeral generation and write-only provider arguments; false is a not-recommended legacy compatibility opt-out |
 | `database_password_wo_version` | `1`; deliberate database-password rotation counter, coordinate with the connection secret |
@@ -111,7 +122,8 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `secret_ids`, `service_account_email`, `service_names` | Managed secret identifiers and runtime identities |
 | `images` | Final resolved image references |
 | `bootstrap_code` | Sensitive legacy-mode value; null in write-only mode |
-| `load_balancer_ip`, `dns_records` | Optional IP and two A records |
+| `load_balancer_ip`, `dns_records` | Optional IP and A records for enabled custom Den/AI Gateway hostnames |
+| `ai_gateway_url` | AI Gateway HTTPS origin, null when disabled |
 
 ### Existing infrastructure and TLS
 
@@ -120,6 +132,42 @@ Existing Cloud SQL: `create_database = false`, `cloud_sql_connection_name = "PRO
 Existing `network`/`subnetwork` enable Direct VPC egress for services and job; `ALL_TRAFFIC` needs Cloud NAT. Existing certificates and a reserved global IP can be reused. Custom domain certificates become active after both hostnames resolve to `load_balancer_ip`; HTTP redirects to HTTPS. `restrict_ingress_to_load_balancer = true` disables direct run.app ingress.
 
 ## Upgrade notes
+
+The managed Google Cloud installer consumes this module with an explicit
+`managed_legacy` profile: old physical names, 48-character generators,
+state-backed secrets, bootstrap-owned Cloud SQL IAM, and a separate web identity
+without database/secret access. It passes MySQL 8.0 explicitly; this does not
+change the direct 8.4/write-only defaults. `managed_maintenance` holds services at
+manual zero through migration and API-only revision preparation, before the
+managed runner verifies traffic and separately restores autoscaling. Direct
+users should leave both flags off. Managed compatibility requires explicit
+legacy secrets and a web identity; new optional generated SMTP/Resend secrets
+are not part of that profile. See the [managed installer guide](../../../managed-deployments/gcp/README.md)
+for address moves, customer re-approval, grant scope, maintenance and live gates.
+The offline managed checks are not a new live certification of this module.
+
+**Database disk default: 10 → 20 GB.** Existing direct users who omitted
+`database.disk_size_gb` will see an in-place storage increase in their next plan.
+[Cloud SQL documents this increase as online, without downtime](https://docs.cloud.google.com/sql/docs/mysql/instance-settings#storage-capacity):
+it does not require a restart or replacement. This is a storage-only change,
+not an instance-tier change. **The disk cannot shrink afterward.** Review the
+whole plan: unrelated changes can still require maintenance. If automatic
+storage growth has already taken it above 20 GB, preserve the current allocation;
+do not attempt to reduce it to this default.
+
+Estimated zonal MySQL SSD storage in **us-central1**, at the public list price
+of **$0.17/GB-month**, goes from **$1.70 to $3.40/month (+$1.70)**.
+Estimate checked 2026-10-19; excludes database compute, backups, networking,
+taxes and discounts. See [Cloud SQL pricing](https://cloud.google.com/sql/pricing).
+To keep an existing 10 GB disk, set this **before applying the increase**
+(merge it into your current `database` object, preserving other settings):
+
+```hcl
+database = { disk_size_gb = 10 }
+```
+
+Automatic storage growth remains enabled; this override does not cap growth or
+undo an increase already applied. Managed installer sizes remain separately pinned.
 
 1. Back up and inventory **all** processes/manual jobs/other installations sharing this physical schema. Freeze rollout/retries; choose one coordinator.
 2. For legacy per-replica migrators, enter maintenance: scale old API to zero/stop it, disable replacements/autoscale and queued retries, await terminal old task/job/container states, and verify old DB sessions/in-flight DDL are gone. Drain other incompatible DB consumers too. A new lock cannot fence old noncooperating code.
@@ -155,4 +203,9 @@ For an S3 backend outside this GCP example, use native `use_lockfile = true`, no
 
 ## Cost notes
 
-Defaults keep one API (1 vCPU / 2 GiB) and one web (1 vCPU / 1 GiB) instance warm plus a db-g1-small (1.7 GB) with 10 GB disk, backups, secrets and image cache. This is a smoke-test baseline, **not** HA or production load sizing. SQL, warm-instance rates, storage, egress and optional load balancer/IP charges vary; estimate current regional prices before apply. The old micro-based daily estimate is no longer applicable. Min instances zero reduces Cloud Run idle cost but adds sign-in cold starts. Disposable `examples/complete` disables deletion protection and backups; do not copy those choices into production. Direct VPC egress can keep a subnet busy for up to roughly two hours after service deletion: budget teardown time, and never force-delete someone else's resources.
+Enabling the AI Gateway keeps one 1 vCPU / 2 GiB instance warm (up to three),
+and creates an HTTPS LB/IP if Den previously used only run.app. It adds no Cloud
+SQL instance. Estimate those incremental regional charges before applying; no
+live Gateway cost/capacity measurement is claimed.
+
+Defaults keep one API (1 vCPU / 2 GiB) and one web (1 vCPU / 1 GiB) instance warm plus a db-g1-small (1.7 GB) with 20 GB disk, backups, secrets and image cache. This is a smoke-test baseline, **not** HA or production load sizing. SQL, warm-instance rates, storage, egress and optional load balancer/IP charges vary; estimate current regional prices before apply. The old micro-based daily estimate is no longer applicable. Min instances zero reduces Cloud Run idle cost but adds sign-in cold starts. Disposable `examples/complete` disables deletion protection and backups; do not copy those choices into production. Direct VPC egress can keep a subnet busy for up to roughly two hours after service deletion: budget teardown time, and never force-delete someone else's resources.

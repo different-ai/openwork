@@ -786,18 +786,32 @@ async function readEnvSnapshot(input: {
   hostToken: string
   keys: string[]
 }): Promise<EnvSnapshot> {
-  const snapshot: EnvSnapshot = new Map()
-  for (const key of input.keys) {
-    if (snapshot.has(key)) {
-      continue
+  const keys = [...new Set(input.keys)]
+  // Keep insertion (and rollback) order independent of read completion order.
+  const snapshot: EnvSnapshot = new Map(keys.map((key) => [key, null]))
+  let nextIndex = 0
+  let failed = false
+  const reads = await Promise.allSettled(Array.from({ length: Math.min(4, keys.length) }, async () => {
+    while (!failed) {
+      const key = keys[nextIndex++]
+      if (key === undefined) return
+      try {
+        const existing = await readEnvEntry({
+          fetchImpl: input.fetchImpl,
+          instanceUrl: input.instanceUrl,
+          hostToken: input.hostToken,
+          key,
+        })
+        snapshot.set(key, existing?.value ?? null)
+      } catch (error) {
+        failed = true
+        throw error
+      }
     }
-    const existing = await readEnvEntry({
-      fetchImpl: input.fetchImpl,
-      instanceUrl: input.instanceUrl,
-      hostToken: input.hostToken,
-      key,
-    })
-    snapshot.set(key, existing?.value ?? null)
+  }))
+  // Drain every launched request before propagating a failure to the caller.
+  for (const read of reads) {
+    if (read.status === "rejected") throw read.reason
   }
 
   return snapshot
@@ -1160,19 +1174,27 @@ export async function materializeCloudWorkerProviders(input: {
       throw new Error("worker_tokens_missing")
     }
     const desiredProviderIds = prepared.providers.map((provider) => provider.runtimeProviderId)
-    const currentManagedProviders = await readRuntimeManagedProviders({
-      fetchImpl,
-      instanceUrl,
-      clientToken: tokens.clientToken,
-    })
+    // These snapshots are independent, but both must finish successfully before
+    // writes begin. allSettled also drains the other reads when either fails.
+    const [providerRead, envRead] = await Promise.allSettled([
+      readRuntimeManagedProviders({
+        fetchImpl,
+        instanceUrl,
+        clientToken: tokens.clientToken,
+      }),
+      readEnvSnapshot({
+        fetchImpl,
+        instanceUrl,
+        hostToken: tokens.hostToken,
+        keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
+      }),
+    ])
+    if (providerRead.status === "rejected") throw providerRead.reason
+    if (envRead.status === "rejected") throw envRead.reason
+    const currentManagedProviders = providerRead.value
+    const envSnapshot = envRead.value
     const providerPatch = buildRuntimeProviderPatch(prepared, currentManagedProviders)
     const providerRollbackPatch = buildRuntimeProviderRollbackPatch(prepared, currentManagedProviders)
-    const envSnapshot = await readEnvSnapshot({
-      fetchImpl,
-      instanceUrl,
-      hostToken: tokens.hostToken,
-      keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
-    })
     const staleKeys = staleSupersededKeys(prepared.supersededEntries, envSnapshot)
     // Roll back only what this pass writes or deletes; a bare-name entry that
     // is left alone is never touched on the way out either.

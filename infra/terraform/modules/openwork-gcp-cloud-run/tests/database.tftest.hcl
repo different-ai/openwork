@@ -66,12 +66,33 @@ run "legacy_generated_database_url_uses_connector" {
 run "safe_stateful_defaults" {
   command = apply
   assert {
+    condition     = google_sql_user.openwork[0].host == "%"
+    error_message = "Direct module users must retain the existing percent host default."
+  }
+  assert {
     condition     = output.database_identifier == google_sql_database_instance.this[0].id && output.migration_step_identifier == google_cloud_run_v2_job.migrate.id && output.web_url != "" && output.api_url != ""
     error_message = "The common output interface must expose URLs, Cloud SQL ID and Cloud Run job ID without renaming existing outputs."
   }
   assert {
     condition     = google_sql_database_instance.this[0].deletion_protection && google_sql_database_instance.this[0].settings[0].deletion_protection_enabled && google_sql_database_instance.this[0].settings[0].tier == "db-g1-small"
     error_message = "Cloud SQL must default to protected db-g1-small (1.7 GB), not memory-exhausted micro."
+  }
+}
+
+run "small_trial_storage_default" {
+  command = plan
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].disk_size == 20 && google_sql_database_instance.this[0].settings[0].disk_autoresize
+    error_message = "Small / trial must start with 20 GB storage and retain automatic growth."
+  }
+}
+
+run "explicit_legacy_storage_is_preserved" {
+  command = plan
+  variables { database = { disk_size_gb = 10 } }
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].disk_size == 10
+    error_message = "Users with an existing 10 GB disk must be able to opt out before applying the increase."
   }
 }
 

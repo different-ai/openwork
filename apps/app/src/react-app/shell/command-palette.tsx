@@ -35,13 +35,10 @@ import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import { formatChord, resolveShortcutOs } from "@/react-app/domains/shortcuts/shortcut-keys";
-import { ModelSourceIcon } from "@/react-app/domains/models/model-picker-list";
-import { OpenWorkMark, ProviderIcon } from "../design-system/provider-icon";
-import { isAutoModel, modelTitle, publicModelTitle } from "@/react-app/domains/models/model-catalog";
+import { ModelPickerList } from "@/react-app/domains/models/model-picker-list";
+import { modelTitle, publicModelTitle } from "@/react-app/domains/models/model-catalog";
 import { useModelCollectionsStore } from "../domains/session/models/model-collections-store";
 import {
-  buildCommandPaletteBehaviorItems,
-  buildCommandPaletteModelItems,
   commandPaletteBackMode,
   createCommandPaletteModelControls,
   type CommandPaletteMode,
@@ -55,6 +52,8 @@ import {
   type PaletteResultGroup,
 } from "./command-palette-search";
 import { buildCommandPaletteSettingsItems } from "./command-palette-settings";
+import { buildSessionGroupActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { sessionGroupActionsToPalette } from "./command-palette-session-actions";
 
 export type { PaletteItem } from "./command-palette-search";
 
@@ -103,6 +102,8 @@ export type CommandPaletteProps = {
   /** Opens a chosen session beside the current session without navigating away. */
   onOpenSessionInSplit?: (workspaceId: string, sessionId: string) => void;
   currentSession?: CommandPaletteSessionRef | null;
+  secondarySession?: CommandPaletteSessionRef | null;
+  onCloseSplitSession?: () => void;
   /** Called when "New session" is chosen. */
   onCreateNewSession: () => void;
   /** Starts an empty session beside the current session. */
@@ -113,12 +114,12 @@ export type CommandPaletteProps = {
   onOpenExtensions: (section?: string) => void;
   onToggleSidebar?: () => void;
   onOpenAutomations?: () => void;
-  onOpenCalendar?: () => void;
   onOpenDashboard?: () => void;
+  dashboardLabel?: string;
   onCreateWorkspace?: () => void;
   /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
-  /** Optional: model data for the nested model and effort modes. */
+  /** Optional: model data for the nested model picker. */
   modelOptions?: ModelOption[];
   selectedModel?: ModelRef;
   selectedModelBehavior?: string | null;
@@ -136,7 +137,8 @@ export type CommandPaletteProps = {
   sessionGroups?: SessionGroupOption[];
   currentSessionForGroupMove?: { title: string } | null;
   currentSessionGroupId?: string | null;
-  onMoveCurrentSessionToGroup?: (groupId: string) => void;
+  onMoveCurrentSessionToGroup?: (groupId: string | null) => void;
+  onCreateGroup?: () => void;
   extraItems?: PaletteItem[];
   /** Optional: agent picker submode (Switch agent). */
   listAgents?: () => Promise<Agent[]>;
@@ -157,14 +159,12 @@ export function CommandPalette(props: CommandPaletteProps) {
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
-  const [behaviorModel, setBehaviorModel] = useState<ModelOption | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!props.open) {
       setMode("root");
-      setBehaviorModel(null);
       setQuery("");
     }
   }, [props.open]);
@@ -211,7 +211,6 @@ export function CommandPalette(props: CommandPaletteProps) {
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
   const favorites = useModelCollectionsStore((state) => state.favorites);
-  const recentModels = useModelCollectionsStore((state) => state.recent);
   const choice = useModelChoice(JSON.stringify([props.selectedModel, props.selectedModelBehavior]));
   const modelControls = createCommandPaletteModelControls({ options: props.modelOptions ?? [], current: props.selectedModel,
     behavior: props.selectedModelBehavior, favorites, onSelect: (model, behavior, option) => {
@@ -262,6 +261,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
+    ...(props.onCloseSplitSession ? [{
+      id: "close-split", title: t("session_management.close_split_view"), meta: "Workbench",
+      searchText: "close side chat split view pane keep conversation",
+      action: () => { props.onClose(); props.onCloseSplitSession?.(); },
+    }] : []),
     ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Shift+M" : "Mod+Shift+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
       disabled: !modelControls.nextPinnedOption,
@@ -279,7 +283,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           group: ACTIONS_GROUP,
           action: () => {
             if (hasNestedModelPicker) {
-              setBehaviorModel(null);
               setMode("models");
               return;
             }
@@ -306,10 +309,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(canMoveCurrentSessionToGroup
       ? [{
           id: "move-to-group",
-          title: "Move to Group",
-          detail: props.currentSessionForGroupMove
-            ? `Add ${props.currentSessionForGroupMove.title} to an existing group`
-            : "Add the selected task to an existing group",
+          title: t("session_management.move_to_group"),
+          detail: props.currentSessionForGroupMove?.title,
           meta: sessionGroupCount > 0 ? `${sessionGroupCount.toLocaleString()} groups` : "No groups",
           searchText: "move to group add task session folder organize",
           group: ACTIONS_GROUP,
@@ -405,23 +406,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(props.onOpenCalendar
-      ? [{
-          id: "calendar.open",
-          title: "Calendar",
-          keywords: ["week", "meetings", "schedule", "automations", "google calendar", "outlook"],
-          group: ACTIONS_GROUP,
-          action: () => {
-            props.onClose();
-            props.onOpenCalendar?.();
-          },
-        }]
-      : []),
     ...(props.onOpenDashboard
       ? [{
           id: "dashboard.open",
-          title: "Dashboard",
-          keywords: ["home", "overview", "apps"],
+          title: props.dashboardLabel ?? "Dashboard",
+          keywords: ["home", "overview", "apps", "artifacts", "dashboard"],
           group: ACTIONS_GROUP,
           action: () => {
             props.onClose();
@@ -470,7 +459,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   const splitSessionItems = useMemo<PaletteItem[]>(
-    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession).map((item) => ({
+    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession, props.secondarySession).map((item) => ({
       id: `split-session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
@@ -481,7 +470,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onClose();
       },
     })),
-    [props.currentSession, props.onClose, props.onOpenSessionInSplit, props.sessions],
+    [props.currentSession, props.secondarySession, props.onClose, props.onOpenSessionInSplit, props.sessions],
   );
 
   const accessibleItems = useMemo<PaletteItem[]>(() => {
@@ -536,68 +525,23 @@ export function CommandPalette(props: CommandPaletteProps) {
     ];
   }, [agents, props]);
 
-  const groupItems = useMemo<PaletteItem[]>(() => (
-    (props.sessionGroups ?? []).map((group) => ({
-      id: `group:${group.id}`,
-      title: group.label,
-      meta: props.currentSessionGroupId === group.id ? "Current" : undefined,
-      searchText: `group ${group.label}`.toLowerCase(),
-      action: () => {
-        props.onClose();
-        props.onMoveCurrentSessionToGroup?.(group.id);
-      },
-    }))
-  ), [props]);
-
-  const modelItems = useMemo<PaletteItem[]>(() => (
-    buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel, favorites, recentModels).map((item) => ({
-      id: item.id,
-      title: item.title,
-      detail: item.detail,
-      meta: item.meta,
-      searchText: item.searchText,
-      disabled: item.option.disabled,
-      action: () => {
-        choice.choose(item.option, () => {
-          props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
-          props.onClose();
-        });
-      },
-    }))
-  ), [choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
-
-  const behaviorItems = useMemo<PaletteItem[]>(() => {
-    if (!behaviorModel) return [];
-    return buildCommandPaletteBehaviorItems(
-      behaviorModel,
-      props.selectedModel,
-      props.selectedModelBehavior,
-    ).map((item) => ({
-      id: item.id,
-      title: item.title,
-      detail: item.detail,
-      meta: item.meta,
-      searchText: item.searchText,
-      action: () => {
-        const currentOption = props.modelOptions?.find((option) => option.providerID === behaviorModel.providerID && option.modelID === behaviorModel.modelID);
-        if (!currentOption) return;
-        choice.choose(currentOption, () => {
-          props.onSelectModel?.({ providerID: behaviorModel.providerID, modelID: behaviorModel.modelID }, item.option.value);
-          props.onClose();
-        });
-      },
-    }));
-  }, [behaviorModel, choice.choose, props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, props.selectedModelBehavior]);
+  const groupItems = useMemo<PaletteItem[]>(() => sessionGroupActionsToPalette(buildSessionGroupActions({
+    groups: props.sessionGroups ?? [],
+    assignedGroupId: props.currentSessionGroupId ?? null,
+    onAssignGroup: (groupId) => props.onMoveCurrentSessionToGroup?.(groupId),
+    onCreateGroup: props.onCreateGroup,
+  }), props.onClose), [props]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
     if (!nextMode) return;
-    if (mode === "model-behavior") setBehaviorModel(null);
     setMode(nextMode);
   };
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (choice.loginOpen) return;
+    // An open menu inside the palette (the provider filter) takes Escape first.
+    if (event.target instanceof Element && event.target.closest('[data-slot="select-content"]')) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -634,15 +578,9 @@ export function CommandPalette(props: CommandPaletteProps) {
         ? agentItems
         : mode === "groups"
           ? groupItems
-          : mode === "models"
-            ? modelItems
-            : mode === "model-behavior"
-              ? behaviorItems
           : [];
 
-  const paletteModels = useMemo(() => new Map((props.modelOptions ?? []).map((option) => [`model:${option.providerID}:${option.modelID}`, option])), [props.modelOptions]);
   const renderPaletteItem = (item: PaletteItem) => {
-    const model = paletteModels.get(item.id);
     return <CommandItem
       key={item.id}
       value={mode === "root" ? item.id : item}
@@ -650,14 +588,11 @@ export function CommandPalette(props: CommandPaletteProps) {
       className="gap-2.5"
       disabled={item.disabled}
       onClick={() => {
+        if (item.disabled) return;
         setRecents(recordPaletteRecent(item.id));
         item.action();
       }}
     >
-      {model ? <span data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
-        {isAutoModel(model) ? <OpenWorkMark className="size-4 text-dls-accent dark:text-foreground" />
-          : <ProviderIcon providerId={model.providerID} providerName={model.description} size={16} />}
-      </span> : null}
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{item.title}</div>
         {item.breadcrumb || item.detail ? (
@@ -674,7 +609,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           <span className="sr-only">{item.searchText}</span>
         ) : null}
       </div>
-      {model && !isAutoModel(model) ? <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={model} /></span> : null}
       {item.shortcut || item.meta ? (
         <CommandShortcut className="tracking-normal">{item.shortcut ?? item.meta}</CommandShortcut>
       ) : null}
@@ -696,73 +630,90 @@ export function CommandPalette(props: CommandPaletteProps) {
                   ? "Move to Group"
                   : mode === "models"
                     ? "Models"
-                    : mode === "model-behavior"
-                      ? behaviorModel?.behaviorTitle ?? "Thinking / Effort"
                   : t("session.palette_title_actions")
           }
         </CommandDialogTitle>
-        <Command
-          key={mode}
-          items={mode === "root" ? rootGroups : submodeItems}
-          {...(mode === "root"
-            ? { filter: null, value: query, onValueChange: setQuery }
-            : { itemToStringValue: paletteItemSearchValue })}
-        >
-          <CommandHeader className="flex items-center gap-0">
-            {mode !== "root" && (
-              <Button variant="outline" size="icon-sm" className="rounded-xl" onClick={navigateBack}>
+        {mode === "models" ? (
+          // The same list as the composer's model picker, in the palette's wider frame.
+          <div data-testid="palette-model-picker" className="flex min-h-0 flex-1 flex-col"
+            onKeyDownCapture={(event) => {
+              if (event.key === "Backspace" && event.target instanceof HTMLInputElement && event.target.value === "") {
+                event.preventDefault();
+                navigateBack();
+              }
+            }}>
+            <ModelPickerList searchInputRef={searchInputRef} autoFocusSearch={false}
+              options={props.modelOptions ?? []} current={props.selectedModel ?? { providerID: "", modelID: "" }}
+              currentBehaviorValue={props.selectedModelBehavior} query={query} onQueryChange={setQuery}
+              leading={<Button variant="outline" size="icon-sm" className="mr-2 rounded-xl" onClick={navigateBack}>
                 <ChevronLeftIcon className="size-4" />
                 <span className="sr-only">{t("common.back")}</span>
-              </Button>
-            )}
-            <CommandInput
-              ref={searchInputRef}
-              data-command-palette-input
-              className="w-full"
-              placeholder={
-                mode === "root"
-                  ? "Search actions and settings…"
-                  : mode === "split-sessions"
-                    ? "Search sessions and workspaces..."
-                  : mode === "accessible-items"
-                    ? "Search servers and artifacts..."
-                    : mode === "agents"
-                      ? t("session.palette_placeholder_agents")
-                      : mode === "groups"
-                        ? "Search groups..."
-                        : mode === "models"
-                          ? "Search models…"
-                          : mode === "model-behavior"
-                            ? "Search thinking or effort..."
-                        : t("session.palette_placeholder_actions")
-              }
-              onKeyDown={handleBackspace}
-            />
-          </CommandHeader>
-          <CommandPanel>
-            <CommandEmpty>{mode === "root" ? "No matches. Try a different word, or type > for actions only." : mode === "accessible-items" ? "No accessible items found for this session." : mode === "groups" ? "No groups found for this workspace." : mode === "models" ? "No models match your search." : mode === "model-behavior" ? "No thinking or effort options match your search." : t("session.palette_no_matches")}</CommandEmpty>
-            <CommandList>
-              {mode === "root"
-                ? (group: PaletteResultGroup) => (
-                    <CommandGroup
-                      key={group.value}
-                      items={group.items}
-                      data-command-palette-group={group.value}
-                    >
-                      <CommandGroupLabel>{group.label}</CommandGroupLabel>
-                      <CommandCollection>
-                        {renderPaletteItem}
-                      </CommandCollection>
-                    </CommandGroup>
-                  )
-                : renderPaletteItem}
-            </CommandList>
-          </CommandPanel>
-          <CommandFooter>
-            <span>{t("session.palette_hint_navigate")}</span>
-            <span>{t("session.palette_hint_run")}</span>
-          </CommandFooter>
-        </Command>
+              </Button>}
+              onSelect={(option, behavior) => choice.choose(option, () => {
+                props.onSelectModel?.({ providerID: option.providerID, modelID: option.modelID }, behavior?.variant);
+                props.onClose();
+              })} />
+          </div>
+        ) : (
+          <Command
+            key={mode}
+            items={mode === "root" ? rootGroups : submodeItems}
+            {...(mode === "root"
+              ? { filter: null, value: query, onValueChange: setQuery }
+              : { itemToStringValue: paletteItemSearchValue })}
+          >
+            <CommandHeader className="flex items-center gap-0">
+              {mode !== "root" && (
+                <Button variant="outline" size="icon-sm" className="rounded-xl" onClick={navigateBack}>
+                  <ChevronLeftIcon className="size-4" />
+                  <span className="sr-only">{t("common.back")}</span>
+                </Button>
+              )}
+              <CommandInput
+                ref={searchInputRef}
+                data-command-palette-input
+                className="w-full"
+                placeholder={
+                  mode === "root"
+                    ? "Search actions and settings…"
+                    : mode === "split-sessions"
+                      ? "Search sessions and workspaces..."
+                    : mode === "accessible-items"
+                      ? "Search servers and artifacts..."
+                      : mode === "agents"
+                        ? t("session.palette_placeholder_agents")
+                        : mode === "groups"
+                          ? "Search groups..."
+                          : t("session.palette_placeholder_actions")
+                }
+                onKeyDown={handleBackspace}
+              />
+            </CommandHeader>
+            <CommandPanel>
+              <CommandEmpty>{mode === "root" ? "No matches. Try a different word, or type > for actions only." : mode === "accessible-items" ? "No accessible items found for this session." : mode === "groups" ? "No groups found for this workspace." : t("session.palette_no_matches")}</CommandEmpty>
+              <CommandList>
+                {mode === "root"
+                  ? (group: PaletteResultGroup) => (
+                      <CommandGroup
+                        key={group.value}
+                        items={group.items}
+                        data-command-palette-group={group.value}
+                      >
+                        <CommandGroupLabel>{group.label}</CommandGroupLabel>
+                        <CommandCollection>
+                          {renderPaletteItem}
+                        </CommandCollection>
+                      </CommandGroup>
+                    )
+                  : renderPaletteItem}
+              </CommandList>
+            </CommandPanel>
+            <CommandFooter>
+              <span>{t("session.palette_hint_navigate")}</span>
+              <span>{t("session.palette_hint_run")}</span>
+            </CommandFooter>
+          </Command>
+        )}
       </CommandDialogPopup>
     </CommandDialog>
     </>

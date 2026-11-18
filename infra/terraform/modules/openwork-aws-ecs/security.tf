@@ -82,8 +82,9 @@ variable "database_ca_bundle" {
 }
 
 data "http" "rds_ca" {
-  count = var.database_ca_bundle == "" ? 1 : 0
-  url   = "https://truststore.pki.rds.amazonaws.com/${local.region}/${local.region}-bundle.pem"
+  count    = var.database_ca_bundle == "" ? 1 : 0
+  url      = "https://truststore.pki.rds.amazonaws.com/${local.region}/${local.region}-bundle.pem"
+  insecure = false
   lifecycle {
     postcondition {
       condition     = self.status_code == 200 && strcontains(self.response_body, "-----BEGIN CERTIFICATE-----")
@@ -96,7 +97,24 @@ locals {
   database_ca_bundle = var.database_ca_bundle != "" ? var.database_ca_bundle : data.http.rds_ca[0].response_body
   # Public CA material only. Node loads extra roots before starting the process;
   # the MySQL parser's sslaccept=strict enforces certificate verification.
-  tls_setup = "printf '%s' '${base64encode(local.database_ca_bundle)}' | base64 -d > /tmp/openwork-db-ca.pem; export NODE_EXTRA_CA_CERTS=/tmp/openwork-db-ca.pem; "
+  tls_check = <<-JS
+    const fs = require("node:fs");
+    const { X509Certificate } = require("node:crypto");
+    try {
+      const url = new URL(process.env.DATABASE_URL);
+      const modes = [...url.searchParams].filter(([key]) => ["sslaccept", "sslmode"].includes(key));
+      if (url.protocol !== "mysql:" || modes.length !== 1 || !["sslaccept=strict", "sslmode=verify-full"].includes(modes[0].join("="))) throw new Error();
+      const certificates = fs.readFileSync(process.env.NODE_EXTRA_CA_CERTS, "utf8")
+        .match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
+      if (!certificates || !certificates.length) throw new Error();
+      for (const certificate of certificates) new X509Certificate(certificate);
+      console.log("OPENWORK_MANAGED_DB_TLS mode=strict ca=validated");
+    } catch {
+      console.error("Database TLS configuration rejected.");
+      process.exit(1);
+    }
+  JS
+  tls_setup = "printf '%s' '${base64encode(local.database_ca_bundle)}' | base64 -d > /tmp/openwork-db-ca.pem; export NODE_EXTRA_CA_CERTS=/tmp/openwork-db-ca.pem; printf '%s' '${base64encode(local.tls_check)}' | base64 -d > /tmp/openwork-db-tls-check.cjs; node /tmp/openwork-db-tls-check.cjs; "
 }
 
 resource "terraform_data" "security_contract" {
@@ -107,7 +125,8 @@ resource "terraform_data" "security_contract" {
         [local.den_api_image, local.den_web_image],
         local.web_enabled ? [local.den_gateway_image] : [],
         local.runner_managed ? [local.runner_image] : [],
-        local.workbot_enabled ? [local.workbot_image] : []
+        local.workbot_enabled ? [local.workbot_image] : [],
+        var.ai_gateway_enabled ? [var.ai_gateway_image] : []
       ) : can(regex("@sha256:[0-9a-f]{64}$", image))])
       error_message = "Every enabled image must be pinned with @sha256:<64 hex characters>; pass digest overrides for optional services."
     }

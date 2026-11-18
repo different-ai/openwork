@@ -42,6 +42,7 @@ import {
   ENTERPRISE_MCP_RESOURCE_URI_LIMIT_BYTES,
 } from "./resource-catalog.js"
 import { assertEnterpriseMcpToolArguments } from "./tool-input.js"
+import { advertisesEvents, observeLegacyEventCapability, withEventRoutingHeaders } from "./events-compat.js"
 
 const connectionSchema = z.object({
   id: z.string().trim().min(1),
@@ -59,6 +60,7 @@ const oauthConfigurationSchema = z.object({
   clientMetadataUrl: clientMetadataUrlSchema.optional(),
   authorizationServerIssuer: z.string().trim().url().optional(),
   requestedScopes: z.array(z.string().trim().min(1)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
+  requestSelectedScopesOnly: z.boolean().optional(),
 })
 const toolNameSchema = z.string().trim().min(1)
 const resourceUriSchema = z.string().trim().min(1).max(ENTERPRISE_MCP_RESOURCE_URI_LIMIT_BYTES).refine(
@@ -93,6 +95,9 @@ type Session = {
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
+  legacyEventsAdvertised: () => boolean
+  /** Set once the server was asked to end the session. */
+  releaseAttempted?: boolean
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -177,7 +182,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
   } = parsedOptions
   const explicitOperationTimeoutMs = options.operationTimeoutMs
   const clock: EnterpriseMcpClock = options.clock ?? { now: () => Date.now() }
-  const configuredFetch: EnterpriseMcpFetch = options.fetch
+  const configuredFetch: EnterpriseMcpFetch = options.webhookEvents ? withEventRoutingHeaders(options.fetch) : options.fetch
 
   function emitDiagnostic(event: Parameters<NonNullable<EnterpriseMcpClientOptions["diagnosticSink"]>>[0]): void {
     try {
@@ -185,6 +190,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     } catch {
       // Diagnostics must never change the connection outcome they observe.
     }
+  }
+
+  /**
+   * Asks the server to end this one-off session (an HTTP DELETE). Closing the
+   * client only stops local requests, so a stateful server would otherwise
+   * keep the session until it expires, and gateways that cap open sessions
+   * then refuse new ones. Bounded, attempted once and best-effort: a server
+   * without DELETE support, a failure or a timeout never changes the result.
+   */
+  async function releaseSession(session: Session): Promise<void> {
+    if (session.releaseAttempted || !session.transport.sessionId) return
+    session.releaseAttempted = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const released = session.transport.terminateSession().catch(() => undefined)
+    await Promise.race([released, new Promise<void>((resolve) => { timer = setTimeout(resolve, closeTimeoutMs) })])
+    clearTimeout(timer)
+  }
+
+  async function closeSession(session: Session): Promise<void> {
+    await releaseSession(session)
+    await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
   }
 
   function failureRequestPhase(observer: EnterpriseMcpRequestObserver) {
@@ -208,8 +234,11 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
     if (!session.oauthProvider || !["tool-execution", "resource-discovery", "resource-read"].includes(input.operationPhase)) return
     const failure = session.observer.lastRequestFailure()
     if (!failure || !isMcpResourceRequest(failure.requestPhase)) return
+    // `insufficient_scope` refuses one request: the token is still valid for
+    // every request its scopes cover, and a new sign-in asks for the same
+    // scopes, so clearing it would only sign the member out again.
     const rejected = (failure.httpStatus === 401 && failure.invalidToken)
-      || (failure.httpStatus === 403 && (failure.bearerChallenge || failure.insufficientScope))
+      || (failure.httpStatus === 403 && failure.bearerChallenge && !failure.insufficientScope)
     if (!rejected) return
     await session.oauthProvider.invalidateCredentials("tokens")
     emitDiagnostic({
@@ -304,10 +333,16 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         : oauthProvider,
       fetch: oauthProvider ? oauthProvider.exclusiveRefreshFetch(observer.fetch) : observer.fetch,
       requestInit: requestInit(input.connection.authorization),
+      // Only a sign-in can widen scopes. Outside one, the refusal is reported
+      // with the scope the server named, without a refresh or a second call.
+      onInsufficientScope: input.flow.kind === "connect" ? "reauthorize" : "throw",
     })
+    const legacyEventsAdvertised = options.webhookEvents ? observeLegacyEventCapability(transport) : () => false
     const capabilities = {
+      ...(options.webhookEvents ? { events: {} } : {}),
       extensions: {
         [MCP_APP_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
+        ...(options.webhookEvents ? { "io.modelcontextprotocol/events": {} } : {}),
       },
     }
     const client = new Client(
@@ -333,6 +368,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       controller,
       requestOptions,
       lifecycle: { expiresAt: configuredExpiresAt, signal: requestSignal },
+      legacyEventsAdvertised,
     }
   }
 
@@ -408,6 +444,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       })
       throw wrapped
     } finally {
+      // A failure can leave a session the operation never closed.
+      await releaseSession(session)
       session.controller.abort()
     }
   }
@@ -436,7 +474,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             throw error
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({
@@ -508,7 +546,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
                   throw new Error("The OAuth provider requested authorization without an authorization URL.")
                 }
                 try {
-                  await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                  await closeSession(session)
                 } catch {
                   // The bounded cleanup attempt must not discard a valid authorization URL.
                 }
@@ -516,7 +554,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               }
             }
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               throw new EnterpriseMcpClientError({
                 operationPhase: "shutdown",
@@ -529,7 +567,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             const authorizeUrl = session.oauthProvider?.authorizeUrl ?? null
             if (error instanceof UnauthorizedError && authorizeUrl) {
               try {
-                await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+                await closeSession(session)
               } catch {
                 // The bounded cleanup attempt must not discard a valid authorization URL.
               }
@@ -611,7 +649,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             })
           } finally {
             try {
-              await closeWithinDeadline(() => session.client.close(), closeTimeoutMs)
+              await closeSession(session)
             } catch (error) {
               if (!operationFailed) {
                 throw new EnterpriseMcpClientError({
@@ -641,6 +679,26 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
         },
         id: authorizationId,
         reason: input.reason,
+      })
+    },
+
+    async requestEvents(input) {
+      if (!options.webhookEvents) throw new Error("MCP webhook events are not enabled for this client.")
+      return runConnectedOperation({
+        connection: input.connection,
+        redirectUri: input.redirectUri,
+        operationPhase: "protocol-initialize",
+        operation: async (session) => {
+          let advertised = session.legacyEventsAdvertised() || advertisesEvents(session.client.getServerCapabilities())
+          if (!advertised && session.client.getProtocolEra() === "modern") {
+            // Auto-negotiation owns the transport observer while discovering. Preserve the
+            // ChatGPT top-level alias with an explicit schema on this read-only fallback.
+            const discovery = await session.client.request({ method: "server/discover" }, z.record(z.string(), z.unknown()), session.requestOptions)
+            advertised = advertisesEvents(discovery.capabilities)
+          }
+          if (!advertised) throw new Error("The MCP server does not advertise Events support.")
+          return session.client.request({ method: input.method, params: input.params }, z.record(z.string(), z.unknown()), session.requestOptions)
+        },
       })
     },
 

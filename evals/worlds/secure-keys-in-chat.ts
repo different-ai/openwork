@@ -5,13 +5,12 @@ import type { Place, Seed } from "@openwork/env";
 import type { MockAgentToolStep, MockAgentWorkload } from "@openwork/labs";
 import { engineParity } from "./engine-parity.ts";
 import { isRecord } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** What OpenWork sends after a key is saved; it carries no key. */
 export const KEY_SAVED_PROMPT = "I've saved the key. Go ahead.";
 export const CONNECT_PROMPT = "Connect our status service. It needs an API key.";
 export const GATEWAY_PROMPT = "Add our OpenRouter account to the AI Gateway for everyone.";
-export const BACKUP_PROMPT = "Also connect our backup status service.";
 export const VERTEX_PROMPT = "Add our Google Cloud Vertex project to the AI Gateway for everyone.";
 
 function field(value: unknown, ...path: string[]): unknown {
@@ -46,7 +45,8 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
       { name: "team_status", description: "Read the team status page", inputSchema: { type: "object", properties: {} }, result: { content: [{ type: "text", text: proof }] } },
     ] }) },
   });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { secureSecretFields: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
+  if (!organizationId) throw new Error("Missing seeded organization");
 
   // Keys exist only in this process; witnesses keep a 12-character fingerprint.
   const keys = { status: randomBytes(24).toString("hex"), wrong: randomBytes(24).toString("hex"), gateway: `sk-or-${randomBytes(24).toString("hex")}` };
@@ -94,10 +94,20 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
     if (!workspace) await new Promise((resolve) => setTimeout(resolve, 500));
   }
   if (!workspace) throw new Error(`Missing workspace after sign-in; route: ${await base.route()}`);
-  const connected = await base.request(`/workspace/${workspace}/mcp/openwork-cloud/reconcile`, "POST", {
-    config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, trigger: "secure-keys-fixture",
-  });
-  if (connected.status !== 200) throw new Error(`Connect reconciliation failed: ${connected.status}`);
+  // A 200 only means reconciliation ran. On a slow boot the engine can still
+  // be unreachable, and the first chat would then fail or miss Cloud tools,
+  // so repeat it until the health says the Cloud tools are usable.
+  let health: unknown = null;
+  for (const deadline = Date.now() + 90_000; Date.now() < deadline;) {
+    const connected = await base.request(`/workspace/${workspace}/mcp/openwork-cloud/reconcile`, "POST", {
+      config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, trigger: "secure-keys-fixture",
+    });
+    if (connected.status !== 200) throw new Error(`Connect reconciliation failed: ${connected.status}`);
+    health = connected.body;
+    if (field(health, "usable") === true) break;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  if (field(health, "usable") !== true) throw new Error(`OpenWork Cloud tools never became usable; last phase: ${String(field(health, "phase"))}`);
   const sentinels = await fetch(`${base.mock.url}/admin/private-sentinels`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ values: [...Object.values(keys), serviceAccountSentinel] }) });
   if (!sentinels.ok) throw new Error("Model privacy witness setup failed");
 
@@ -135,11 +145,22 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
     return { isError: field(envelope, "result", "isError") === true, body, text };
   }
 
+  // Any current Gemini text model works: no inference is sent. models.dev marks
+  // retired models "deprecated" and unreleased ones "alpha" or "beta".
   const vertexModels = await (async () => {
     const result = await seed.api(den.admin, "/v1/llm-provider-catalog/google-vertex");
+    if (!result.response.ok) throw new Error(`Den could not load the google-vertex catalog (${result.response.status}): ${result.text.slice(0, 300)}`);
     const models = field(result.body, "provider", "models");
-    const ids = Array.isArray(models) ? models.flatMap((model) => isRecord(model) && typeof model.id === "string" && /^gemini-2\.5/.test(model.id) && !/preview|exp|lite|image|tts|live|embed/i.test(model.id) ? [model.id] : []) : [];
-    if (!ids.length) throw new Error("The google-vertex catalog has no Gemini 2.5 models");
+    const current = (model: unknown): model is { id: string } => {
+      if (!isRecord(model) || typeof model.id !== "string") return false;
+      const status = field(model, "config", "status");
+      const output = field(model, "config", "modalities", "output");
+      return /^gemini-/.test(model.id) && !/preview|exp|lite|image|tts|live|embed/i.test(model.id)
+        && (status === undefined || status === "active")
+        && Array.isArray(output) && output.length === 1 && output[0] === "text";
+    };
+    const ids = Array.isArray(models) ? models.filter(current).map((model) => model.id) : [];
+    if (!ids.length) throw new Error("The google-vertex catalog has no current Gemini text model (all are deprecated, preview, or non-text)");
     return ids.slice(0, 1);
   })();
   // OpenWork Cloud in headless Chrome, signed in as the admin.
@@ -151,11 +172,11 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
   const resources = setup.move();
   return {
     ...base, den, web, organizationId, keys, fingerprint, wire, proof, statusUrl, serviceAccount,
-    /** The admin asks; the agent creates the connection without its key and ends its turn. */
+    /** The admin asks; the agent sets the connection up by a stable key without its key and ends its turn. */
     async scriptConnection() {
       await script([
         { promptMarker: CONNECT_PROMPT, latestUserTurn: true, finalReply: "Add the key in the field above and I'll continue.", steps: [
-          cloudCall("execute_capability", { name: "postMcpConnections", body: { name: "Status service", url: statusUrl, authType: "apikey", credentialMode: "shared", access: { orgWide: true } } }),
+          cloudCall("execute_capability", { name: "putMcpConnectionsByKeyByExternalKey", path: { externalKey: "status-service" }, body: { name: "Status service", url: statusUrl, authType: "apikey", credentialMode: "shared", access: { orgWide: true } } }),
         ] },
         { promptMarker: KEY_SAVED_PROMPT, latestUserTurn: true, finalReply: "The status service did not answer", finalReplyFrom: "last-tool-text", steps: statusCall },
       ]);
@@ -167,14 +188,6 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
           cloudCall("execute_capability", { name: "postInferenceProviders", body: { name: "Team OpenRouter", providerId: "openrouter", modelIds: ["openai/gpt-4o-mini"], allMembers: true } }),
         ] },
         { promptMarker: KEY_SAVED_PROMPT, latestUserTurn: true, finalReply: "Team OpenRouter is ready for everyone.", steps: [] },
-      ]);
-    },
-    /** A second request whose key nobody has entered yet. */
-    async scriptBackup() {
-      await script([
-        { promptMarker: BACKUP_PROMPT, latestUserTurn: true, finalReply: "Add the backup service's key in the field above.", steps: [
-          cloudCall("execute_capability", { name: "postMcpConnections", body: { name: "Backup status service", url: statusUrl, authType: "apikey", credentialMode: "shared", access: { orgWide: true } } }),
-        ] },
       ]);
     },
     /** The admin asks; the agent adds a Vertex provider for everyone without its key file and ends its turn. */
@@ -215,9 +228,6 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
       const riley = den.members.riley;
       if (!riley) throw new Error("Missing member");
       return seed.api(riley, `/v1/mcp-connections/${encodeURIComponent(connectionId)}/shared-credential`, { method: "PUT", headers: { "x-openwork-org-id": organizationId }, body: JSON.stringify({ apiKey: keys.wrong }) });
-    },
-    async setFeature(enabled: boolean) {
-      await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { secureSecretFields: enabled } }) });
     },
     async colorScheme(theme: "light" | "dark") {
       await base.app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });

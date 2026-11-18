@@ -1,0 +1,174 @@
+---
+title: "Import your Claude conversations"
+sidebarTitle: "Import Claude conversations"
+description: "Bring Claude chats and Claude Code sessions into OpenWork as regular conversations you can read, search and continue."
+---
+
+Switching from Claude does not mean starting from a blank page. OpenWork imports your past conversations into a workspace, where they look and behave like any other chat: you can read them, search them, and pick up where you left off with any model.
+
+What you can bring depends on where the conversation happened in Claude.
+
+<CardGroup cols={3}>
+  <Card title="Claude Code" icon="terminal" href="#claude-code-sessions">
+    **Imports directly.** Sessions are saved on your computer, so OpenWork finds them for you.
+  </Card>
+  <Card title="Claude chats" icon="messages" href="#claude-chats">
+    **Imports from Claude's data export.** Request it in Claude, then choose the file in OpenWork.
+  </Card>
+  <Card title="Cowork tasks" icon="lock" href="#cowork-tasks">
+    **Not available.** Claude's export does not include Cowork tasks.
+  </Card>
+</CardGroup>
+
+All imports happen in **Settings → Import**, in the workspace you want the conversations to live in.
+
+<Frame caption="Settings → Import finds the Claude Code sessions saved for this folder. Chats come from your Claude export.">
+  <img src="/images/claude-import-settings.png" alt="The Import page in OpenWork settings, listing two Claude Code sessions ready to import, a drop area for a Claude export, and Cowork tasks marked as not available." />
+</Frame>
+
+<Note>
+  Import is rolling out. If you don't see **Import** under your workspace in Settings, update OpenWork, or ask your OpenWork admin to turn on **Desktop: import Claude conversations**.
+</Note>
+
+## Claude Code sessions
+
+Claude Code saves every session in a folder on your computer. OpenWork reads the sessions that belong to the folder your workspace uses.
+
+<Steps>
+  <Step title="Open the same folder in OpenWork">
+    Create or select the workspace for the project folder you used with Claude Code. Sessions are matched by folder, so a session started in `~/code/website` appears in the workspace for `~/code/website`.
+  </Step>
+  <Step title="Open Settings → Import">
+    **Claude Code sessions in this folder** lists every session it found, newest first, with how many messages it has.
+  </Step>
+  <Step title="Choose and import">
+    Sessions you haven't imported yet are already ticked. Untick any you want to leave behind and select **Import**. Each one appears in your workspace's chat list straight away. Select **Open** to jump to it.
+  </Step>
+</Steps>
+
+<Frame caption="An imported Claude Code session reads like any other chat, including the tools Claude ran.">
+  <img src="/images/claude-import-chat.png" alt="An imported Claude Code session in OpenWork: the original question, a finished Read step, and Claude's answer." />
+</Frame>
+
+<Tip>
+  Working across several folders? Switch workspace in the Settings sidebar and import each folder's sessions in turn.
+</Tip>
+
+## Claude chats
+
+Conversations from claude.ai and the Claude desktop app come from **Claude's data export**. Claude prepares the export and emails you a link; OpenWork reads the file it gives you.
+
+### 1. Request your export from Claude
+
+<Tabs>
+  <Tab title="Your own account">
+    1. In Claude, open **Settings → Privacy**.
+    2. Select **Export data** and confirm.
+
+    If you don't see **Export data**, your organization has turned off personal exports. Ask a Claude organization owner to switch on **Allow members to export their own data** under **Organization settings → Data and privacy**, or to export for you.
+  </Tab>
+  <Tab title="Organization owners">
+    1. In Claude, open **Organization settings → Data and privacy**.
+    2. Under **Data controls**, select **Export data**.
+    3. Pick a date range and select **Export**.
+
+    <Warning>
+      An organization export contains **every member's conversations**, not just yours. Keep the file private, and import only your own conversations, or only what your organization has agreed to move.
+    </Warning>
+  </Tab>
+</Tabs>
+
+### 2. Download the conversations file
+
+Claude emails you when the export is ready. In our tests that took under a minute, but Claude says it can take up to 12 hours.
+
+<Steps>
+  <Step title="Open the link in the email">
+    Use a browser where you are signed in to Claude. The link downloads a small **list of downloads** (a file named `manifest-….json`), not your conversations.
+  </Step>
+  <Step title="Open the conversations link inside that list">
+    Open the manifest and visit the link next to `"category": "conversations"`. That downloads a file named like **`conversations-000.zip`**. Large exports have more than one: download each `conversations-…` file.
+  </Step>
+  <Step title="Download it straight away">
+    Links expire after 24 hours and can stop working once used. If a link no longer works, request a new export.
+  </Step>
+</Steps>
+
+<Note>
+  You can ignore the other files in the list, such as `light_metadata-000.zip`. They hold account details, not conversations. If you choose the manifest itself, OpenWork tells you which file to pick instead.
+</Note>
+
+### 3. Import into OpenWork
+
+<Steps>
+  <Step title="Open Settings → Import">
+    Under **Claude chats**, drop your `conversations-…` file onto the page, or select **Choose Claude export** and pick it.
+  </Step>
+  <Step title="Pick the conversations">
+    OpenWork lists every conversation in the file, newest first, with conversations not yet imported already ticked. Untick anything you don't want.
+  </Step>
+  <Step title="Import">
+    Select **Import**. Each conversation appears in your workspace's chat list.
+  </Step>
+</Steps>
+
+## Cowork tasks
+
+Claude's data export **does not include Cowork tasks**, and Claude offers no other way to download them. We confirmed this on October 23, 2026: a Cowork task created alongside a regular chat was missing from the export, while the chat was included. Cowork tasks now run in Anthropic's cloud by default, which is why there is no local copy to read either.
+
+Until Claude makes them exportable, bring the useful parts across yourself:
+
+<CardGroup cols={2}>
+  <Card title="Save the files" icon="file-arrow-down">
+    Open each task you rely on and download the files it produced (**More ways to open → Download**). Put them in your OpenWork workspace folder.
+  </Card>
+  <Card title="Keep the know-how" icon="sparkles">
+    Turn instructions you repeat into a skill. Skills you wrote for Cowork move with the [migration prompt](/start-here/migrate-from-claude-cowork).
+  </Card>
+</CardGroup>
+
+## What comes across
+
+| | Imported | Not imported |
+| --- | --- | --- |
+| **Messages** | Every message, in order, with its original date | Earlier versions of messages you edited or regenerated (you get the latest) |
+| **Titles** | The conversation or session name | |
+| **Thinking and tools** | Claude's reasoning, and each tool call with its result, shown as finished steps | Nothing is re-run: no commands, searches or edits happen again |
+| **Files** | | Files you attached; Claude's export leaves them out |
+| **Claude Code sub-agents** | The result they returned | Their individual steps |
+| **Settings** | | Projects, memory, connectors and saved logins. [Reconnect your services](/start-here/connect-your-stack/connect-services) in OpenWork |
+| **Model and usage** | The model Claude Code recorded, for reference | Token counts and cost |
+
+## Good to know
+
+<AccordionGroup>
+  <Accordion title="Can I continue an imported conversation?">
+    Yes. An imported conversation is a regular OpenWork chat. Type a message and it continues with the model you have selected, which sees the imported history: ask about something said in Claude and it can answer.
+  </Accordion>
+  <Accordion title="What happens if I import the same file twice?">
+    Nothing is duplicated. Conversations you already imported show **Imported** and can't be ticked. Each conversation is imported once per workspace.
+  </Accordion>
+  <Accordion title="A conversation shows “Changed since import”">
+    You kept using it in Claude after importing it. OpenWork keeps the copy you already have, including anything you added in OpenWork, and does not overwrite it.
+  </Accordion>
+  <Accordion title="Where do my conversations go?">
+    Into the workspace you have selected in Settings, on this computer. Nothing is uploaded to OpenWork's servers. Your export file is read and then left where it is; delete it when you are done if you no longer need it.
+  </Accordion>
+  <Accordion title="Can I import chats with my teammates' conversations in the file?">
+    You'll see every conversation in an organization export. Import only the ones that are yours, or that your organization has agreed to move.
+  </Accordion>
+  <Accordion title="My export is very large">
+    OpenWork reads files up to 256 MB. For bigger histories, request an export with a shorter date range and import each one.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Move plugins and skills" icon="arrow-right-arrow-left" href="/start-here/migrate-from-claude-cowork">
+    One prompt moves your Claude plugins and the skills you wrote.
+  </Card>
+  <Card title="Keep using Claude models" icon="key" href="/start-here/connect-your-stack/add-anthropic-api-key">
+    Add an Anthropic API key to continue imported conversations with Claude.
+  </Card>
+</CardGroup>

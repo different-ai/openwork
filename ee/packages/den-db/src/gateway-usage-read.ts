@@ -77,6 +77,27 @@ export async function activeUsageMember(
   return member
 }
 
+/**
+ * A member a limit can be assigned to directly: anyone still in the organization, joined or
+ * invited. An invited person's member row keeps its id when they accept, so what is assigned
+ * to it is enforced from their first request. A canceled invitation removes the row.
+ */
+export async function assignableUsageMember(tx: UsageReader, scope: GatewayUsageScope) {
+  const [member] = await tx
+    .select()
+    .from(MemberTable)
+    .where(
+      and(
+        eq(MemberTable.id, scope.memberId),
+        eq(MemberTable.organizationId, scope.organizationId),
+        isNull(MemberTable.removedAt),
+      ),
+    )
+    .for("share")
+  if (!member) return usageFail("member_not_found", 404, "Organization member not found.")
+  return member
+}
+
 export async function usagePolicies(
   tx: UsageReader,
   organizationId: GatewayUsageScope["organizationId"],
@@ -93,10 +114,21 @@ export async function usagePolicies(
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), inArray(A.policyId, ids)))
+  // A provider limit whose provider was deleted applies to no requests; say so.
+  const existingProviders = await usageProviderNames(
+    tx,
+    organizationId,
+    rows.flatMap((row) => (row.inferenceProviderId ? [row.inferenceProviderId] : [])),
+  )
   return rows.map(
     ({ inferenceProviderId, ...row }): GatewayUsageLimitPolicy => ({
       ...row,
       providerId: inferenceProviderId ?? null,
+      providerStatus: inferenceProviderId
+        ? existingProviders.has(inferenceProviderId)
+          ? "available"
+          : "removed"
+        : null,
       archivedAt: row.archivedAt?.toISOString() ?? null,
       limits: limits
         .filter((entry) => entry.policyId === row.id)
@@ -527,18 +559,16 @@ export async function usageProviderNames(
 
 /**
  * The member's default status plus one entry per provider limit that governs
- * them. Provider entries are only built when per-provider limits are on.
+ * them. Provider limits are available on every deployment.
  */
 export async function readUsageStatusWithProviders(
   tx: UsageReader,
   scope: GatewayUsageScope,
   now: Date,
-  options: { lock?: boolean; providerLimits: boolean },
+  options: { lock?: boolean } = {},
 ): Promise<GatewayUsageStatus> {
   const lock = options.lock ?? false
-  const scopes = options.providerLimits
-    ? await effectiveUsagePolicyScopes(tx, scope, lock)
-    : new Map<string, UsageWinner[]>()
+  const scopes = await effectiveUsagePolicyScopes(tx, scope, lock)
   const { usage } = await readUsageStatus(
     tx,
     scope,
@@ -546,9 +576,8 @@ export async function readUsageStatusWithProviders(
     lock,
     false,
     GATEWAY_DEFAULT_USAGE_SCOPE,
-    options.providerLimits ? (scopes.get(GATEWAY_DEFAULT_USAGE_SCOPE) ?? []) : undefined,
+    scopes.get(GATEWAY_DEFAULT_USAGE_SCOPE) ?? [],
   )
-  if (!options.providerLimits) return usage
   const providerIds = [...scopes.keys()].filter((key) => key !== GATEWAY_DEFAULT_USAGE_SCOPE).sort()
   const names = await usageProviderNames(tx, scope.organizationId, providerIds)
   const providers: GatewayProviderUsage[] = []

@@ -11,13 +11,50 @@ browser ── chat.openworklabs.com (this app: page + API) ──┬── Den 
 
 - **The page** is [`@openwork-ee/workbot-ui`](../../packages/workbot-ui), built with Vite and served by this app.
 - **The API** (`/v1/workbot/...`) is [`@openwork-ee/workbot-server`](../../packages/workbot-server) behind this
-  app's sign-in. Every request needs a signed-in member and Den's answer that Workbot is on for their workspace.
+  app's sign-in. Every request needs a signed-in member and Den's current access decision.
 - **Den stays the identity provider.** Workbot is Den's first-party OAuth client `openwork-workbot` (PKCE, no
   secret, no consent screen, one return address `${WORKBOT_PUBLIC_URL}/auth/callback`). Den creates it from
   `DEN_WORKBOT_URL`. The access token Workbot gets only works on Den's `/mcp/agent` resource and on
   `GET /v1/workbot/session` and `POST /v1/workbot/run-token`; it never sees the person's Den session.
 - **Each turn** gets a fresh member-scoped token from `POST /v1/workbot/run-token` (at most an hour). Den refuses it
-  when Workbot is off for the workspace or the membership ended.
+  when membership or the required access grant is no longer valid.
+
+## Navigation
+
+Workbot uses the same chat-first navigation on every screen, without a layout rollout flag.
+At 1024px and wider, a 64px icon rail sits beside a 260px searchable chat list: Main chat stays first,
+then side chats ordered by latest activity. On smaller screens, the navigation button opens a drawer
+with the destinations, side chats, and a bottom search/new-chat row. Files, Documents, Calendar and Apps
+open their existing destinations; capability availability and document-draft guards still apply. Tasks are
+not a destination: what Workbot is doing shows under its name, and tapping the name opens the task sheet.
+Apps opens a plain sheet titled Apps. On phones (under 1024px) there is no avatar badge or "Set up by" card,
+only Workbot's name with its status where it says who is replying; tapping it opens the same sheet the avatar
+opens on desktop (the profile), as a full-height sheet that is
+pulled down or closed to dismiss. Background tasks are one row each (title, one status line, a time, Stop); their
+steps open inside the row.
+No empty channel or space sections are invented. Computer is not a navigation destination; browser
+work is opened from its inline preview card, and files Workbot made open from their cards in the same
+panel (a full-screen sheet on phones; see `docs/features/workbot-artifact-panel`). While the desktop panel
+is open, navigation folds into the same drawer so the conversation keeps its width; closing the panel
+restores the direct sidebar.
+
+The conversation and composer share a centered column capped at 800px. Changing screen size or
+switching chats preserves the existing per-chat draft and scroll owners.
+
+`pnpm --filter @openwork-ee/workbot test:navigation-browser` checks the real React screen against the
+local in-memory fixture, including 1440px/1920px desktop, 390px phone, switching, filtering, empty/error
+recovery, keyboard focus and unsent drafts. Start `test-fixtures/chat-screen-server.ts 3098` first;
+`PLAYWRIGHT_MODULE` can point to a separate Playwright installation. These are deterministic UI
+checks, not evidence of live Den, runner or model integration.
+
+## On a phone
+
+The page runs edge to edge in iPhone Safari and as a Home Screen app (`manifest.webmanifest`, `display: standalone`,
+black-translucent status bar). The header and message box float over the conversation on a progressive blur
+(`floating-glass.tsx`); Workbot's replies flow on the page without a box, the person's messages stay grey bubbles.
+The page shell is deliberately not `position: fixed`: Safari 26 paints the colour at a fixed element's edge as a solid
+bar behind its status bar and floating toolbar, which hid everything under them. `/` and the manifest are served with
+`Cache-Control: no-cache`, so a phone picks up a deploy on its next load.
 
 ## Sessions
 
@@ -30,6 +67,32 @@ returns at once while their Den session lasts. Den is asked who the person is at
 30 seconds, so a revoked grant or membership signs them out quickly. Changes must come from this site's own origin.
 Signing out revokes the refresh token at Den.
 
+## The phone app
+
+The [OpenWork app](../openwork-ios) for iPhone signs in through Workbot, so Den keeps one return address and the phone
+never holds Den tokens:
+
+1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its
+   return address.
+2. Workbot sends the person to Den with that challenge, marked sign-in only (`openwork_sign_in_only=true`): Den's
+   sign-in page asks for an email first and never offers to create an account, because app stores require an app
+   that creates accounts to delete them too. Den returns to Workbot's `/auth/callback`, which hands the
+   code to the app's return address: `/auth/app/callback` on Workbot itself, which iOS opens only in the OpenWork app
+   it verified against `/.well-known/apple-app-site-association`. Anyone can start a sign-in with a challenge of
+   their own, so the code never goes to an address another app could claim. Private-use schemes are rejected on
+   every deployment, including localhost; phone sign-in requires an HTTPS deployment with verified app links.
+3. The app trades the code and its verifier at `POST /auth/app/token` for a Workbot session, encrypted with
+   `WORKBOT_SESSION_SECRET` like the cookie, and sends it as `Authorization: Bearer`. When the Den tokens inside are
+   refreshed, the response carries the new session in `Workbot-Session`; `POST /auth/app/refresh` renews it before it
+   expires, and `POST /auth/logout` revokes it.
+
+The phone app is behind the `workbotMobile` feature. A member whose workspace doesn't have it cannot sign a phone in:
+`POST /auth/app/token` answers `403 workbot_mobile_not_enabled` and gives back what Den issued. If the feature is
+turned off later, `/v1/workbot/me` says so and every other request from a phone is refused the same way.
+
+Android is not built yet. `/.well-known/assetlinks.json` is served for it once `WORKBOT_ANDROID_CERT_SHA256` is set,
+so an Android app can use the same return address.
+
 ## Configuration
 
 | Variable | | |
@@ -39,12 +102,48 @@ Signing out revokes the refresh token at Den.
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
 | `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
+| `WORKBOT_IOS_TEAM_ID` | unset | The OpenWork app's Apple team ID, served in `apple-app-site-association` so iOS returns sign-in to the app. Unset: the iPhone app can't finish signing in |
+| `WORKBOT_ANDROID_CERT_SHA256` | unset | SHA-256 fingerprints of an Android app's signing certificates, comma-separated, served in `assetlinks.json`. Unset: nothing is served; no Android app exists yet |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 | `WORKBOT_SENTRY_DSN` | unset | Optional Sentry error reports from the server: route errors, sign-in and token refresh failures, `den_unavailable`, runner unreachable or 5xx, live-event relay failures. Stable codes only, never messages, tokens or cookies. Unset sends nothing |
 | `WORKBOT_SENTRY_ENVIRONMENT`, `WORKBOT_SENTRY_RELEASE` | unset, `workbot@<WORKBOT_VERSION>` | Tags on those reports |
 
 On Den, set `DEN_WORKBOT_URL` (den-api) to the same address as `WORKBOT_PUBLIC_URL`; den-web's `/workbot` redirects
-there. Then turn Workbot on per organization: the admin panel, or the `den_set_org_capability` admin tool.
+there. Workbot is generally available; service configuration and each member's model access are still required.
+
+### Separate deployment domains
+
+Workbot, Den web and Den API can use unrelated HTTPS domains. Workbot discovers
+the authorization server from `WORKBOT_DEN_API_URL`; browser sign-in visits Den
+and returns to Workbot, while the code exchange runs on Workbot's server. Their
+browser cookies do not need a shared parent domain.
+
+- Set `DEN_WORKBOT_URL` and `WORKBOT_PUBLIC_URL` to the same canonical Workbot
+  origin. Den registers exactly `<origin>/auth/callback`. An alias or preview
+  host cannot share that callback: its host-only login cookie belongs to the
+  host where sign-in started. Keep this value consistent across Den replicas.
+- Set Den's `DEN_BASE_URL` (and `BETTER_AUTH_URL`, if supplied) to its public web
+  origin, and `DEN_API_PUBLIC_URL` to the public API origin. Configure
+  `DEN_API_BASE` on den-web for its server-side API connection. Browser session
+  requests use den-web's same-origin auth and browser proxies.
+- Set `WORKBOT_DEN_WEB_URL` explicitly when dashboard links should use a
+  different origin from the discovered issuer. It controls links, not OAuth
+  discovery. `WORKBOT_DEN_API_URL` must be reachable from the Workbot server.
+- These values are origins, not subpath mounts. Changing the Workbot origin
+  during an in-progress sign-in or account connection requires a fresh attempt.
+
+The focused auth test covers discovery and code exchange across three custom
+domains with synthetic endpoints; it does not verify deployed DNS, TLS, ingress
+or a live identity provider.
+
+### Internal health check
+
+`GET /internal/readiness` authenticates with the existing `WORKBOT_RUNNER_TOKEN`.
+An authenticated `X-OpenWork-Den-Origin` header asks it to compare the expected Den
+origin with its configuration, without returning either URL. The versioned
+response contains configuration facts only; it does not test sign-in, a model
+completion or delivery. It has no effect on public `/healthz` liveness checks.
+See [diagnostics](../../../docs/diagnostics.md).
 
 ## Run
 
@@ -94,12 +193,16 @@ permission requirements and concurrency boundaries.
 ## Workspace assistant
 
 `workbotWorkspaceAssistant` is off by default on cloud and self-hosted installs.
-With Workbot on, it adds the compact navigation drawer and floating composer to
-Documents and Calendar. Documents also requires `workbotDocuments`; Calendar
-retains its existing feature checks. The drawer reads recent files through the
-same authenticated Drive provider as Documents.
+With Workbot on, it adds the compact navigation drawer and an Ask Workbot action
+on an open document. The chat (conversation, composer, context chips) appears
+only in the chat view: Documents, Calendar and other views show their own title
+and full width, never a floating chat. Ask Workbot switches to the chat with the
+open document attached to the next message; the person can remove it before
+sending. Documents also requires `workbotDocuments`; Calendar retains its
+existing feature checks. The drawer reads recent files through the same
+authenticated Drive provider as Documents.
 
-At Send, the user can include or exclude the current view. The bounded snapshot
+The attached view is sent with one message only. The bounded snapshot
 contains the open Drive file's ID and unsaved status, or the calendar
 range, time zone and selected event/automation ID. Display titles, MIME labels and search text never enter the model prompt. It contains no document bytes or
 unsaved text. Contextual turns, retries and interrupted-turn resumes use read-only MCP credentials and disable write-capable runner tools. Changes require a separate explicit request from Home without view context. Workbot reads saved content using the member's existing connected
@@ -110,6 +213,24 @@ file is saved as an Office copy, context follows the confirmed copy’s file ID.
 Canonical Google document links in replies offer an explicit open action in
 Documents. Metadata resolves through Den again before the file opens; links
 never navigate automatically. Other links keep their usual external behavior.
+
+When the person explicitly asks Workbot to open or show a document, Workbot can
+request it with `open_document` (message turns only, including read-only
+contextual ones; never tasks or reports). The runner records only a request.
+The page follows it once, only for a message sent from that page and only if
+the person is still on the view they sent it from; reloads, history and
+retries never replay an earlier request. Under the reply, Workbot says
+"Opening in Documents…", then "Opened in Documents", "Couldn't open this
+document" (Den refused or failed), or "Not opened, because you moved on" with
+an Open action. While a document opens, the view context names nothing, so a
+message sent meanwhile never references the previous document.
+
+Where browser teaching is on, asking Workbot in the main chat to be taught a
+browser task works the same way: Workbot requests the teaching window with
+`open_teaching`, and the page follows it once for a message sent from that
+page, opening Browser with the window ready. Nothing is recorded until the
+person presses Start teaching. A Teach Workbot action under the reply opens the
+window again; reloads and history never replay the request.
 The Documents browser remains mounted while the user switches surfaces, keeping
 local drafts intact. Turning the assistant off removes contextual actions and
 rejects new context requests without unmounting an already-open editor.

@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
+import { useOnboardingStep } from "../../shell/use-onboarding-step";
+import { captureOnboardingEvent } from "../../../app/lib/analytics";
 
 import { t } from "../../../i18n";
 import {
@@ -13,6 +15,7 @@ import {
   resolveDenBaseUrls,
 } from "../../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../../app/lib/den-sign-in-intent";
+import { clearSignInReturnTarget } from "../../../app/lib/den-sign-in-return";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import { parseManualAuthInput } from "../../../app/lib/manual-auth-input";
 import { normalizeOrganizationServerInput } from "../../../app/lib/organization-server-input";
@@ -43,6 +46,7 @@ export type ForcedSigninPageProps = {
  * shared `DenSignInSurface` presentation layer.
  */
 export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
+  const signinRef = useOnboardingStep("signin");
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const desktopConfig = useDesktopConfig();
@@ -78,7 +82,9 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
+      captureOnboardingEvent("onboarding_signin_selected", { choice: mode === "sign-in" ? "sign_in" : "sign_up" });
       const url = buildDenAuthUrl(baseUrl, mode);
+      clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
@@ -89,6 +95,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       setAuthError(null);
       void tryOpenBrowserAuthUrl(url).then((opened) => {
         if (opened) return;
+        captureOnboardingEvent("onboarding_signin_failed", { reason: "browser_open_failed" });
         setStatusMessage(null);
         setManualAuthOpen(true);
       });
@@ -97,6 +104,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
   );
 
   const exchangeGrant = useCallback(async (grant: string, nextBaseUrl: string) => {
+    clearSignInReturnTarget();
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
@@ -277,6 +285,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   return (
     <DenSignInSurface
+      ref={signinRef}
       variant="fullscreen"
       appName={appName}
       logoUrl={bootstrap.brandLogoUrl ?? null}

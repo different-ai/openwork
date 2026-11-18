@@ -80,13 +80,14 @@ export type LiteLlmIssuePlan = {
 async function issueContext(provider: GatewayProvider, client?: LiteLlmClient): Promise<IssueContext> {
   const settings = requireSettings(provider)
   if (!isLiteLlmIssued(settings)) throw new GatewayWriteError(409, "litellm_not_issued", "This LiteLLM provider does not create keys for people.")
-  const set = await activeSet(db, provider, settings)
-  const { key } = await syncKey(db, set, settings.mode)
+  // Primary: issuing runs right after the provider, its key or its grants were written.
+  const set = await activeSet(db.$primary, provider, settings)
+  const { key } = await syncKey(db.$primary, set, settings.mode)
   return { provider, settings, client: client ?? createLiteLlmClient(liteLlmEndpoints(provider)), adminKey: key, catalogIds: settings.catalog.map((model) => model.id) }
 }
 
-async function memberRows(providerId: GatewayProvider["id"], memberId: GatewayMemberId) {
-  const rows = await db.select({ row: GatewayLiteLlmIssuedKeyTable, secret: GatewayProviderCredentialTable.secret, credentialStatus: GatewayProviderCredentialTable.status })
+async function memberRows(providerId: GatewayProvider["id"], memberId: GatewayMemberId, database: typeof db | typeof db.$primary = db) {
+  const rows = await database.select({ row: GatewayLiteLlmIssuedKeyTable, secret: GatewayProviderCredentialTable.secret, credentialStatus: GatewayProviderCredentialTable.status })
     .from(GatewayLiteLlmIssuedKeyTable)
     .leftJoin(GatewayProviderCredentialTable, eq(GatewayProviderCredentialTable.id, GatewayLiteLlmIssuedKeyTable.credential_id))
     .where(and(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, providerId), eq(GatewayLiteLlmIssuedKeyTable.org_membership_id, memberId)))
@@ -271,19 +272,20 @@ export async function applyLiteLlmMemberIssue(tx: GatewayTx, lockedProvider: Gat
 export async function liteLlmEligibleMembers(provider: GatewayProvider, settings: LiteLlmSettings) {
   const groupId = settings.groups[SIGN_IN_GROUP_KEY]
   if (!groupId || !isDenTypeId("gatewayModelGroup", groupId)) return []
-  const grants = await db.select().from(GatewayProviderAccessTable).innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.status, "active")))
+  // Primary: reconciling runs right after the grants were written.
+  const grants = await db.$primary.select().from(GatewayProviderAccessTable).innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.status, "active")))
     .where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.model_group_id, groupId), eq(GatewayProviderAccessTable.credential_set_id, normalizeDenTypeId("gatewayCredentialSet", settings.credentialSetId))))
   const audience = grants.map((row) => row.gateway_provider_access)
   const everyone = audience.some((grant) => grant.audience_key === "organization")
   const teamIds = audience.flatMap((grant) => grant.team_id ? [grant.team_id] : [])
   const memberIds = new Set(audience.flatMap((grant) => grant.org_membership_id ? [grant.org_membership_id] : []))
   if (teamIds.length) {
-    const teamMembers = await db.select({ memberId: TeamMemberTable.orgMembershipId }).from(TeamMemberTable).innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
+    const teamMembers = await db.$primary.select({ memberId: TeamMemberTable.orgMembershipId }).from(TeamMemberTable).innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
       .where(and(inArray(TeamMemberTable.teamId, teamIds), eq(TeamTable.organizationId, provider.organization_id)))
     for (const row of teamMembers) if (row.memberId) memberIds.add(row.memberId)
   }
   if (!everyone && !memberIds.size) return []
-  const members = await db.select({ memberId: MemberTable.id, email: AuthUserTable.email }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+  const members = await db.$primary.select({ memberId: MemberTable.id, email: AuthUserTable.email }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(and(eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt), everyone ? undefined : inArray(MemberTable.id, [...memberIds])))
   return members
 }
@@ -321,7 +323,8 @@ export async function reconcileLiteLlmIssuedKeys(provider: GatewayProvider, clie
   }))
   // Everyone else with rows: lost access, left the organization, or revoked earlier.
   const eligibleIds = new Set(eligible.map((member) => member.memberId))
-  const stale = (await db.select().from(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id)))
+  // Primary: sees the rows applyPlan wrote above.
+  const stale = (await db.$primary.select().from(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id)))
     .filter((row) => !eligibleIds.has(row.org_membership_id) || row.status === "revoked")
   const staleMembers = [...new Set(stale.map((row) => row.org_membership_id))]
   for (const memberId of staleMembers) {
@@ -375,7 +378,8 @@ export function scheduleLiteLlmProvisioning(provider: GatewayProvider, memberId:
 
 /** A person's lookup state for the connect page and provider status. */
 export async function liteLlmMemberIssueStatus(providerId: GatewayProvider["id"], memberId: GatewayMemberId) {
-  const rows = await memberRows(providerId, memberId)
+  // Primary: read right after provisioning wrote this person's keys.
+  const rows = await memberRows(providerId, memberId, db.$primary)
   const status = rows.find(({ row }) => row.slot === MEMBER_SLOT)?.row ?? null
   const active = rows.filter(({ row }) => row.slot !== MEMBER_SLOT && row.status === "active")
   return { status: status?.status ?? "pending", message: status?.message ?? null, keyCount: active.length }

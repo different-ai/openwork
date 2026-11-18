@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import { Freestyle, FreestyleApiError, type VmData, type CreateVmOptions } from "freestyle"
 import { SandboxError, shellQuote, type SandboxProvider, type SandboxHandle, type SandboxRef, type SandboxQuery, type SandboxState, type RunSpec, type RunResult } from "@openwork/sandbox"
 
@@ -11,7 +12,15 @@ export type FreestyleProviderOptions = {
   firewall: NonNullable<Parameters<Freestyle["vms"]["create"]>[0]["firewall"]>
   /** Provider-specific endpoint composition (TLS/domains), not assumed by compute. */
   endpoint?: SandboxProvider["endpoint"]
+  /**
+   * Publishes each spec's `exposePorts` over HTTPS at an unguessable host under this
+   * domain: any unused `style.dev` subdomain works without DNS, or a domain verified
+   * on the Freestyle account. Hosts are fixed at create and stored in VM metadata.
+   */
+  endpointDomain?: string
 }
+const ENDPOINT_LABEL = "openwork-endpoint"
+const ENDPOINT_PORTS = "openwork-endpoint-ports"
 export type FreestyleProviderDeps = { client?: Pick<Freestyle, "vms">; now?: () => number }
 
 export function freestyleError(error: unknown): SandboxError {
@@ -26,6 +35,8 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
   const api = deps.client ?? (options.apiKey ? new Freestyle({ apiKey: options.apiKey }) : (() => { throw new Error("Freestyle requires apiKey or an injected client") })())
   const now = deps.now ?? Date.now
   const id = "freestyle"
+  /** A VM's public hosts never change, so each is read from its metadata once per process. */
+  const published = new Map<string, { label: string; ports: string[] }>()
   const unsupported = (feature: string): never => { throw new SandboxError({ providerId: id, code: "invalid_state", retryable: false, message: `Freestyle adapter does not provide ${feature}` }) }
   const identity = (ref: SandboxRef) => {
     if (ref.providerId !== id || !ref.ref.vmId) unsupported("this sandbox reference")
@@ -63,16 +74,23 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
   }
   const provider: SandboxProvider = {
     id,
-    describe: () => ({ stopResume: true, persistentStorage: false, memorySnapshotRestore: true, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: false, detachedExec: false, endpoints: Boolean(options.endpoint), platform: { os: "linux", isolation: "vm" } }),
+    describe: () => ({ stopResume: true, persistentStorage: false, memorySnapshotRestore: true, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: false, detachedExec: false, endpoints: Boolean(options.endpoint || options.endpointDomain), platform: { os: "linux", isolation: "vm" } }),
     currentImage: () => ({ id: options.snapshot, version: options.snapshot }),
     async create(spec, opts) {
       if (spec.storage.length || spec.resources || spec.lifecycle?.autoArchiveMinutes !== undefined) unsupported("storage attachments, resource overrides or auto-archive")
       if (Object.keys(spec.env).length) unsupported("create-time env; use run.env")
+      if (spec.exposePorts.length && !options.endpointDomain) unsupported("exposed ports without an endpoint domain")
+      if (spec.exposePorts.some(port => !Number.isInteger(port) || port < 1 || port > 65_535)) unsupported("ports outside 1-65535")
+      // One random label per VM: the public host names nothing about the conversation or person.
+      const label = spec.exposePorts.length ? randomBytes(12).toString("hex") : null
+      const published = label ? spec.exposePorts.map(port => ({ action: "allow" as const, domain: `${label}-${port}.${options.endpointDomain}`, source: { public: true as const }, destination: { port } })) : []
+      const tls = [...(options.createOptions?.tls?.rules ?? []), ...published]
       const response = await bounded(() => api.vms.create({
         ...options.createOptions,
+        ...(tls.length ? { tls: { rules: tls } } : {}),
         snapshotId: spec.image?.id ?? options.snapshot,
         slug: spec.idempotencyKey,
-        metadata: { ...spec.labels },
+        metadata: { ...spec.labels, ...(label ? { [ENDPOINT_LABEL]: label, [ENDPOINT_PORTS]: spec.exposePorts.join(",") } : {}) },
         firewall: options.firewall,
         ...(spec.lifecycle?.autoStopMinutes === undefined ? {} : { idleTimeoutSeconds: spec.lifecycle.autoStopMinutes === 0 ? -1 : spec.lifecycle.autoStopMinutes * 60 }),
         ...(spec.lifecycle?.autoDeleteMinutes === undefined ? {} : { autoDeleteSeconds: spec.lifecycle.autoDeleteMinutes < 0 ? -1 : spec.lifecycle.autoDeleteMinutes * 60 }),
@@ -108,13 +126,26 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
     async inspect(h) { return await provider.get(h.ref) ?? { ...h, state: "missing", observedAt: now() } },
     async start(h, opts) { await bounded(() => api.vms.ref(identity(h.ref)).start(), opts.timeoutMs) },
     async stop(h, opts) { await bounded(() => api.vms.ref(identity(h.ref)).pause(), opts.timeoutMs) },
-    async destroy(h, opts) { await bounded(() => api.vms.delete(identity(h.ref)), opts.timeoutMs) },
+    async destroy(h, opts) { published.delete(identity(h.ref)); await bounded(() => api.vms.delete(identity(h.ref)), opts.timeoutMs) },
     async exec(h, spec) {
       if (spec.detach) unsupported("detached exec; use the job's background-process helper")
       const result = await run(h, { command: spec.command ?? spec.script ?? "", timeoutMs: spec.timeoutMs })
       return { id: `freestyle-exec-${now()}`, exitCode: async () => result.exitCode, logs: async () => ({ stdout: result.stdout, stderr: result.stderr }) }
     },
-    endpoint: options.endpoint ?? (async () => unsupported("endpoints without an endpoint binding")),
+    endpoint: options.endpoint ?? (options.endpointDomain ? async (h, port) => {
+      const vmId = identity(h.ref)
+      let entry = published.get(vmId)
+      if (!entry) {
+        const data = await mapped(() => api.vms.get(vmId))
+        entry = { label: data.metadata[ENDPOINT_LABEL] ?? "", ports: (data.metadata[ENDPOINT_PORTS] ?? "").split(",") }
+        if (entry.label) published.set(vmId, entry)
+      }
+      const label = entry.label
+      if (!label || !entry.ports.includes(String(port))) {
+        throw new SandboxError({ providerId: id, code: "invalid_state", retryable: false, message: `This VM was created without a public endpoint for port ${port}; it needs a new VM.` })
+      }
+      return { url: `https://${label}-${port}.${options.endpointDomain}`, expiresAt: null, kind: "stable" as const }
+    } : async () => unsupported("endpoints without an endpoint binding")),
     storage: { ensureVolume: async () => unsupported("volumes"), eraseSubpaths: async () => unsupported("volumes") },
     blocks: {
       run,

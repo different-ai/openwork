@@ -3,19 +3,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { allocateFreePort } from "../../evals/packages/cdp/src/index.ts";
 import { denFetch, type DenSession } from "../../evals/packages/behaviors/src/den.ts";
-import { app } from "../../evals/packages/env/src/desktop-app.ts";
-import type { Den } from "../../evals/packages/env/src/den.ts";
-import type { Place } from "../../evals/packages/env/src/place.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
-import { output, secret } from "../../packages/world/src/outputs.ts";
+import { output } from "../../packages/world/src/outputs.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 
 /**
- * The desktop Calendar on top of the Workbot world (`preview-workbot -- --calendar`): the Acme owner's
- * Automations with two weeks of runs (seeded by seed-demo-org --automations), the automationCalendar feature on
- * for Acme, the calendar mock (evals/packages/labs/src/calendar-mock.mjs) for meetings, and a signed-in desktop
- * whose meetings layer reads the mock. Flip the desktop to real connections with
- * `localStorage.setItem("openwork.calendar.mockUrl", "off")` and a reload; nothing else changes.
+ * Calendar fixtures for the Workbot world (`preview-workbot -- --calendar`): the Acme owner's Automations
+ * with two weeks of runs (seeded by seed-demo-org --automations), the calendar mock
+ * (evals/packages/labs/src/calendar-mock.mjs) for meetings, and model choices for Workbot's Calendar.
  */
 
 const MOCK_SCRIPT = new URL("../../evals/packages/labs/src/calendar-mock.mjs", import.meta.url);
@@ -54,23 +49,11 @@ export async function startCalendarMockProcess(stack: AsyncDisposableStack, env:
   throw new Error(`Calendar mock did not become healthy: ${logs}`);
 }
 
-/** The owner's desktop, signed in to this Den, opening on the Calendar with meetings from the mock. */
-export async function bootCalendarDesktop(stack: AsyncDisposableStack, input: { den: Den; place: Place; mock: CalendarMock }) {
-  return stack.use(await app({
-    den: input.den, place: input.place, as: "admin", enterpriseActivated: true,
-    env: { VITE_DISABLE_OPENWORK_MODELS: "0", VITE_OPENWORK_CALENDAR_MOCK_URL: input.mock.baseUrl },
-  }));
-}
-
-export function calendarOutputs(mock: CalendarMock, desktop: { handle: { cdpUrl: string } } | null): Record<string, WorldOutput> {
+export function calendarOutputs(mock: CalendarMock): Record<string, WorldOutput> {
   return {
     calendarMock: output(mock.baseUrl, { group: "Calendar", note: "Den-contract calendar routes, provider upstreams and /mcp; POST /scenario {\"google\":\"expired_token\"} to try error states" }),
     calendarMockState: output(`${mock.baseUrl}/state`, { group: "Calendar", note: "The seeded meetings, as Google and Graph return them" }),
-    calendarAutomations: output("5 Automations, two weeks of runs", { group: "Calendar", note: "Seeded for alex@acme.test; Workbot and automationCalendar are on for Acme" }),
-    ...(desktop ? {
-      calendarDesktop: output("OpenWork desktop window", { group: "Calendar", note: "Open Calendar in the sidebar; meetings come from the mock" }),
-      calendarCdp: secret(desktop.handle.cdpUrl, { group: "Calendar" }),
-    } : {}),
+    calendarAutomations: output("5 Automations, two weeks of runs", { group: "Calendar", note: "Seeded for alex@acme.test; Workbot is on for Acme" }),
   };
 }
 
@@ -80,7 +63,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 
 /**
  * Publishes an Anthropic provider (two Claude models from Den's catalog, a fixture key) to every member, so the
- * Calendar's model pickers list real providers with their logos next to the free starter and the cloud default.
+ * Workbot Calendar's model pickers list real providers with their logos next to the free starter and the cloud default.
  * No run reaches Anthropic: the specs only pick and save the model.
  */
 export async function publishCalendarModels(admin: DenSession, organizationId: string): Promise<void> {

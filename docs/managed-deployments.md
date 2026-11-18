@@ -2,9 +2,9 @@
 
 A workspace owner installs OpenWork in their own cloud from hosted OpenWork,
 approves it in the provider console or Cloud Shell, and then sees its status
-checks and available updates in **Manage › Deployments**. AWS is behind
-`managedDeployments`; Google Cloud additionally requires `managedDeploymentsGcp`
-(both cloud only, off by default). GCP remains an unverified rollout until a real
+checks and available updates in **Manage › Deployments**. AWS, Google Cloud and
+the deployment agent tools share `managedDeployments` (cloud only, off by
+default). GCP remains unverified until a real
 published release and approved customer-project install pass. Design and contract:
 `infra/managed-deployments/README.md`.
 
@@ -44,6 +44,11 @@ published release and approved customer-project install pass. Design and contrac
 2. **Prepare AWS approval** › **Review and approve in AWS**. The CloudFormation
    console opens prefilled. Review the installer permissions, acknowledge IAM,
    create the stack. Nothing is launched until this approval.
+   If your organization signs in through an AWS access portal (IAM Identity
+   Center), save it under **AWS sign-in** first (feature
+   `managedDeploymentAwsSignIn`, see
+   [`features/managed-deployment-aws-sign-in`](./features/managed-deployment-aws-sign-in/README.md)):
+   the approval link then opens through the portal in the deployment's account.
 3. OpenWork shows the installer's six steps as they happen (about 15–25
    minutes): installer connected, release verified, account and domain verified,
    infrastructure installed, services started, HTTPS and database verified.
@@ -52,9 +57,93 @@ published release and approved customer-project install pass. Design and contrac
    `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE`. OpenWork never receives this code.
    Configure SMTP and SSO after setup.
 
+## Gateway-backed AWS runtime
+
+With `managedDeployments` and `managedDeploymentAssistants` enabled for the
+organization (cloud only, off), new AWS installations include the complete
+Gateway-backed runtime. Only computers are optional. Existing core/legacy
+installations keep their topology until the owner selects the Gateway profile
+and approves it in AWS: with an explicit newer Update, or, with
+`managedDeploymentConfigUpdates` on, with a configuration change at the
+installed version (see "Configuration changes" below). GCP keeps its existing
+profile.
+
+- **AI/model Gateway**: included at `https://models.<address>`. After first
+  sign-in, configure upstream provider credentials, model grants and the default
+  model inside the installed Den. Model traffic uses existing Gateway
+  authorization; no shared upstream model key is injected into the runner.
+- **Headless runner**: one private Fargate task with conversation history/files
+  on encrypted EFS. Existing networks need exactly one private service subnet per
+  availability zone for EFS mount targets. No external runner URL is offered.
+- **Workbot**: included browser chat at `https://chat.<address>`. Gateway and
+  Workbot add DNS records and expand the HTTPS certificate.
+- **Slack and Automations**: execution is included on that runner. Slack still
+  needs its real app, connection, OAuth and workspace policy configured inside
+  the installed Den. Installed services alone do not complete that setup.
+- **Computers (optional)**: **Off** by default. Daytona is preferred when a
+  conversation needs a sandbox; Freestyle is also supported. Daytona requires a
+  chosen snapshot. These are not required for chat, Slack replies or
+  connector-based headless Automations. Freestyle also needs the prepared
+  computer snapshot matching the pinned runner release in that provider account;
+  the installer does not build it. Provider configuration does not grant members
+  computer-use permission: enable it for intended members through the installed
+  Den's normal operator controls, without overriding kill switches or locks.
+  **Computers run in the selected provider's cloud, outside the customer's AWS account.**
+
+Only an enabled computer provider needs its API-key secret in the target AWS
+account/region's Secrets Manager. Supply the full ARN, never the value. ECS reads
+it directly; hosted OpenWork, Terraform and the installer do not receive its
+plaintext. The reference uses the AWS-managed Secrets Manager encryption key;
+custom KMS grants need separate review. Keep it available through updates.
+Model credentials belong in the installed Den's encrypted Gateway provider
+workflow, never the hosted deployment form, Terraform inputs, approval command
+or chat. Legacy direct-model inputs remain compatible for legacy installs but
+are ignored by the Gateway profile. Generated application/runner secrets remain
+in the customer's encrypted Terraform state.
+
+The core-only cost estimate above excludes the extra Gateway, runner and Workbot
+Fargate tasks, EFS, backups and computer/model-provider charges. Daily EFS recovery points
+are kept for seven days. A recovery point is not an application-consistent SQLite
+export or proof that a restore has succeeded. The health panel reports runner,
+Workbot, EFS and completed-backup checks without reading conversation content.
+A newly installed disk is not reported as backed up before a recovery point
+exists.
+
+**Updates need a maintenance window.** The single runner stops before its
+replacement starts to prevent two tasks opening the same SQLite database.
+Active turns and headless Automations can be interrupted; there is no automatic
+turn drain. Stop new work and let known active runs finish before approval.
+Inspect the actual outcome before retrying an interrupted action. Extra EFS and
+Backup IAM grants require customer re-approval of the new CloudFormation template
+**before** its Terraform payload runs. See the installer README for ordering,
+certificate handover, secret preservation and retained-resource cleanup.
+
+This optional profile is **unqualified until its real managed-install and
+approved-Update proof is recorded**. Offline tests alone do not establish that
+Workbot chat, Slack thread delivery, headless Automations or Freestyle commands
+work on a live install. Do not enable production installer publication based on
+an available form or a green plan.
+
+The 17 November 2026 isolated qualification observed a real fresh managed install,
+then an approved Update enabling the optional services on that same install. Its
+certificate cutover, encrypted EFS/backup and secret-preservation checks passed.
+**The application qualification failed:** Workbot Send returned HTTP 403
+`gateway_not_configured`, and a real scheduled headless Automation failed
+`provider_unavailable` at the current runtime's Gateway-only model-selection
+policy. This was tested with fixed OpenWork `0.18.67` application digests and
+isolated test-only installer versions, not production release coordinates.
+Those failures are retained for the legacy/direct configuration. The selected
+architecture now includes the native Gateway and keeps runtime authorization
+unchanged. The direct-model runtime proposal was cancelled before any code or
+images were created. A new approved Gateway-profile Update and complete model
+checks remain required; infrastructure health is not a successful model turn.
+The actual scheduled daily EFS backup has since completed encrypted with its
+configured plan/role; restore remains untested. The installer README keeps each
+`Passed`, `Failed` and `NotRun` result distinct.
+
 ## From an agent (MCP)
 
-With `managedDeploymentsMcp` also on for the organization (cloud only, off by
+With `managedDeployments` on for the organization (cloud only, off by
 default), agents connected to the OpenWork MCP gateway can drive the same flow
 through `search_capabilities` / `execute_capability`:
 
@@ -73,8 +162,8 @@ through `search_capabilities` / `execute_capability`:
 Agents cannot remove deployment records or call the installer's enrollment,
 milestone or health endpoints. The routes keep their permissions
 (`deployments.view` / `deployments.manage`) and feature checks; turning
-`managedDeploymentsMcp` off hides the capabilities without affecting the page,
-running installs or health reports.
+`managedDeployments` off hides the capabilities and blocks new launches without
+affecting running installs or authenticated enrollment and health reports.
 
 ## Status checks
 
@@ -85,7 +174,10 @@ certificate. The deployment reads **Operational**, **Degraded** (warnings or a
 non-critical failure), **Down** (API, web, database connection or services
 failing) or **Not reporting** (no report for 16 minutes; the last known checks
 stay visible). Reports are authenticated by the agent's AWS role identity and
-bound to the exact report body; replays are rejected.
+bound to the exact report body; replays are rejected. The existing 30-per-hour
+burst limit uses fixed windows so normal five-minute reports do not accumulate
+into a later lockout. Existing counters expire normally; deployment does not
+clear them or bypass throttling.
 
 ## Updates and recovery (approval required)
 
@@ -96,17 +188,59 @@ bound to the exact report body; replays are rejected.
   retained state, refuses to delete or replace the database, secrets or VPC,
   applies, and re-verifies health. Customers approve every change; there are no
   automatic updates.
+- **Shared-module adoption requires a new IAM approval and a maintenance window.**
+  Review the generated CloudFormation template with `CAPABILITY_NAMED_IAM`: the
+  migration Lambda, its deployment-scoped role and logs are new grants. Existing
+  template approval is not sufficient. The runner drains old migration-capable
+  tasks before the single migration, keeps existing keys/state-backed secrets,
+  and refuses data-bearing replacement. A failed adoption stays in maintenance;
+  inspect the migration outcome before retrying. No legacy automatic rollback or
+  wildcard task-definition deregistration permission is used. See
+  `infra/managed-deployments/README.md` for exact ordering and provider-upgrade risk.
 - Deleting the installer stack does **not** delete OpenWork, its database or the
   Terraform state. Decommissioning is a manual, customer-run `terraform destroy`
   against the retained state (disable RDS deletion protection first).
+
+## Configuration changes (approval required)
+
+With `managedDeploymentConfigUpdates` on (cloud only, off by default), an owner
+edits an installed AWS deployment without waiting for a newer installer:
+**Edit configuration** changes the first administrator email, adds the gateway
+runtime, or changes its cloud computers. Renaming is saved at once.
+
+- The change re-runs the installer the deployment already has, with the new
+  values, through the same account-checked AWS CloudShell command an Update
+  uses. Nothing changes in AWS until the customer runs it, and the deployment
+  keeps showing its installed configuration until that run has verified health.
+- The address, AWS account, region, hosted zone and network are fixed at
+  installation, and the gateway runtime cannot be turned off. Such a request is
+  refused before anything is prepared.
+- Adding the gateway runtime this way requires the deployment to run the
+  currently published installer; otherwise Update adds it together with the
+  newer installer.
+- Editing is locked while an install, retry or update is unfinished. A prepared
+  change that was not approved can be replaced or discarded; its command, if
+  run afterwards, is refused when the installer enrolls and changes nothing in
+  the deployment.
+- A change to the first administrator email matters before first sign-in or
+  when no active owner is left. It never removes or replaces an administrator
+  who has signed in.
+
+Agents cannot prepare configuration changes through MCP. Details, refusal codes
+and the kill switch: `docs/features/managed-deployment-config-updates/README.md`.
 
 ## Operator setup
 
 1. Build an installer for an **already published** image version:
    `node infra/managed-deployments/tools/build-release.mjs aws <version> <dir>`
    (or run the **Managed Deployments** workflow with that version).
+   A separately approved isolated test may use a newer installer version plus
+   `--image-pins <approved-json-file>` for a registry-verified existing application
+   pair. That is a real version-increasing Update, not Retry or a fictitious image
+   tag. Never point production Den at those test-only artifacts.
 2. Publish from a dedicated release account into a versioned, encrypted S3
-   bucket whose `releases/*` objects are publicly readable and nothing else:
+   bucket whose `releases/*` objects and pinned versions are publicly readable
+   (`s3:GetObject` and `s3:GetObjectVersion`, not public listing) and nothing else:
    `node infra/managed-deployments/tools/publish-release.mjs <dir> <bucket> <account-id> <region>`.
    It refuses the wrong account and overwrites, and prints URLs pinned to
    immutable object versions.
@@ -140,7 +274,133 @@ Do not hide the lock, invent a checksum or configure a mutable/latest artifact
 to make the page look ready. Publication, hosted configuration, and rollout
 changes require explicit operator approval.
 
+## Stable-release currency
+
+The **Managed Stable Installer** workflow prepares a candidate from GitHub's
+latest public stable release after release/image-publisher completion, with a
+six-hour reconciliation fallback. It does not select `dev`, alpha, draft or
+prerelease images, and it does not upgrade customer installations. Candidate
+preparation verifies the release tag's commit, exact Linux/amd64 image digests
+and OCI source identity, then runs installer and container/bootstrap checks.
+These checks are **not** a real-cloud fresh-install or approved-Update receipt.
+
+Production promotion stays an explicit, protected operator action until a real
+cloud qualification gate is automated. Qualify the exact retained candidate on
+an isolated account, including a fresh install and version-increasing Update,
+and retain the manifest SHA-256 and review URL. Dispatch the workflow from the
+trusted default branch with `promote=true`, that manifest hash, and the trusted
+repository qualification review URL. The URL is the operator's attestation,
+not an automated assertion that its contents passed. The dedicated
+`managed-installer-production` environment must have nonempty required
+reviewers and prevent self-review. The workflow verifies that policy before
+assuming the release role or publishing; an absent/unprotected environment
+fails closed. Do not assume an existing production environment has reviewers,
+or change other deployment environments as part of installer setup.
+A newer release or changed candidate invalidates the earlier review.
+
+Before enabling promotion, deploy the atomic configuration reader below and
+verify the configuration API from a controlled internal organization. A Render
+`live` deploy proves deployment completion, not installer availability: after
+promotion, verify that `GET /v1/managed-deployments/configuration` advertises the
+reviewed version before handing out new approvals.
+
+AWS promotion requires explicit operator configuration (never infer an account
+or create public access as a workaround):
+
+- `MANAGED_DEPLOYMENT_AWS_PROMOTION_ENABLED=true`.
+- `MANAGED_DEPLOYMENT_AWS_RELEASE_ROLE_ARN`: a narrowly scoped GitHub OIDC role
+  in the release account, trusted only for the repository's
+  `managed-installer-production` environment.
+- `MANAGED_DEPLOYMENT_AWS_RELEASE_ACCOUNT_ID`,
+  `MANAGED_DEPLOYMENT_AWS_RELEASE_BUCKET`, and
+  `MANAGED_DEPLOYMENT_AWS_RELEASE_REGION`.
+- Existing `RENDER_API_KEY` and `RENDER_DEN_CONTROL_PLANE_SERVICE_ID` secrets.
+- Publisher permissions include `s3:ListBucketVersions`, bucket/versioning reads
+  and conditional object creation, plus public verification of immutable bytes.
+  They do not require bucket-policy changes or object deletion.
+
+GCP remains candidate-only in this workflow. Do not silently enable an
+unconfigured provider or substitute GKE/Helm testing for managed Cloud Run
+qualification. Existing explicit GCP publication steps below still apply.
+
+### Atomic configuration and safe recovery
+
+Promotion writes **one** non-secret coordinate record on hosted Den:
+`DEN_MANAGED_DEPLOYMENT_AWS_RELEASE` (the configuration reader also supports
+`DEN_MANAGED_DEPLOYMENT_GCP_RELEASE`). Its value is a JSON object with exactly:
+
+```json
+{
+  "version": "0.18.65",
+  "templateUrl": "https://release-bucket.s3.us-east-1.amazonaws.com/releases/aws/0.18.65/cloudformation.json?versionId=immutable-template-version",
+  "bundleUrl": "https://release-bucket.s3.us-east-1.amazonaws.com/releases/aws/0.18.65/bundle.tar.gz?versionId=immutable-bundle-version",
+  "bundleSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+This is a schema example, **not published artifacts**. Use only the publisher's
+verified coordinates and hash. AWS uses regional S3 object-version URLs; GCP
+uses exact GCS generation URLs. The control-plane origin still comes only from
+`DEN_API_PUBLIC_URL`; the coordinate record cannot override it.
+
+When the record is absent, the four legacy provider fields remain supported.
+When present but invalid, Den fails closed: it never silently revives an older
+legacy pin. Production promotion changes only this selected record and requests
+one Den deploy; it never bulk-rewrites unrelated environment values. Workflow
+writers share the `den-api-env` concurrency lock and re-read the selected key
+before writing. Render has no server-side compare-and-swap: dashboard/external
+API writers must respect that operational lock too.
+
+An old/out-of-order candidate cannot downgrade the advertised release. The
+same version with different bytes or coordinates is refused. Re-running a
+partial publication reuses only identical, publicly verified immutable object
+versions; conflicting bytes fail before uploads. If an installer fix changes
+an already-published version, publish a new reviewed version rather than
+replace its objects. Deterministic archives require Python 3 alongside the
+registry tooling.
+
+On ambiguous publication/configuration/deploy failure, inspect the actual
+objects, selected record and deploy receipt before retrying. No automatic
+rollback or uncertain mutation replay is performed. Disable the promotion
+opt-in to pause future operator promotions; the existing `managedDeployments`
+kill switch blocks launches while authenticated enrollment and health reporting
+continue. An operator may deliberately restore a prior coordinate record after
+review, but that affects new approvals only—it never rolls back a customer's
+database. Pending approval runs retain their frozen coordinates.
+
+Automatic **preparation** does not yet mean zero-touch production promotion.
+After merging, configure credentials and complete real-cloud qualification
+before claiming that the live managed installer follows the latest release.
+
 ## Google Cloud (GCP)
+
+The managed installer uses the shared Cloud Run module with explicit legacy
+naming and state-backed secrets. Existing and fresh managed installs stay on
+**MySQL 8.0**; the direct module default remains 8.4. No major database upgrade or
+secret rotation is part of adoption. The October 21 isolated Den Update passed
+on head `26fdbbf2bf`, including the Google provider 6→8 transition and data,
+secret and sign-in preservation for its frozen image set. This historical run
+used a dev-built legacy baseline, not a published stable installer. It does not
+qualify newer application images.
+
+**Updates require customer re-approval and a maintenance window.** Bootstrap adds
+one deployment-specific custom role containing only `monitoring.timeSeries.list`
+(the approving administrator needs custom-role creation permission). The runner
+clears traffic tags, disables and observes the drain of only the two owned
+services, runs one native migration, prepares API-only revisions while disabled,
+then verifies actual latest-ready traffic before separately restoring autoscaling.
+This causes a short outage on every update while services are scaled to zero,
+including during migration. Previously old code kept serving during migration.
+Fence/readiness CLI calls and drain-token minting each have a 30-second timeout.
+Missing/stale drain evidence, a command timeout or failed/unknown migration
+blocks progress without automatically resuming services or replaying the command.
+Inspect partial outcomes before retrying. A pre-resume failure retains maintenance,
+but a later health failure can happen after traffic resumes. Revision tags are
+removed and must be recreated on the new revisions if needed.
+The managed-deployments owners must still accept this behavior before merge or
+publication. Before publishing newer application images, qualify that exact
+image set with a live upgrade. Use a genuinely newer isolated test installer for
+Den Update; same-version protection stays unchanged.
 
 Use a dedicated billing-enabled project, a supported region, and an already
 public authoritative Cloud DNS zone for the chosen address. The form requires

@@ -41,14 +41,26 @@ export const officeDraftSchema = z.object({
   fileType: officeFileTypeSchema, canEdit: z.boolean(), saveAsCopy: z.boolean(),
   expiresAt: z.number(), ticket: z.string(), source: z.string(),
   draft: z.string().optional(), draftVersion: z.number().int().default(0),
+  /** The draft version last saved to the provider; later versions are unsaved edits. */
+  savedDraftVersion: z.number().int().optional(),
   saveRequestId: z.string().uuid().optional(),
   wopiLock: z.object({ value: z.string(), expiresAt: z.number() }).optional(),
   savedFileId: z.string().optional(), error: z.string().optional(), uncertain: z.boolean().optional(),
+  /** The editor serving this session when hosts place it per person; otherwise their configured service. */
+  editorUrl: z.string().url().optional(), workerId: z.string().optional(),
 })
 export type OfficeDraft = z.infer<typeof officeDraftSchema>
 /** Hosts provide shared, encrypted temporary storage and cross-process serialization. */
+/** Edits the editor stored that were never saved, or a save whose outcome is unknown. */
+export function officeDraftHasUnsavedEdits(draft: Pick<OfficeDraft, "draftVersion" | "savedDraftVersion" | "uncertain">): boolean {
+  return draft.uncertain === true || draft.draftVersion > (draft.savedDraftVersion ?? 0)
+}
+
+export type OfficeFileKey = Pick<OfficeDraft, "organizationId" | "memberId" | "connectionId" | "fileId">
 export type OfficeStore = {
   get(id: string): Promise<OfficeDraft | null>
+  /** The member's session still open on this file, so reopening it returns to the same draft. */
+  findOpen(file: OfficeFileKey): Promise<OfficeDraft | null>
   put(draft: OfficeDraft): Promise<void>
   remove(draft: OfficeDraft): Promise<void>
   lock<T>(key: string, action: () => Promise<T>): Promise<T>

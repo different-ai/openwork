@@ -13,7 +13,7 @@ mock_provider "aws" {
     defaults = { account_id = "123456789012" }
   }
   mock_data "aws_region" {
-    defaults = { name = "us-east-1" }
+    defaults = { name = "us-east-1", region = "us-east-1" }
   }
   mock_data "aws_partition" {
     defaults = { partition = "aws" }
@@ -74,6 +74,19 @@ run "dedicated_network_by_default" {
   assert {
     condition     = length(module.network) == 1 && module.platform.service_names.den_api == "den-api"
     error_message = "A dedicated account gets its own VPC, and its services keep their unprefixed names."
+  }
+}
+
+run "new_installer_version_accepts_verified_existing_application_digests" {
+  command = plan
+  variables {
+    openwork_version = "0.18.59-managed-test.1"
+    den_api_image    = "ghcr.io/different-ai/openwork-den-api@sha256:0942e02a8e2033151e982f51b24926fe5090807b7f7480d77f2c4fc5b806737e"
+    den_web_image    = "ghcr.io/different-ai/openwork-den-web@sha256:b1543b2bb36df0a7c75d7dc18cdd773eb2e87df268169dcb1e284439299ada3f"
+  }
+  assert {
+    condition     = var.openwork_version == "0.18.59-managed-test.1" && output.api_url == "https://api.openwork.example.com"
+    error_message = "A test installer label must not require a fabricated application image tag."
   }
 }
 

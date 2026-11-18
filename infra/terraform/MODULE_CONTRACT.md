@@ -95,10 +95,10 @@ mock coverage alone does not certify an external database live.
 - Require `>= 1.11, < 2.0` and test Terraform and OpenTofu independently.
 - Stay on the common language/test subset: no tool-specific `enabled`, Actions,
   Stacks, or `override_during` options.
-- Declare provider minimums with pessimistic (`~>`) constraints. The direct AWS
-  module uses the tested 6.x line; the managed installer has a separate frozen
-  implementation and keeps its own provider pins. Do not configure providers or
-  backends inside reusable modules; those belong to the executable root.
+- Declare provider minimums with pessimistic (`~>`) constraints. The shared AWS
+  module uses the tested 6.x line; the managed executable root commits its own
+  exact provider lock. Do not configure providers or backends inside reusable
+  modules; those belong to the executable root.
 - Keep registry-specific dependency lock files only in executable examples/roots,
   with explicit instructions to select or regenerate the correct tool's lock.
   Do not combine registry namespaces or ship a reusable-module lock.
@@ -127,6 +127,13 @@ counts, and skips; do not count one tool's result for the other.
 - Expose `web_url`, `api_url`, `database_identifier`, and
   `migration_step_identifier`, retaining native outputs. Explain each identifier's
   cloud-specific meaning and the value returned for external infrastructure.
+- Optional AI Gateway uses `ai_gateway_enabled` (false),
+  `ai_gateway_domain_name` (empty), `ai_gateway_image` (empty; explicit digest
+  required when enabled), and `ai_gateway_url` (null when disabled) on all three
+  native modules. It reuses database/encryption secrets without rotating them.
+  Distinguish it from OpenWork Web's den-gateway and Den API's MCP gateway.
+  See [AI_GATEWAY.md](AI_GATEWAY.md) for native networking exceptions, the thin
+  Helm wrapper interface, managed-installer boundaries and live NotRun checks.
 - Document all defaults in the README. These smoke-tested floors are not
   production load-sizing guarantees.
 
@@ -199,6 +206,64 @@ coverage NotRun and failed steps Failed. Later offline hardening is not a new
 live run; fixture-established desktop authentication is not proof of an OS-level
 OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 
+## Gateway-backed AWS managed runtime qualification
+
+AWS's explicit `gateway` managed profile includes Den API/web, native AI Gateway,
+runner, Workbot, Slack processing and Automations. It does not alter the core C7
+conformance verdict or direct-module defaults. Existing records remain `legacy`
+until an approved version-increasing profile Update. Hosted runtime controls are
+behind `managedDeploymentAssistants`; GCP behavior is unchanged.
+
+All agent inference uses existing scoped Gateway authorization. Upstream model
+credentials and grants are configured inside the installed Den, not hosted
+installer configuration. Gateway-profile runners receive no global upstream key.
+Only computers are optional/off by default: Daytona is preferred, Freestyle is
+supported. They execute outside the customer's AWS account. The customer must
+also configure the real Slack app and connection inside Den.
+
+Only enabled computers require a same-account/region Secrets Manager reference;
+ECS injects it without a Terraform secret-value read. Legacy direct-model inputs
+remain compatible only for legacy profiles. Generated core/runner credentials
+and historical state remain state-backed; protect them. Customer-managed KMS
+keys need separately reviewed grants.
+
+A managed runner adds encrypted EFS and daily encrypted AWS Backup recovery
+points with seven-day retention. Keep backup resources protected alongside the
+conversation disk. Report the latest completed recovery point, not just an
+existing backup plan. These are filesystem backups, not a validated live SQLite
+export/restore. Application-consistent restore proof remains a separate check.
+
+The runner is a single SQLite owner: each task-definition rollout stops it before
+starting its replacement. No turn-drain protocol is provided; active turns and
+Automations may be interrupted and need outcome inspection before any deliberate
+retry. The installer documents a maintenance window. Core TLS redeployment must
+never force a second runner restart. Adding Workbot must preserve existing runner
+credentials/disk and validate the expanded ACM certificate before listener cutover;
+it must not bypass protected-resource checks.
+
+Qualification must use the **managed CloudFormation/CodeBuild path**, an isolated
+release channel and a disposable authorized test account. Native tests, direct
+module conformance, local product tests and plans do not satisfy it. Record:
+
+- A managed baseline, then a version-increasing Update enabling Workbot with
+  customer IAM re-approval and live HTTPS continuity observations.
+- Actual Workbot chat output, installed Slack assistant thread delivery, a
+  completed headless Automation, and a Freestyle command from Workbot.
+- Another approved Update on the same install, with preserved conversations/core
+  secret fingerprints and the same behaviours rechecked.
+- Redacted evidence, followed by destroy and independent retained/soft-deleted
+  resource inventory. Never publish secret material, state or customer identity.
+
+Until that candidate-specific sequence has been observed, mark the profile
+**unqualified** and retain each missing (`NotRun`) or failed (`Failed`) result.
+The November 2026 legacy/direct test passed cloud install/enable-Update,
+certificate continuity and both triggered/scheduled encrypted EFS backups, but
+failed Workbot and scheduled Automation model access because no Gateway was
+installed. Those failures remain recorded. The selected Gateway-backed profile
+requires a new approved Update and independent application proof; no direct-model
+runtime change was implemented. See the installer README for exact live status.
+Production release publication or hosted release changes remain separate actions.
+
 ## Known per-cloud limitations
 
 - **Azure migration waiter:** job start is native AzAPI, but terminal waiting is a
@@ -210,18 +275,16 @@ OAuth/protocol-handler handoff. Screenshots illustrate results, not decide them.
 - **Azure custom-domain certificate:** optional PFX material can be stored in
   state through the provider's certificate arguments. Protect state or manage
   certificates externally; core state-free credentials do not cover this path.
-- **AWS managed-installer boundary:** the installer uses a frozen pre-contract
-  module with its original AWS/random/archive pins. A TLS-only overlay
-  adds certificate verification/CA trust and the HTTP provider. Managed API/web
-  definitions use new retained addresses; CA-enabled services must settle before
-  strict secret promotion and a forced deployment. No bootstrap IAM widening or
-  deregistration is used; manual legacy RunTask remains outside the guarantee.
-  It is not certified by direct-module conformance. No migration lifecycle,
-  secret-mode or IAM adoption is included. The prior cross-major compatibility
-  exception is removed; the
-  direct module uses AWS `~> 6.69`. Future managed adoption needs supporting-file
-  packaging, migration IAM/log permissions and customer re-approval, a legacy
-  maintenance fence, and explicit update/version semantics.
+- **AWS managed-installer boundary:** the installer consumes the shared AWS 6.x
+  module but explicitly retains state-backed secrets for existing and fresh
+  managed installs. Its runner drains migration-capable legacy tasks, disables
+  legacy rollback, replans desired counts and verifies a completed forced strict
+  redeployment. CA definitions precede strict promotion, which precedes the native
+  single migration and application rollout. Bootstrap migration grants require
+  customer re-approval. Historical revisions are retained without deregistration;
+  manual legacy RunTask remains unsupported. Native synthetic state tests and
+  direct-module conformance are not a live managed version-increasing Update
+  receipt; see the managed installer README for the separate proof gate.
 - **AWS database TLS:** the tested RDS path verifies the certificate chain;
   separate MySQL hostname-identity enforcement is not claimed by that run.
 - **Database privileges:** automatic separate DDL/DML users remain a follow-up

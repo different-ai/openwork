@@ -1,6 +1,6 @@
 /**
- * Zustand store for session management primitives (pin, manual order, custom
- * group mirror + expanded state). Persisted to localStorage via
+ * Zustand store for session management primitives (pin, manual order,
+ * custom group mirror + expanded state). Persisted to localStorage via
  * zustand/middleware/persist.
  *
  * Archive is server-side (OpenCode session.time.archived). Session groups are
@@ -10,6 +10,7 @@
  */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { sessionManagementStorage } from "./session-management-storage";
 
 export type SessionGroupDefinition = {
   id: string;
@@ -58,9 +59,39 @@ type SessionGroupSyncStatus = {
   deferredServerSync?: SessionGroupDeferredServerSync;
 };
 
+/**
+ * A spot the person dragged a session to in the Feed. `key` is the time it
+ * sorts at; it holds until the session has activity newer than `at`, which
+ * brings it back to the top.
+ */
+export type FeedPlacement = { key: number; at: number };
+
+export type SidebarView = "workspaces" | "feed";
+
+/** A workspace group pinned to the bottom of the Feed; sessions filed there stay until moved. */
+export type FeedFolder = { workspaceId: string; groupId: string };
+
+/** Feed sections: by day, active and inactive, or one list. */
+export const FEED_GROUP_BY_OPTIONS = ["day", "activity", "none"] as const;
+export type FeedGroupBy = (typeof FEED_GROUP_BY_OPTIONS)[number];
+export const DEFAULT_FEED_GROUP_BY: FeedGroupBy = "day";
+
+/** The time the Feed orders and groups by: last activity or creation. */
+export const FEED_SORT_BY_OPTIONS = ["activity", "created"] as const;
+export type FeedSortBy = (typeof FEED_SORT_BY_OPTIONS)[number];
+export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
+  /** Local time work last started or finished in a session on this device. */
+  workedAtById: Record<string, number>;
+  feedPlacementById: Record<string, FeedPlacement>;
+  /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
+  sidebarView: SidebarView;
+  feedFolders: FeedFolder[];
+  feedGroupBy: FeedGroupBy;
+  feedSortBy: FeedSortBy;
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -70,6 +101,17 @@ type SessionManagementActions = {
   reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
+  /**
+   * Work started or finished in the session (a reply, a run, an approval answered). OpenCode v2 does not move the
+   * session's own time per message, so the Feed counts this as activity too.
+   */
+  noteActivity: (sessionId: string) => void;
+  /** Put a session at a spot in the Feed until it has new activity. */
+  placeInFeed: (sessionId: string, key: number) => void;
+  setSidebarView: (view: SidebarView) => void;
+  setFeedGroupBy: (groupBy: FeedGroupBy) => void;
+  setFeedSortBy: (sortBy: FeedSortBy) => void;
+  toggleFeedFolder: (workspaceId: string, groupId: string) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -206,21 +248,23 @@ function syncServerState(request: Promise<SessionGroupServerState | null> | unde
 
 export const useSessionManagementStore = create<SessionManagementStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       pinnedIds: [],
       unreadIds: [],
+      workedAtById: {},
+      feedPlacementById: {},
+      sidebarView: "workspaces",
+      feedFolders: [],
+      feedGroupBy: DEFAULT_FEED_GROUP_BY,
+      feedSortBy: DEFAULT_FEED_SORT_BY,
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
       togglePin: (sessionId) =>
         set((state) => {
           const idx = state.pinnedIds.indexOf(sessionId);
-          return {
-            pinnedIds:
-              idx >= 0
-                ? state.pinnedIds.filter((id) => id !== sessionId)
-                : [...state.pinnedIds, sessionId],
-          };
+          if (idx >= 0) return { pinnedIds: state.pinnedIds.filter((id) => id !== sessionId) };
+          return { pinnedIds: [...state.pinnedIds, sessionId] };
         }),
 
       reorderPins: (sessionIds) =>
@@ -242,6 +286,32 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             ? { unreadIds: state.unreadIds.filter((id) => id !== sessionId) }
             : state
         )),
+
+      noteActivity: (sessionId) =>
+        set((state) => ({ workedAtById: { ...state.workedAtById, [sessionId]: Date.now() } })),
+
+      placeInFeed: (sessionId, key) =>
+        set((state) => (Number.isFinite(key)
+          ? { feedPlacementById: { ...state.feedPlacementById, [sessionId]: { key, at: Date.now() } } }
+          : state)),
+
+      toggleFeedFolder: (workspaceId, groupId) =>
+        set((state) => {
+          const pinned = state.feedFolders.some((folder) => folder.workspaceId === workspaceId && folder.groupId === groupId);
+          return {
+            feedFolders: pinned
+              ? state.feedFolders.filter((folder) => folder.workspaceId !== workspaceId || folder.groupId !== groupId)
+              : [...state.feedFolders, { workspaceId, groupId }],
+          };
+        }),
+
+      setSidebarView: (view) => set({ sidebarView: view === "feed" ? "feed" : "workspaces" }),
+
+      setFeedGroupBy: (groupBy) =>
+        set({ feedGroupBy: FEED_GROUP_BY_OPTIONS.includes(groupBy) ? groupBy : DEFAULT_FEED_GROUP_BY }),
+
+      setFeedSortBy: (sortBy) =>
+        set({ feedSortBy: FEED_SORT_BY_OPTIONS.includes(sortBy) ? sortBy : DEFAULT_FEED_SORT_BY }),
 
       reorderSessions: (workspaceId, sessionIds) =>
         set((state) => (
@@ -421,7 +491,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
     }),
     {
       name: "openwork.react.sessionManagement",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(sessionManagementStorage),
     },
   ),
 );

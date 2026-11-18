@@ -11,6 +11,8 @@ export async function recordFreeAutoPurchase(input: {
   try {
     const { subscription, row, paidAt } = input
     if (!row || row.stripe_subscription_id !== subscription.id || !row.created_by_org_membership_id) return
+    // Enterprise is sales-led: never a self-serve Free Auto conversion.
+    if (row.type === "enterprise") return
     const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
       eq(MemberTable.id, row.created_by_org_membership_id), eq(MemberTable.organizationId, row.organization_id))).limit(1)
     if (!member?.userId) return

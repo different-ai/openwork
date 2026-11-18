@@ -1,6 +1,5 @@
 import { denFetch, signIn, type DenSession } from "@openwork/behaviors";
 import { selfHostServer } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 import { allocateFreePorts, type AttachedSurface } from "@openwork/cdp";
 import { defaultReuseAdmin, faultProxy, localMysqlIsRunning, localRedisIsRunning, needs, personDefaults, queryDenDatabase, SkipError, type Place, type Seed } from "@openwork/env";
 
@@ -167,7 +166,6 @@ export async function orgInvite(seed: Seed, { place }: { place: Place }) {
   if (!createdOrganization.response.ok) throw new Error(`Organization: HTTP ${createdOrganization.response.status}`);
   const organization = record(record(createdOrganization.body).organization);
   // Signing up from this workspace's invite links verifies the invited email (OPE-82).
-  await enableOrganizationCapabilities(seed, owner, { inviteLinkVerifiesEmail: true }, text(organization.id));
   const createdOther = await seed.api(owner, "/v1/org", { method: "POST", body: JSON.stringify({ name: `Other workspace ${runId}` }) });
   if (!createdOther.response.ok) throw new Error(`Second organization: HTTP ${createdOther.response.status}`);
   const otherOrg = record(record(createdOther.body).organization);

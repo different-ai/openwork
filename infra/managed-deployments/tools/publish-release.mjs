@@ -20,21 +20,39 @@ if (manifest?.provider !== "aws" || typeof manifest.version !== "string" || !/^\
 for (const [name, expected] of [["bundle.tar.gz", manifest.bundleSha256], ["cloudformation.json", manifest.templateSha256]]) {
   if (digests[name] !== expected) throw new Error("Release artifact changed after packaging.");
 }
+const prefix = `releases/aws/${manifest.version}/`;
 const uploaded = {};
-for (const name of artifacts) {
-  const key = `releases/${manifest.provider}/${manifest.version}/${name}`;
-  const result = aws(["s3api", "put-object", "--bucket", bucket, "--expected-bucket-owner", accountId, "--key", key, "--body", resolve(directory, name), "--if-none-match", "*", "--server-side-encryption", "AES256", "--content-type", name.endsWith(".json") ? "application/json" : "application/gzip"]);
-  if (typeof result.VersionId !== "string" || !result.VersionId || result.VersionId === "null") throw new Error("Upload did not return an immutable version ID.");
-  uploaded[name] = `https://${bucket}.s3.${region}.amazonaws.com/${key}?versionId=${encodeURIComponent(result.VersionId)}`;
-}
-// Successful uploads are not readiness: customers must be able to download the
-// exact pinned bytes without credentials. Never change IAM or public policy here.
-for (const [name, url] of Object.entries(uploaded)) {
+const publicUrl = (key, versionId) => {
+  if (typeof versionId !== "string" || !versionId || versionId === "null") throw new Error("Upload did not return an immutable version ID.");
+  return `https://${bucket}.s3.${region}.amazonaws.com/${key}?versionId=${encodeURIComponent(versionId)}`;
+};
+async function verify(name, url) {
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`Published ${name} is not publicly readable (${response.status}). Configure the release bucket's public access policy, then verify before configuring Den.`);
   const digest = createHash("sha256").update(Buffer.from(await response.arrayBuffer())).digest("hex");
   if (digest !== digests[name]) throw new Error(`Published ${name} differs from the reviewed local artifact.`);
 }
+// Preflight every immutable version before writing anything. Never replace or
+// delete existing bytes, including noncurrent versions and delete markers.
+const existing = aws(["s3api", "list-object-versions", "--bucket", bucket, "--expected-bucket-owner", accountId, "--prefix", prefix]);
+if (!existing || !Array.isArray(existing.Versions ?? []) || !Array.isArray(existing.DeleteMarkers ?? [])) throw new Error("Invalid release object inventory.");
+if ((existing.DeleteMarkers ?? []).length) throw new Error("Release prefix contains delete markers; refusing publication.");
+for (const object of existing.Versions ?? []) {
+  const name = object.Key?.slice(prefix.length);
+  if (!object.Key?.startsWith(prefix) || !artifacts.includes(name)) throw new Error("Unexpected existing release object.");
+  const url = publicUrl(object.Key, object.VersionId);
+  await verify(name, url);
+  uploaded[name] = url;
+}
+for (const name of artifacts) {
+  if (uploaded[name]) continue;
+  const key = `${prefix}${name}`;
+  const result = aws(["s3api", "put-object", "--bucket", bucket, "--expected-bucket-owner", accountId, "--key", key, "--body", resolve(directory, name), "--if-none-match", "*", "--server-side-encryption", "AES256", "--content-type", name.endsWith(".json") ? "application/json" : "application/gzip"]);
+  uploaded[name] = publicUrl(key, result.VersionId);
+}
+// Successful uploads are not readiness: customers must be able to download the
+// exact pinned bytes without credentials. Never change IAM or public policy here.
+for (const [name, url] of Object.entries(uploaded)) await verify(name, url);
 // Public installer URLs and hashes only. There are no credentials in these values.
 console.log(JSON.stringify({
   DEN_MANAGED_DEPLOYMENT_AWS_VERSION: manifest.version,

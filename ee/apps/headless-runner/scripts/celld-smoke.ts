@@ -10,6 +10,7 @@ import { createApp } from "../src/app.js"
 import { nodeSqlite } from "../src/node-sqlite.js"
 import { Runner } from "../src/runner.js"
 import { Store } from "../src/store.js"
+import { smokeResult, smokeView } from "./celld-smoke-result.js"
 
 const base = z.url().parse(process.env.SMOKE_BASE)
 const token = z.string().min(32).parse(process.env.HEADLESS_API_TOKEN)
@@ -27,7 +28,7 @@ expect("create", (await call(`/v1/sessions/${sessionId}`, { method: "PUT", body:
 try {
   const sent = await call(`/v1/sessions/${sessionId}/turns`, { method: "POST", body: JSON.stringify({ messageId: "m1", prompt: "Reply with exactly the word: pong" }) })
   expect("send", sent.status, 202)
-  const view = z.object({ status: z.string(), turns: z.array(z.object({ status: z.string() })), finalAssistantText: z.string() })
+  const view = smokeView
   const deadline = Date.now() + 120_000
   let read = view.parse({ status: "busy", turns: [], finalAssistantText: "" })
   while (Date.now() < deadline) {
@@ -35,9 +36,9 @@ try {
     read = view.parse(await (await call(`/v1/sessions/${sessionId}`)).json())
     if (read.status === "idle" && read.turns.length > 0) break
   }
-  const status = read.turns.at(-1)?.status
-  console.log(`turn: ${status ?? "none"}, answer: ${JSON.stringify(read.finalAssistantText.slice(0, 40))}`)
-  if (status !== "completed" || !/pong/i.test(read.finalAssistantText)) throw new Error("the smoke turn did not complete with the expected answer")
+  const result = smokeResult(read)
+  console.log(result.summary)
+  if (!result.completed) throw new Error(`the smoke turn did not complete with the expected answer (${result.summary})`)
 
   const exported = await call(`/v1/sessions/${sessionId}/export`)
   expect("export", exported.status, 200)

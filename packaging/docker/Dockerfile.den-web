@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 RUN corepack enable
 
@@ -10,6 +10,7 @@ COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/managed-deployments/package.json /app/packages/managed-deployments/package.json
 COPY packages/features/package.json /app/packages/features/package.json
+COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
 COPY packages/ui/package.json /app/packages/ui/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 # Client-safe telemetry contracts: source-only package (no build step) that
@@ -23,6 +24,7 @@ RUN pnpm install --frozen-lockfile --trust-lockfile --filter @openwork-ee/den-we
 COPY packages/types /app/packages/types
 COPY packages/managed-deployments /app/packages/managed-deployments
 COPY packages/features /app/packages/features
+COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/ui /app/packages/ui
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts

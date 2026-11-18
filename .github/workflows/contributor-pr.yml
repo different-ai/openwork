@@ -32,11 +32,10 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
+    uses: ./.github/workflows/contributor-screen.yml
     with:
       pr_number: ${{ github.event.pull_request.number }}
       head_sha: ${{ github.event.pull_request.head.sha }}
-      stage: scan
 
   refuse-other-branches:
     if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/dev'
@@ -69,7 +68,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: List open forks to screen
         id: backfill
         env:
@@ -90,8 +89,7 @@ jobs:
       issues: write
       pull-requests: write
       statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
+    uses: ./.github/workflows/contributor-screen.yml
     with:
       pr_number: ${{ matrix.number }}
       head_sha: ${{ matrix.sha }}
-      stage: scan

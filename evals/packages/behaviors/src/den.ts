@@ -79,7 +79,7 @@ export async function signIn(den: DenRef, credentials: { email: string; password
   });
   const token = stringField(result.body, "token");
   if (!result.response.ok || !token) {
-    throw new Error(`Sign-in failed for ${credentials.email}: HTTP ${result.response.status} ${preview(result.body)}`);
+    throw new Error(`Sign-in failed for ${credentials.email}: HTTP ${result.response.status} (authentication response withheld)`);
   }
   return { ...den, token, email: credentials.email, password: credentials.password };
 }

@@ -1,3 +1,4 @@
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
 import { isSettingsTabAllowed, type DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
 import type { SettingsTab } from "@/app/types";
@@ -14,6 +15,7 @@ import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advance
 import type { PaletteItem } from "./command-palette-search";
 
 const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
+  ollama: ["local models", "llama", "offline", "on device"],
   ai: ["provider", "providers", "api key", "anthropic", "openai", "openrouter", "google", "gemini", "claude", "gpt", "connect model", "models"],
   preferences: ["default model", "reasoning", "thinking", "compaction", "effort"],
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
@@ -51,6 +53,8 @@ export function buildCommandPaletteSettingsItems(input: {
     "general",
     ...getWorkspaceSettingsTabs(),
     ...getGlobalSettingsTabs(input.developerMode, input.capabilities),
+    // Not in the sidebar (opened from AI Providers), but still searchable.
+    "ollama",
     ...CLOUD_SETTINGS_TABS,
   ] satisfies SettingsTab[]).filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
 
@@ -81,7 +85,7 @@ export function buildCommandPaletteSettingsItems(input: {
   }));
 
   const advancedItems: PaletteItem[] = tabs.includes("advanced")
-    ? ADVANCED_SETTINGS_SECTIONS.map((section) => ({
+    ? ADVANCED_SETTINGS_SECTIONS.filter((section) => section.id !== "experimental-engine" || isDesktopRuntime()).map((section) => ({
         id: `settings:advanced/${section.id}`,
         title: section.title,
         keywords: section.keywords,

@@ -193,12 +193,13 @@ export function checkDefaultModelChoice(choice: DefaultModelChoice, options: Def
 
 /** The organization default and every team's override, teams by name, with each team's size and conflicts. */
 export async function listDefaultModelSettings(organizationId: OrganizationId): Promise<Omit<DefaultModelSettings, "canEdit">> {
+  // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
   const [rows, teams] = await Promise.all([
-    db.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId)),
-    db.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
+    db.$primary.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId)),
+    db.$primary.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
   ])
   const membershipRows = teams.length > 0
-    ? await db
+    ? await db.$primary
       .select({ teamId: TeamMemberTable.teamId, memberId: TeamMemberTable.orgMembershipId })
       .from(TeamMemberTable)
       .where(inArray(TeamMemberTable.teamId, teams.map((team) => team.id)))
@@ -241,6 +242,8 @@ export async function saveDefaultModel(input: {
   teamId: TeamId | null
   model: DefaultModelChoice | null
   updatedByOrgMemberId: MemberId
+  /** Id for the row when this save creates it (config-blob imports reuse the source id); new otherwise. */
+  id?: DenTypeId<"orgDefaultModel">
 }): Promise<void> {
   const scopeKey = input.teamId ?? DEFAULT_MODEL_EVERYONE_SCOPE
   const now = new Date()
@@ -259,7 +262,7 @@ export async function saveDefaultModel(input: {
       return
     }
     await tx.insert(OrgDefaultModelTable).values({
-      id: createDenTypeId("orgDefaultModel"),
+      id: input.id ?? createDenTypeId("orgDefaultModel"),
       organizationId: input.organizationId,
       teamId: input.teamId,
       scopeKey,
@@ -359,10 +362,9 @@ export async function readDefaultModelForMember(input: { organizationId: Organiz
  * lookup fails, so desktops keep their own default.
  */
 export async function desktopConfigDefaultModel(
-  input: { organizationId: OrganizationId; memberId: MemberId; featureOn: boolean },
+  input: { organizationId: OrganizationId; memberId: MemberId },
   read: typeof readDefaultModelForMember = readDefaultModelForMember,
 ): Promise<DesktopDefaultModel | null> {
-  if (!input.featureOn) return null
   try {
     return await read({ organizationId: input.organizationId, memberId: input.memberId })
   } catch (error) {

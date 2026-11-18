@@ -7,7 +7,10 @@ import {
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
 import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { env } from "./env.js"
+import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./mcp/connection-navigation.js"
 
 function text(record: unknown, ...path: string[]): string | null {
   let value = record
@@ -55,6 +58,40 @@ export function mcpConnectionKeyPrompt(connection: { id: string; name: string; u
   })
 }
 
+/** The signed-in person's own key for a connection where each person uses their own. */
+export function mcpConnectionMemberKeyPrompt(connection: { id: string; name: string; url: string }): CredentialPrompt {
+  return credentialPromptSchema.parse({
+    schemaVersion: "1",
+    kind: "credential_prompt",
+    target: { type: "mcp_connection_member_key", connectionId: connection.id },
+    name: connection.name,
+    destination: credentialPromptDestination(connection.url),
+  })
+}
+
+/**
+ * One shared key that replaces each person's own. The prompt changes nothing:
+ * the connection switches only when a person saves a key that works, and only
+ * while it is still as it was at `updatedAt`.
+ */
+export function mcpConnectionSharedSwitchPrompt(input: {
+  connection: { id: string; name: string; url: string; updatedAt: Date }
+  audience: { orgWide: boolean; memberCount: number; teamCount: number }
+}): CredentialPrompt {
+  return credentialPromptSchema.parse({
+    schemaVersion: "1",
+    kind: "credential_prompt",
+    target: {
+      type: "mcp_connection_shared_switch",
+      connectionId: input.connection.id,
+      expectedUpdatedAt: input.connection.updatedAt.toISOString(),
+      audience: input.audience,
+    },
+    name: input.connection.name,
+    destination: credentialPromptDestination(input.connection.url),
+  })
+}
+
 export function pluginConnectionKeyPrompt(input: { pluginId: string; configObjectId: string; serverName: string; connection: { id: string; name: string; url: string } }): CredentialPrompt {
   return credentialPromptSchema.parse({
     schemaVersion: "1",
@@ -73,7 +110,9 @@ export type GatewayCredentialShape =
   | { kind: "api_key_map"; envNames: string[] }
 
 export function gatewayCredentialShape(providerId: string, envNames: readonly string[]): GatewayCredentialShape | null {
-  if (isLiteLlmProviderId(providerId)) return null
+  if (isLiteLlmProviderId(providerId) || isTrueFoundryProviderId(providerId)) return null
+  // Custom OpenAI-compatible providers take exactly one API key, whatever env names the row declares.
+  if (isGatewayCustomProviderId(providerId)) return { kind: "api_key" }
   if (providerId === "google-vertex" || providerId === "google-vertex-anthropic") return { kind: "gcp_service_account" }
   if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle") return { kind: "aws_keys" }
   if (envNames.length === 1) return { kind: "api_key" }
@@ -110,11 +149,12 @@ export function gatewayProviderKeyPrompt(input: { inferenceProviderId: string; c
 
 /** The dashboard page where a person can add the same key outside OpenWork chat. */
 export function credentialPromptManageUrl(prompt: CredentialPrompt): string | null {
-  const path = prompt.target.type === "mcp_connection_key" || prompt.target.type === "plugin_connection_key"
-    ? `/dashboard/mcp-connections/${encodeURIComponent(prompt.target.connectionId)}`
-    : "/dashboard/ai-gateway?tab=ai-providers"
   try {
-    return new URL(path, env.betterAuthUrl).toString()
+    if (prompt.target.type === "mcp_connection_member_key") return openworkYourConnectionsUrl(prompt.target.connectionId)
+    if (prompt.target.type === "gateway_provider_key" || prompt.target.type === "gateway_provider_credential") {
+      return new URL("/dashboard/ai-gateway?tab=ai-providers", env.betterAuthUrl).toString()
+    }
+    return openworkOrganizationConnectionsUrl(prompt.target.connectionId)
   } catch {
     return null
   }

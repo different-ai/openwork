@@ -16,10 +16,18 @@ import {
 
 /** Effective permissions for one member in one organization. */
 export type MemberPermissions = {
-  /** Whether the organization's Permissions feature is on (database) or off (code defaults). */
-  featureEnabled: boolean
+  /** Compatibility field for older clients; permissions are always enabled. */
+  featureEnabled: true
   isOwner: boolean
-  /** Effective admin: direct admin role (or legacy super-admin) or a member of an Admin team. */
+  /**
+   * Direct super-admin role (not the owner). Their keys come from the Super
+   * admin default set (seeded with every catalog key), plus Member, Admin
+   * and team sets. Role-hierarchy rules (who may make or
+   * remove super-admins) read this flag; deleting the organization and
+   * transferring ownership stay owner-only role checks.
+   */
+  isSuperAdmin: boolean
+  /** Effective admin: direct admin or super-admin role, or a member of an Admin team. */
   isAdmin: boolean
   keys: ReadonlySet<PermissionKey>
   has(key: PermissionKey): boolean
@@ -28,9 +36,14 @@ export type MemberPermissions = {
 /** Why a member holds a permission. */
 export type PermissionSource =
   | { kind: "owner" }
+  /** Legacy explanation source retained for published clients. */
+  | { kind: "super_admin" }
+  | { kind: "super_admin_default"; setId: string; setName: string }
   | { kind: "member_default"; setId: string; setName: string }
   | { kind: "admin_default"; setId: string; setName: string; via: "role" | "team"; teamId?: string; teamName?: string }
   | { kind: "team"; setId: string; setName: string; teamId: string; teamName: string }
+  /** A set given to the person directly (permission_set_member): a custom role or Billing manager. */
+  | { kind: "direct"; setId: string; setName: string }
   | { kind: "code_default"; set: PermissionDefaultSetKey }
 
 /** One source and the keys it allows. A member's permissions are the union over their grants. */
@@ -57,10 +70,14 @@ export function ownerPermissionGrants(): PermissionGrant[] {
   return [{ source: { kind: "owner" }, keys: new Set(PERMISSION_KEYS) }]
 }
 
-/** Feature off (or a database fallback): Member code defaults, plus Admin code defaults for admins. */
-export function codeDefaultPermissionGrants(input: { isAdmin: boolean }): PermissionGrant[] {
+/**
+ * Database fallback: Member code defaults, plus Admin code defaults for
+ * admins, plus Super admin code defaults (every key) for super-admins.
+ */
+export function codeDefaultPermissionGrants(input: { isAdmin: boolean; isSuperAdmin?: boolean }): PermissionGrant[] {
   const grants: PermissionGrant[] = [{ source: { kind: "code_default", set: "member" }, keys: new Set(permissionDefaultKeys("member")) }]
-  if (input.isAdmin) grants.push({ source: { kind: "code_default", set: "admin" }, keys: new Set(permissionDefaultKeys("admin")) })
+  if (input.isAdmin || input.isSuperAdmin === true) grants.push({ source: { kind: "code_default", set: "admin" }, keys: new Set(permissionDefaultKeys("admin")) })
+  if (input.isSuperAdmin === true) grants.push({ source: { kind: "code_default", set: "super-admin" }, keys: new Set(permissionDefaultKeys("super-admin")) })
   return grants
 }
 
@@ -70,21 +87,23 @@ export function codeDefaultPermissionGrants(input: { isAdmin: boolean }): Permis
  * the organization is not locked out; inside a write transaction, where sets
  * can't be created, it denies everything.
  */
-export function missingDefaultSetsPermissionGrants(input: { isAdmin: boolean; transaction: boolean }): PermissionGrant[] {
-  return input.transaction ? [] : codeDefaultPermissionGrants({ isAdmin: input.isAdmin })
+export function missingDefaultSetsPermissionGrants(input: { isAdmin: boolean; isSuperAdmin?: boolean; transaction: boolean }): PermissionGrant[] {
+  return input.transaction ? [] : codeDefaultPermissionGrants({ isAdmin: input.isAdmin, isSuperAdmin: input.isSuperAdmin })
 }
 
 export function createMemberPermissions(input: {
-  featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin?: boolean
   isAdmin: boolean
   keys: Iterable<PermissionKey>
 }): MemberPermissions {
+  const isSuperAdmin = !input.isOwner && input.isSuperAdmin === true
   const keys: ReadonlySet<PermissionKey> = new Set(input.isOwner ? PERMISSION_KEYS : input.keys)
   return {
-    featureEnabled: input.featureEnabled,
+    featureEnabled: true,
     isOwner: input.isOwner,
-    isAdmin: input.isAdmin,
+    isSuperAdmin,
+    isAdmin: input.isAdmin || isSuperAdmin,
     keys,
     has: (key) => keys.has(key),
   }
@@ -92,8 +111,8 @@ export function createMemberPermissions(input: {
 
 /** Union of grants: a permission is allowed when any grant allows it. */
 export function memberPermissionsFromGrants(input: {
-  featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin?: boolean
   isAdmin: boolean
   grants: readonly PermissionGrant[]
 }): MemberPermissions {

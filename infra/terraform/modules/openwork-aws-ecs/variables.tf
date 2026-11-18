@@ -187,7 +187,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name, api_domain_name, and openwork_web_domain_name when openwork_web_enabled. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering Den and all enabled optional hosts, including ai_gateway_domain_name. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }
@@ -246,9 +246,9 @@ variable "require_email_verification" {
 }
 
 variable "automations_enabled" {
-  description = "Enable Automations."
+  description = "Automations for the whole install (on by default; organization admins can turn Desktop or Cloud Automations off in Settings)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "dashboards_enabled" {
@@ -320,7 +320,8 @@ variable "headless_runner" {
   description = <<-EOT
     The headless runner: Den's private agent service for Slack replies, headless
     Automations and Workbot. It calls the model directly (any Anthropic- or
-    OpenAI-compatible endpoint; key in headless_model_api_key) and reaches tools
+    OpenAI-compatible endpoint; key via headless_model_secret_arn or the legacy
+    headless_model_api_key input) and reaches tools
     through Den's /mcp/agent. Runs as one task with its SQLite database on EFS
     (one mount target per service subnet, so service_subnet_ids must be in
     different availability zones). Set external_url to use an already deployed
@@ -339,8 +340,8 @@ variable "headless_runner" {
   default = {}
 
   validation {
-    condition     = contains(["anthropic", "openai"], var.headless_runner.model_protocol)
-    error_message = "headless_runner.model_protocol must be anthropic or openai."
+    condition     = contains(["anthropic", "openai", "openai-responses"], var.headless_runner.model_protocol)
+    error_message = "headless_runner.model_protocol must be anthropic, openai or openai-responses."
   }
 
   validation {
@@ -360,7 +361,7 @@ variable "headless_runner_token" {
 }
 
 variable "headless_computer" {
-  description = "Optional computer tools for Workbot/headless turns. Off by default. Daytona reuses daytona_api_key/api_url/target but needs its own computer snapshot; Freestyle uses headless_computer_api_key."
+  description = "Optional computer tools for Workbot/headless turns. Off by default; no sandbox is provisioned during installation. Daytona uses daytona.api_url/target and its own computer snapshot. Use headless_computer_secret_arn for either provider, or the matching legacy raw-key input."
   type = object({
     provider      = optional(string, "off")
     snapshot      = optional(string, "")
@@ -387,6 +388,34 @@ variable "headless_model_api_key" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "headless_model_secret_arn" {
+  description = "Full ARN of an existing plain-string model API key secret. ECS reads it directly; Terraform never reads or copies its value. Mutually exclusive with headless_model_api_key. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_model_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_model_secret_arn))
+    error_message = "headless_model_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_model_secret_arn == "" || var.headless_model_api_key == ""
+    error_message = "Supply only one of headless_model_secret_arn and headless_model_api_key."
+  }
+}
+
+variable "headless_computer_secret_arn" {
+  description = "Full ARN of an existing plain-string Daytona or Freestyle API key secret, read directly by ECS. Mutually exclusive with the matching raw-key input. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_computer_secret_arn))
+    error_message = "headless_computer_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || (var.headless_computer.provider == "daytona" ? var.daytona_api_key == "" : var.headless_computer_api_key == "")
+    error_message = "Supply only one computer secret reference or matching raw API key."
+  }
 }
 
 variable "headless_runner_image" {
@@ -498,7 +527,7 @@ variable "database_url" {
 variable "database" {
   description = "RDS settings."
   type = object({
-    instance_class        = optional(string, "db.t4g.micro")
+    instance_class        = optional(string, "db.t4g.small")
     engine_version        = optional(string, "8.4")
     allocated_storage_gb  = optional(number, 20)
     max_allocated_storage = optional(number, 100)

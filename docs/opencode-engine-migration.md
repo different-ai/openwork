@@ -1,134 +1,116 @@
-# OpenCode engine selection and history migration
+# OpenCode engine selection and history
 
-The command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
-and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
-commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
-for the switch check, the migration consent, and migration progress, so a
-migration stays visible after the surface that started it closes. Switching
-engines never migrates history. V1 remains the default. Desktop packages include
-both pinned native executables; v2's download fallback remains available for
-standalone servers.
+OpenWork keeps its existing v2 routing policy. Fresh profiles start on v2;
+managed hosts automatically select v2 when the previous engine is idle, and the
+`opencodeV2Only` organization policy still prevents switching back. Explicit
+local support/test overrides and external-engine ownership remain respected.
+The retired `engineV2ForceUpgrade` setting remains ignored.
 
-## Running tasks, switching, and migration progress
+## Upstream owns migration
 
-Before switching, the app reads `GET /experimental/engine-v2-preview/activity`
-(counts only) for the engine being left. Running v1 tasks keep running unseen
-after a switch to v2, and switching to v1 stops the v2 sidecar, so either case
-asks first ("Switch anyway" / "Stop tasks and switch").
+OpenWork bundles vanilla OpenCode **2.2.6**, without a migration patch. It starts
+the normal v2 server directly with `OPENCODE_DB` pointing at the selected history
+database. Upstream converts v1 tables in place on startup, retains the original
+v1 tables, and owns the `kv` / `migration.v1-v2` cursor and completion marker.
+OpenWork does not reset those markers.
 
-Migration consent names running v1 tasks the same way: a chat copied mid-turn
-lands in v2 half-finished while v1 keeps running it. The server enforces this:
-`POST …/migrate` answers 409 `engine_migration_active_sessions` while v1 reports
-busy work, unless the request sets `allowActiveSessions: true` ("Migrate
-anyway"). Engine switches during a migration answer 409
-`engine_migration_running`.
+Removed: the custom child worker, immutable snapshots, payload externalization,
+conversion workspace, cross-database transfer, copy/swap/restore and backup
+rotation, disk-space preflight, copy mutex/fence and engine leases, copy startup
+and connection gates, retry/resume jobs, and manual migration route/UI. There
+is no migration progress dialog or “Migrate chats” command. Engine selection and
+running-task switch confirmations remain.
 
-While a migration runs, a modal shows progress. The person can choose
-**Continue using OpenWork**, which leaves a top banner ("OpenWork may be
-unstable until this finishes") with **Show progress**. Status reports a
-`phase` (`starting`, `converting`, `copying`) and `startedAt`; the counts only
-move while copying, so the bar is indeterminate before that instead of
-showing a stalled "0 of N". A finished migration offers **Switch to OpenCode
-v2**; one finished in the background reports with a toast instead. A failure
-brings the dialog back with **Try again**, which skips chats already copied.
+The old preflight estimated **4 × source + target + 1 GiB**, not the amount
+upstream needs for an in-place conversion. Its disk warning (including the
+reported 10.2 GB requirement on v0.18.64) is gone. Upstream still needs working
+disk space; real SQLite, conversion, executable and startup errors remain errors.
+No free-space guarantee is implied.
 
-Session sync keys run state by workspace and session, not by engine, and
-migrated chats keep their ids. A status read is therefore only adopted by the
-engine it came from, a released sync for the other engine is disposed when
-chats move to a new engine, and failed status reads back off instead of
-polling an unreachable engine at 4 Hz.
+## Existing installations: non-destructive selection
 
-Connect health and repair follow the active local engine. On v2, diagnostics
-read native `/api/mcp` connection status and `/api/model` tool capabilities;
-they do not look for the selected model in v1's catalog or require v1 plugin
-canary tools. Remote workspace diagnostics remain with their owning server.
-The connector parity proof checks health, repair, and real capability execution
-on both engines.
+`apps/server/src/opencode-history.ts` selects a database before the engine starts:
 
-## What migration does
+| Existing state | Database opened by v2 |
+| --- | --- |
+| No separate OpenWork v2 database | Original v1 database; upstream migrates in place |
+| Separate database is zero-byte or has an empty initialized schema | Original v1 database; empty separate file is left alone |
+| Separate `<runtime>/opencode-v2/state/opencode.db` contains chats | Keep reading that database, including native v2 chats and already copied history |
+| Old copy stopped after writing some chats | Keep reading the populated separate database; do not resume the custom copy or let its checkpoint block startup |
+| Corrupt/unreadable separate database | Report the error, rather than silently hiding its history by selecting another store |
 
-Migration requires the OpenWork host token and explicit confirmation. It takes
-an immutable SQLite snapshot of the active profile's v1 database, including
-committed WAL writes. The original database is never modified.
+The chosen path is saved once as `historyDatabase` in the existing engine-state
+file. This is only a database pointer, not a migration checkpoint: deleting the
+last chat must not switch stores or resurrect old chats on the next boot. A
+saved selection is not silently replaced by another database.
 
-The copy has durable stages: snapshot, reversible payload externalization,
-native conversion, payload restoration, and transactional transfer. Large JSON
-strings are held in SQLite and replaced with unique references in the private
-conversion workspace. The pinned native converter processes those references;
-SQLite restores their exact values afterward, including inline files. No chat
-is trimmed, and no whole-chat export or import body is allocated in JavaScript.
+The original path honors `OPENCODE_DB`, an isolated v1 database selected by the
+host after a collision, then XDG/HOME defaults. History stays profile-local.
+Generated v2 configuration remains under the existing private v2 state directory;
+changing the history path does not relocate configuration or provider credentials.
 
-The v2 engine initializes its own schema and then closes before the transfer.
-Managed engine leases and a pending-copy fence keep other managed app instances
-from opening that database during an unfinished copy. Running v2 tasks prevent
-the copy from starting. V1 remains available; v2 chats pause until completion.
-The projected schemas must match before target writes begin.
+Old `history-copy.pending`, mutex/lease files, staging copies, backups, archive
+and checkpoint tables are **ignored and preserved**, not deleted. Old automatic
+copy markers and receipts no longer enter the runtime selection state. There is
+no new cleanup worker, merge, database rewrite, process-signalling recovery, or
+support-only startup unlock.
 
-Messages move in bounded row batches, including a single very large payload
-without decoding it in JavaScript. Each batch commits its progress in the target
-SQLite database. A killed worker rolls back its active transaction; retry or
-restart resumes the retained workspace and committed batches. Conversion and
-payload restoration have their own restart checkpoints. Errors never blacklist
-a chat or mark a partial copy complete.
+### Limits and risks
 
-Existing v2 chats are skipped without changing their messages, metadata, order,
-or event history. A new session and its migration checkpoint are created in one
-transaction. Only that checkpoint lets the migration resume writing the session;
-a matching session ID alone does not. New messages retain the native converter's
-order, and event sequence allocation never rewinds.
-
-Every original v1 message and part is also retained byte-for-byte in the target's
-`openwork_v1_message` and `openwork_v1_part` archive tables, keyed by the snapshot's
-SHA-256. Original session fields are retained in `openwork_v1_session`. This
-preserves fields and older part types that the native v2 projection does not
-represent. The archive is not a promise that v2 renders unsupported legacy items.
-Source rows and projected message identities are verified before completion.
-Only then is the staging workspace removed. Existing v2 history is backed up
-before the transfer, and the two most recent backups remain on disk.
-
-The saved snapshot time remains the migration cutoff after restart: chats
-created in v1 after that snapshot still need a later copy. Completion/error
-receipts remain visible after restart. The copy stays local to this profile;
-it neither imports remote-server history nor merges later edits automatically.
-
-OpenCode's conversion still resets session permissions and revert state and
-normalizes interrupted activity. Review permissions before continuing migrated
-chats. V1 plugin implementations require v2-compatible replacements; migration
-does not rewrite configuration, skills, or plugin files.
-
-## Upstream contract reviewed
-
-Implementation was checked against the native engine at the repository pin,
-`2.0.26`, and its upstream source commit
-`9b4ec5714d481559990db0a816d5dec19541a814`:
-
-- [Native migration](https://github.com/anomalyco/opencode/blob/9b4ec5714d481559990db0a816d5dec19541a814/packages/core/src/database/v1-migration.bun.ts)
-- [Migration status API](https://github.com/anomalyco/opencode/blob/9b4ec5714d481559990db0a816d5dec19541a814/packages/protocol/src/groups/migration.ts)
-- [Native session transfer](https://github.com/anomalyco/opencode/blob/9b4ec5714d481559990db0a816d5dec19541a814/packages/core/src/session/transfer.ts)
-- [V1 compatibility guide](https://github.com/anomalyco/opencode/blob/9b4ec5714d481559990db0a816d5dec19541a814/services/www/src/docs/content/migrate-v1.mdx)
+- A populated separate v2 database wins when history is split. V1-only chats
+  that were never copied remain in the original database; unfinished copied
+  chats may still be partial. Upstream cannot resume OpenWork's private copy
+  checkpoints. The source, staging data and backups remain available for a
+  separately reviewed recovery/export; this change does not silently merge or
+  overwrite either history. Do not delete them to “fix” an upgrade.
+- Stop old OpenWork instances before updating. This build never launches the old
+  worker and does not signal unknown processes; it cannot safely arbitrate a
+  worker from an older build still writing the same database.
+- In-place adoption is one-way. The existing engine-switch fence drains incoming
+  mutations, and the manual API checks v1 is idle before starting v2; “Switch
+  anyway” is no longer offered for busy v1 tasks. Once the shared original store
+  is adopted, v1 selection and host-forwarded v1 chat writes answer
+  `409 engine_v1_history_adopted` (reads and Stop remain available). Settings show
+  why v1 is unavailable. Separate, unconverted v1 stores keep their old switching
+  behavior. This is an engine handoff safeguard, not a history copy lock.
+  Retained v1 tables are recovery input, not live bidirectional sync: upstream
+  never re-imports writes made after its completion marker. Automatic startup
+  does not fall back to v1 after v2 may have converted the store. A standalone
+  v1 process outside OpenWork is not controlled by this guard.
+- Downgrading to a build that ignores `historyDatabase` can select its old separate
+  store instead. Do not downgrade as an automatic recovery step; preserve both
+  stores and use an explicitly reviewed recovery plan.
+- Upstream conversion/startup errors are surfaced through normal engine status
+  and restart handling. Test large histories and real low-disk behavior before
+  release; removal of the false preflight is not a promise about upstream's peak
+  disk or memory consumption.
 
 ## Verification
 
-`apps/server/test/opencode-v2-staged-history.test.ts` is an isolated integration
-test against the pinned real engine. It creates a 260 MiB single tool output,
-Unicode text, base64 and percent-encoded files, and multiple transfer batches.
-It kills a worker after a committed batch, resumes from another process,
-checks complete payloads and the original database digest, leaves existing v2
-chats untouched, and opens the result through a fresh native engine. It also
-checks graceful shutdown and automatic startup recovery. Without a binary it
-explicitly skips.
-
 ```sh
-OPENWORK_OPENCODE2_BIN="$(command -v opencode2)" pnpm --filter openwork-server test:history-migration
+pnpm --filter openwork-server test:history-migration
+bun test apps/server/test/engine-auto-upgrade.test.ts
+bun test apps/server/test/engine-auto-upgrade-boot.test.ts
+bun test apps/server/test/engine-v2-restart.test.ts
 ```
 
-The same integration can be bundled and run on Node with a small V8 heap to
-exercise the desktop database implementation. No production history, provider
-credentials, external records, or inference are needed.
+The history-selection tests cover original, empty, populated, split and partial
+stores, WAL reads, upstream markers, stale artifacts and non-deletion. Startup
+regressions cover stale custom state/fences with v2 directly serving history.
+The automatic-engine proof uses a synthetic v1 chat and the real pinned engine
+without provider credentials or production data.
 
-Design: P3 (details disclosure), P5 (existing ToggleGroup, Button, AlertDialog,
-Dialog, Progress and Alert), P9 (migration data and risks), P10 (desktop
-screenshots), P11 (no step labels; counts appear once they move), S2 (settings
-rows), S6 (one owner for palette and settings), C1 (verb-first actions), C2
-(Migrate → Migrated), C5 (running tasks are a warning, not an error), C6
-(retryable errors).
+For manual release verification, close older builds, launch with a disposable
+v1 profile, verify its chat through v2, relaunch, then repeat with a populated
+separate v2 database and stale copy artifacts. Confirm no migration UI, no
+`/experimental/engine-v2-preview/migrate` route, no copy worker, and unchanged
+v2-only routing. Never use production history as a test fixture.
+
+## Upstream contract (v2.2.0)
+
+- [Database path](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/cli/src/database-path.ts)
+- [In-place migration](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/database/v1-migration.bun.ts)
+- [V1 compatibility guide](https://opencode.ai/v2/docs/migrate-v1)
+
+Provider catalog ownership, Connect health, config/skills and plugin API
+compatibility are unchanged; see [live provider sync](live-provider-sync.md).

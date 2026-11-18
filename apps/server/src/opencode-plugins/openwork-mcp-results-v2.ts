@@ -1,10 +1,21 @@
+import { mcpToolId } from "../opencode-v2-mcp-readiness.js";
 import { nativeDiscoveryCode } from "./openwork-codemode-discovery-v2.js";
 
 type Registration = { dispose(): Promise<void> };
 type CallEvent = { readonly tool: string; readonly messageID: string; readonly id: string };
 type ToolResult = { output?: unknown; content?: unknown; metadata?: Record<string, unknown> };
 type ToolCall = { readonly messageID: string; readonly id: string; progress(metadata: Record<string, unknown>): Promise<void> };
-type EditableTool = { execute(input: unknown, call: ToolCall): Promise<ToolResult> };
+type EditableTool = { options?: Record<string, unknown>; execute(input: unknown, call: ToolCall): Promise<ToolResult> };
+
+/**
+ * Connect's own search, execute, and skill reader stay in the Code Mode
+ * catalog. When the catalog is full the engine still lists pinned tools but
+ * hides the rest behind `search()`; without the pin, other MCP servers push
+ * these out and the model would have to search for Connect's search.
+ */
+export const PINNED_CONNECT_TOOL_IDS: ReadonlySet<string> = new Set(
+  ["search_capabilities", "execute_capability", "get_skill"].map(name => mcpToolId("openwork-cloud", name)));
+
 type ExecuteAfter = CallEvent & { readonly input: unknown } & (
   | { readonly status: "completed"; result: { output?: unknown; metadata?: Record<string, unknown> } }
   | { readonly status: "error"; readonly error: unknown }
@@ -263,13 +274,16 @@ export default {
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
     let rootSearch = false;
+    let toolIds = new Set<string>();
     const catalog = await context.tool.transform(editor => {
       rootSearch = editor.get("search") !== undefined;
+      toolIds = new Set(editor.list().map(info => info.id));
       // Wrap each tool so a Code Mode call publishes its start and its own
       // result while the script is still running, not only at completion.
       for (const info of editor.list()) {
         if (info.id === "execute") continue;
         editor.update(info.id, tool => {
+          if (PINNED_CONNECT_TOOL_IDS.has(info.id)) tool.options = { ...tool.options, pinned: true };
           const execute = tool.execute;
           tool.execute = async (input, call) => {
             const event = { tool: info.id, messageID: call.messageID, id: call.id, input };
@@ -295,7 +309,7 @@ export default {
     });
     const before = await context.tool.hook("execute.before", event => {
       if (!rootSearch && event.tool === "execute" && isRecord(event.input) && typeof event.input.code === "string") {
-        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code) };
+        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code, server => toolIds.has(mcpToolId(server, "search"))) };
       }
       collector.before(event);
     });

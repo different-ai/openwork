@@ -32,6 +32,18 @@ For exact Azure CLI commands, values, TLS options, migration troubleshooting, ve
 
 The module deploys Den API and web as HTTPS-only Container Apps, a singleton manual migration Job, MySQL Flexible Server 8.4 (or your existing database), managed Container Apps secrets with optional Key Vault references, and a new or existing environment and Log Analytics workspace. Application replicas do not run migrations. The native Job start is followed by a read-only observer of the exact execution; only `Succeeded` permits application rollout. Default image references and all overrides must be digest-pinned. The default API is 1 vCPU / 2 GiB and web is 0.5 vCPU / 1 GiB.
 
+The optional **AI Gateway** (`openwork-inference`, 8791) is distinct from OpenWork
+Web's **den-gateway** and Den API's MCP gateway. Set `ai_gateway_enabled=true`, a
+dedicated `ai_gateway_domain_name`, a matching release's digest-pinned
+`ai_gateway_image`, and a covering `custom_domain_certificate`. Preconfigure CNAME
+and `asuid` TXT records using the environment's hostname/verification ID before
+binding. `ai_gateway_url` returns the HTTPS origin (null when off); Den calls the
+generated HTTPS FQDN within the same environment. Existing database/encryption
+values are reused without advancing rotation counters. See the
+[Terraform AI Gateway guide](https://github.com/different-ai/openwork/blob/dev/infra/terraform/AI_GATEWAY.md)
+for prerequisites and limits. **Live AI Gateway conformance is NotRun**; mock plans
+do not qualify an installation.
+
 ### Tested scenarios
 
 | Date | Tools / release | Result |

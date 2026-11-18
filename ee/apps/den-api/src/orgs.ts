@@ -9,6 +9,8 @@ import {
   ConnectorInstanceAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
+  AutomationShareTable,
+  AutomationTable,
   InvitationTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
@@ -16,11 +18,13 @@ import {
   MemberTable,
   OrganizationTable,
   PluginAccessGrantTable,
+  SandboxOrganizationTable,
   ScimGroupMemberTable,
   ScimProviderTable,
   ScimUserTombstoneTable,
   SsoConnectionTable,
   SsoProviderTable,
+  PermissionSetMemberTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -35,7 +39,8 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { getOrganizationFeatures, readOrganizationWithPermissions, type FeatureMap } from "./features.js"
+import { parseOrganizationPlan, type PlanTier } from "./entitlements.js"
+import { getOrganizationFeatures, readOrganizationForAuthorization, type FeatureMap } from "./features.js"
 import {
   getRoleValueAfterOwnershipTransfer,
   roleIncludesAdmin,
@@ -44,9 +49,11 @@ import {
   validateOrganizationMemberRoleChange,
   type MemberLifecycleValidation,
 } from "./organization-member-guards.js"
+import { ORGANIZATION_DELETION_METADATA_KEY } from "./organization-metadata.js"
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { isScimDeprovisionedIdentity } from "./scim-deprovisioning.js"
 import { getScimManagedTeamIds } from "./scim-groups.js"
+import { moveUsageMemberAssignments } from "@openwork-ee/den-db/gateway-usage-limits"
 import { effectiveOrganizationRole, listMemberAdminTeams, listOrganizationAdminTeamGrants, withOrganizationMembershipUsageMutation, withOrganizationTeamMutation, type OrganizationAdminTeam } from "./organization-team-roles.js"
 import {
   DEFAULT_ORGANIZATION_LIMITS,
@@ -59,17 +66,19 @@ import {
   ASSIGNABLE_ORGANIZATION_ROLES,
   ORGANIZATION_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   assignableOrganizationRole,
   organizationRoleValueIncludes,
   shouldRevokeSessionsForRoleChange,
 } from "./organization-role-hierarchy.js"
 import { resolvePermissionsForMember } from "./permissions/resolve.js"
-import { decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
+import { decideActorlessSuperAdminRemoval, decideMemberRemoval, decideRequiredPermission, type RoleAssignmentDenial } from "./permissions/role-assignment.js"
 import { permissionDeniedMessage } from "./permissions/effective.js"
 import type { PermissionDatabase } from "@openwork-ee/den-db/permissions"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import { appLogger } from "./observability/logger.js"
 import { isSingleOrgOwnerEmailEligible, resolveSingleOrgMembershipRole } from "./single-org-policy.js"
+import type { AdminReauthMinutes, MaxSessionLengthDays, SessionLengthHours } from "./session-security-settings.js"
 
 const logger = appLogger.child({ component: "organizations" })
 
@@ -191,6 +200,8 @@ export type UserOrgSummary = {
   orgMemberId: string
   membershipId: string
   memberCount: number
+  planTier: PlanTier
+  isSandbox: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -217,6 +228,8 @@ export type OrganizationContext = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    /** Whether this member has OpenWork Web (see MemberTable.openworkWeb). */
+    openworkWeb: boolean
   }
 }
 
@@ -236,6 +249,7 @@ export type OrganizationDirectory = {
     createdAt: Date
     joinedAt: Date | null
     isOwner: boolean
+    openworkWeb: boolean
     user: {
       id: UserId | MemberId
       email: string
@@ -409,14 +423,15 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
  * Organization metadata as members see it. Feature overrides are platform
  * administration data (still mirrored into metadata.capabilities for one
  * release, for rollback) and are never sent; clients read the effective
- * `features` from GET /v1/org instead.
+ * `features` from GET /v1/org instead. An unfinished deletion's progress is
+ * platform-only too.
  */
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
   const metadata = parseMetadataRecord(input)
-  if (!("capabilities" in metadata)) {
+  if (!("capabilities" in metadata) && !(ORGANIZATION_DELETION_METADATA_KEY in metadata)) {
     return serializeOrganizationMetadata(input)
   }
-  const { capabilities: _platformOnly, ...memberFacing } = metadata
+  const { capabilities: _platformOnly, [ORGANIZATION_DELETION_METADATA_KEY]: _deletionProgress, ...memberFacing } = metadata
   return serializeMetadataRecord(memberFacing)
 }
 
@@ -437,8 +452,8 @@ export class OrganizationEmailDomainRestrictionError extends Error {
   }
 }
 
-async function listMembershipRows(userId: UserId) {
-  return db
+async function listMembershipRows(userId: UserId, reader: Pick<typeof db.$primary, "select"> = db) {
+  return reader
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
@@ -494,13 +509,15 @@ async function insertMemberIfMissing(input: {
   role: string
   email?: string | null
 }) {
-  const existing = await db
+  const findActiveMember = async (reader: Pick<typeof db.$primary, "select">) => (await reader
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
+    .limit(1))[0] ?? null
 
-  const existingMember = existing[0] ?? null
+  // Single-org mode runs this on many requests: the replica answers the usual
+  // "already a member", and the primary confirms a miss before anything is written.
+  const existingMember = await findActiveMember(db) ?? await findActiveMember(db.$primary)
   if (existingMember) {
     await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: existingMember.id })
     return existingMember
@@ -529,6 +546,7 @@ async function insertMemberIfMissing(input: {
     return null
   }
 
+  let inserted = false
   try {
     await db.insert(MemberTable).values({
       id: createDenTypeId("member"),
@@ -537,29 +555,34 @@ async function insertMemberIfMissing(input: {
       role: input.role,
       joinedAt: new Date(),
     })
+    inserted = true
     // Joining an org changes both the aggregate list and this user's membership cache.
     await cache.org.deleteMemberList(input.organizationId)
     await cache.org.deleteMembership({ organizationId: input.organizationId, userId: input.userId })
   } catch {}
 
-  const created = await db
-    .select()
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
-    .limit(1)
+  // primary: reads back the row inserted above.
+  const created = await findActiveMember(db.$primary)
 
-  if (!created[0]) {
+  if (!created) {
     throw new Error("failed_to_create_member")
   }
-  await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created[0].id })
-  return created[0]
+  if (inserted) {
+    // A new member changes billing like any other join (and issues the
+    // member's gateway key through the same hooks).
+    await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: created.id, change: "added" })
+  } else {
+    await ensureMemberGatewayKey({ organizationId: input.organizationId, memberId: created.id })
+  }
+  return created
 }
 
 async function findSoftRemovedMemberForUser(input: {
   organizationId: OrgId
   userId: UserId
 }) {
-  const rows = await db
+  // primary: a removal moments ago must keep the user out (callers then write).
+  const rows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNotNull(MemberTable.removedAt)))
@@ -616,7 +639,8 @@ export async function acceptPendingInvitationForBootstrapMembership(input: {
 }
 
 export async function reconcilePendingInvitationsForUser(userId: UserId) {
-  const userRows = await db
+  // primary throughout: runs as the session is created, right after sign-up or SSO JIT wrote the user and member.
+  const userRows = await db.$primary
     .select({ email: AuthUserTable.email })
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, userId))
@@ -627,7 +651,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   }
 
   const now = new Date()
-  const invitations = await db
+  const invitations = await db.$primary
     .select()
     .from(InvitationTable)
     .where(and(
@@ -643,7 +667,7 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
       continue
     }
 
-    const existingMemberRows = await db
+    const existingMemberRows = await db.$primary
       .select({ id: MemberTable.id })
       .from(MemberTable)
       .where(and(eq(MemberTable.organizationId, invitation.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
@@ -663,7 +687,24 @@ export async function reconcilePendingInvitationsForUser(userId: UserId) {
   return acceptedCount
 }
 
+/**
+ * Accepts an invitation, then runs the member-change hooks (billing and model
+ * access) when it turned into a new membership. Every acceptance path goes
+ * through here: the accept endpoint, bootstrap sign-in and reconciliation.
+ */
 async function acceptInvitation(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
+  const accepted = await acceptInvitationRecord(invitation, userId, options)
+  if (accepted?.status === "accepted" && accepted.newlyAccepted) {
+    await runPostOrganizationMemberChangeHooks({
+      organizationId: accepted.invitation.organizationId,
+      memberId: accepted.member.id,
+      change: "added",
+    })
+  }
+  return accepted
+}
+
+async function acceptInvitationRecord(invitation: InvitationRow, userId: UserId, options?: { fallbackRole?: string }) {
   const scimConnections = await db
     .select({ id: ScimProviderTable.id })
     .from(ScimProviderTable)
@@ -751,6 +792,8 @@ async function acceptInvitation(invitation: InvitationRow, userId: UserId, optio
         .set({ role: existingRole, joinedAt: existingJoinedAt })
         .where(eq(MemberTable.id, existingMember.id))
       if (invitedMember.id !== existingMember.id) {
+        // Limits assigned to the invitation while it was pending belong to the person.
+        await moveUsageMemberAssignments(tx, currentInvitation.organizationId, invitedMember.id, existingMember.id)
         await tx.delete(MemberTable).where(eq(MemberTable.id, invitedMember.id))
       }
       member = { ...existingMember, role: existingRole, joinedAt: existingJoinedAt }
@@ -973,13 +1016,6 @@ export async function acceptInvitationForUser(input: {
   if (accepted.status === "scim_deprovisioned") {
     return accepted
   }
-  if (accepted.newlyAccepted) {
-    await runPostOrganizationMemberChangeHooks({
-      organizationId: accepted.invitation.organizationId,
-      memberId: accepted.member.id,
-      change: "added",
-    })
-  }
   return {
     status: "accepted",
     invitation: accepted.invitation,
@@ -1084,8 +1120,8 @@ async function createOrganizationRecord(input: {
   return organizationId
 }
 
-export async function getSingletonOrganization() {
-  const rows = await db
+export async function getSingletonOrganization(reader: Pick<typeof db.$primary, "select"> = db) {
+  const rows = await reader
     .select()
     .from(OrganizationTable)
     .where(eq(OrganizationTable.slug, env.singleOrg.slug))
@@ -1139,16 +1175,19 @@ async function countActiveOwners(organizationId: OrgId) {
 }
 
 export async function ensureSingletonOrganizationForUser(userId: UserId, options?: { forceOwner?: boolean }) {
-  const userRows = await db
+  // Runs on many requests in single-org mode, and at sign-up right after the
+  // user (and possibly the organization) was written: the replica answers,
+  // and the primary confirms anything it does not find.
+  const readUserEmail = async (reader: Pick<typeof db.$primary, "select">) => (await reader
     .select({
       email: AuthUserTable.email,
     })
     .from(AuthUserTable)
     .where(eq(AuthUserTable.id, userId))
-    .limit(1)
-  const userEmail = userRows[0]?.email ?? null
+    .limit(1))[0]?.email ?? null
+  const userEmail = await readUserEmail(db) ?? await readUserEmail(db.$primary)
 
-  let organization = await getSingletonOrganization()
+  let organization = await getSingletonOrganization() ?? await getSingletonOrganization(db.$primary)
   if (!organization) {
     if (!options?.forceOwner && !isSingleOrgOwnerEmailEligible({
       email: userEmail,
@@ -1165,7 +1204,7 @@ export async function ensureSingletonOrganizationForUser(userId: UserId, options
       })
       return organizationId
     } catch {
-      organization = await getSingletonOrganization()
+      organization = await getSingletonOrganization(db.$primary)
       if (!organization) {
         throw new Error("failed_to_create_single_org")
       }
@@ -1232,7 +1271,14 @@ export async function ensurePersonalOrganizationForUser(userId: UserId) {
     return null
   }
 
-  const userRows = await db
+  // primary: confirm there is still no membership (one may have been created
+  // moments ago) before creating a personal organization.
+  const [primaryMembership] = await listMembershipRows(userId, db.$primary)
+  if (primaryMembership) {
+    return primaryMembership.organizationId
+  }
+
+  const userRows = await db.$primary
     .select({
       name: AuthUserTable.name,
       email: AuthUserTable.email,
@@ -1279,6 +1325,10 @@ export async function updateOrganizationSettings(input: {
   allowedEmailDomains?: readonly string[] | null
   allowedDesktopVersions?: readonly string[] | null
   requireSso?: boolean
+  restrictDomainToSso?: boolean
+  sessionLengthHours?: SessionLengthHours
+  maxSessionLengthDays?: MaxSessionLengthDays
+  adminReauthMinutes?: AdminReauthMinutes
   brandAppName?: string | null
   brandLogoUrl?: string | null
   brandIconUrl?: string | null
@@ -1299,7 +1349,7 @@ export async function updateOrganizationSettings(input: {
     if (input.allowedEmailDomains !== undefined) {
       updates.allowedEmailDomains = normalizeAllowedEmailDomains(input.allowedEmailDomains).domains
     }
-    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
+    if (input.allowedDesktopVersions !== undefined || input.requireSso !== undefined || input.restrictDomainToSso !== undefined || input.sessionLengthHours !== undefined || input.maxSessionLengthDays !== undefined || input.adminReauthMinutes !== undefined || input.brandAppName !== undefined || input.brandLogoUrl !== undefined || input.brandIconUrl !== undefined || input.brandLogoAsset !== undefined || input.brandIconAsset !== undefined || input.brandAccentColor !== undefined) {
       const rows = await tx
         .select({ metadata: OrganizationTable.metadata })
         .from(OrganizationTable)
@@ -1326,6 +1376,22 @@ export async function updateOrganizationSettings(input: {
 
       if (input.requireSso !== undefined) {
         nextMetadata.requireSso = input.requireSso
+      }
+
+      if (input.restrictDomainToSso !== undefined) {
+        nextMetadata.restrictDomainToSso = input.restrictDomainToSso
+      }
+
+      if (input.sessionLengthHours !== undefined) {
+        nextMetadata.sessionLengthHours = input.sessionLengthHours
+      }
+
+      if (input.maxSessionLengthDays !== undefined) {
+        nextMetadata.maxSessionLengthDays = input.maxSessionLengthDays
+      }
+
+      if (input.adminReauthMinutes !== undefined) {
+        nextMetadata.adminReauthMinutes = input.adminReauthMinutes
       }
 
       if (input.brandAppName !== undefined) {
@@ -1410,7 +1476,8 @@ export async function setSessionActiveOrganization(sessionId: SessionId, organiz
     .set({ activeOrganizationId: organizationId })
     .where(eq(AuthSessionTable.id, sessionId))
 
-  const rows = await db
+  // primary: a session created moments ago must still have its cached entry cleared.
+  const rows = await db.$primary
     .select({ token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.id, sessionId))
@@ -1422,11 +1489,12 @@ export async function setSessionActiveOrganization(sessionId: SessionId, organiz
   await cache.auth.deleteSessionId(sessionId)
 }
 
-export async function listUserOrgs(userId: UserId) {
-  const memberships = await db
+export async function listUserOrgs(userId: UserId, reader: Pick<typeof db.$primary, "select"> = db) {
+  const memberships = await reader
     .select({
       membershipId: MemberTable.id,
       role: MemberTable.role,
+      sandboxOrganizationId: SandboxOrganizationTable.organizationId,
       organization: {
         id: OrganizationTable.id,
         name: OrganizationTable.name,
@@ -1440,13 +1508,14 @@ export async function listUserOrgs(userId: UserId) {
     })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
+    .leftJoin(SandboxOrganizationTable, eq(SandboxOrganizationTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
     .orderBy(asc(MemberTable.createdAt))
 
   const organizationIds = memberships.map((row) => row.organization.id)
   const memberCounts = new Map<OrgId, number>()
   if (organizationIds.length > 0) {
-    const counts = await db
+    const counts = await reader
       .select({
         organizationId: MemberTable.organizationId,
         memberCount: count(),
@@ -1474,6 +1543,8 @@ export async function listUserOrgs(userId: UserId) {
       orgMemberId: row.membershipId,
       membershipId: row.membershipId,
       memberCount: memberCounts.get(row.organization.id) ?? 0,
+      planTier: parseOrganizationPlan(row.organization.metadata).tier,
+      isSandbox: row.sandboxOrganizationId !== null,
       createdAt: row.organization.createdAt,
       updatedAt: row.organization.updatedAt,
     } satisfies UserOrgSummary
@@ -1483,10 +1554,12 @@ export async function listUserOrgs(userId: UserId) {
 export async function resolveUserOrganizations(input: {
   activeOrganizationId?: string | null
   userId: UserId
+  /** Pass `db.$primary` right after creating a membership in the same flow. */
+  reader?: Pick<typeof db.$primary, "select">
 }) {
   await ensureUserOrgAccess({ userId: input.userId })
 
-  const visibleOrgs = await listUserOrgs(input.userId)
+  const visibleOrgs = await listUserOrgs(input.userId, input.reader)
   const orgs = env.orgMode === "single_org"
     ? visibleOrgs.filter((org) => org.slug === env.singleOrg.slug)
     : visibleOrgs
@@ -1522,8 +1595,7 @@ export async function getOrganizationContextForUser(input: {
   userId: UserId
   organizationId: OrgId
 }) {
-  // The live permissions flag comes back with the organization row.
-  const organizationRead = await readOrganizationWithPermissions(input.organizationId)
+  const organizationRead = await readOrganizationForAuthorization(input.organizationId)
   if (!organizationRead) {
     return null
   }
@@ -1538,7 +1610,7 @@ export async function getOrganizationContextForUser(input: {
       .from(MemberTable)
       .where(and(eq(MemberTable.organizationId, organization.id), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt)))
       .limit(1),
-    getOrganizationFeatures(organization.id, { permissions: organizationRead.permissions }),
+    getOrganizationFeatures(organization.id, { userId: input.userId }),
   ])
 
   const currentMember = currentMemberRows[0]
@@ -1574,6 +1646,7 @@ export async function getOrganizationContextForUser(input: {
       createdAt: currentMember.createdAt,
       joinedAt: currentMember.joinedAt,
       isOwner: roleIncludesOwner(currentMember.role),
+      openworkWeb: currentMember.openworkWeb,
     },
   } satisfies OrganizationContext
 }
@@ -1659,8 +1732,9 @@ async function listOrganizationTeams(organizationId: OrgId) {
 
 export { listTeamsForMember } from "./member-teams.js"
 
+// primary: last-owner/admin guards decide a write; a stale row could remove the last one.
 async function listActiveOrganizationMemberGuardRows(organizationId: OrgId) {
-  return db
+  return db.$primary
     .select({
       id: MemberTable.id,
       role: MemberTable.role,
@@ -1691,7 +1765,7 @@ export async function validateOrganizationMemberRoleUpdate(input: {
   memberId: MemberRow["id"]
   nextRole: string
 }): Promise<MemberMutationResult> {
-  const memberRows = await db
+  const memberRows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
@@ -1815,7 +1889,7 @@ export async function validateOrganizationMemberRemovalForHook(input: {
   organizationId: OrgId
   memberId: MemberRow["id"]
 }): Promise<MemberMutationResult> {
-  const memberRows = await db
+  const memberRows = await db.$primary
     .select()
     .from(MemberTable)
     .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId), isNull(MemberTable.removedAt)))
@@ -1990,6 +2064,12 @@ export async function removeOrganizationMember(input: {
    * Invitation cancellation and SCIM deprovisioning authorize separately and omit it.
    */
   requiredPermission?: PermissionKey
+  /**
+   * SCIM deprovisioning (no `removedByOrgMemberId`): the user who set up the SCIM connection.
+   * Removing a super-admin without an actor needs this person to be the owner or a super-admin
+   * now (decideActorlessSuperAdminRemoval); without it, a super-admin is never removed.
+   */
+  actorlessAuthorityUserId?: typeof AuthUserTable.$inferSelect["id"] | null
 }): Promise<MemberMutationResult> {
   let gatewayCredentials: Awaited<ReturnType<typeof revokeInferenceCredentialsForMembers>> = []
   // Every removal path (members DELETE, invitation cancel, SCIM deprovisioning)
@@ -2042,16 +2122,36 @@ export async function removeOrganizationMember(input: {
 
     if (actorPermissions) {
       const targetIsDirectAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_ADMIN_ROLE)
-      const targetIsAdminViaTeam = !targetIsDirectAdmin && actorPermissions.featureEnabled && !actorPermissions.isOwner && !actorPermissions.isAdmin
+      const targetIsDirectSuperAdmin = organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)
+      const targetIsAdminViaTeam = !targetIsDirectAdmin && !actorPermissions.isOwner && !actorPermissions.isAdmin
         && (await listAuthoritativeTeamMemberships(tx, { organizationId: input.organizationId, memberId: member.id, adminTeamsOnly: true, lock: "share" })).length > 0
       const adminRemovalDenial = decideMemberRemoval({
         actor: actorPermissions,
+        targetIsDirectSuperAdmin,
         targetIsDirectAdmin,
         targetIsAdminViaTeam,
         targetIsPendingInvitation: member.userId === null,
       })
       if (adminRemovalDenial) {
         return { ok: false, error: "forbidden", message: adminRemovalDenial.message }
+      }
+    } else if (organizationRoleValueIncludes(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+      // Read through this transaction with share locks, like the actor above.
+      const [authorityMember] = input.actorlessAuthorityUserId
+        ? await tx.select({ id: MemberTable.id }).from(MemberTable)
+          .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.actorlessAuthorityUserId), isNull(MemberTable.removedAt)))
+          .limit(1).for("share")
+        : []
+      const authority = authorityMember
+        ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: authorityMember.id, database: tx })
+        : null
+      const superAdminRemovalDenial = decideActorlessSuperAdminRemoval({
+        targetIsDirectSuperAdmin: true,
+        targetIsPendingInvitation: member.userId === null,
+        authority,
+      })
+      if (superAdminRemovalDenial) {
+        return { ok: false, error: "forbidden", message: superAdminRemovalDenial.message }
       }
     }
 
@@ -2086,6 +2186,16 @@ export async function removeOrganizationMember(input: {
       .delete(TeamMemberTable)
       .where(eq(TeamMemberTable.orgMembershipId, member.id))
 
+    // A role given to the person directly ends with their membership, so it
+    // can't come back if they are invited again.
+    await tx.update(PermissionSetMemberTable)
+      .set({ removedAt: new Date() })
+      .where(and(
+        eq(PermissionSetMemberTable.organizationId, input.organizationId),
+        eq(PermissionSetMemberTable.orgMembershipId, member.id),
+        isNull(PermissionSetMemberTable.removedAt),
+      ))
+
     await tx.update(ScimGroupMemberTable)
       .set({ userId: null, orgMembershipId: null, teamMemberId: null, updatedAt: new Date() })
       .where(and(eq(ScimGroupMemberTable.organizationId, input.organizationId), eq(ScimGroupMemberTable.orgMembershipId, member.id)))
@@ -2100,6 +2210,16 @@ export async function removeOrganizationMember(input: {
         eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
         eq(DesktopPolicyMemberTable.orgMemberId, member.id),
       ))
+
+    await tx.delete(AutomationShareTable).where(and(
+      eq(AutomationShareTable.organization_id, input.organizationId),
+      or(
+        eq(AutomationShareTable.org_membership_id, member.id),
+        inArray(AutomationShareTable.automation_id, tx.select({ id: AutomationTable.id }).from(AutomationTable).where(and(
+          eq(AutomationTable.organization_id, input.organizationId), eq(AutomationTable.owner_member_id, member.id),
+        ))),
+      ),
+    ))
 
     await tx
       .delete(ExternalMcpConnectionAccessGrantTable)

@@ -56,9 +56,21 @@ export type ExternalMcpDiagnostic = {
   payloadBytes?: number
   jsonRpcCode?: number
   connectUrl?: string
+  /** A validated link to the provider page where the named setting is changed. */
+  providerSettingsUrl?: string
   providerErrorMessage?: string
   providerErrorData?: string
   providerResponseExcerpt?: string
+  /** The OAuth scopes the server said a refused request needs, space separated. */
+  requiredScope?: string
+}
+
+/**
+ * A tool call the server refused because the sign-in lacks a scope. The
+ * sign-in is kept, and a new one asks for the same scopes.
+ */
+export function isToolScopeRefusal(diagnostic: Pick<ExternalMcpDiagnostic, "code" | "operationPhase">): boolean {
+  return diagnostic.code === "MCP_OAUTH_INSUFFICIENT_SCOPE" && diagnostic.operationPhase === "MCP_TOOL_EXECUTION"
 }
 
 export type ExternalMcpSafeOutbound = {
@@ -260,6 +272,19 @@ function structuredProviderResponseExcerpt(text: string): string | undefined {
       if (typeof parsed.error.message === "string") {
         allowed.error_message = redactSensitiveString(parsed.error.message)
       }
+    }
+    // Some MCP servers (Slack) answer a refusal with top-level error_code and
+    // error_message instead of a JSON-RPC error object.
+    if (
+      allowed.error_code === undefined
+      && typeof parsed.error_code === "number"
+      && Number.isSafeInteger(parsed.error_code)
+      && String(parsed.error_code).length <= 16
+    ) {
+      allowed.error_code = parsed.error_code
+    }
+    if (allowed.error_message === undefined && typeof parsed.error_message === "string") {
+      allowed.error_message = redactSensitiveString(parsed.error_message)
     }
     for (const field of PROVIDER_RESPONSE_STRING_FIELDS) {
       const value = parsed[field]
@@ -479,6 +504,89 @@ function providerDeclaredErrorFromJson(
   return providerDeclaredErrorFromEnvelope(value, phase)
 }
 
+/**
+ * Reads the error a server states in the body of an HTTP refusal. Accepts a
+ * JSON-RPC error object, with or without the jsonrpc marker, and the
+ * top-level error_code/error_message shape Slack's MCP server uses. Only
+ * negative (JSON-RPC style) codes count; the message is sanitized and capped
+ * because it is untrusted provider text.
+ */
+function providerDeclaredErrorFromRefusalBody(
+  text: string,
+  phase: ExternalMcpDiagnosticPhase,
+): ProviderDeclaredErrorEvidence | null {
+  const parsed = parsedTextRecord(text)
+  if (!parsed) return null
+  const envelope = isRecord(parsed.error) ? parsed.error : null
+  const code = envelope ? envelope.code : parsed.error_code
+  if (typeof code !== "number" || !Number.isSafeInteger(code) || code >= 0) return null
+  const message = sanitizedProviderTextExcerpt(
+    (envelope ? stringProperty(envelope, "message") : stringProperty(parsed, "error_message")) ?? "",
+  )
+  return { phase, jsonRpcCode: code, ...(message ? { message } : {}) }
+}
+
+const SLACK_MCP_HOSTNAME = "mcp.slack.com"
+const SLACK_APP_SETTINGS_HOSTNAME = "api.slack.com"
+const SLACK_MCP_ACCESS_DISABLED_TEXT = /\bApp is not enabled for Slack MCP server access\b/i
+const SLACK_APP_SETTINGS_LINK = /https:\/\/api\.slack\.com\/apps\/[^\s"'<>]+/i
+const SLACK_APP_SETTINGS_PATH = /^\/apps\/([A-Za-z0-9]{1,32})(?:\/([a-z0-9-]{1,64}))?\/?$/
+export const EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE = "MCP_SLACK_APP_MCP_DISABLED"
+
+/**
+ * Rebuilds the Slack app settings link named in a provider message. Only an
+ * https link on api.slack.com to an app page survives; query, fragment,
+ * credentials and ports are dropped or rejected.
+ */
+export function slackAppSettingsUrl(message: string | undefined): string | undefined {
+  const match = message ? SLACK_APP_SETTINGS_LINK.exec(message) : null
+  if (!match) return undefined
+  let url: URL
+  try {
+    url = new URL(match[0].replace(/[.,;:!?)\]]+$/, ""))
+  } catch {
+    return undefined
+  }
+  if (
+    url.protocol !== "https:"
+    || url.hostname !== SLACK_APP_SETTINGS_HOSTNAME
+    || url.port !== ""
+    || url.username !== ""
+    || url.password !== ""
+  ) return undefined
+  const path = SLACK_APP_SETTINGS_PATH.exec(url.pathname)
+  const appId = path?.[1]
+  if (!appId) return undefined
+  const page = path?.[2]
+  return `https://${SLACK_APP_SETTINGS_HOSTNAME}/apps/${appId}${page ? `/${page}` : ""}`
+}
+
+/** The link a failure page offers so the person can change the named provider setting. */
+export function externalMcpProviderSettingsLink(diagnostic: ExternalMcpDiagnostic): { label: string; href: string } | undefined {
+  if (diagnostic.code !== EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) return undefined
+  const href = slackAppSettingsUrl(diagnostic.providerSettingsUrl)
+  return href ? { label: "Open Slack app settings", href } : undefined
+}
+
+function slackMcpAccessDisabledClassification(
+  endpoint: URL,
+  phase: ExternalMcpDiagnosticPhase,
+  evidence: ProviderDeclaredErrorEvidence | null,
+): Classification | null {
+  if (endpoint.hostname !== SLACK_MCP_HOSTNAME || !evidence?.message) return null
+  if (!SLACK_MCP_ACCESS_DISABLED_TEXT.test(evidence.message)) return null
+  const providerSettingsUrl = slackAppSettingsUrl(evidence.message)
+  return {
+    phase,
+    category: "provider_app_setup",
+    code: EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE,
+    retryable: false,
+    actionOwner: "organization_admin",
+    operatorAction: "In the Slack app's settings, open Agents and turn on MCP, then connect again.",
+    ...(providerSettingsUrl ? { providerSettingsUrl } : {}),
+  }
+}
+
 function providerAuthorizationClassification(connectUrl: string): Classification {
   return {
     phase: "PROVIDER_AUTHORIZATION",
@@ -676,6 +784,30 @@ function typedOAuthErrorName(error: unknown): string | undefined {
   return undefined
 }
 
+const REQUIRED_SCOPE_MAX_CHARS = 300
+// RFC 6749 scope tokens: printable ASCII without space, quote or backslash.
+const OAUTH_SCOPE_TOKEN = /^[\x21\x23-\x5B\x5D-\x7E]+$/
+
+/**
+ * A request the server refused with an `insufficient_scope` challenge, and the
+ * scopes it named. Everything in the challenge is the server's own text, so a
+ * value that is not a plain scope list is dropped rather than shown.
+ */
+function scopeChallengeFromError(error: unknown): { requiredScope?: string } | undefined {
+  let current: unknown = error
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (errorName(current) === "InsufficientScopeError" && isRecord(current) && "requiredScope" in current) {
+      const tokens = (stringProperty(current, "requiredScope") ?? "").split(/\s+/).filter(Boolean)
+      const scope = tokens.join(" ")
+      return tokens.length > 0 && scope.length <= REQUIRED_SCOPE_MAX_CHARS && tokens.every((token) => OAUTH_SCOPE_TOKEN.test(token))
+        ? { requiredScope: scope }
+        : {}
+    }
+    current = errorCause(current)
+  }
+  return undefined
+}
+
 function oauthProviderDetail(error: unknown): string | undefined {
   let current: unknown = error
   const seen = new Set<unknown>()
@@ -794,11 +926,13 @@ function safeMessageFor(input: {
   category: string
   code: string
   highestPassed?: ExternalMcpHealthLevel
+  httpStatus?: number
   providerStatus?: number
   providerCode?: string
   jsonRpcCode?: number
   providerErrorMessage?: string
   providerDetail?: string
+  requiredScope?: string
 }): string {
   if (input.code === "MCP_OAUTH_SIGN_IN_METADATA_MISSING") {
     return "This server returns a redirect or login page and publishes no valid sign-in information for this MCP URL. Configure the connection manually or ask the server administrator."
@@ -809,7 +943,10 @@ function safeMessageFor(input: {
   const baseMessage = safeBaseMessageFor(input)
   const message = input.providerDetail
     ? `${baseMessage} Provider detail (untrusted): "${input.providerDetail}".`
-    : baseMessage
+    : input.category === "http_failure" && input.phase.startsWith("MCP_") && input.providerErrorMessage
+      // The server said why it refused; without it a refusal is a bare status.
+      ? `${baseMessage} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
+      : baseMessage
   const details = [
     ...(input.providerStatus === undefined ? [] : [`provider status ${input.providerStatus}`]),
     ...(input.providerCode ? [`code ${input.providerCode}`] : []),
@@ -822,9 +959,16 @@ function safeBaseMessageFor(input: {
   category: string
   code: string
   highestPassed?: ExternalMcpHealthLevel
+  httpStatus?: number
   jsonRpcCode?: number
   providerErrorMessage?: string
+  requiredScope?: string
 }): string {
+  if (input.code === "MCP_OAUTH_INSUFFICIENT_SCOPE") {
+    return input.requiredScope
+      ? `The provider refused this request because the sign-in does not include a permission it requires (OAuth scope named by the provider, untrusted: ${input.requiredScope}).`
+      : "The provider refused this request because the sign-in does not include a permission (OAuth scope) it requires."
+  }
   if (input.code === "MCP_LIFECYCLE_DEADLINE") {
     return input.phase === "MCP_TOOL_EXECUTION"
       ? "The capability did not finish within the time OpenWork allows a single tool call."
@@ -832,6 +976,9 @@ function safeBaseMessageFor(input: {
   }
   if (input.code === "MCP_REQUEST_TIMEOUT") {
     return "The MCP server did not answer the current protocol request within its bounded timeout."
+  }
+  if (input.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) {
+    return "The Slack app for this connection doesn't have MCP access turned on. In the Slack app's settings, open Agents and turn on MCP, then connect again."
   }
   if (input.code === "MCP_PROVIDER_AUTH_REQUIRED") {
     const message = "The provider answered but requires this user to authorize the downstream account before the tool can run."
@@ -868,7 +1015,7 @@ function safeBaseMessageFor(input: {
     return "The MCP URL uses a port that server-side HTTP clients are not permitted to access."
   }
   if (input.phase === "NETWORK_DNS") {
-    return "Den could not resolve the MCP host from its server network."
+    return "OpenWork's server network could not resolve the MCP server's hostname. Check that the hostname is correct and publicly reachable. If public access was just turned on, DNS can take a while to update, so try again later."
   }
   if (input.phase === "NETWORK_TCP") {
     return "Den resolved the MCP host but could not establish a network connection."
@@ -902,12 +1049,21 @@ function safeBaseMessageFor(input: {
       : "The provider rejected the authorization request before issuing a code."
   }
   if (input.phase === "AUTH_RESOURCE_VALIDATION") {
-    return "The MCP resource rejected the supplied authorization."
+    return input.httpStatus === undefined
+      ? "The MCP resource rejected the supplied authorization."
+      : `The MCP resource rejected the supplied authorization (HTTP ${input.httpStatus}).`
   }
   if (input.phase === "MCP_VERSION") {
     return "The MCP client and server could not agree on a supported protocol version."
   }
+  if (input.code === "MCP_SESSION_LIMIT") {
+    return "The MCP server refused to start a new session because it has reached its limit of open sessions."
+  }
   if (input.phase === "MCP_INITIALIZE" || input.phase === "MCP_INITIALIZED") {
+    const status = input.httpStatus === undefined ? "" : ` (HTTP ${input.httpStatus})`
+    if (input.category === "provider_throttled") return `The MCP server is rate limiting OpenWork and did not start a session${status}.`
+    if (input.category === "provider_unavailable") return `The MCP server failed or was unavailable while starting a session${status}.`
+    if (input.category === "http_failure") return `The MCP server refused to start a session${status}.`
     return "The MCP lifecycle failed during initialization."
   }
   if (input.phase === "MCP_TOOL_DISCOVERY") {
@@ -987,6 +1143,16 @@ function logProviderToolEvidence(input: {
   })
 }
 
+/**
+ * A sign-in asks for the connection's configured scopes, so after a tool call
+ * is refused for scope only a change to those scopes makes a new sign-in help.
+ */
+function insufficientScopeAction(phase: ExternalMcpDiagnosticPhase, otherwise: string): string {
+  return phase === "MCP_TOOL_EXECUTION"
+    ? "Ask an organization admin to add the scope under Requested OAuth scopes in this connection's settings, then sign in to the connection again. Signing in again without that change requests the same scopes."
+    : otherwise
+}
+
 function httpClassification(input: {
   phase: ExternalMcpDiagnosticPhase
   status: number
@@ -996,6 +1162,8 @@ function httpClassification(input: {
   hasSession: boolean
   contentType: string
   providerResponseExcerpt?: string
+  /** The response body says the server's session limit was reached. */
+  sessionLimit?: boolean
 }): Classification | null {
   const { phase, status } = input
   const redirectUriRejectionCode = status === 400 && phase === "AUTH_CLIENT_REGISTRATION"
@@ -1032,6 +1200,18 @@ function httpClassification(input: {
       operatorAction: "Verify Streamable HTTP content negotiation and the provider's supported MCP transport.",
     }
   }
+  // Only an explicit statement from the server: a generic refusal is never
+  // reported as a session limit.
+  if (input.sessionLimit && phase === "MCP_INITIALIZE" && status >= 400 && status !== 401 && status !== 404) {
+    return {
+      phase,
+      category: "mcp_session_limit",
+      code: "MCP_SESSION_LIMIT",
+      retryable: true,
+      actionOwner: "provider_admin",
+      operatorAction: "Wait for idle sessions on the MCP server to end, then try again. If it keeps happening, ask the server's administrator to raise its session limit.",
+    }
+  }
   if (status === 429) {
     return {
       phase,
@@ -1064,7 +1244,7 @@ function httpClassification(input: {
         retryable: status === 401,
         actionOwner: input.insufficientScope ? "organization_admin" : "member",
         operatorAction: input.insufficientScope
-          ? "Grant the provider scopes required by this MCP resource and reconnect."
+          ? insufficientScopeAction(phase, "Grant the provider scopes required by this MCP resource and reconnect.")
           : status === 403 && !input.bearerChallenge
             ? "Verify provider access policy and token audience, tenant, and resource binding before reconnecting."
             : "Reconnect the provider account and verify token audience, tenant, and resource binding.",
@@ -1275,7 +1455,7 @@ function classifyByCode(code: string): Classification | null {
       code: `MCP_${normalizedCode}`,
       retryable: normalizedCode === "EAI_AGAIN",
       actionOwner: "network_admin",
-      operatorAction: "Verify DNS resolution and Den egress for the MCP host.",
+      operatorAction: "Check the hostname and that it resolves on the public internet; if public access was just turned on, wait and try again.",
     }
   }
   if (TLS_ERROR_CODES.has(normalizedCode)) {
@@ -1432,7 +1612,7 @@ function classifyError(error: unknown, fallbackPhase: ExternalMcpDiagnosticPhase
       code: "MCP_OAUTH_INSUFFICIENT_SCOPE",
       retryable: false,
       actionOwner: "organization_admin",
-      operatorAction: "Grant the MCP resource scopes required by the provider and restart authorization.",
+      operatorAction: insufficientScopeAction(fallbackPhase, "Grant the MCP resource scopes required by the provider and restart authorization."),
     }
   }
   if (name === "InvalidTokenError") {
@@ -1809,11 +1989,16 @@ export class ExternalMcpDiagnosticTracker {
       && isOAuthTokenPhase(this.providerResponseExcerptPhase)
       ? this.providerResponseExcerpt.slice(0, EXTERNAL_MCP_OAUTH_PROVIDER_DETAIL_CHARS)
       : undefined
-    const safeOAuthProviderDetail = oauthProviderDetail(error)
-      ?? oauthProviderDetail(source.error)
-      ?? capturedOAuthProviderDetail
+    const scopeChallenge = classification.code === "MCP_OAUTH_INSUFFICIENT_SCOPE"
+      ? scopeChallengeFromError(error) ?? scopeChallengeFromError(source.error)
+      : undefined
+    // A scope challenge's only detail is its scope list, reported on its own.
+    const safeOAuthProviderDetail = scopeChallenge
+      ? undefined
+      : oauthProviderDetail(error) ?? oauthProviderDetail(source.error) ?? capturedOAuthProviderDetail
     const providerErrorMessage = providerEvidence?.message ?? safeOAuthProviderDetail
     const providerErrorData = providerEvidence?.dataExcerpt
+    const requiredScope = scopeChallenge?.requiredScope
     const diagnosticWithoutMessage = {
       referenceId: this.referenceId,
       highestPassed: this.highestPassed,
@@ -1821,11 +2006,13 @@ export class ExternalMcpDiagnosticTracker {
       ...(jsonRpcCode === undefined ? {} : { jsonRpcCode }),
       ...(providerErrorMessage ? { providerErrorMessage } : {}),
       ...(providerErrorData ? { providerErrorData } : {}),
+      ...(requiredScope ? { requiredScope } : {}),
     }
     const diagnostic: ExternalMcpDiagnostic = {
       ...diagnosticWithoutMessage,
       message: safeMessageFor({
         ...diagnosticWithoutMessage,
+        ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
         ...(safeOAuthProviderDetail ? { providerDetail: safeOAuthProviderDetail } : {}),
       }),
       ...(this.lastHttpStatus === null ? {} : { httpStatus: this.lastHttpStatus }),
@@ -2013,8 +2200,14 @@ async function responseTextExcerptWithinLimit(response: Response, limit: number)
   }
 }
 
-async function providerResponseExcerpts(response: Response): Promise<{
+const SESSION_LIMIT_TEXT = /\b(?:too many|max(?:imum)?|limit(?:ed)?|capacity|exhausted|exceeded)\b[^.]{0,40}\bsessions?\b|\bsessions?\b[^.]{0,40}\b(?:limit|capacity|exhausted|exceeded|maximum)\b/i
+
+async function providerResponseExcerpts(response: Response, phase: ExternalMcpDiagnosticPhase): Promise<{
   memberExcerpt?: string
+  /** Read from the body for classification only; the body itself is never kept. */
+  sessionLimit: boolean
+  /** The error the server stated in the body, sanitized and capped. */
+  declaredError: ProviderDeclaredErrorEvidence | null
   log: ProviderResponseLog
 } | null> {
   try {
@@ -2026,6 +2219,8 @@ async function providerResponseExcerpts(response: Response): Promise<{
     const memberExcerpt = structuredProviderResponseExcerpt(text)
     return {
       ...(memberExcerpt ? { memberExcerpt } : {}),
+      sessionLimit: SESSION_LIMIT_TEXT.test(text),
+      declaredError: providerDeclaredErrorFromRefusalBody(text, phase),
       log: {
         contentType: providerResponseContentType(
           (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim().toLowerCase() ?? "",
@@ -2180,8 +2375,24 @@ export function createExternalMcpDiagnosticFetch(input: {
       input.tracker.recordHttpStatus(response.status)
       input.tracker.recordProviderRequestId(response.headers)
       let providerResponseExcerpt: string | undefined
+      let sessionLimit = false
+      let providerRefusal: ProviderDeclaredErrorEvidence | null = null
       if (!response.ok || (response.ok && isOAuthTokenPhase(phase) && contentType === "application/json")) {
-        const excerpts = await providerResponseExcerpts(response)
+        const excerpts = await providerResponseExcerpts(response, phase)
+        sessionLimit = excerpts?.sessionLimit === true
+        // A refusal's own reason is kept for MCP requests only. Credential
+        // rejections stay excluded: their text can repeat a submitted key.
+        if (
+          !response.ok
+          && phase.startsWith("MCP_")
+          && response.status !== 401
+          && response.status !== 403
+          && response.status !== 407
+          && excerpts?.declaredError
+        ) {
+          providerRefusal = excerpts.declaredError
+          input.tracker.recordProviderDeclaredError(providerRefusal)
+        }
         if (excerpts && (!response.ok || (excerpts.memberExcerpt && isProviderTokenErrorExcerpt(excerpts.memberExcerpt)))) {
           providerResponseExcerpt = excerpts.memberExcerpt
           input.tracker.recordProviderResponseExcerpt({
@@ -2198,7 +2409,7 @@ export function createExternalMcpDiagnosticFetch(input: {
         && /\bbearer\b/i.test(challenge)
       const classification = unauthenticatedChallenge
         ? null
-        : httpClassification({
+        : slackMcpAccessDisabledClassification(endpoint, phase, providerRefusal) ?? httpClassification({
             phase,
             status: response.status,
             hasAuthorization,
@@ -2207,6 +2418,7 @@ export function createExternalMcpDiagnosticFetch(input: {
             hasSession: Boolean(requestHeader(init, "mcp-session-id")),
             contentType,
             providerResponseExcerpt,
+            sessionLimit,
           })
       input.tracker.passed(phase, "reachable")
       if (classification) {

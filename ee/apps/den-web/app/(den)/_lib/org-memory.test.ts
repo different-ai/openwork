@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
-import { mapFeatures } from "@openwork/features";
 import type { DenOrgSummary } from "./den-org";
 import { readRememberedOrganization, rememberOrganization, restoreRememberedOrganization, setActiveOrganizationAndRemember } from "./org-memory";
 
@@ -35,15 +34,14 @@ function browser(origin = "https://den.example", blocked = false) {
 function organization(id: string, isActive = false): DenOrgSummary {
   return {
     id, isActive, name: id, slug: id, logo: null, metadata: null, role: "member",
-    orgMemberId: `member-${id}`, membershipId: `membership-${id}`, memberCount: 2,
+    orgMemberId: `member-${id}`, membershipId: `membership-${id}`, memberCount: 2, planTier: "free", isSandbox: false,
     createdAt: null, updatedAt: null,
   };
 }
 
-function context(id: string, enabled = true, userId = "account-a") {
+function context(id: string, userId = "account-a") {
   return {
     organization: { id }, currentMember: { userId },
-    features: mapFeatures((key) => key === "rememberLastOrganization" && enabled),
   };
 }
 
@@ -89,7 +87,7 @@ test("blank identities, blank choices, SSR and blocked storage never prevent sig
   assert.equal(readRememberedOrganization("account-a"), null);
 });
 
-test("a live member with the rollout on restores B rather than the server's first/default A", async () => {
+test("a live member restores B rather than the server's first/default A", async () => {
   const { input, calls } = fixture();
   assert.equal((await restoreRememberedOrganization(input))?.id, "org-b");
   assert.deepEqual(calls, ["context:org-b", "active:org-b"]);
@@ -112,14 +110,14 @@ test("a removed or malformed stored ID never leaves the browser", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("a live off or missing flag, wrong workspace, or wrong authenticated identity keeps the chooser", async () => {
+test("a missing context, wrong workspace, or wrong authenticated identity keeps the chooser", async () => {
   const { input, calls } = fixture();
-  for (const result of [null, context("org-b", false), context("org-a"), context("org-b", true, "account-b")]) {
+  for (const result of [null, context("org-a"), context("org-b", "account-b")]) {
     input.loadContext = async (id) => { calls.push(`context:${id}`); return result; };
     assert.equal(await restoreRememberedOrganization(input), null);
     assert.equal(readRememberedOrganization("account-a"), "org-b");
   }
-  assert.deepEqual(calls, Array(4).fill("context:org-b"));
+  assert.deepEqual(calls, Array(3).fill("context:org-b"));
 });
 
 test("a context fetch failure stays in the chooser without losing the durable preference", async () => {
@@ -138,12 +136,12 @@ test("a rejected active-organization acknowledgement stays in the chooser", asyn
   assert.equal(readRememberedOrganization("account-a"), "org-b");
 });
 
-test("every restoration checks the live feature instead of caching a previous enabled result", async () => {
+test("every restoration checks live identity instead of caching a previous result", async () => {
   const { input, calls } = fixture();
-  let enabled = true;
-  input.loadContext = async (id) => { calls.push(`context:${id}`); return context(id, enabled); };
+  let userId = "account-a";
+  input.loadContext = async (id) => { calls.push(`context:${id}`); return context(id, userId); };
   assert.equal((await restoreRememberedOrganization(input))?.id, "org-b");
-  enabled = false;
+  userId = "account-b";
   assert.equal(await restoreRememberedOrganization(input), null);
   assert.deepEqual(calls, ["context:org-b", "active:org-b", "context:org-b"]);
 });
@@ -170,7 +168,7 @@ test("an already stale account or generation sends no requests", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("an explicit switch or account change during feature validation wins over memory", async () => {
+test("an explicit switch or account change during membership validation wins over memory", async () => {
   const { input, calls } = fixture();
   let current = true;
   input.isCurrent = () => current;

@@ -1,7 +1,7 @@
 import { signIn, type DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 import { denForAppWeb } from "./signed-in-app-web.ts";
-import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -19,7 +19,7 @@ function requiredString(value: unknown): string {
 
 /**
  * Real Den accounts, memberships and independent, single-use handoff grants.
- * A stays default-off; an operator enables memory for B and C through /admin's API.
+ * Organization memory is generally available; no feature overrides are seeded.
  * No preference or credential is injected into the app: every sign-in happens
  * through the sidebar's manual-paste UI after arrangement ends.
  */
@@ -64,7 +64,6 @@ export async function rememberLastOrganization(seed: Seed) {
         throw new Error(`Join organization: HTTP ${accepted.response.status} ${accepted.text.slice(0, 300)}`);
       }
     }
-    await enableOrganizationCapabilities(seed, den.admin, { rememberLastOrganization: true }, organization.id);
   }
 
   const app = await seed.appWeb({
@@ -92,12 +91,12 @@ export async function rememberLastOrganization(seed: Seed) {
     return { session, userId, grant: requiredString(memoryRecord(issued.body).grant) };
   };
   const first = await handoff(returning);
-  const featureOff = await handoff(returning);
+  const returningLogin = await handoff(returning);
   const restored = await handoff(returning);
   const anotherAccount = await handoff(other);
-  if (new Set([first, featureOff, restored, anotherAccount].map(({ session }) => session.token)).size !== 4) {
+  if (new Set([first, returningLogin, restored, anotherAccount].map(({ session }) => session.token)).size !== 4) {
     throw new Error("Every handoff must use an independent, freshly authenticated session.");
   }
 
-  return { app, den, organizationA, organizationB, organizationC, first, featureOff, restored, anotherAccount };
+  return { app, den, organizationA, organizationB, organizationC, first, returningLogin, restored, anotherAccount };
 }

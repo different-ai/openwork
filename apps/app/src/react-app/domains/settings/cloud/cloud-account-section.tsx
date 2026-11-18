@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { ArrowUpRight, Building2, Check, LogOut, Loader2 } from "lucide-react";
 import { markOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
@@ -42,19 +41,11 @@ export function CloudAccountSection({
   onRefreshOrgs,
   onSignOut,
 }: CloudAccountSectionProps) {
-  const { user, client, baseUrl, authToken } = useCloudSession();
+  const { user } = useCloudSession();
   const navigate = useNavigate();
   const activeOrg = orgs.find((org) => org.id === activeOrgId) ?? null;
   const controlsDisabled = authBusy || sessionBusy;
-  const memoryFeature = useQuery({
-    queryKey: ["den", "org-memory-feature", baseUrl, user?.id, activeOrgId],
-    queryFn: () => client.getOrgFeatures(activeOrgId),
-    enabled: Boolean(authToken && user && activeOrgId && orgs.length > 1),
-    staleTime: 60_000,
-    retry: false,
-    select: (features) => features.rememberLastOrganization === true,
-  });
-  const switchOrganization = activeOrg && orgs.length > 1 && memoryFeature.data === true
+  const switchOrganization = activeOrg && orgs.length > 1
     ? () => {
         // Deliberate switching always opens the picker; remembering a choice
         // must never remove the member's way to change it.

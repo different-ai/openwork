@@ -1,11 +1,10 @@
-import { orgFeatureEnabled, type DenOrgContext, type DenOrgSummary } from "./den-org";
+import { type DenOrgContext, type DenOrgSummary } from "./den-org";
 
 const LAST_ORGANIZATION_PREFIX = "openwork.den.lastOrganization:";
 
 type OrganizationMemoryContext = {
   organization: Pick<DenOrgContext["organization"], "id">;
   currentMember: Pick<DenOrgContext["currentMember"], "userId">;
-  features: DenOrgContext["features"];
 };
 
 function memoryKey(userId: string): string | null {
@@ -70,8 +69,7 @@ export async function restoreRememberedOrganization(input: {
   try {
     const context = await input.loadContext(organization.id);
     if (!input.isCurrent() || context?.organization.id !== organization.id
-      || context.currentMember.userId !== input.userId
-      || !orgFeatureEnabled(context, "rememberLastOrganization")) return null;
+      || context.currentMember.userId !== input.userId) return null;
 
     // Publish nothing locally until the server acknowledges the new session choice.
     await input.setActive(organization.id);

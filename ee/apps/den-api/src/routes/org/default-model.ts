@@ -15,7 +15,6 @@ import {
   listDefaultModelSettings,
   saveDefaultModel,
 } from "../../default-model.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { isDuplicateEntry, type ResourceActionContext } from "./declarative.js"
@@ -75,8 +74,8 @@ const writeResponses = {
 
 /**
  * The model new desktop chats start with (OpenCode v2 engine only): one
- * organization default and an optional override per team. Behind the
- * `orgDefaultModel` feature.
+ * organization default and an optional override per team,
+ * available to every organization.
  */
 export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
@@ -94,7 +93,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -117,7 +115,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -135,7 +132,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.manage"),
     jsonValidator(defaultModelWriteSchema),
     async (c) => save(c, { teamId: null, model: c.req.valid("json").model }),
@@ -151,7 +147,6 @@ export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVar
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgDefaultModel"),
     requireOrgPermission("inference.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(defaultModelWriteSchema),

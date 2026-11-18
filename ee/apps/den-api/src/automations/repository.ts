@@ -15,7 +15,7 @@ import type {
   AutomationListItem,
   AutomationRepository,
 } from "@openwork/automations"
-import { REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
+import { REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY, REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY, REMOTE_SESSION_ONLY_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import type {
   Automation,
   AutomationAction,
@@ -26,10 +26,13 @@ import type {
   AutomationRun,
   AutomationRunEvent,
   AutomationRunEventType,
+  AutomationRunTriggerContext,
   AutomationUsage,
   DesktopRunnerInventory,
+  RemoteSessionAccessMode,
+  RunnerReportedSession,
 } from "@openwork/types/automations"
-import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunnerTable,
@@ -86,6 +89,14 @@ export function automationRunnerRowId(input: { organizationId: string; ownerMemb
  */
 export function automationRunnerComputerIds(input: { organizationId: string; ownerMemberId: string; runnerId: string }) {
   return [automationRunnerRowId(input), input.runnerId]
+}
+
+/** What Den keeps of a runner's session report: see remote-sessions/access.ts for what is kept from whom. */
+export type StoredRunnerSessionReport = { access: RemoteSessionAccessMode | null; sessions: RunnerReportedSession[] }
+
+/** Who holds the lease of a run a desktop claimed: its owner and the install's own id. */
+export function automationDesktopLeaseOwner(input: { ownerMemberId: string; runnerId: string }) {
+  return `desktop:${input.ownerMemberId}:${input.runnerId}`
 }
 
 /**
@@ -181,6 +192,7 @@ function mapRun(row: RunRow): AutomationRun {
     resultSummary: row.result_summary,
     codemodeReceiptId: row.codemode_receipt_id,
     validatedResult: row.validated_result,
+    ...(row.trigger_context ? { triggerContext: row.trigger_context } : {}),
     usage: row.usage,
     createdAt: row.created_at.getTime(),
     updatedAt: row.updated_at.getTime(),
@@ -226,7 +238,7 @@ function mapEvent(row: EventRow): AutomationRunEvent {
 }
 
 async function latestRun(automationId: AutomationRow["id"]): Promise<AutomationRun | null> {
-  const rows = await db.select().from(AutomationRunTable)
+  const rows = await db.$primary.select().from(AutomationRunTable)
     .where(eq(AutomationRunTable.automation_id, automationId))
     .orderBy(desc(AutomationRunTable.created_at), desc(AutomationRunTable.id)).limit(1)
   return rows[0] ? mapRun(rows[0]) : null
@@ -331,9 +343,9 @@ export class DenAutomationRepository implements AutomationRepository {
         organization_id: normalizeOrganizationId(input.organizationId),
         owner_member_id: normalizeMemberId(input.ownerMemberId),
         name: definition.name,
-        state: "active",
+        state: input.initialState ?? "active",
         current_revision_id: newRevisionId,
-        next_due_at: date(nextDueAt),
+        next_due_at: input.initialState === "inactive" ? null : date(nextDueAt),
         needs_attention_reason: null,
         archived_at: null,
         created_at: now,
@@ -453,13 +465,14 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async get(input: Parameters<AutomationRepository["get"]>[0]): Promise<AutomationListItem | null> {
-    const rows = await db.select().from(AutomationTable).where(and(
+    // primary: create/update/setState read back what they just wrote.
+    const rows = await db.$primary.select().from(AutomationTable).where(and(
       eq(AutomationTable.id, normalizeAutomationId(input.automationId)),
       eq(AutomationTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     )).limit(1)
     if (!rows[0]) return null
-    const revisions = await db.select().from(AutomationRevisionTable)
+    const revisions = await db.$primary.select().from(AutomationRevisionTable)
       .where(eq(AutomationRevisionTable.id, rows[0].current_revision_id)).limit(1)
     return revisions[0] ? itemFromRows(rows[0], revisions[0]) : null
   }
@@ -482,6 +495,19 @@ export class DenAutomationRepository implements AutomationRepository {
     return this.get(input)
   }
 
+  /** Active Cloud Automations that run around meetings, oldest first, for the calendar trigger source. */
+  async listActiveCalendarTriggers(input: { limit: number }): Promise<AutomationListItem[]> {
+    const rows = await db.select({ automation: AutomationTable }).from(AutomationTable)
+      .innerJoin(AutomationRevisionTable, eq(AutomationRevisionTable.id, AutomationTable.current_revision_id))
+      .where(and(
+        eq(AutomationTable.state, "active"),
+        eq(AutomationRevisionTable.schedule_kind, "calendar"),
+        eq(AutomationRevisionTable.execution_target, "cloud"),
+      ))
+      .orderBy(asc(AutomationTable.id)).limit(input.limit)
+    return itemsFromRows(rows.map((row) => row.automation))
+  }
+
   async listDue(input: Parameters<AutomationRepository["listDue"]>[0]): Promise<AutomationListItem[]> {
     const rows = await db.select().from(AutomationTable).where(and(
       eq(AutomationTable.state, "active"),
@@ -490,7 +516,10 @@ export class DenAutomationRepository implements AutomationRepository {
     return itemsFromRows(rows)
   }
 
-  async claim(input: Parameters<AutomationRepository["claim"]>[0]): Promise<AutomationClaimResult> {
+  async claim(input: Parameters<AutomationRepository["claim"]>[0] & {
+    /** The meeting a calendar-triggered occurrence is about. */
+    triggerContext?: AutomationRunTriggerContext | null
+  }): Promise<AutomationClaimResult> {
     return db.transaction(async (tx) => {
       const locked = await tx.select().from(AutomationTable)
         .where(eq(AutomationTable.id, normalizeAutomationId(input.automation.id))).limit(1).for("update")
@@ -548,6 +577,7 @@ export class DenAutomationRepository implements AutomationRepository {
         finished_at: overlap ? new Date(input.now) : null,
         error: null,
         result_summary: overlap ? "Skipped because another occurrence is already active." : null,
+        trigger_context: input.triggerContext ?? null,
         usage: emptyUsage,
         created_at: new Date(input.now),
         updated_at: new Date(input.now),
@@ -649,7 +679,8 @@ export class DenAutomationRepository implements AutomationRepository {
     engineKind: string | null
     model: { providerId: string; modelId: string }
   } | null> {
-    const rows = await db.select({
+    // primary: called right after claim() queues the run.
+    const rows = await db.$primary.select({
       organizationId: AutomationTable.organization_id,
       ownerMemberId: AutomationTable.owner_member_id,
       engineKind: AutomationRunTable.engine_kind,
@@ -789,7 +820,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async cloudRunState(runId: string): Promise<{ cancelRequested: boolean; receipt: Record<string, unknown> | null } | null> {
-    const rows = await db.select({
+    // primary: a stale "not running" right after claimCloud would abort the run.
+    const rows = await db.$primary.select({
       cancelRequestedAt: AutomationRunTable.cancel_requested_at,
       receipt: AutomationRunTable.engine_receipt,
     }).from(AutomationRunTable).where(and(
@@ -869,7 +901,7 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunTable.lease_owner, input.leaseOwner),
       inArray(AutomationRunTable.status, ["claimed", "running"]),
     ))
-    const rows = await db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
+    const rows = await db.$primary.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
       eq(AutomationRunTable.id, normalizeRunId(input.runId)), eq(AutomationRunTable.lease_owner, input.leaseOwner),
       inArray(AutomationRunTable.status, ["claimed", "running"]),
     )).limit(1)
@@ -948,7 +980,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async recoverExpiredLeases(input: Parameters<AutomationRepository["recoverExpiredLeases"]>[0]): Promise<AutomationRun[]> {
-    const rows = await db.select().from(AutomationRunTable).where(and(
+    // primary: a stale lease must not be reported as recovered.
+    const rows = await db.$primary.select().from(AutomationRunTable).where(and(
       inArray(AutomationRunTable.status, ["claimed", "running"]),
       lt(AutomationRunTable.lease_expires_at, new Date(input.now)),
     )).orderBy(asc(AutomationRunTable.lease_expires_at)).limit(input.limit)
@@ -980,7 +1013,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async requestCancellation(input: Parameters<AutomationRepository["requestCancellation"]>[0]): Promise<AutomationRun | null> {
-    const owned = await db.select({ run: AutomationRunTable }).from(AutomationRunTable)
+    // primary: a stale "queued" status would cancel a run that already started.
+    const owned = await db.$primary.select({ run: AutomationRunTable }).from(AutomationRunTable)
       .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
@@ -1019,14 +1053,27 @@ export class DenAutomationRepository implements AutomationRepository {
     appVersion: string
     platform: "darwin" | "win32" | "linux"
     concurrency: number
+    /** The sign-in session the registration came with; null for an API key or Den's own MCP principal. */
+    authSessionId?: string | null
     now: number
   }) {
     const now = new Date(input.now)
     const organizationId = normalizeOrganizationId(input.organizationId)
     const ownerMemberId = normalizeMemberId(input.ownerMemberId)
     const id = automationRunnerRowId(input)
-    const existing = await db.select({ organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id })
-      .from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
+    const signIn = { install_id: input.runnerId, auth_session_id: input.authSessionId ? normalizeDenTypeId("session", input.authSessionId) : null }
+    const existing = await db.$primary.select({
+      organizationId: AutomationRunnerTable.organization_id, ownerMemberId: AutomationRunnerTable.owner_member_id, capabilities: AutomationRunnerTable.capabilities,
+    }).from(AutomationRunnerTable).where(eq(AutomationRunnerTable.id, id)).limit(1)
+    // An app that does not understand session access only ever allows sessions
+    // started remotely: whatever a newer app reported from this install is dropped.
+    // An app that just gained the owner's choice has not said yet whether they made one:
+    // what an earlier app reported by itself must not pass for it.
+    const choice = input.capabilities.includes(REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY)
+    const gainedChoice = choice && existing[0]?.capabilities?.includes(REMOTE_SESSION_CHOICE_RUNNER_CAPABILITY) !== true
+    const sessionReport = (input.capabilities.includes(REMOTE_SESSION_ACCESS_RUNNER_CAPABILITY) || choice) && !gainedChoice
+      ? {}
+      : { session_access: null, sessions: null, sessions_updated_at: null }
     // The row id hashes its own scope, so this only trips on a row that took
     // the id under the old install-id keying for someone else.
     if (existing[0] && (
@@ -1045,6 +1092,7 @@ export class DenAutomationRepository implements AutomationRepository {
         platform: input.platform,
         concurrency: input.concurrency,
         last_seen_at: now,
+        ...signIn,
         created_at: now,
         updated_at: now,
       }).onDuplicateKeyUpdate({ set: {
@@ -1056,6 +1104,8 @@ export class DenAutomationRepository implements AutomationRepository {
         concurrency: input.concurrency,
         last_seen_at: now,
         updated_at: now,
+        ...signIn,
+        ...sessionReport,
       } })
     } catch (error) {
       logger.error("automation runner registration upsert failed", {
@@ -1082,6 +1132,22 @@ export class DenAutomationRepository implements AutomationRepository {
       eq(AutomationRunnerTable.id, input.runnerId),
       eq(AutomationRunnerTable.organization_id, organizationId),
       eq(AutomationRunnerTable.owner_member_id, ownerMemberId),
+    ))
+  }
+
+  /**
+   * The sign-in session a desktop reported itself with, kept on its runner
+   * registration when it has one, so a desktop that has not asked for a new
+   * runner credential lately is still signed out when it is disconnected.
+   */
+  async noteDesktopRunnerSignIn(input: { organizationId: string; ownerMemberId: string; runnerId: string; authSessionId: string }) {
+    await db.update(AutomationRunnerTable).set({
+      install_id: input.runnerId,
+      auth_session_id: normalizeDenTypeId("session", input.authSessionId),
+    }).where(and(
+      eq(AutomationRunnerTable.id, automationRunnerRowId(input)),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     ))
   }
 
@@ -1122,6 +1188,46 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   /**
+   * Stores what the runner says about its sessions: the access in force there
+   * (null from an app whose owner can choose and has not) and, while that is
+   * `all`, the sessions it has. Returns false when the runner has no row, so
+   * it must register again first.
+   */
+  async saveDesktopRunnerSessions(input: StoredRunnerSessionReport & {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    now: number
+  }): Promise<boolean> {
+    const now = new Date(input.now)
+    const result = await db.update(AutomationRunnerTable).set({
+      session_access: input.access,
+      sessions: input.sessions,
+      sessions_updated_at: now,
+      last_seen_at: now,
+      updated_at: now,
+    }).where(and(
+      inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+    ))
+    return automationAffectedRows(result) > 0
+  }
+
+  /**
+   * Drops every session list the organization's runners reported, for when
+   * the organization stops allowing other devices to see them. Each owner's
+   * own choice is kept: it applies again if the organization allows it again.
+   */
+  async clearReportedSessions(input: { organizationId: string; now: number }): Promise<void> {
+    const now = new Date(input.now)
+    await db.update(AutomationRunnerTable).set({ sessions: null, sessions_updated_at: now, updated_at: now }).where(and(
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      isNotNull(AutomationRunnerTable.sessions),
+    ))
+  }
+
+  /**
    * Queued desktop runs, oldest first. Every one of the owner's desktops sees
    * the same list; a run pinned to a workspace says so, and only a desktop
    * that has that workspace claims it.
@@ -1131,7 +1237,8 @@ export class DenAutomationRepository implements AutomationRepository {
     executionTarget: "desktop"
     workspaceId?: string
   }>> {
-    const rows = await db.select({
+    // primary: runners ask for work as soon as a work_available hint arrives.
+    const rows = await db.$primary.select({
       runId: AutomationRunTable.id,
       revisionTarget: AutomationRevisionTable.execution_target,
       workspaceId: AutomationRevisionTable.workspace_id,
@@ -1229,7 +1336,7 @@ export class DenAutomationRepository implements AutomationRepository {
       gt(AutomationRunTable.lease_expires_at, new Date(input.now)),
     ))
     if (!automationUpdateChangedRows(renewal)) return null
-    const rows = await db.select({
+    const rows = await db.$primary.select({
       leaseExpiresAt: AutomationRunTable.lease_expires_at,
       cancelRequestedAt: AutomationRunTable.cancel_requested_at,
     }).from(AutomationRunTable).where(and(
@@ -1364,7 +1471,7 @@ export class DenAutomationRepository implements AutomationRepository {
   /** Durably skips a run that must not execute (e.g. revoked model access). */
   async skipRun(input: {
     runId: string
-    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "openwork_web_access_required"
+    code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "openwork_web_access_required" | "execution_runtime_unavailable"
     message: string
     now: number
   }): Promise<void> {
@@ -1415,13 +1522,15 @@ export class DenAutomationRepository implements AutomationRepository {
   /**
    * The owner's desktops that can take remote sessions, most recently seen
    * first, with their latest inventory report (null for desktops that never
-   * sent one).
+   * sent one) and the session access each last reported. The reported session
+   * lists are read only when asked for: they are large and few callers need them.
    */
   async listRemoteSessionDesktops(input: {
     organizationId: string
     ownerMemberId: string
     capability: AutomationDesktopRunnerCapability
     limit: number
+    sessions?: boolean
   }) {
     const rows = await db.select({
       id: AutomationRunnerTable.id,
@@ -1430,12 +1539,15 @@ export class DenAutomationRepository implements AutomationRepository {
       lastSeenAt: AutomationRunnerTable.last_seen_at,
       capabilities: AutomationRunnerTable.capabilities,
       inventory: AutomationRunnerTable.inventory,
+      sessionAccess: AutomationRunnerTable.session_access,
+      sessionsUpdatedAt: AutomationRunnerTable.sessions_updated_at,
+      ...(input.sessions ? { sessions: AutomationRunnerTable.sessions } : {}),
     }).from(AutomationRunnerTable).where(and(
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       sql`json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(input.capability)})`,
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
-    return rows.map((row) => ({ ...row, capabilities: row.capabilities ?? [] }))
+    return rows.map((row) => ({ ...row, capabilities: row.capabilities ?? [], sessions: row.sessions ?? null }))
   }
 
   /** The owner's registered desktops, most recently seen first. */
@@ -1452,22 +1564,23 @@ export class DenAutomationRepository implements AutomationRepository {
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
-  /** One runner's capabilities and last contact, scoped to its owner. */
+  /** One runner's capabilities, last contact and reported session access, scoped to its owner. */
   async desktopRunnerById(input: {
     organizationId: string
     ownerMemberId: string
     runnerId: string
-  }): Promise<{ capabilities: AutomationDesktopRunnerCapability[]; lastSeenAt: number } | null> {
+  }): Promise<{ capabilities: AutomationDesktopRunnerCapability[]; lastSeenAt: number; sessionAccess: RemoteSessionAccessMode | null } | null> {
     const rows = await db.select({
       capabilities: AutomationRunnerTable.capabilities,
       lastSeenAt: AutomationRunnerTable.last_seen_at,
+      sessionAccess: AutomationRunnerTable.session_access,
     }).from(AutomationRunnerTable).where(and(
       inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
       eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
       eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
     )).orderBy(desc(sql`${AutomationRunnerTable.id} = ${automationRunnerRowId(input)}`)).limit(1)
     const row = rows[0]
-    return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime() } : null
+    return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime(), sessionAccess: row.sessionAccess ?? null } : null
   }
 
   private async missedDesktopReason(input: {
@@ -1542,7 +1655,7 @@ export class DenAutomationRepository implements AutomationRepository {
         eq(AutomationRunTable.attempt_count, run.attempt_count),
         lte(AutomationRunTable.claim_deadline_at, new Date(input.now)),
       ))
-      const confirmed = await db.select({ status: AutomationRunTable.status, error: AutomationRunTable.error })
+      const confirmed = await db.$primary.select({ status: AutomationRunTable.status, error: AutomationRunTable.error })
         .from(AutomationRunTable).where(eq(AutomationRunTable.id, run.id)).limit(1)
       if (confirmed[0]?.status === status && confirmed[0].error?.code === code) {
         expired.push(run.id)
@@ -1552,7 +1665,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async getRunReceipt(input: Parameters<AutomationRepository["getRunReceipt"]>[0]) {
-    const owned = await db.select({ automation: AutomationTable, run: AutomationRunTable })
+    // primary: polled right after a run is created.
+    const owned = await db.$primary.select({ automation: AutomationTable, run: AutomationRunTable })
       .from(AutomationRunTable).innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
       .where(and(
         eq(AutomationRunTable.id, normalizeRunId(input.runId)),
@@ -1560,7 +1674,7 @@ export class DenAutomationRepository implements AutomationRepository {
         eq(AutomationTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
       )).limit(1)
     if (!owned[0]) return null
-    const revisions = await db.select().from(AutomationRevisionTable)
+    const revisions = await db.$primary.select().from(AutomationRevisionTable)
       .where(eq(AutomationRevisionTable.id, owned[0].run.revision_id)).limit(1)
     if (!revisions[0]) return null
     const events = await db.select().from(AutomationRunEventTable)
@@ -1653,7 +1767,8 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   async queueRetry(input: { runId: string; leaseOwner: string; now: number }): Promise<boolean> {
-    const rows = await db.select().from(AutomationRunTable).where(and(
+    // primary: re-queuing a run that already finished would run it twice.
+    const rows = await db.$primary.select().from(AutomationRunTable).where(and(
       eq(AutomationRunTable.id, normalizeRunId(input.runId)),
       eq(AutomationRunTable.lease_owner, input.leaseOwner),
       eq(AutomationRunTable.status, "running"),
@@ -1698,7 +1813,7 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   private async runById(runId: string): Promise<AutomationRun | null> {
-    const rows = await db.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, normalizeRunId(runId))).limit(1)
+    const rows = await db.$primary.select().from(AutomationRunTable).where(eq(AutomationRunTable.id, normalizeRunId(runId))).limit(1)
     return rows[0] ? mapRun(rows[0]) : null
   }
 }

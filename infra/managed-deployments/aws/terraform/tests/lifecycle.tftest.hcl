@@ -30,6 +30,9 @@ mock_provider "aws" {
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:openwork" }
   }
+  mock_resource "aws_db_instance" {
+    defaults = { address = "db.example.test" }
+  }
   mock_resource "aws_ecs_task_definition" {
     defaults = { arn = "arn:aws:ecs:us-east-1:123456789012:task-definition/openwork:1" }
   }
@@ -42,14 +45,17 @@ mock_provider "http" {
 }
 
 variables {
-  openwork_version    = "0.18.58"
-  vpc_id              = "vpc-test"
-  alb_subnet_ids      = ["subnet-a", "subnet-b"]
-  service_subnet_ids  = ["subnet-a", "subnet-b"]
-  database_subnet_ids = ["subnet-a", "subnet-b"]
-  owner_emails        = ["admin@example.com"]
-  domain_name         = "openwork.example.com"
-  certificate_arn     = "arn:aws:acm:us-east-1:123456789012:certificate/test"
+  openwork_version       = "0.18.58"
+  write_only_secrets     = false
+  managed_legacy_secrets = true
+  wait_for_steady_state  = true
+  vpc_id                 = "vpc-test"
+  alb_subnet_ids         = ["subnet-a", "subnet-b"]
+  service_subnet_ids     = ["subnet-a", "subnet-b"]
+  database_subnet_ids    = ["subnet-a", "subnet-b"]
+  owner_emails           = ["admin@example.com"]
+  domain_name            = "openwork.example.com"
+  certificate_arn        = "arn:aws:acm:us-east-1:123456789012:certificate/test"
 }
 
 run "legacy_false_skip_destroy_state" {
@@ -65,9 +71,9 @@ run "legacy_false_skip_destroy_state" {
 run "upgrade_forgets_legacy_and_creates_retained_ca_revisions" {
   command   = plan
   state_key = "legacy"
-  module { source = "./modules/openwork-aws-ecs" }
+  module { source = "../../../terraform/modules/openwork-aws-ecs" }
   assert {
-    condition     = aws_ecs_task_definition.api_ca.skip_destroy && aws_ecs_task_definition.web_ca.skip_destroy
+    condition     = aws_ecs_task_definition.api_v1.skip_destroy && aws_ecs_task_definition.web_v1.skip_destroy
     error_message = "New addresses must retain revisions from their first creation."
   }
   assert {
@@ -79,12 +85,12 @@ run "upgrade_forgets_legacy_and_creates_retained_ca_revisions" {
 run "create_ca_definition_state" {
   command   = apply
   state_key = "ca"
-  module { source = "./modules/openwork-aws-ecs" }
+  module { source = "../../../terraform/modules/openwork-aws-ecs" }
   plan_options {
-    target = [aws_ecs_task_definition.api_ca, aws_ecs_task_definition.web_ca]
+    target = [aws_ecs_task_definition.api_v1, aws_ecs_task_definition.web_v1]
   }
   assert {
-    condition     = aws_ecs_task_definition.api_ca.skip_destroy && aws_ecs_task_definition.web_ca.skip_destroy
+    condition     = aws_ecs_task_definition.api_v1.skip_destroy && aws_ecs_task_definition.web_v1.skip_destroy
     error_message = "Created state must contain true skip_destroy, not a replacement-time edit."
   }
 }
@@ -92,15 +98,15 @@ run "create_ca_definition_state" {
 run "future_update_replaces_only_retained_ca_definitions" {
   command   = plan
   state_key = "ca"
-  module { source = "./modules/openwork-aws-ecs" }
-  variables { tls_task_revision = "second-update" }
+  module { source = "../../../terraform/modules/openwork-aws-ecs" }
+  variables { extra_environment = { OPENWORK_MANAGED_TASK_REVISION = "second-update" } }
   # Mock providers do not execute the AWS SDK's ForceNew planner. Explicitly
   # exercise its replacement shape; the live second update proves real ForceNew.
   plan_options {
-    replace = [aws_ecs_task_definition.api_ca, aws_ecs_task_definition.web_ca]
+    replace = [aws_ecs_task_definition.api_v1, aws_ecs_task_definition.web_v1]
   }
   assert {
-    condition     = aws_ecs_task_definition.api_ca.skip_destroy && aws_ecs_task_definition.web_ca.skip_destroy && var.tls_task_revision == "second-update"
+    condition     = aws_ecs_task_definition.api_v1.skip_destroy && aws_ecs_task_definition.web_v1.skip_destroy && var.extra_environment.OPENWORK_MANAGED_TASK_REVISION == "second-update"
     error_message = "A later definition-changing update must keep skip_destroy true."
   }
 }

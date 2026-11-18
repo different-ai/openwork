@@ -1,6 +1,6 @@
 import { signIn, type DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,11 +60,6 @@ export async function denRememberLastOrganization(seed: Seed) {
       throw new Error(`Join organization: HTTP ${accepted.response.status}`);
     }
   }
-  await enableOrganizationCapabilities(seed, den.admin, { rememberLastOrganization: true }, organizationB.id);
-  const disabled = await seed.api(den.admin, `/v1/admin/organizations/${organizationA.id}/capabilities`, {
-    method: "PUT", body: JSON.stringify({ capabilities: { rememberLastOrganization: false } }),
-  });
-  if (!disabled.response.ok) throw new Error(`Disable organization memory: HTTP ${disabled.response.status}`);
 
   const identity = async (session: DenSession) => {
     const result = await seed.api(session, "/v1/me");

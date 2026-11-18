@@ -3,6 +3,7 @@ const orgBasePath = "/v1"
 export const pluginArchRoutePaths = {
   configObjects: `${orgBasePath}/config-objects`,
   configObject: `${orgBasePath}/config-objects/:configObjectId`,
+  configObjectKey: `${orgBasePath}/config-objects/:configObjectId/key`,
   configObjectArchive: `${orgBasePath}/config-objects/:configObjectId/archive`,
   configObjectDelete: `${orgBasePath}/config-objects/:configObjectId/delete`,
   configObjectRestore: `${orgBasePath}/config-objects/:configObjectId/restore`,

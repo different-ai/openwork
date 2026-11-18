@@ -1,7 +1,7 @@
 # Focused Google Docs tools
 
-`googleDocumentTools` is off by default on cloud and self-hosted deployments.
-Enabling it makes three native Google Workspace capabilities available to
+Focused Google Docs tools are generally available on cloud and self-hosted
+deployments. Three native Google Workspace capabilities are available to
 Workbot and other connected assistants through the existing capability gateway:
 
 | Capability | Use |

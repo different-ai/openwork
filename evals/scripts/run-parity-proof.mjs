@@ -6,14 +6,12 @@ import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 // Keyed by basename: a journey can live in evals/specs, evals/core or evals/proofs.
 const specs = new Set([
-  "v2-chat-recovery.proof.test.ts",
   "agent-connection-journey.e2e.test.ts",
   "secure-keys-in-chat.e2e.test.ts",
   "agent-permissions.e2e.test.ts",
 ]);
 
 const v2Only = new Set([
-  "v2-chat-recovery.proof.test.ts",
   // Agent permissions are enforced by OpenCode v2 only.
   "agent-permissions.e2e.test.ts",
 ]);

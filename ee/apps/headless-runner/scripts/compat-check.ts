@@ -273,6 +273,24 @@ async function traffic() {
   return { mine, thread }
 }
 
+/**
+ * A chat in its own session cell (hs_c_, Workbot with a current Den), for set-ups whose cells are the new
+ * version: an old router sends it to the owner cell, which forwards it. Not with old cells: the flag goes on only after
+ * the runner that serves it is live.
+ */
+async function sessionCellTraffic() {
+  const id = `hs_c_${crypto.randomUUID().replaceAll("-", "")}`
+  await expectStatus("create a session-cell chat", await call(`/v1/sessions/${id}`, OWNER, { method: "PUT", body: JSON.stringify({ title: "Compat cell", memoryScope: "owner" }) }), 201)
+  await turn(id, "c1", OWNER)
+  await expectStatus("other owner's read of a session-cell chat", await call(`/v1/sessions/${id}`, OTHER), 404)
+  for (const deadline = Date.now() + 10_000; ; await sleep(200)) {
+    const listed = z.object({ sessions: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(await expectStatus("list", await call(`/v1/sessions?owner=${encodeURIComponent(OWNER)}`, OWNER), 200)))
+    if (listed.sessions.some((session) => session.id === id)) break
+    assert.ok(Date.now() < deadline, "owner listing misses the session-cell chat")
+  }
+  await expectStatus("delete a session-cell chat", await call(`/v1/sessions/${id}`, OWNER, { method: "DELETE" }), 204)
+}
+
 async function scenario(label: string, run: () => Promise<void>) {
   try {
     await run()
@@ -298,6 +316,7 @@ try {
     const { mine } = await traffic()
     await expectStatus("delete", await call(`/v1/sessions/${mine}`, OWNER, { method: "DELETE" }), 204)
     await expectStatus("read deleted", await call(`/v1/sessions/${mine}`, OWNER), 404)
+    await sessionCellTraffic()
   })
   await scenario(`new router (${current.name}) → old cell (${old.name})`, async () => {
     prepare(join(work, "new-router"), "head", "base", modelPort)
@@ -316,6 +335,7 @@ try {
     await expectStatus("note after upgrade", await call(`/v1/sessions/${mine}/files/content?path=memory/note.md`, OWNER), 200)
     await turn(mine, "m2", OWNER)
     await turn(thread, "t2", "")
+    await sessionCellTraffic()
   })
 } finally {
   await stop()

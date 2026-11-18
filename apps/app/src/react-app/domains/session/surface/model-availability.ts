@@ -43,6 +43,8 @@ export type ModelAvailabilityContext = {
   checkRestriction: DesktopAppRestrictionChecker;
   /** Settled cloud-managed catalog for the current context, if any. */
   cloudProviderList: ProviderListResponse | null;
+  /** Live sync deliberately has no app-side cloud snapshot; use the subscribed engine query. */
+  liveProviderSync?: boolean;
   /**
    * Provider catalog for the current workspace (query keyed by server +
    * directory). `null`/`undefined` means the catalog has not settled for this
@@ -86,7 +88,7 @@ export function computeModelAvailability(
     return { status: "unavailable", reason: "provider_blocked" };
   }
 
-  const providerList = usesCloudProvider ? context.cloudProviderList : context.providerList;
+  const providerList = usesCloudProvider && !context.liveProviderSync ? context.cloudProviderList : context.providerList;
   if (!providerList) {
     // Catalog not settled for the current context: pending, not unavailable.
     return { status: "pending" };
@@ -129,10 +131,9 @@ export type UnavailableConfirmationGate = {
     verdict: ModelAvailability,
   ) => ModelAvailability;
   /**
-   * Milliseconds until the youngest tracked denial matures (0 when one is
-   * already mature but not yet re-rendered), or null when nothing is tracked.
-   * Callers use this to schedule a re-evaluation so a genuine denial still
-   * surfaces without further catalog changes.
+   * Milliseconds until the next immature denial matures, or null when every
+   * tracked denial has matured (or none are tracked). Mature denials must not
+   * schedule a busy loop or hide another model's pending deadline.
    */
   nextRecheckDelay: (nowMs?: number) => number | null;
 };
@@ -168,7 +169,7 @@ export function createUnavailableConfirmationGate(options?: {
       let next: number | null = null;
       for (const deniedAt of firstDeniedAtByModel.values()) {
         const remaining = confirmMs - (current - deniedAt);
-        if (remaining <= 0) return 0;
+        if (remaining <= 0) continue;
         next = next === null ? remaining : Math.min(next, remaining);
       }
       return next;

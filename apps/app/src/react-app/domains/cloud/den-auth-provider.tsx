@@ -27,6 +27,12 @@ import {
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
 import { connectionDiagnosticHistory, type ConnectionDiagnosticReason, type ConnectionDiagnosticSource } from "../../../app/lib/connection-diagnostic-history";
 import { readOrgSelectionPending } from "../../../app/lib/den-sign-in-intent";
+import {
+  classifyStartupError,
+  failStartup,
+  markStartupStep,
+  noteStartupDenSession,
+} from "../../../app/lib/startup-diagnostics";
 import { desktopBridge, readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import {
   denSessionUpdatedEvent,
@@ -37,6 +43,7 @@ import {
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { explainSignOutAfterDisconnect } from "../devices/disconnected-sign-out";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -262,6 +269,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
 
     if (!token) {
+      noteStartupDenSession(null);
       setUser(null);
       setVerifiedIdentity(null);
       setError(null);
@@ -278,6 +286,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       updateStatus("checking");
     }
 
+    noteStartupDenSession({ baseUrl: settings.baseUrl, organizationId: organizationId || null });
     const diagnostics = diagnosticsRef.current;
     diagnostics?.attempt("den_session_retry");
     try {
@@ -285,21 +294,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         baseUrl: settings.baseUrl,
         token,
       }).getSession();
-
-      if (currentRun !== refreshTokenRef.current) return;
-
-      // While a desktop-initiated sign-in is waiting for the user's explicit
-      // organization choice, do not auto-resolve a default — that would
-      // silently commit an org the chooser is still asking about.
-      if (!readOrgSelectionPending().pending) {
-        await resolveDenActiveOrganizationWithRetry(() =>
-          ensureDenActiveOrganization({
-            forceServerSync:
-              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
-            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
-          })
-        );
-      }
 
       if (currentRun !== refreshTokenRef.current) return;
 
@@ -319,13 +313,35 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       lastSignalRetryAtRef.current = null;
       diagnostics?.recovered("den_session_recovered");
       updateStatus("signed_in");
+      markStartupStep("signed_in", { organizationId: confirmedOrganizationId || null });
       syncDesktopSentrySession(nextUser);
+
+      // The session is verified. Organization discovery can take several
+      // request timeouts, so repair it in the background without keeping the
+      // app on "Checking your sign-in". Settings changes refresh the verified
+      // organization scope when discovery succeeds.
+      // An explicit organization chooser still owns its pending choice.
+      if (!readOrgSelectionPending().pending) {
+        await resolveDenActiveOrganizationWithRetry(() => {
+          if (currentRun !== refreshTokenRef.current || readOrgSelectionPending().pending) {
+            return Promise.resolve(null);
+          }
+          return ensureDenActiveOrganization({
+            forceServerSync:
+              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
+            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
+          });
+        });
+      }
     } catch (nextError) {
       if (currentRun !== refreshTokenRef.current) return;
 
       diagnostics?.failed();
+      failStartup("signed_in", classifyStartupError(nextError));
       const failureStatus = resolveDenAuthFailureStatus(nextError);
       if (failureStatus === "signed_out") {
+        // Before the session is cleared: afterwards nothing says this computer was disconnected.
+        explainSignOutAfterDisconnect();
         clearDenSession();
         setUser(null);
         verifiedCredentialRef.current = null;

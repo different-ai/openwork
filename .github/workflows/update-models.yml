@@ -24,6 +24,8 @@ concurrency:
 env:
   MODELS_PATH: ee/apps/gateway/src/models/base.json
   MODELS_URL: https://models.dev/api.json
+  MODELS_V2_PATH: ee/apps/gateway/src/models/base-v2.json
+  MODELS_V2_URL: https://models.dev/experimental/v2.0/api.json?type=all
   BASE_BRANCH: ${{ inputs.base_branch }}
   BRANCH_NAME: automation/update-models-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -47,116 +49,33 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
+      # The generator comes from this workflow's own commit, never from the
+      # dispatcher-chosen base branch, and is checked out without credentials,
+      # so a branch can't run its own code next to the persisted write token.
+      - name: Checkout generator
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .update-models-generator
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: ee/apps/gateway/scripts/update-models.mjs
+          sparse-checkout-cone-mode: false
+
+      # The script downloads the v1 and v2 catalogs in one run, validates both,
+      # derives the openrouter-eu provider in each from OpenRouter's EU model
+      # list, and writes minified JSON.
       - name: Download and validate models
-        run: |
-          set -euo pipefail
-
-          node --input-type=module <<'NODE'
-          import { writeFile } from "node:fs/promises"
-
-          const modelsPath = process.env.MODELS_PATH
-          const modelsUrl = process.env.MODELS_URL
-
-          function fail(message) {
-            throw new Error(`Refusing to update ${modelsPath}: ${message}`)
-          }
-
-          function isRecord(value) {
-            return Boolean(value) && typeof value === "object" && !Array.isArray(value)
-          }
-
-          function isStringArray(value) {
-            return Array.isArray(value) && value.every((item) => typeof item === "string")
-          }
-
-          function validateModel(providerId, modelId, model) {
-            if (!isRecord(model)) {
-              fail(`model ${providerId}.${modelId} was not an object`)
-            }
-
-            if (model.id !== modelId) {
-              fail(`model ${providerId}.${modelId} was missing a matching id`)
-            }
-
-            if (typeof model.name !== "string" || model.name.length === 0) {
-              fail(`model ${providerId}.${modelId} was missing a name`)
-            }
-
-            if (!isRecord(model.modalities)) {
-              fail(`model ${providerId}.${modelId} was missing modalities`)
-            }
-
-            if (!isStringArray(model.modalities.input) || model.modalities.input.length === 0) {
-              fail(`model ${providerId}.${modelId} was missing input modalities`)
-            }
-
-            if (!isStringArray(model.modalities.output) || model.modalities.output.length === 0) {
-              fail(`model ${providerId}.${modelId} was missing output modalities`)
-            }
-
-            if (!isRecord(model.limit)) {
-              fail(`model ${providerId}.${modelId} was missing limits`)
-            }
-          }
-
-          const response = await fetch(modelsUrl, {
-            headers: { accept: "application/json" },
-          })
-
-          if (!response.ok) {
-            fail(`GET ${modelsUrl} returned ${response.status} ${response.statusText}`)
-          }
-
-          const body = await response.text()
-          let parsed
-          try {
-            parsed = JSON.parse(body)
-          } catch (error) {
-            fail(error instanceof Error ? error.message : "response was not valid JSON")
-          }
-
-          if (!isRecord(parsed)) {
-            fail("response was not a JSON object")
-          }
-
-          const providers = Object.entries(parsed)
-          if (providers.length === 0) {
-            fail("response did not include any providers")
-          }
-
-          for (const [providerId, provider] of providers) {
-            if (!isRecord(provider)) {
-              fail(`provider ${providerId} was not an object`)
-            }
-
-            if (provider.id !== providerId) {
-              fail(`provider ${providerId} was missing a matching id`)
-            }
-
-            if (typeof provider.name !== "string" || provider.name.length === 0) {
-              fail(`provider ${providerId} was missing a name`)
-            }
-
-            if (!isRecord(provider.models) || Object.keys(provider.models).length === 0) {
-              fail(`provider ${providerId} did not include models`)
-            }
-
-            for (const [modelId, model] of Object.entries(provider.models)) {
-              validateModel(providerId, modelId, model)
-            }
-          }
-
-          await writeFile(modelsPath, `${JSON.stringify(parsed)}\n`)
-          NODE
+        run: node .update-models-generator/ee/apps/gateway/scripts/update-models.mjs
 
       - name: Check for changes
         id: changes
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- "$MODELS_PATH"; then
+          if git diff --quiet -- "$MODELS_PATH" "$MODELS_V2_PATH"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -180,7 +99,7 @@ jobs:
           git config --local gpg.format ssh
           git config --local user.signingkey "$signing_key"
           git switch -c "$BRANCH_NAME"
-          git add "$MODELS_PATH"
+          git add "$MODELS_PATH" "$MODELS_V2_PATH"
           git commit -S -m "chore: update models snapshot"
 
       # Opened by the automation App once it is configured (AUTOMATION_APP_ID
@@ -212,7 +131,7 @@ jobs:
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore: update models snapshot" \
-            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON.")"
+            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\` and \`$MODELS_V2_PATH\` from \`$MODELS_V2_URL\`.\n\nThe workflow validated both responses before replacing the files and wrote the snapshots as minified JSON.")"
           {
             echo "pr_url=$pr_url"
             echo "pr_number=$(gh pr view "$pr_url" --json number --jq .number)"
@@ -237,9 +156,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          if [ "$changed_files" != "$MODELS_PATH" ]; then
-            echo "Refusing to approve PR #$PR: changed files must be exactly $MODELS_PATH; found:"
+          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' | sort)"
+          unexpected="$(grep -vxF -e "$MODELS_PATH" -e "$MODELS_V2_PATH" <<< "$changed_files" || true)"
+          if [ -z "$changed_files" ] || [ -n "$unexpected" ]; then
+            echo "Refusing to approve PR #$PR: changed files must be only $MODELS_PATH and $MODELS_V2_PATH; found:"
             echo "$changed_files"
             exit 1
           fi
@@ -250,7 +170,7 @@ jobs:
             exit 1
           fi
 
-          BODY="Machine-generated snapshot of \`ee/apps/gateway/src/models/base.json\` from https://models.dev/api.json, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
+          BODY="Machine-generated snapshots of \`$MODELS_PATH\` from $MODELS_URL and \`$MODELS_V2_PATH\` from $MODELS_V2_URL, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
           gh api "repos/$REPO/pulls/$PR/reviews" \
             -f event=APPROVE \
             -f commit_id="$HEAD_SHA" \

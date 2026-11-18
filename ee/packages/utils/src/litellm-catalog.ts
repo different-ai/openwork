@@ -29,6 +29,25 @@ export function isLiteLlmProviderId(providerId: string): boolean {
   return providerId === LITELLM_PROVIDER_ID
 }
 
+/**
+ * `settings.litellm.keySource` of a provider whose proxy accepts sign-in tokens
+ * instead of LiteLLM keys (LiteLLM JWT auth): each member signs in with
+ * Microsoft Entra ID and the gateway forwards their own access token.
+ */
+export const LITELLM_ENTRA_KEY_SOURCE = "entra"
+
+/**
+ * The API scope members' Entra access tokens are issued for, when the provider
+ * is a LiteLLM provider in member Microsoft Entra sign-in mode. Null for every
+ * other provider and LiteLLM mode.
+ */
+export function liteLlmEntraScope(provider: { provider_id: string; settings: unknown }): string | null {
+  if (!isLiteLlmProviderId(provider.provider_id) || !isRecord(provider.settings)) return null
+  const litellm = provider.settings.litellm
+  if (!isRecord(litellm) || litellm.mode !== "member" || litellm.keySource !== LITELLM_ENTRA_KEY_SOURCE) return null
+  return typeof litellm.entraScope === "string" && litellm.entraScope.trim() ? litellm.entraScope : null
+}
+
 /** The models.dev-shaped provider entry, without models. */
 export function liteLlmCatalogEntry(): JsonRecord {
   return { id: LITELLM_PROVIDER_ID, name: LITELLM_PROVIDER_NAME, npm: LITELLM_NPM, env: [...LITELLM_ENV], doc: LITELLM_DOC_URL, models: {} }

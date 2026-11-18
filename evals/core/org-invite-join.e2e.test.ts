@@ -17,8 +17,8 @@ linkTest("an owner copies a pending invite's link, and a plain member cannot rea
 
   await step("the owner copies the invite link from the pending row's actions", async () => {
     await user.click({ role: "button", label: `Open actions for ${world.pendingName}` });
-    await user.click({ role: "button", label: "Copy invite link" });
-    await user.notSee({ role: "button", label: "Copy invite link" });
+    await user.click({ role: "menuitem", label: "Copy invite link" });
+    await user.notSee({ role: "menuitem", label: "Copy invite link" });
     await user.screenshot();
   });
 

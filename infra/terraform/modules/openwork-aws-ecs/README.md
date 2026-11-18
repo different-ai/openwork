@@ -1,9 +1,10 @@
 # openwork-aws-ecs (Terraform)
 
-For **direct Terraform users**. The managed AWS installer uses a separate frozen
-pre-contract module, not this implementation; its only adopted security change
-is RDS TLS/CA-first ordering and retained API/web revisions, not the direct
-migration or write-only secret lifecycle. See the managed installer README.
+Shared by **direct Terraform users** and the managed AWS installer. Both use
+one migration step and API-only replicas. Managed installs explicitly retain
+legacy state-backed secrets and use a runner maintenance fence; direct installs
+still default to write-only. See the managed installer README for approval and
+upgrade boundaries.
 
 ## What it deploys
 
@@ -24,6 +25,15 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 | Logs | CloudWatch `/ecs/<name>/den-api` and `/ecs/<name>/den-web` |
 | Headless runner and Workbot (optional) | Managed Node runner (Service Connect, SQLite on EFS) or an existing celld/S3 fleet; diskless `workbot` at `chat.<domain_name>` (`headless_runner`, `workbot`) |
 | OpenWork Web (optional) | `den-gateway` Fargate service at `web.<domain_name>`, sandboxes in your Daytona organization (`openwork_web_enabled = true`) |
+| AI Gateway (optional, off by default) | Separate `openwork-inference` service on 8791, private Cloud Map, HTTPS host rule (`ai_gateway_enabled`) |
+
+**Three different gateways:** the AI Gateway handles inference; **den-gateway**
+handles OpenWork Web/sandboxes; Den API's MCP gateway handles connected tools.
+See [AI Gateway inputs, networking and verification limits](../../AI_GATEWAY.md).
+`ai_gateway_enabled=false`, `ai_gateway_domain_name=""`, `ai_gateway_image=""`
+are the defaults; enablement requires a dedicated hostname and digest-pinned image.
+`ai_gateway_listener_rule_priority` defaults to 50; `ai_gateway_url` is null when off.
+The managed installer calls this module directly, not Helm; its defaults stay off.
 
 It sets the same environment the [`openwork-ee` Helm chart](../../../../packaging/helm/openwork-ee)
 sets on Kubernetes, so the chart's README and `ee/apps/den-api/.env.example`
@@ -35,14 +45,15 @@ Contract-v1 offline checks: Terraform 1.16.5 / AWS provider 6.69.1 and
 OpenTofu 1.11.14 / AWS provider 6.69.0, 2026-10-15, 37 tests each (including write-only existing-database coverage).
 The contract-v1 rows below are separate from historical task-local-migration runs.
 An earlier AWS 5.100.0 / random 3.7.2 run is historical evidence, not the current
-supported provider range. The decoupled managed root keeps its original pins
-and is checked independently against its frozen pre-contract module.
+supported provider range. The managed root now adopts AWS 6.x with its own
+committed lock; offline adoption tests are not a real provider-upgrade receipt.
 
 What has been applied end to end in an AWS test account with
 `examples/complete`, and what has not:
 
 | Scenario | Result | Release / tools | Date |
 | --- | --- | --- | --- |
+| AI Gateway live DNS/TLS, admin/provider/Desktop flow, unchanged apply, disable/data retention and teardown | NotRun: offline-only implementation; no infrastructure provisioned | See [AI Gateway verification boundary](../../AI_GATEWAY.md#verification-boundary) | 2026-11-13 |
 | Contract-v1 offline guards, including write-only existing DB and no legacy bootstrap output in write-only mode | Passed: 37 per tool | Terraform 1.16.5 / OpenTofu 1.11.14 | 2026-10-15 |
 | Contract-v1 release → dev, two API-only tasks, exactly one successful migrator per image, recognizable org preserved | Passed | 0.18.58 → dev ef455ca; AWS 6.69.1 | 2026-10-15 |
 | Same-version later apply with identical ephemeral inputs; secret hashes/version and pre-apply session unchanged | Passed: plan exit 0, no changes | 0.18.58 | 2026-10-15 |
@@ -219,10 +230,38 @@ at the `alb_dns_name` output (CNAME) at your DNS provider.
   or set `allow_public_signup = true` for a while.
 - **OpenWork Web** (chat in the browser, each member's workspace in a
   Daytona sandbox) is off by default; see [OpenWork Web](#openwork-web).
-- **Anything else** (SSO, proxies, Gateway, observability): add env vars with
+- **AI Gateway:** use the first-class `ai_gateway_*` inputs above. Setting
+  `GATEWAY_ENABLED` through `extra_environment` alone does not deploy a service;
+  remove Gateway/Inference and shared runtime overrides before opting in.
+- **Anything else** (SSO, proxies, observability): add non-secret env vars with
   `extra_environment` and secrets with `extra_secrets`.
 
 ## Upgrade notes
+
+**Database size default: `db.t4g.micro` → `db.t4g.small`.** New installs get
+2 GiB of database memory instead of 1 GiB; API and web sizes are unchanged.
+Existing direct users who omitted `database.instance_class` will see an
+**in-place instance-class change** in their next plan. Applying it queues the
+change for the next RDS maintenance window by default (`apply_immediately = false`);
+the class change restarts the database and interrupts connections when performed.
+With `apply_immediately = true`, that restart happens during apply instead.
+Review pending modifications and schedule maintenance before applying. See
+[AWS modification behavior](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html).
+
+Estimated Single-AZ MySQL instance cost in **us-east-1** increases from
+**$11.68 to $23.36/month (+$11.68)** at 730 hours ($0.016 → $0.032/hour,
+public on-demand list prices checked 2026-10-19). Storage, CPU credits,
+backups, networking, taxes and discounts are excluded; this is not a total-stack quote.
+See [RDS pricing](https://aws.amazon.com/rds/mysql/pricing/).
+To keep the old size, set this in your module call **before upgrading**
+(merge it into your existing `database` object; keep its other settings):
+
+```hcl
+database = { instance_class = "db.t4g.micro" }
+```
+
+This opts out of the resize, but retains the measured low-memory risk of micro.
+Managed installers explicitly pin their own sizes and are unchanged by this default.
 
 **First upgrade from the old per-task migrator requires maintenance.** Reducing
 replicas to one is not an exclusion barrier. Before applying this module:
@@ -305,15 +344,23 @@ This module is for **direct Terraform users** and requires AWS `~> 6.69`,
 random `~> 3.9`, archive `~> 2.7` and HTTP `~> 3.5`. The temporary AWS 5.x/6.x
 compatibility-range exception has been removed.
 
-The managed AWS installer does **not** consume this module. It uses its own
-frozen pre-contract copy under
-`infra/managed-deployments/aws/terraform/modules/openwork-aws-ecs`, retaining
-its original behavior and AWS 5.100.0 / random 3.7.2 / archive 2.8.1 lock.
-Its earlier legacy-mode adapter, extra HTTP lock entry and migration mocks are
-not needed. The standalone live results here do not certify a managed-installer
-upgrade. Adopting the new module requires separate work and owner review for
-supporting-file packaging, bootstrap permissions/re-approval, a legacy fence
-and update/version handling. See the managed-deployments README for provenance.
+The managed AWS installer consumes this module with `write_only_secrets=false`
+and `managed_legacy_secrets=true`. The latter is an installer-only compatibility
+mode, not a direct-user default: it preserves the old accept seed and strict
+current version while the runner fences legacy tasks before migration. It must
+not be enabled by direct callers without that orchestration. Customers must
+approve the updated scoped migration Lambda/IAM/log permissions and a maintenance
+window. Direct-module live results do not certify that managed Update path.
+See `infra/managed-deployments/README.md` for the complete upgrade/recovery flow.
+
+Core definition addresses now use `api_v1`, `web_v1`, `migrate_v1`, with
+`skip_destroy=true` from creation. Earlier API/web/migrator addresses are
+forgotten without deregistration; managed `api_ca`/`web_ca` addresses move to the
+new ones. This intentionally retains historical revisions, including pre-CA or
+migration-capable ones: never manually restart them. Inventory/deregister owned
+retained definitions only after services are destroyed during decommissioning.
+API rollback remains disabled; managed web rollback is also disabled for safe
+first adoption. Direct web rollback behavior is unchanged.
 
 No provider lock file is shipped in this reusable module. Generate your root
 or example lock with the tool you use (`terraform init` / `tofu init`), then
@@ -332,7 +379,7 @@ verification through custom environment overrides.
 
 ## Inputs and defaults
 
-All inputs remain listed in `variables.tf` and `security.tf`; equivalent cloud
+All inputs remain listed in `variables.tf`, `security.tf` and `managed.tf`; equivalent cloud
 concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 
 | Input | Default / meaning |
@@ -346,7 +393,7 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `alb_subnet_ids`, `database_subnet_ids` | `[]`; supply two AZs for managed ALB/RDS |
 | `create_database`, `database_url` | `true`, empty legacy URL; false brings an existing strict-TLS DB (write-only mode uses `secret_values_wo.database_url`) |
 | `deletion_protection` | `true`; deprecated `database.deletion_protection` overrides if set |
-| `database` | t4g.micro, MySQL 8.4, 20–100 GiB gp3, single AZ, 7-day backups, final snapshot, deferred changes, strict TLS |
+| `database` | t4g.small, MySQL 8.4, 20–100 GiB gp3, single AZ, 7-day backups, final snapshot, deferred changes, strict TLS |
 | `database_ca_bundle` | Empty fetches regional public RDS CA; PEM override for existing DB |
 | `den_api` | 1024 CPU units / 2048 MiB / one task; no migrations in replicas |
 | `den_web` | 512 CPU units / 1024 MiB / one task |
@@ -360,7 +407,8 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `api_listener_rule_priority`, `web_listener_rule_priority`, `attach_listener_certificate` | `10`, `20`, `false` |
 | `internal_alb`, `assign_public_ip`, `allowed_ingress_cidrs` | `false`, `false`, public ALB ingress |
 | `allow_public_signup`, `require_email_verification` | Both `false` |
-| `automations_enabled`, `dashboards_enabled`, `slack_assistant_enabled` | All `false` |
+| `automations_enabled` | `true`; independent of runner, Slack and computer selection |
+| `dashboards_enabled`, `slack_assistant_enabled` | Both `false` |
 | `email_from`, `smtp`, `resend_api_key` | Empty / disabled; SMTP port 587, nonimplicit TLS |
 | `extra_environment`, `extra_secrets` | Empty maps; nonsecret settings / secret references |
 | `create_redis`, `redis_node_type` | `false`, `cache.t4g.micro` |
@@ -370,6 +418,7 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `provisioner_mode`, `daytona`, `daytona_api_key` | Auto stub/Daytona; hosted API with empty snapshot/target; empty key |
 | `headless_runner`, `headless_runner_image`, `headless_runner_token` | Off; 512 CPU / 1024 MiB; digest override if managed; empty external token |
 | `headless_model_api_key`, `headless_computer`, `headless_computer_api_key` | Empty key; computer off; empty key |
+| `headless_model_secret_arn`, `headless_computer_secret_arn` | Empty; optional external plain-string secret references, mutually exclusive with the matching raw keys |
 | `workbot`, `workbot_image`, `workbot_listener_rule_priority` | Off; 256 CPU / 512 MiB / one; digest override if enabled; `40` |
 
 ## Outputs
@@ -381,10 +430,12 @@ concepts use the common names below. AWS uses `tags` rather than GCP `labels`.
 | `migration_step_identifier`, `migration_result` | Common migration task definition; terminal task/image/exit result |
 | `setup_url`, `bootstrap_code` | First administrator URL; sensitive legacy code (null in write-only mode) |
 | `secret_arn`, `database_endpoint` | Secret reference; managed RDS endpoint |
-| `cluster_name`, `cluster_arn`, `service_names` | ECS identities |
+| `cluster_name`, `cluster_arn`, `service_names`, `task_definition_arns` | ECS identities and intended core/optional service revisions |
 | `alb_arn`, `alb_dns_name`, `alb_zone_id`, `alb_security_group_id` | ALB/DNS integration |
 | `task_security_group_id`, `target_group_arns`, `log_groups`, `certificate_arn` | Network and observation references |
 | `openwork_web_url`, `workbot_url` | Optional app endpoints, null while disabled |
+| `efs_file_system_id`, `runner_backup_vault_name` | Optional runner filesystem and encrypted seven-day backup vault; null without a managed runner |
+| `runner_secret_version_id` | Opaque runner credential version ID for preservation checks; never a credential value |
 
 ## Slack, headless Automations and Workbot
 
@@ -399,7 +450,7 @@ keep `service_subnet_ids` in different availability zones).
 ```hcl
   automations_enabled     = true # headless cloud Automations
   slack_assistant_enabled = true
-  headless_model_api_key  = var.anthropic_api_key
+  headless_model_secret_arn = var.model_secret_arn # existing plain-string API key secret
   headless_runner = {
     enabled = true
     model   = "claude-sonnet-4-5" # any model at model_base_url
@@ -416,6 +467,42 @@ Workbot stores sign-in state in encrypted cookies using one shared
 `WORKBOT_DB_PATH`; replicas use rolling deployments (100% minimum healthy,
 200% maximum). The managed Node runner still needs EFS and remains a single
 writer, regardless of Workbot's replica count.
+
+For credentials already stored in Secrets Manager, prefer
+`headless_model_secret_arn` and `headless_computer_secret_arn` to raw-key inputs.
+Each accepts a **full plain-string secret ARN**, without a JSON-key/version
+suffix, encrypted with the AWS-managed Secrets Manager key. ECS injects the
+secret directly; Terraform never reads the secret value or copies it into a
+SecretVersion. Only the task execution role receives `GetSecretValue` on the
+selected ARNs, and unused references grant no access while the runner/computers
+are off. Customer-managed KMS keys need separately reviewed decrypt permissions
+and are not supported by these inputs alone. Raw-key inputs remain supported
+for existing direct deployments and retain their state-backed behavior.
+
+The managed installer uses a separate Workbot session secret. Enabling Workbot
+later therefore does not change its existing runner credential SecretVersion.
+Direct callers retain their existing combined secret layout; do not switch an
+existing direct deployment into `managed_legacy_secrets` mode. Credential
+rotation is not part of enabling Workbot.
+
+Every module-managed runner now gets an AWS Backup plan: daily at 05:00 UTC,
+seven-day retention, in the encrypted `${name}-runner` vault. The
+`${name}-runner-backup` role can back up only this runner's EFS filesystem and
+use its encryption keys; it has no restore or deletion rights and no broad
+AWS-managed backup policy. Existing direct runner deployments will see these
+**additional backup resources** in their next plan; disabled runners and
+external fleets create none. The vault cannot be force-deleted with recovery
+points. Restoring a backup is a separate customer-approved recovery operation;
+file-level snapshots do not prove SQLite application-consistent recovery.
+The 17 November 2026 isolated **managed-installer** test observed encrypted
+triggered and scheduled daily backups with this role/vault, plus Workbot
+DNS/certificate/service enablement. It did **not** qualify application use:
+Workbot and a scheduled headless Automation failed because the legacy/direct
+configuration lacked the Gateway expected by the published `0.18.67` runtime.
+The selected managed `gateway` profile now includes this module's native Gateway,
+with existing scoped authorization unchanged; it needs its own approved Update
+and application proof. No direct-model runtime change was implemented. Restore
+remains **NotRun**. See [the managed installer README](../../../managed-deployments/README.md).
 
 ### Existing celld/S3 fleet
 
@@ -473,30 +560,43 @@ fresh managed runner.
 - **Workbot** is a chat app at `workbot.domain_name` (default
   `chat.<domain_name>`; covered by a module-created certificate and Route 53).
   Members sign in with their OpenWork account; the dashboard links to it.
-- **Slack**: `slack_assistant_enabled` turns the Slack assistant on. Replies
-  run on the headless runner when it is enabled (and work a reply hands to a
-  member's desktop is posted back to the thread), otherwise on OpenWork Web.
-  Then, in Den, add the Slack connector and follow its Slack assistant setup:
+- **Slack**: with a runner configured, `slack_assistant_enabled` sets the
+  supported `DEN_SLACK_ASSISTANT_WORKER_ENABLED` setting explicitly: `true`
+  enables Slack turn processing and desktop-handoff delivery; `false` stops
+  those workers. Slack is generally available; no feature lock is emitted.
+  Without a runner, the module emits no Slack worker override and Den's setup
+  reports the missing runner; OpenWork Web is not a fallback for Slack turns.
+  In Den, add the Slack connector and follow its separate assistant opt-in:
   it generates the Slack app manifest with this deployment's URLs. See
   [Set up the Slack app](https://openworklabs.com/docs/slack/set-up-the-slack-app).
 - **Headless Automations**: with `automations_enabled` and the runner,
-  scheduled cloud Automations run on the runner.
+  scheduled cloud Automations run on the runner. Automations default to on;
+  `automations_enabled` remains independent of runner, Slack and computer
+  selection. The module emits no `DEN_AUTOMATIONS_RUNTIME_ENABLED` override,
+  preserving Den's runtime default and an explicit Automations setting.
+  Turning Slack off does not turn Automations or the model off.
 
 ### Optional Workbot computer (Daytona or Freestyle)
 
 The runner's `bash` and `look` tools can use either provider, off by default.
-Daytona shares this deployment's Daytona connection, but **not the Web snapshot**:
+The runner, Workbot and Slack can install and run without computers: provider
+credentials and snapshots are required only when that provider is selected.
+Terraform configures the runner's tools; it does not provision a Daytona or
+Freestyle sandbox during installation. Daytona uses `daytona.api_url` (default
+`https://app.daytona.io/api`) and `daytona.target` (default empty), but **not the
+OpenWork Web snapshot**:
 
 ```hcl
   headless_computer = {
     provider = "daytona"
     snapshot = "<snapshot from snapshot:build:daytona>"
   }
-  daytona_api_key = var.daytona_api_key
+  headless_computer_secret_arn = var.computer_secret_arn
 ```
 
 Build it with `DAYTONA_API_KEY=… pnpm --filter @openwork-ee/headless-computer snapshot:build:daytona`.
-For Freestyle, set `provider = "freestyle"` and `headless_computer_api_key`;
+For Freestyle, set `provider = "freestyle"` and `headless_computer_secret_arn`
+(or the legacy state-backed `headless_computer_api_key`);
 its snapshot defaults to the existing prepared computer image. The backend
 setting changes where tools run, not organization feature access. Turning it
 off stops new computer use; existing computers retain their provider's idle
@@ -552,8 +652,26 @@ several deployments can share one Daytona organization.
 
 ## Cost notes
 
-### Rough cost (us-east-1, defaults)
+Enabling the AI Gateway adds one 1 vCPU / 2 GiB Fargate task, logs and ALB traffic,
+not a new database. Its live capacity and incremental costs have not been measured.
 
-About $3/day: den-api 1 vCPU/2 GB and den-web 0.5 vCPU/1 GB on Fargate, a
-db.t4g.micro RDS, and an ALB. ElastiCache adds about $0.40/day. A NAT
-gateway, if your VPC needs one, adds about $1/day.
+### Small / trial baseline
+
+| Component | Default per copy |
+| --- | --- |
+| Den API | 1 vCPU / 2 GiB, one task |
+| Den web | 0.5 vCPU / 1 GiB, one task |
+| Database | db.t4g.small (2 GiB), 20 GiB gp3, single AZ, 7-day backups |
+| Migration task | 1 vCPU / 2 GiB, one task per deployment |
+
+This provisional baseline comes from light setup/sign-in measurements, not a
+user-capacity load test. Medium/Large and optional service sizes are not qualified.
+Use two API copies for service redundancy when needed (additional compute cost);
+this does not make the single-AZ database highly available.
+
+The instance-only monthly estimate and old-size opt-out are in
+[Upgrade notes](#upgrade-notes). Budget separately for Fargate, ALB, optional
+NAT/Redis, storage/backups, logs and image-transfer traffic. API/web size changes
+in this revision cost **$0/month extra** because those defaults are unchanged.
+Managed installer sizes are separately pinned; this module-default change does
+not update their small profile.
