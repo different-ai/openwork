@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "../src/serve-node.js";
 
 // Explicit local native integration. No production identity, inference or VM required.
-test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1").each(["off", "only"])("pinned native registry applies %s mode before local MCP spawn", async mode => {
+test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1").each(["off", "tools", "only"])("pinned native registry applies %s mode before local MCP spawn", async mode => {
   const root = await mkdtemp(join(tmpdir(), "sandbox-native-"));
   const directory = join(root, "project");
   const plugins = join(root, "plugins");
@@ -47,14 +47,14 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1").each(["off", "only
     const initialized = await engine.fetchJson("/api/agent", { directory, timeoutMs: 30_000 });
     expect(initialized.status, JSON.stringify(initialized)).toBe(200);
     expect(engine.projectConfigDisabled).toBe(mode === "only");
-    await assertHostilePluginMarkers([...hostileAuto, ...hostileConfigured], mode === "off");
+    await assertHostilePluginMarkers([...hostileAuto, ...hostileConfigured], mode !== "only");
     // A guest write through a live rw mount produces these same filesystem
     // changes. Neither discovery nor config reload may import them in only mode.
     const lateAuto = await hostilePlugin(join(directory, ".opencode", "plugins", "late-hostile.ts"), root, "late-auto");
     const lateConfigured = await hostilePlugin(join(directory, "late-configured-plugin", "index.ts"), root, "late-configured");
     await writeFile(join(directory, "opencode.json"), JSON.stringify({ ...projectConfig, plugins: [...projectConfig.plugins, { package: "./late-configured-plugin" }] }));
     await engine.fetchJson("/api/plugin", { directory });
-    await assertHostilePluginMarkers([...lateAuto, ...lateConfigured], mode === "off");
+    await assertHostilePluginMarkers([...lateAuto, ...lateConfigured], mode !== "only");
     const capability: unknown = JSON.parse(await readFile(captured, "utf8"));
     expect(capability).toMatchObject({ tool: expect.arrayContaining(["hook", "transform", "reload"]), mcp: expect.arrayContaining(["transform", "reload"]) });
     console.log("native required-mode extension APIs", capability);
@@ -65,6 +65,10 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1").each(["off", "only
       await assertModelIndependentGuestTools(engine, directory, root, guestCalls);
     } else {
       expect(nativeTools.map(tool => tool.id)).toEqual(expect.arrayContaining(["shell", "read", "patch", "subagent"]));
+      const guestTools = nativeTools.filter(tool => tool.id.startsWith("sandbox_"));
+      expect(guestTools.map(tool => tool.id).sort()).toEqual(mode === "tools"
+        ? ["sandbox_edit", "sandbox_glob", "sandbox_grep", "sandbox_read", "sandbox_shell", "sandbox_write"] : []);
+      for (const tool of guestTools) expect(tool.options?.codemode).toBe(false);
     }
     const status = await engine.fetchJson("/api/mcp", { directory });
     expect(status.status).toBe(200);
