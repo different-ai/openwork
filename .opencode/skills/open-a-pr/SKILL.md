@@ -52,10 +52,29 @@ users rely on always needs a note.
 
 Title: conventional commit, imperative, under 70 characters.
 
-A short Mermaid diagram or a small table is welcome under an existing heading
-when it shows the cause or the before → after faster than a sentence would:
-one of them, a handful of nodes or rows, and it replaces prose rather than
-adding to it. It does not count toward the word limit.
+## Show it
+
+Before writing, ask whether a picture beats the sentence. Add one when the
+change has any of these:
+
+- **A chain of cause**, three or more hops (A stores no limit, so B assumes
+  one, so C refuses): a Mermaid `flowchart LR` under "What was the situation
+  before?".
+- **A path that changed** between parts (client, Den, gateway, provider): one
+  flowchart with the old edge and the new edge labelled, same heading.
+- **Several cases** that behave differently (per provider, mode or input): a
+  small before / after table instead of a paragraph.
+
+One per PR, at most about six nodes or rows, plain words on the labels, and
+it replaces the prose it shows rather than repeating it. It does not count
+toward the word limit. A one-file fix with a one-line cause needs none.
+
+```mermaid
+flowchart LR
+  A["Model saved with no limit"] --> B["Client assumes 32000"]
+  B -->|before| C["Provider: 400"]
+  B -->|after: gateway lowers it| D["Provider: 200"]
+```
 
 ## Evidence
 
@@ -96,4 +115,6 @@ gh pr edit <n> --body-file /tmp/pr-body.md
 ```
 
 Write the file first and read it as the reviewer would. If a section makes
-you scroll, cut it.
+you scroll, cut it. Then run the three questions in "Show it" once more:
+if one is a yes and the body has no diagram or table, add it before creating
+the PR.
