@@ -24,7 +24,7 @@ test("a platform administrator verifies and pins an installer without changing a
 
   await step("the administrator explicitly configures single-administrator approval inside Admin", async () => {
     await person.click({ text: "Advanced" });
-    await person.click({ role: "button", text: "One administrator" });
+    await person.click({ role: "radio", text: "One administrator" });
     await person.click({ role: "button", text: "Save approval policy" });
     await person.see({ text: "Allow one platform administrator to verify and pin releases?" });
     await person.click({ role: "button", text: "Confirm one administrator" });
