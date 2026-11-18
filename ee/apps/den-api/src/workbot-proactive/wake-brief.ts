@@ -60,7 +60,7 @@ import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
+import { checkSources, noticeStoppedSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
 
 /**
  * One check of a member's agent under `workbotAgentBrief`: one rhythm, the brief, and two steps.
@@ -238,9 +238,13 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   }
   if (!listed) return retry("sources_unavailable")
   const ready = sources.filter((source) => readableConnections(source).length > 0)
-  const notices = await noticeUnreadableSources({
-    row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
-  })
+  const notices = {
+    ...await noticeUnreadableSources({
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
+    }),
+    // A source it read lately that is no longer on: said once too, instead of only dropping out of the check.
+    ...await noticeStoppedSources({ row, organizationId, userId, sources, choices: stored.sources, othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record }),
+  }
   // Which tools the check may call on each connection, decided now: an admin's choice, a reviewed list, the provider's
   // annotations, then the tool's name. Only these ride in its token; a source left with none sits this check out.
   const toolPlan = await planAgentTools({

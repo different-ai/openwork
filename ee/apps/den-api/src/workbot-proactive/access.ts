@@ -52,6 +52,14 @@ export async function agentSendCheckAllowed(organizationId: string, userId?: str
 }
 
 /**
+ * Your agent saying when it stops reading a source (`workbotAgentStoppedSources`) for this member. Off, a source that
+ * is no longer on simply drops out of the check, as before.
+ */
+export async function agentStoppedSourcesAllowed(organizationId: string, userId?: string) {
+  return organizationFeatureEnabled(organizationId, "workbotAgentStoppedSources", userId ? { userId } : {})
+}
+
+/**
  * Whether this deployment has the key for the evaluation model. Without it the check gate skips a check only when
  * nothing arrived, and the send check can't run.
  */

@@ -40,7 +40,7 @@ import {
   type MemberConnection,
   type ResolvedSource,
 } from "./sources.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService } from "./wake-shared.js"
+import { checkSources, noticeStoppedSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService } from "./wake-shared.js"
 import type { AgentCheckCount, AgentInstanceRow, AgentSettle, DeliveryOutcome } from "./repository.js"
 import type { AgentTemplateVersion } from "./template.js"
 import type { AgentTurnResult } from "./turn.js"
@@ -80,6 +80,11 @@ export type AgentWakeDeps = {
   connectedMembers?: (organizationId: DenTypeId<"organization">) => Promise<ReadonlyMap<string, number>>
   /** Where the member connects or reconnects a connection. */
   connectLink: (connectionId: string) => string
+  /**
+   * `workbotAgentStoppedSources` for this member: where they choose what their agent reads, or null while the feature
+   * is off for them. Asked only when a source their agent read lately is no longer on.
+   */
+  stoppedSources?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<{ link: string } | null>
   sessionId: (organizationId: string, memberId: string) => string
   messageId: (memberId: string, wakeAt: number) => string
   told: (memberId: DenTypeId<"member">, items: readonly AgentItem[]) => Promise<Set<string>>
@@ -239,9 +244,13 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   const readable = sources.filter((source) => readableConnections(source).length > 0)
 
   // A source that is on but can't be read: one message with the action that fixes it, once until it works again.
-  const notices = await noticeUnreadableSources({
-    row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record,
-  })
+  const notices = {
+    ...await noticeUnreadableSources({
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record,
+    }),
+    // A source it read lately that is no longer on: said once too, instead of only dropping out of the check.
+    ...await noticeStoppedSources({ row, organizationId, userId, sources, choices, othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record }),
+  }
   if (!readable.length) {
     // Nothing to read: no turn. Look again later; the member's fix (or turning a source on) makes it due sooner.
     return skip("no_sources", now + Math.min(6, row.failures + 1) * HOUR_MS, { state: JSON.stringify({ ...observed, notices }), timeZone, failures: row.failures + 1 })
