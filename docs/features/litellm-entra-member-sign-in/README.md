@@ -28,6 +28,33 @@ offers a fourth choice, **Microsoft sign-in**:
 Nothing changes for Microsoft Foundry sign-in or for the three key-based
 LiteLLM modes, with the feature on or off.
 
+## What it looks like
+
+Screenshots from a local Den with the feature on, taken while running the
+proof described under [Verified](#verified). The tenant, application and
+addresses are throwaway values.
+
+**Add a provider › LiteLLM › Microsoft sign-in.** The admin enters the app
+registration, one API scope and the model names. No LiteLLM key is asked for.
+
+![Add LiteLLM with Microsoft sign-in](add-litellm-microsoft-sign-in.png)
+
+**The provider page.** It shows the redirect URI to add to the app
+registration, how many people signed in, and the settings an admin can change.
+
+![LiteLLM provider page](provider-page.png)
+
+**Connect, in the member's browser.** The person continues to Microsoft and
+comes back to a confirmation.
+
+![Connect page](connect-page.png)
+
+![Connected](connected.png)
+
+**With the feature off.** Microsoft sign-in stays visible but locked.
+
+![Add LiteLLM with the feature off](add-litellm-feature-off.png)
+
 ## How it is built
 
 - **No database migration.** The app registration lives in the provider's one
@@ -104,8 +131,8 @@ operator override, the only setup UI change is a locked sign-in option.
 The additional identity, feature-state and primary-database dispatch checks are
 restricted to this new LiteLLM mode; existing provider modes retain their
 previous request path. To roll back a trial, turn the feature off before
-reverting its code. Keep the flag off until licensed, real-provider and browser
-verification is complete.
+reverting its code. Keep the flag off until the flow has also run against a real
+Microsoft Entra tenant: see [Not verified](#not-verified).
 
 ## What to watch
 
@@ -133,14 +160,44 @@ Tokens and the client secret are never logged and never returned by any API.
 - `ee/apps/den-web/app/(den)/dashboard/_components/litellm-provider-data.test.ts`:
   what the admin screens send and refuse.
 
+## Verified
+
+`evals/proofs/litellm-entra-sign-in.proof.test.ts` (world:
+`evals/worlds/litellm-entra-sign-in.ts`) runs the whole flow on this
+checkout's Den, Den web and AI Gateway against a **real, licensed LiteLLM
+Enterprise proxy** (1.109.1) with its own JWT authentication, a database, one
+LiteLLM user per Entra object id and no LiteLLM key for anyone:
+
+- With the feature off the admin UI locks the option and the API answers
+  `403 feature_disabled`.
+- With it on, an admin adds the provider in the browser, a member signs in from
+  the Connect page, and a real `chat/completions` request through AI Gateway
+  returns LiteLLM's reply. LiteLLM received the member's own token (issuer,
+  audience and object id as configured) and held no key for them.
+- LiteLLM itself answers `401` to no token, a made-up `sk-` key, a token signed
+  by another key, for another audience, from another tenant, an expired token,
+  and a person it has no user for.
+- A teammate who has not signed in gets `401 openwork_auth_required` from AI
+  Gateway and LiteLLM is not called. Turning the feature off again gives the
+  signed-in member `403 feature_disabled` before LiteLLM is called.
+
+Run it with `LITELLM_LICENSE` set and docker available:
+`pnpm evals:e2e litellm-entra-sign-in --local`.
+
 ## Not verified
 
-- A local LiteLLM 1.109.1 probe confirmed that native JWT authentication refuses
-  unlicensed requests with HTTP 403. That checks the license gate only, not
-  successful sign-in or inference.
-- Entra ID and LiteLLM are stand-ins in every automated test. The flow has not been run
-  against a real Entra tenant or a real LiteLLM proxy, so the token Entra
-  issues for a custom scope and LiteLLM's validation of it are unproven here.
-- The admin screens were typechecked, linted and unit tested, not opened in a
-  browser. This doc has no screenshots yet; add them from a running Den before
-  the feature is turned on for anyone.
+- **Microsoft Entra ID itself.** In that proof Entra ID is a stand-in
+  (`evals/packages/labs/src/entra-stand-in.ts`) that issues Entra-shaped v2
+  tokens under its own signing key. No real tenant has issued a token for a
+  custom scope through this flow, so the real consent screen, the `scope`
+  Entra returns for the configured scope, Conditional Access and the claims of
+  a real v2 access token are unproven. Do this once against a real tenant with
+  a dedicated app registration before turning the feature on for anyone.
+- **Token renewal against LiteLLM.** AI Gateway only renews through public
+  addresses, so the stand-in cannot answer it. Renewal is covered by the
+  Gateway's unit tests only.
+- **The OpenWork app.** The proof starts Connect the way the app does (the
+  provider's `oauth/start` address) and drives the Connect page in a browser.
+  The app's own Connect row for this provider was not exercised.
+- **LiteLLM audience lists.** The proxy in the proof is configured with one
+  audience. LiteLLM 1.109.1 declares `audience` as a string or a list.
