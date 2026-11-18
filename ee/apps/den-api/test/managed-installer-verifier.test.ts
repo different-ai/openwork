@@ -5,7 +5,7 @@ import { once } from "node:events"
 import { Buffer } from "node:buffer"
 import { gzipSync, gunzipSync } from "node:zlib"
 import { inspectInstallerBundle } from "../src/managed-deployments/release-verifier.js"
-import { installerSourceBaseUrl, latestInstallerVersion, verifyInstallerRelease } from "../src/managed-deployments/release-verifier.js"
+import { boundedReleaseGet, InstallerReleaseError, installerSourceBaseUrl, latestInstallerVersion, sha256, verifyInstallerRelease } from "../src/managed-deployments/release-verifier.js"
 import { fixtureArtifacts, fixtureFetch, gcpSource, source } from "./api/managed-installer-fixtures.js"
 
 test("latest stable discovery requests GitHub JSON rather than the artifact download media type", async () => {
@@ -111,6 +111,84 @@ test("verifies all objects twice and complete immutable five-image runtime inven
 
 test("rejects missing real immutable version, changed versioned bytes, hashes and legacy core-only bundles", async () => {
   for (const fetcher of [fixtureFetch(undefined, { noVersion: true }), fixtureFetch(undefined, { changed: true }), fixtureFetch(new Map([["1.2.3", fixtureArtifacts("1.2.3", { corrupt: true })]])), fixtureFetch(new Map([["1.2.3", fixtureArtifacts("1.2.3", { coreOnly: true })]]))]) await assert.rejects(verifyInstallerRelease("aws", source, "1.2.3", fetcher))
+})
+
+test("object failures identify the artifact and distinguish forbidden from missing without exposing provider bodies", async () => {
+  for (const name of ["manifest.json", "cloudformation.json", "bundle.tar.gz"]) {
+    for (const status of [403, 404, 500]) {
+      const original = fixtureFetch()
+      const failing: typeof fetch = async (input, init) => String(input).includes(`/${name}`) ? new Response("private provider error with credentials", { status }) : original(input, init)
+      await assert.rejects(verifyInstallerRelease("aws", source, "1.2.3", failing), (error: unknown) => {
+        assert.ok(error instanceof InstallerReleaseError)
+        assert.equal(error.code, "artifact_unavailable")
+        assert.equal(error.status, status === 403 || status === 404 ? 400 : 502)
+        assert.ok(error.message.includes(name))
+        assert.ok(error.message.includes(`HTTP ${status}`))
+        assert.ok(!error.message.includes("credentials"))
+        assert.ok(!error.message.includes(source))
+        if (status === 403) assert.match(error.message, /may be unpublished or private/)
+        if (status === 404) assert.match(error.message, /not found/)
+        return true
+      })
+    }
+  }
+})
+
+test("download diagnostics distinguish deadlines, transport failures and declared or streamed size limits", async () => {
+  const failing: typeof fetch = async () => { throw new Error("private transport detail") }
+  const cases = [
+    { fetcher: failing, signal: AbortSignal.abort(), code: "artifact_unavailable", message: /deadline/ },
+    { fetcher: failing, signal: new AbortController().signal, code: "artifact_unavailable", message: /public read access/ },
+    { fetcher: async () => new Response("secret", { headers: { "content-length": "100" } }), signal: new AbortController().signal, code: "artifact_too_large", message: /size limit/ },
+    { fetcher: async () => new Response("secret"), signal: new AbortController().signal, code: "artifact_too_large", message: /size limit/ },
+    { fetcher: async () => new Response(new ReadableStream({ start(controller) { controller.error(new Error("private transport detail")) } })), signal: AbortSignal.abort(), code: "artifact_unavailable", message: /deadline/ },
+  ] satisfies { fetcher: typeof fetch, signal: AbortSignal, code: string, message: RegExp }[]
+  for (const entry of cases) await assert.rejects(boundedReleaseGet(`${source}1.2.3/bundle.tar.gz`, 3, entry.signal, entry.fetcher), (error: unknown) => {
+    assert.ok(error instanceof InstallerReleaseError)
+    assert.equal(error.code, entry.code)
+    assert.equal(error.status, 502)
+    assert.match(error.message, /bundle\.tar\.gz/)
+    assert.match(error.message, entry.message)
+    assert.doesNotMatch(error.message, /secret|private transport detail/)
+    return true
+  })
+})
+
+test("manifest, object checksum and runtime inventory failures retain safe actionable diagnostics", async () => {
+  for (const entry of [
+    { kind: "manifest-json", code: "manifest_invalid", message: /manifest\.json.*protocolVersion 1/ },
+    { kind: "manifest-protocol", code: "manifest_invalid", message: /protocolVersion 1/ },
+    { kind: "manifest-identity", code: "manifest_identity_mismatch", message: /selected provider and version/ },
+    { kind: "template-checksum", code: "artifact_checksum_mismatch", message: /cloudformation\.json.*templateSha256/ },
+    { kind: "bundle-checksum", code: "artifact_checksum_mismatch", message: /bundle\.tar\.gz.*bundleSha256/ },
+    { kind: "runtime-inventory", code: "runtime_inventory_mismatch", message: /den_api, den_web, headless_runner, workbot, ai_gateway/ },
+    { kind: "runtime-digest", code: "runtime_image_unpinned", message: /den_api.*@sha256:/ },
+    { kind: "archive", code: "bundle_invalid", message: /regular-file archive/ },
+  ]) {
+    const artifacts = fixtureArtifacts("1.2.3", { coreOnly: entry.kind === "runtime-inventory", imageDigest: entry.kind === "runtime-digest" ? "invalid-private-image" : undefined })
+    const manifest = artifacts.get("manifest.json")
+    assert.ok(manifest)
+    if (entry.kind === "manifest-json") artifacts.set("manifest.json", Buffer.from("private malformed json"))
+    if (entry.kind === "manifest-protocol") artifacts.set("manifest.json", Buffer.from(manifest.toString().replace('"protocolVersion":1', '"protocolVersion":2')))
+    if (entry.kind === "manifest-identity") artifacts.set("manifest.json", Buffer.from(manifest.toString().replace('"provider":"aws"', '"provider":"gcp"')))
+    if (entry.kind === "template-checksum") artifacts.set("cloudformation.json", Buffer.from("private mismatching template"))
+    if (entry.kind === "bundle-checksum") artifacts.set("bundle.tar.gz", Buffer.from("private mismatching bundle"))
+    if (entry.kind === "archive") {
+      const bundle = Buffer.from("private invalid gzip")
+      const oldBundle = artifacts.get("bundle.tar.gz")
+      assert.ok(oldBundle)
+      artifacts.set("bundle.tar.gz", bundle)
+      artifacts.set("manifest.json", Buffer.from(manifest.toString().replace(sha256(oldBundle), sha256(bundle))))
+    }
+    await assert.rejects(verifyInstallerRelease("aws", source, "1.2.3", fixtureFetch(new Map([["1.2.3", artifacts]]))), (error: unknown) => {
+      assert.ok(error instanceof InstallerReleaseError)
+      assert.equal(error.code, entry.code)
+      assert.equal(error.status, 502)
+      assert.match(error.message, entry.message)
+      assert.doesNotMatch(error.message, /private/)
+      return true
+    })
+  }
 })
 
 test("rejects oversized objects, fetch errors and pre-release candidates without leaking remote response bodies", async () => {

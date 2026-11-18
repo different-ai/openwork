@@ -60,6 +60,7 @@ globalThis.fetch = Object.assign(async (input, init) => {
     console.info("Managed installer fixture:", JSON.stringify({ method, path: url.pathname, immutable: url.searchParams.has("versionId") }));
     if (!["GET", "HEAD"].includes(method)) throw new Error("The published-object fixture accepts reads only");
     const match = /^\/releases\/aws\/(1\.2\.[234])\/(manifest\.json|bundle\.tar\.gz|cloudformation\.json)$/.exec(url.pathname);
+    if (url.pathname === "/releases/aws/1.2.5/manifest.json") return new Response("Private storage diagnostic: never show this provider body", { status: 403 });
     if (!match) return new Response(null, { status: 404 });
     const [, version, file] = match;
     const versionId = `fixture-${version}-${file}`;

@@ -37,6 +37,22 @@ test("a platform administrator verifies and pins an installer without changing a
     await person.screenshot();
   });
 
+  await step("after: an inaccessible release explains the publishing problem without changing the default", async () => {
+    await person.type({ label: "Choose version" }, "1.2.5", { replace: true });
+    await person.click({ role: "button", label: "Verify release" });
+    await person.see({ text: /403/ }, { timeoutMs: 30_000 });
+    await person.see({ text: /publish|public/i });
+    await person.notSee({ text: "The request failed with status 502." });
+    await person.notSee({ text: "Private storage diagnostic" });
+    const current = await world.readiness();
+    const reads = await world.artifactReads();
+    const requested = reads.some(line => line.includes("1.2.5/manifest.json"));
+    expect(current?.version).toBe("1.2.2");
+    expect(requested).toBe(true);
+    evidence.recordAssertionEvidence("Unavailable objects have an actionable explanation", "The object store returned 403; the administrator sees publishing/public-access guidance, not a generic 502 or provider body; the default remains 1.2.2", requested && current?.version === "1.2.2");
+    await person.screenshot();
+  });
+
   await step("a corrupt published bundle is refused without changing the offered version", async () => {
     await person.type({ label: "Choose version" }, "1.2.4", { replace: true });
     await person.click({ role: "button", label: "Verify release" });
