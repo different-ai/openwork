@@ -18,3 +18,15 @@ Sending a message from the message box while a question waits skips the
 question first, then sends the message. The card says so next to **Skip**.
 
 Off, the question opens above the message box, as before.
+
+## Forms from the agent (prototype)
+
+With `OPENWORK_ASK_FORM=1` in the server's environment, agents get an
+`ask_form` tool. It asks several things in one card: choices as rows, cards
+with an icon and a short description, or tiles; a scale with labels at both
+ends; a date; or free text. Options may be marked as cost, risk or safe.
+
+It uses the engine's standard v2 form: each field is a `string` or
+`multiselect` form field, and the layout rides in `metadata.form`. An app that
+does not know the layout shows each field as a plain question. Answers come
+back as one message, like `ask_without_waiting`.

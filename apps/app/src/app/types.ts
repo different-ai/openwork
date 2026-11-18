@@ -1,3 +1,4 @@
+import type { AgentForm } from "@openwork/types/agent-form";
 import type {
   Message,
   Part,
@@ -411,6 +412,7 @@ export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  form?: AgentForm;
 };
 
 export type TodoItem = {
