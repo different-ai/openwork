@@ -136,7 +136,7 @@ export function clearQuestionDrafts() {
 }
 
 const QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE =
-  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto wrap-anywhere text-sm leading-6 text-gray-11";
+  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto pl-7.5 wrap-anywhere text-sm leading-6 text-gray-11";
 const QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
 
 export function QuestionPanel(props: QuestionPanelProps) {
@@ -534,7 +534,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                     })}
                   </div>
                 </div>
-                <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
               </div>
             )}
             <CollapsibleTrigger
@@ -565,6 +564,9 @@ export function QuestionPanel(props: QuestionPanelProps) {
               </Button>
             ) : null}
           </div>
+          {collapsed ? null : (
+            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
+          )}
         </div>
         <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
       </Collapsible>
@@ -590,7 +592,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 })}
               </div>
             </div>
-            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
           </div>
           {props.onDismiss ? (
             <Button
@@ -606,6 +607,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
             </Button>
           ) : null}
         </div>
+        <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
       </div>
 
       {body}
