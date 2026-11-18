@@ -13,6 +13,8 @@ this key** after a key is created.
 
 ## What people see
 
+![OpenCode setup in My Library with a copyable configuration](setup.png)
+
 Picking **OpenCode** shows three steps:
 
 1. `export OPENWORK_API_KEY="<key>"` for their shell profile (the key just
