@@ -11,7 +11,7 @@ import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mant
 import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import { isLiteLlmProviderId, liteLlmEntraScope, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { isTrueFoundryProviderId, trueFoundryTracksUsageCosts } from "@openwork-ee/utils/truefoundry-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
@@ -1027,9 +1027,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
       requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
     } else if (isTrueFoundryProviderId(provider.provider_id)) {
-      // Each person's own TrueFoundry token: TrueFoundry budgets it, so record tokens only.
-      spendTracking = false
-      requestPricing = undefined
+      // Each person's own TrueFoundry token: TrueFoundry budgets it, so record tokens only, unless the
+      // provider tracks usage costs in OpenWork and the model has a public price: then price it and apply limits.
+      const price = trueFoundryTracksUsageCosts(provider.settings) && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      spendTracking = price !== null
+      requestPricing = spendTracking && price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
     } else if (isGatewayCustomProviderId(provider.provider_id)) {
       // Custom models are not in the models.dev snapshot: price from the saved model's cost, else record usage unpriced.
       const price = selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
@@ -1128,7 +1130,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
-    // Per-user LiteLLM keys and TrueFoundry tokens are budgeted upstream, so they skip OpenWork admission and limits.
+    // Per-user LiteLLM keys and TrueFoundry tokens are budgeted upstream, so they skip OpenWork admission and limits
+    // (a TrueFoundry provider tracking usage costs in OpenWork keeps them for models with a public price).
     const usageRejection = !spendTracking ? null : await dependencies.checkUsage({
       organizationId: identity.organizationId,
       memberId: identity.orgMembershipId,

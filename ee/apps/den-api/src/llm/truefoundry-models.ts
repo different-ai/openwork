@@ -16,8 +16,10 @@
  * case and `-_.:`, then also ignoring a trailing date (`-2026-04-23`, `-20250514`).
  * An ambiguous match inside one provider is skipped, never guessed.
  *
- * Only capabilities, modalities and limits are copied. Prices are left out:
- * TrueFoundry budgets these requests and OpenWork does not price them.
+ * Capabilities, reasoning options (the efforts the app offers), modalities and
+ * limits are copied. The public price is kept too, but people are only served
+ * it when the provider tracks usage costs in OpenWork (see
+ * servedTrueFoundryModel): otherwise TrueFoundry budgets these requests alone.
  */
 import type { ModelsDevModel, ModelsDevProvider } from "./models-dev.js"
 
@@ -48,7 +50,9 @@ const ACCOUNT_HINTS: ReadonlyArray<[RegExp, readonly string[]]> = [
   [/perplexity|sonar/, ["perplexity"]],
 ]
 
-const COPIED_FACTS = ["attachment", "reasoning", "tool_call", "structured_output", "temperature", "modalities", "limit"] as const
+const COPIED_FACTS = ["attachment", "reasoning", "reasoning_options", "tool_call", "structured_output", "temperature", "modalities", "limit"] as const
+/** Public pricing, served only when the provider tracks usage costs in OpenWork. */
+const PRICE_FACTS = ["cost"] as const
 
 export type TrueFoundryModelMatch = { providerId: string; modelId: string }
 
@@ -115,10 +119,17 @@ export function matchTrueFoundryModel(id: string, providers: readonly ModelsDevP
   return null
 }
 
-/** OpenWork model config for a TrueFoundry model: its own id, the match's name and copied facts. */
+/** OpenWork model config for a TrueFoundry model: its own id, the match's name, copied facts and public price. */
 export function trueFoundryModelConfig(id: string, match: { provider: ModelsDevProvider; model: ModelsDevModel } | null): JsonRecord {
   // Unmatched models still need tools for OpenWork agents; TrueFoundry's chat API carries OpenAI tool calls.
   if (!match) return { id, name: id, tool_call: true, modalities: { input: ["text"], output: ["text"] } }
-  const facts = Object.fromEntries(COPIED_FACTS.flatMap((key) => match.model.config[key] === undefined ? [] : [[key, match.model.config[key]]]))
+  const facts = Object.fromEntries([...COPIED_FACTS, ...PRICE_FACTS].flatMap((key) => match.model.config[key] === undefined ? [] : [[key, match.model.config[key]]]))
   return { tool_call: true, modalities: { input: ["text"], output: ["text"] }, ...facts, id, name: match.model.name }
+}
+
+/** A stored TrueFoundry model as people are served it: without its public price unless usage costs are tracked in OpenWork. */
+export function servedTrueFoundryModel<T extends { config: JsonRecord }>(model: T, trackUsageCosts: boolean): T {
+  if (trackUsageCosts) return model
+  const config = Object.fromEntries(Object.entries(model.config).filter(([key]) => !PRICE_FACTS.some((price) => price === key)))
+  return { ...model, config }
 }

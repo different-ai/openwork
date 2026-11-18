@@ -7,7 +7,8 @@
  *
  * Every person calls TrueFoundry with their own personal access token, which
  * OpenWork creates with the organization's TrueFoundry admin key. TrueFoundry
- * budgets and logs those tokens, so OpenWork never prices or limits them.
+ * budgets and logs those tokens; OpenWork prices and limits them only when the
+ * provider tracks usage costs in OpenWork, for models with public pricing.
  */
 
 export const TRUEFOUNDRY_PROVIDER_ID = "truefoundry"
@@ -31,6 +32,14 @@ function isRecord(value: unknown): value is JsonRecord {
 
 export function isTrueFoundryProviderId(providerId: string): boolean {
   return providerId === TRUEFOUNDRY_PROVIDER_ID
+}
+
+/**
+ * "Track usage costs in OpenWork" on a TrueFoundry provider's settings
+ * (settings.truefoundry.trackUsageCosts). Off unless explicitly on.
+ */
+export function trueFoundryTracksUsageCosts(settings: unknown): boolean {
+  return isRecord(settings) && isRecord(settings.truefoundry) && settings.truefoundry.trackUsageCosts === true
 }
 
 /** The models.dev-shaped provider entry, without models. */

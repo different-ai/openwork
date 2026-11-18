@@ -107,7 +107,7 @@ const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
 });
 const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
   controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
-  createMissingUsers: z.boolean().catch(false), hasAdminKey: z.boolean(),
+  createMissingUsers: z.boolean().catch(false), trackUsageCosts: z.boolean().catch(false), hasAdminKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
   modelCount: z.number(),
   availableModels: z.array(z.object({ id: z.string(), name: z.string() })).catch([]),
