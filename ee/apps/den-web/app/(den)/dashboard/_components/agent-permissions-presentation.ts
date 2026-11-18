@@ -18,6 +18,25 @@ const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
 /** Rows that blocking computer use blocks too, shown with its lock. */
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
+/** Rows the host refuses while tools may not run on the computer (sandbox-only). */
+const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
+
+/** What the editor shows beyond the definitions: rollouts it reads from the organization. */
+export type AgentPermissionEditorFeatures = {
+  /** The sandboxTools rollout. Off hides "Run tools on this computer" unless it is already set. */
+  sandboxOnly: boolean;
+};
+
+/**
+ * Sandbox-only is offered with its rollout on. A requirement saved earlier
+ * stays on screen with the rollout off, so it can be seen and removed
+ * (DESIGN.md P4): it keeps blocking host tools until then.
+ */
+export function hostExecutionRowVisible(features: AgentPermissionEditorFeatures | undefined, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): boolean {
+  if (!features || features.sandboxOnly) return true;
+  return settings.hostExecution !== undefined || everyone?.hostExecution !== undefined;
+}
+
 function inArea(area: AgentPermissionsArea, key: string): boolean {
   if (area === "all") return true;
   return area === "browser" ? BROWSER_KEYS.includes(key) : !BROWSER_KEYS.includes(key);
@@ -30,13 +49,14 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: { hostExecution?: boolean } = {}) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
-      && inArea(area, definition.key)),
+      && inArea(area, definition.key)
+      && (definition.key !== "hostExecution" || options.hostExecution !== false)),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -72,7 +92,14 @@ export function storedAgentPermissionDecision(definition: AgentPermissionDefinit
 }
 
 /** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */
-export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): { key: string; reason: string } | null {
+export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {
+  const sandboxRequired = (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";
+  if (key === "hostExecution" && sandboxRequired && features && !features.sandboxOnly) {
+    return { key: "sandbox-off", reason: "The sandbox is turned off for this organization, so agents can't run for these members. Turn this on to let them run again." };
+  }
+  if (BLOCKED_WITH_HOST_EXECUTION.includes(key) && sandboxRequired) {
+    return { key: "host-execution", reason: "Blocked while Run tools on this computer is off." };
+  }
   if (key === "commands" && (settings.fileEdits?.decision ?? everyone?.fileEdits?.decision) === "deny") {
     return { key: "edits", reason: "Blocked while Edit files is blocked, because any command can change files." };
   }

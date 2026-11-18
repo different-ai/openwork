@@ -3012,6 +3012,9 @@ async function requestJsonRaw<T>(
   if (options.browserUploadPermissionsCapable) {
     headers["X-OpenWork-Browser-Upload-Permissions"] = "1";
   }
+  if (path === "/v1/me/desktop-config") {
+    headers["X-OpenWork-Sandbox-Only"] = "1";
+  }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
     // Without it Den treats this desktop as a release that reads only once/daily/weekly schedules.

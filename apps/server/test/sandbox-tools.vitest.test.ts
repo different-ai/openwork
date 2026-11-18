@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { createFakeProvider } from "../../../packages/sandbox/src/testing/fake-provider.js";
 import type { RunSpec, SandboxHandle } from "@openwork/sandbox";
 import { createSandboxToolHost, SANDBOX_OUTPUT_BYTES, SANDBOX_TOOL_NAMES, sandboxGuestPath } from "../src/sandbox-tool-host.js";
-import sandboxPlugin, { setupSandboxTools, type SandboxNativeTool, type SandboxPluginContext, type SandboxToolMode } from "../src/opencode-plugins/openwork-sandbox-v2.js";
+import sandboxPlugin, { setupSandboxTools, type HostNativeTool, type SandboxPluginContext, type SandboxToolMode } from "../src/opencode-plugins/openwork-sandbox-v2.js";
 import { providerSchemaProblems } from "../src/opencode-plugins/provider-safe-tool-schema.js";
 
 const call = () => ({ sessionID: "session-test", id: "call-test", signal: new AbortController().signal });
@@ -110,17 +110,21 @@ async function pluginFixture(initial: SandboxToolMode) {
   let executions = 0;
   let disposed = 0;
   let statusFailed = false;
-  const tools = new Map<string, SandboxNativeTool>();
+  const tools = new Map<string, HostNativeTool>();
   const builtins = new Set<string>();
   const render = () => {
     tools.clear(); builtins.clear();
     for (const name of [...SANDBOX_TOOL_NAMES, "browser", "mcp_host_tool"]) builtins.add(name);
-    transform?.({ list: () => [...builtins].map(id => ({ id })), remove: id => { builtins.delete(id); }, add: tool => { tools.set(tool.name, tool); } });
+    transform?.({ list: () => [...builtins].map(id => ({ id, name: id, description: "host fixture", input: {}, options: { codemode: true }, execute: async () => ({ content: [{ type: "text", text: "host fixture" }] }) })), remove: id => { builtins.delete(id); }, add: tool => {
+      if (mode !== "only" && !tool.name.startsWith("sandbox_")) builtins.add(tool.name);
+      else tools.set(tool.name, tool);
+    } });
   };
   const context: SandboxPluginContext = {
     options: {},
-    tool: { async transform(callback) { transform = callback; render(); return { async dispose() { disposed += 1; tools.clear(); } }; }, async reload() { reloads += 1; render(); } },
-    session: { async hook(_name, callback) { prompt = callback; return { async dispose() { disposed += 1; prompt = undefined; } }; } },
+    tool: { async transform(callback) { transform = callback; render(); return { async dispose() { disposed += 1; tools.clear(); } }; }, async reload() { reloads += 1; render(); }, async hook() { return { async dispose() {} }; } },
+    mcp: { async transform() { return { async dispose() {} }; }, async reload() {} },
+    session: { async hook(name, callback) { if (name === "prompt") prompt = callback; return { async dispose() { disposed += 1; if (name === "prompt") prompt = undefined; } }; } },
   };
   const stop = await setupSandboxTools(context, {
     async status() { if (statusFailed) throw new Error("status unavailable"); return mode; },
@@ -145,15 +149,16 @@ test("normal mode adds six provider-safe sandbox IDs without replacing host tool
     assert.equal(fixture.reloads(), 1);
     assert.equal(fixture.tools.size, 0);
   } finally { await fixture.stop(); }
-  assert.equal(fixture.disposed(), 2);
+  assert.equal(fixture.disposed(), 3);
 });
 
-test("only mode removes/replaces the same six primitive IDs, not an isolation claim", async () => {
+test("only mode replaces six primitive IDs and default-denies all other host tools", async () => {
   const fixture = await pluginFixture("only");
   try {
     assert.deepEqual([...fixture.tools.keys()], [...SANDBOX_TOOL_NAMES]);
     for (const name of SANDBOX_TOOL_NAMES) assert.equal(fixture.builtins.has(name), false);
-    assert.ok(fixture.builtins.has("browser"), "unrelated tools require the separate policy layer");
+    assert.equal(fixture.builtins.has("browser"), false);
+    assert.equal(fixture.builtins.has("mcp_host_tool"), false);
     const tool = fixture.tools.get("shell"); assert.ok(tool);
     await tool.execute({ command: "pwd" }, call());
     fixture.setMode("tools");

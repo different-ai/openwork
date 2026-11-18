@@ -17,6 +17,7 @@ import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
 import type { FileSendApprovals, FileSendPolicy } from "./file-send-approval.js";
 import { createSandboxToolsBridge } from "./sandbox-tools-bridge.js";
 import type { ServerConfig } from "./types.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 const requestSchema = z.object({
   name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
@@ -205,7 +206,10 @@ function bridgeAffordances(value: unknown): unknown {
 /** Process-local app-read and browser endpoints, closed with their engine.
  * Build this host entry as one bundle: packaged desktops relocate engine plugin
  * files, and the shared factory and its request-local transport must use the
- * same AsyncLocalStorage instance rather than separately bundled copies. */
+ * same AsyncLocalStorage instance rather than separately bundled copies.
+ * Keep managed-desktop-policy and local-sandbox-runtime external in that build:
+ * their verified session authority and runtime-config subscriptions must share
+ * the embedded server's module instances, not a bundle-private copy. */
 export async function createV2ContextBridge(
   hostRequest: (path: string, init?: RequestInit) => Promise<unknown>,
   engine?: () => EngineConnection | undefined,
@@ -236,6 +240,10 @@ export async function createV2ContextBridge(
       const text = await request.text();
       if (text.length > 64_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
+      // These helpers access host files independently of the engine catalog.
+      if (sandboxConfig && (isDriveFileAction(call.name) || ["openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft"].includes(call.name))) {
+        await managedDesktopPolicy(sandboxConfig).assertHostExecution();
+      }
       let deadline = AbortSignal.timeout(60_000);
       const read = (path: string, init?: RequestInit) => {
         const signal = AbortSignal.any([request.signal, deadline, ...(init?.signal ? [init.signal] : [])]);
@@ -493,7 +501,7 @@ export async function createV2ContextBridge(
       return Response.json({ error: error instanceof Error ? error.message : "OpenWork read failed" }, { status: 400 });
     }
   } });
-  const browser = await createV2BrowserBridge().catch(async error => { await server.stop(); await plugin.dispose(); throw error; });
+  const browser = await createV2BrowserBridge(sandboxConfig ? () => managedDesktopPolicy(sandboxConfig).assertHostExecution() : undefined).catch(async error => { await server.stop(); await plugin.dispose(); throw error; });
   const sandbox = sandboxConfig ? await createSandboxToolsBridge(sandboxConfig).catch(async error => {
     await browser.close(); await server.stop(); await plugin.dispose(); throw error;
   }) : undefined;

@@ -17,7 +17,7 @@ async function fixture() {
   await mkdir(workspace); await mkdir(external);
   const config: ServerConfig = {
     host: "127.0.0.1", port: 0, token: "client-test", hostToken: "host-test", configPath: join(temp, "runtime", "server.json"),
-    approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [],
+    approval: { mode: "auto", timeoutMs: 1000 }, corsOrigins: [], trustedDenOrigin: "http://127.0.0.1:1",
     workspaces: [{ id: "test-workspace", path: workspace, name: "Test", preset: "starter", workspaceType: "local" }],
     authorizedRoots: ["/this-is-not-the-authorized-folders-list"], readOnly: false,
     startedAt: Date.now(), tokenSource: "generated", hostTokenSource: "generated", logFormat: "json", logRequests: false,

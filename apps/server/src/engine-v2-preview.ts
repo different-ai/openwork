@@ -1,4 +1,5 @@
 import { startupPhase } from "./startup-phase.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
@@ -160,6 +161,7 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  assertSandboxReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
   refreshGatewayInventory(): void;
   /**
@@ -874,8 +876,9 @@ export function createEngineV2Preview(options: {
     const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp");
     if (mcpRules) await active.refreshConfig();
     const organizationMcp = mcpRules ? await registeredOrganizationMcpServers(config, [location.workspaceId]) : {};
+    const hostAllowed = await managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
+      if (!hostAllowed || agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
       const mapped = mapRuntimeMcpToV2(value, name);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
@@ -895,6 +898,7 @@ export function createEngineV2Preview(options: {
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine connects before it answers (up to the startup timeout).
       const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
@@ -908,6 +912,7 @@ export function createEngineV2Preview(options: {
       applied.set(name, fingerprint);
     };
     const restart = async (name: string, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine ignores a PUT identical to the config it has, so a failed
       // connection is restarted with /connect. On a healthy client /connect
       // closes and reopens it, which is why only unhealthy ones get here.
@@ -966,6 +971,22 @@ export function createEngineV2Preview(options: {
     if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
       throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
     }
+  }
+
+  async function assertSandboxReady(directory: string): Promise<void> {
+    const hostAllowed = await managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
+    if (hostAllowed) return;
+    const active = sidecar;
+    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement is not ready. No task was admitted.");
+    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "Sandbox-only mode requires the supported OpenCode engine. No task was admitted.");
+    const plugins = await active.fetchJson("/api/plugin", { directory, timeoutMs: 10_000 });
+    const instance = engineInstanceId();
+    const expected = join(rootDir, ...(instance ? ["instances", instance] : []), "sandbox-plugin");
+    const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data : [];
+    const installed = data.filter(isRecord).some(plugin => plugin.id === "openwork.sandbox"
+      && isRecord(plugin.state) && plugin.state.status === "active"
+      && isRecord(plugin.source) && plugin.source.type === "local" && plugin.source.path === expected);
+    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement could not be verified in this engine. No task was admitted.");
   }
 
   function checkMcpHealth(): void {
@@ -1504,7 +1525,7 @@ export function createEngineV2Preview(options: {
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders,
+  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, refreshProviders,
     refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
     syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

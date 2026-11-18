@@ -1,51 +1,76 @@
-# Local sandbox first-slice verification
+# Sandbox-only verification
 
-Date: 2026-11-17. Local Apple Silicon macOS, Node 24.22.2, pnpm 11.4.0.
-No production, model, remote sandbox or real Den account calls. Loopback Den responses are disposable fixtures.
+Scope: local microsandbox, required-only mode, Den/local permission controls and host-rail admission. No production
+organization, feature rollout, provider configuration or customer data was mutated. Tests use disposable local Den
+instances and runtime profiles; real-model keys remain in an in-memory inference proxy.
 
-## Results
+## Placement
 
-| Command | Result |
+A disposable Daytona default sandbox exposed `/dev/kvm`, but its normal `daytona` user (uid 1001) received
+`PermissionError: [Errno 13] Permission denied: '/dev/kvm'` on `os.open(..., O_RDWR)`. CPU virtualization flags alone
+were not treated as usable KVM. The probe sandbox was deleted. Thus real microVM/native Electron work runs on this
+Apple Silicon Mac. Portable Den/Settings controls use the Daytona-supported proof lane; its final receipt is
+recorded below once that run completes. No remote result is represented as a microVM result.
+
+## Completed local product proof
+
+Command:
+
+```sh
+MICROSANDBOX_LIVE=1 MICROSANDBOX_PRODUCT_PROOF=1 \
+  pnpm evals:e2e sandbox-only --local --engine v2 --surface electron
+pnpm evals:e2e sandbox-controls --local --engine v2
+```
+
+Native proof: **4 passed, 0 failed, 0 skipped**; controls proof: **3 passed, 0 failed, 0 skipped**. Both drive real
+UI and record screenshots/assertions. The native proof uses Electron's embedded Node runtime and an actual local
+microVM, not a fake provider. The deterministic model is a tool-calling witness; real-model tests are separate.
+
+| Claim | Independent witness |
 | --- | --- |
-| `pnpm --filter @openwork/sandbox-microsandbox test` | 23 passed, 0 failed, 0 skipped |
-| `pnpm --dir evals exec vitest run --project pr ../apps/server/test/sandbox-tools.vitest.test.ts ../apps/server/test/sandbox-mounts.vitest.test.ts ../apps/server/test/local-sandbox-runtime.vitest.test.ts` | 25 passed, 0 failed, 0 skipped |
-| `MICROSANDBOX_LIVE=1 MSB_HOME=<fresh short temp directory> pnpm --dir evals exec vitest run --project pr ../apps/server/test/local-sandbox-bridge.live.vitest.test.ts` | 1 passed, 0 failed, 0 skipped |
-| `pnpm --filter openwork-server build` | passed; includes native-adapter dependency build, server TypeScript and engine plugin bundles |
-| `pnpm check` | all eight passed: typecheck, node-source-imports, outbound-access, features, i18n, app-structure, code-habits, spec-lint |
+| Required mode executes in guest | Native `shell` returns Linux; inference sees exactly six direct guest tool names; unmounted host nonce cannot be read |
+| Absolute live mounts | Authorized Folder is added through the supported API; guest reads at that exact host path; changes both directions match bytes independently |
+| Read-only | Separate actual-provider API test confirms guest file writes and shell redirection fail while reads succeed; no fabricated UI control |
+| Sandbox unavailable | Invalid runtime directory produces a real SDK startup failure, tool errors and no host sentinel |
+| Org/local controls | Den team toggle changes member rule; managed local switch is locked; a direct local-Allow API save cannot weaken effective org denial |
+| Flag off | New control absent for unaffected users, no new host rule, and ordinary tool reads the host-only nonce |
+| Persistence | Signed-out local preference survives reload and explicit opt-out restores host access |
 
-The adapter's separate live suite previously passed 18/18 on the same platform; the adapter itself is unchanged in
-this slice. It covers read-only mounts, egress, lifecycle, port publishing/collisions and timeout cleanup. This is
-not evidence for Windows, Linux KVM, packaged Electron or full required-only mode.
+Intermediate failures are retained. Product proof found and fixed: unsupported Bun SQLite/JSONC eager bundling under
+Electron, duplicate host policy/runtime singleton caches in the bridge bundle, and an overbroad host guard that
+blocked the app's text-only session instructions update. No failing assertion was removed to obtain these passes.
 
-## Real bridge witness
+## Automated checks
 
-The opt-in bridge test uses the actual local adapter and VM, not a fake provider:
+- Adapter offline suite: **23 passed**; separate adapter live suite previously **18 passed** on this Mac.
+- Exact Static CI command: **419 passed**, no failures/skips. The original CI failure was a missing Docker snapshot
+  workspace dependency closure; both package COPY entries were added, leaving the assertion intact.
+- Den `test:api:security`: **159 passed**, no failures/skips. Audit coverage: **940/940** routes, disposable DB removed.
+- Agent-permission type tests: **10 passed**. Server/native-engine sandbox regressions: **39 passed** in the full
+  backend run, plus the product-proof integration regressions. Desktop computer-policy tests: **2 passed**.
+- `pnpm check`: all eight checks pass, including typecheck, feature registry and proof spec lint.
+- Server and desktop typecheck/build passed. Electron Node import of the final embedded-server bundle succeeds.
 
-1. A disposable Den fixture enables the rollout and returns unrestricted member rules; the real policy reader
-   verifies it before dispatch.
-2. `shell` answers Linux. `read` retrieves a nonce through an Authorized Folder mounted at its original absolute
-   path; `write` changes a file observed independently on the host workspace live bind.
-3. Removing that Authorized Folder in the engine-global runtime row stops/recreates the guest. Reading the removed
-   path fails while the host's original file remains unchanged, and the workspace file remains available.
-4. Revoking the rollout refuses a guest write; independent host `readFile` confirms no sentinel was created.
-5. The bridge is closed; remaining test VMs are destroyed and the temporary runtime home removed.
+## Real models
 
-The test is opt-in and reports a skip when the required runtime is not requested; that skip is not a passing
-microVM result. The explicit live invocation above ran without skips.
+See [Fable](model-check-fable.md) and [Sol](model-check-sol.md) for per-request provider-reported identities, effort,
+service tiers, tool traces and intermediate failures. Fable uses accepted low effort; Sol requests low effort and
+a fast/priority tier and reports the actual returned tier. Separate tester subagents run the two models in parallel,
+with independent VM/runtime roots and no diagnostic plugin override.
 
-## Independent review corrections
+The harness exercises actual OpenCode 2.2.6 sessions with real inference, the same plugin/host bridge/local runtime
+and actual microVMs. Rollout is supplied by a loopback Den fixture; this is not a real production-flag proof.
+Unadvertised host-tool checks with no model attempt do **not** establish dispatch enforcement; the hostile native
+registry/MCP and host-route tests provide that separate coverage. Loopback witness observations are not inflated
+into active exploit attempts.
 
-An independent review found three defects before final verification: canonical aliases could bypass lexical mount
-restrictions, optional plugin status errors could break unrelated prompts, and a cached stopped guest could remain
-unusable after a grant round-trip. The slice now canonicalizes restrictions and missing-path ancestors, treats
-additive status outages as off without restoring required-only host primitives, and inspects/resumes a stopped
-same-backend guest before dispatch. Regression tests cover each condition.
+## Evidence locations
 
-## Overall boundary
+Proofs are under `evals/proofs/`; worlds under `evals/worlds/sandbox-only.ts`. Galleries and machine assertions are
+recorded under ignored `evals/results/test-runs/`, not committed screenshots. Final receipts and the PR publication
+link are added after the committed-head reruns. Keys, runtime tokens and transient private connection URLs must not
+be copied into public PR text.
 
-**Passed for this backend/plugin/mount slice; Incomplete for the full requested product scope.**
-
-The actual server can expose only additive tools, never `only`. The plugin's replacement transform is tested, but
-Den/local controls, host-side computer/browser/MCP and alternate execution guards, old-client admission and the
-real Settings/member-permissions proof are follow-ups. The pinned Claude Agent source uses the transformed registry;
-its live CLI/SDK behavior has not been exercised here. No screenshots are offered as proof of an unimplemented UI.
+Remaining limits: not a same-user OS jail, old desktop compatibility requires version restrictions for a complete
+read-tool guarantee, all MCP transports/delegation are disabled in required mode, guest scratch resets on mount
+recreation, and native signed release packaging/Claude CLI-provider runtime need separate validation.

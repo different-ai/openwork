@@ -1,53 +1,58 @@
 # Local sandbox tools
 
-Feature `sandboxTools`, cloud and self-hosted, off. Owner: `benjaminshafii`.
-
-**First slice:** local microsandbox adapter, v2 plugin, authenticated bridge and live Authorized Folders mounts.
-The full [sandbox-only design](design.md) is specified but its permission controls are follow-ups. No remote
-backend or gateway rollout is used.
+Feature `sandboxTools`, cloud and self-hosted, **off by default**. Owner: `benjaminshafii`.
 
 ## What changes
 
-With the pilot rollout enabled for a signed-in organization member, v2 offers `sandbox_shell`, `sandbox_read`,
-`sandbox_write`, `sandbox_edit`, `sandbox_glob` and `sandbox_grep`. They execute only through the local guest's
-`@openwork/sandbox` run/files blocks. Normal host tools stay available in this pilot: **this is not confinement
-of the whole agent**.
+OpenCode v2 can use a local microsandbox microVM in two ways:
 
-The workspace and allowed engine-wide Authorized Folders are live bind mounts at the same absolute paths. The
-source is `permission.external_directory` in the runtime row, not `config.authorizedRoots`. Current folder grants
-are access permissions, not per-folder write modes. A read-only server creates ro binds; restrictive/unrepresentable
-rules fail closed. Managed shell/edit/folder approvals must not be bypassed by new tool names, so the initial pilot
-is unavailable while such restrictions exist.
+- Extra tools: `sandbox_shell`, `sandbox_read`, `sandbox_write`, `sandbox_edit`, `sandbox_glob`, `sandbox_grep`.
+- Sandbox only: native `shell/read/write/edit/glob/grep` are removed and replaced under the same names. All other
+  tools and MCP transports are withheld initially, including desktop computer use and the built-in browser.
 
-The plugin also implements same-name `shell/read/write/edit/glob/grep` replacement via registry transforms, tested
-through an injected mode resolver. The actual host bridge returns only off/additive modes. Do not expose its `only`
-mode before the Den/local permission store, host computer/browser/local-MCP blocks and other execution-route checks
-in design sections 5–6 and 11 are complete.
+A sandbox failure never executes a host implementation. This is agent-tool confinement, not an OS jail for the
+trusted engine process. Authorized live rw bind mounts intentionally let the guest change their host files.
 
-## Try the pilot
+## Control it
 
-On a development checkout with Apple Silicon macOS or Linux KVM, install dependencies and build `openwork-server`.
-Use the normal registry rollout for `sandboxTools` in a disposable organization; this PR changes no rollout state.
-Open a registered workspace with v2, configure Authorized Folders normally, and ask for a sandbox command.
-The runtime uses `alpine:3.22`, no network and a 15-minute idle stop. A missing/unsupported native runtime is an
-error, never host execution. Use a short `MSB_HOME` on macOS; no automatic runtime install or privilege change.
+Den member/team agent permissions add **Run tools on this computer**. Turn it off to require sandbox-only.
+Settings -> Permissions has the same editable local control below Authorized Folders. Effective restriction is
+stricter-wins: local Allow cannot undo org Deny. Managed restrictions lock the local switch. The setting is
+engine-global, not imported from workspace files.
 
-Runtime folder changes stop the old instance; the next guest call recreates it with the new grants and a restart
-receipt. Live host files survive, but guest scratch is reset. Unrelated runtime-row changes do not reset it.
-The native-runtime packaging/signing and end-to-end Settings workflow remain follow-ups before broad enablement.
+Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and host tools do not
+come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations
+requiring complete confinement, because old binaries cannot enforce new read-tool restrictions.
 
-## Turning it off
+## Folders and runtime
 
-Off/unverified refuses calls even if the engine still has a listed tool. Refresh/reload removes the additive tool
-catalog at the next prompt. Existing host behavior is unchanged in this pilot. Once required sandbox-only exists,
-flag loss must block execution rather than restore host primitives; that policy is not reachable yet.
+Workspace plus concrete allowed Authorized Folders bind live at their original absolute paths. The source is the
+engine-wide `permission.external_directory` row, **not** `config.authorizedRoots`. Current folder grants do not
+encode a separate write mode; readonly server mounts are ro, and policies that cannot safely become binds are
+refused. Canonical aliases and protected runtime paths are checked before mounting.
 
-Watch unavailable-runtime/policy errors, create latency, mount-restart receipts and leftover VM disks. Timeout means
-an outcome may be unknown, not permission to rerun on the host.
+Changing grants stops/recreates the guest before reuse. Host bind contents survive; guest-only scratch is reset,
+with a restart receipt. In-flight operations are bounded, not promised instantaneous descendant cancellation.
+
+Use Apple Silicon macOS or Linux KVM, a short `MSB_HOME` on macOS, and the normal feature registry for rollout in a
+disposable test organization. No production rollout is changed here. Missing runtime/image/hypervisor support is
+an error. Native release signing/packaging still needs validation before broad enablement.
+
+## Turning it off and watching it
+
+Off with host allowed preserves normal behavior. Off while sandbox-only is required keeps the requirement and
+refuses guest execution, rather than silently restoring the host. Watch policy/runtime errors, mount recreation,
+unknown execution outcomes and leftover VM disks.
+
+The pinned Claude Agent integration disables native CLI tools and sends advertised tools through OpenCode's
+registry; do not block it merely by provider name. Live API-provider tests and source verification are distinct
+from a live Claude CLI/SDK-provider test, which remains unverified.
 
 ## Evidence
 
-Adapter: `pnpm --filter @openwork/sandbox-microsandbox test` and opt-in `MICROSANDBOX_LIVE=1 ... test:live`.
-Server tests: `sandbox-tools.vitest.test.ts`, `sandbox-mounts.vitest.test.ts`, `local-sandbox-runtime.vitest.test.ts`;
-real local bridge test: `local-sandbox-bridge.live.vitest.test.ts`. Design sections 10–11 list the remaining product proofs
-and exact permission/UI follow-ups. No production or remote provider is exercised.
+[Design](design.md), [verification](verification.md), [Fable](model-check-fable.md), [Sol](model-check-sol.md).
+Proofs: `evals/proofs/sandbox-only.proof.test.ts` (native Electron/real microVM on Mac) and
+`sandbox-controls.proof.test.ts` (portable Den/Settings UI). Real readonly provider checks supplement the UI proof.
+Daytona had no usable KVM access for its default user, so microVM proof is explicitly local.
+
+Remote sandbox backends and guest secret injection are future work only; no gateway flag or remote routing changes.

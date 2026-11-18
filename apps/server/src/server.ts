@@ -119,6 +119,8 @@ import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
@@ -1060,6 +1062,9 @@ export async function startServer(
             // providers from its catalog; v1's engine waits for its own folder
             // setup instead. Bounded and never fails the request.
             await engineV2Preview.ensureWorkspaceReady(workspace.path);
+          }
+          if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
+            await engineV2Preview.assertSandboxReady(workspace.path);
           }
           const send = () => proxyOpencodeV2Request({
             config,
@@ -3340,6 +3345,27 @@ function createRoutes(
       }),
       files: { workspace: opencodeConfigPath(workspace.path), global: globalPath },
     });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
+  });
+  addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const parsed = sandboxSettingsSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "allowHostExecution must be a boolean");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
+    });
+    await writeSandboxSettings(config, parsed.data);
+    await recordAudit(workspace.path, {
+      id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
+      action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
+    });
+    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {

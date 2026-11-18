@@ -23,32 +23,73 @@ export type SandboxNativeTool = {
   execute(input: unknown, call: SandboxToolCall): Promise<SandboxEngineResult>;
 };
 type Registration = { dispose(): Promise<void> };
+export type HostNativeTool = {
+  name: string; description: string; input: Record<string, unknown>; options?: { codemode?: boolean };
+  execute(input: unknown, call: SandboxToolCall): Promise<unknown>;
+};
+type CatalogEntry = Partial<HostNativeTool> & { id: string };
 export type SandboxPluginContext = {
   options: unknown;
   location?: { directory?: string };
   tool: {
-    transform(callback: (editor: { list(): readonly { id: string }[]; remove(id: string): void; add(tool: SandboxNativeTool): void }) => void): Promise<Registration>;
+    transform(callback: (editor: { list(): readonly CatalogEntry[]; remove(id: string): void; add(tool: HostNativeTool): void }) => void): Promise<Registration>;
     reload(): Promise<void>;
+    hook?(name: "execute.before", callback: (event: { readonly tool: string }) => Promise<void>): Promise<Registration>;
   };
-  session: { hook(name: "prompt", callback: () => Promise<void>): Promise<Registration> };
+  mcp?: {
+    transform(callback: (editor: { list(): Iterable<readonly [string, unknown]>; set(name: string, config: Record<string, unknown>): void }) => void): Promise<Registration>;
+    reload?(): Promise<void>;
+  };
+  session: { hook: {
+    (name: "prompt", callback: () => Promise<void>): Promise<Registration>;
+    (name: "context", callback: (event: { tools: Record<string, unknown> }) => Promise<void>): Promise<Registration>;
+  } };
 };
 export type SandboxPluginDependencies = {
   status(): Promise<SandboxToolMode>;
+  assertHostExecution?(): Promise<void>;
   execute(name: SandboxToolName, input: unknown, call: SandboxToolCall): Promise<SandboxEngineResult>;
 };
 
-/**
- * Package-level integration seam. `only` replaces the six primitive IDs, not a
- * complete security policy: other catalog entries/late transforms and external
- * host APIs need the separate host-tool/MCP enforcement layer before exposure.
+/** In required mode the supported catalog is exactly the six guest primitives.
+ * Unknown/custom tools (including patch, browser and file-transfer helpers) are
+ * denied by default, rather than guessed safe by name or a broad namespace.
+ * Host APIs have their own server-side guards; this is not an OS process jail.
  */
 export async function setupSandboxTools(context: SandboxPluginContext, dependencies: SandboxPluginDependencies) {
   const offeredMode = async (previous: SandboxToolMode): Promise<SandboxToolMode> => {
     try { return modeSchema.parse(await dependencies.status()); }
     catch { return previous === "only" ? "only" : "off"; }
   };
-  let mode = await offeredMode("off");
+  // Plugin setup failures may be logged rather than abort engine startup. An
+  // unknown initial mode therefore installs the restrictive catalog and MCP
+  // guards; its context/tool calls still fail until authority can be verified.
+  let mode: SandboxToolMode;
+  try { mode = modeSchema.parse(await dependencies.status()); }
+  catch { mode = "only"; }
   let closed = false;
+  const hooksAvailable = !!context.tool.hook && !!context.mcp;
+  if (mode === "only" && !hooksAvailable) throw new Error("Sandbox-only enforcement is unavailable; host tools were not admitted.");
+  let mcpMode = mode;
+  const guard = await context.tool.hook?.("execute.before", async event => {
+    // Primitive implementations are individually guarded (guest and retained
+    // host snapshots). Everything outside that bounded set, including Code
+    // Mode's execute/fetch interpreter, needs fresh host authority.
+    if (SANDBOX_TOOL_NAMES.some(name => event.tool === name)) return;
+    if (dependencies.assertHostExecution) return dependencies.assertHostExecution();
+    if (modeSchema.parse(await dependencies.status()) === "only") {
+      throw new Error("Sandbox-only mode blocks this host tool. Use the guest primitives; nothing ran on the host.");
+    }
+  });
+  // Disable every MCP transport in the deliberately bounded first required-mode
+  // catalog. In particular local/stdio commands never spawn before tool hooks.
+  const servers = await context.mcp?.transform(editor => {
+    if (mode !== "only") return;
+    for (const [name, value] of editor.list()) {
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) editor.set(name, { ...value, disabled: true });
+      else editor.set(name, { disabled: true });
+    }
+  });
   const definitions = SANDBOX_TOOL_NAMES.map(name => ({ name, input: z.toJSONSchema(sandboxToolSchemas[name]) }));
   // A replacement schema must never silently disappear and leave a host tool
   // behind. Validate all schemas before making a single catalog modification.
@@ -58,17 +99,33 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   }
   const registration = await context.tool.transform(editor => {
     const catalogMode = mode;
-    if (catalogMode === "off") return;
     if (catalogMode === "only") {
-      for (const tool of editor.list()) if (SANDBOX_TOOL_NAMES.some(name => tool.id === name)) editor.remove(tool.id);
+      for (const tool of editor.list()) editor.remove(tool.id);
+    } else {
+      // Guard original implementations too: an inference snapshot made before
+      // revocation may retain a host shell/read callable with the same id as
+      // its new guest replacement. A name-only before hook cannot tell them apart.
+      for (const original of editor.list()) {
+        const execute = original.execute;
+        if (!execute || !original.name || original.description === undefined || !original.input) throw new Error("This engine cannot guard its host catalog; restart with a supported engine.");
+        editor.remove(original.id);
+        editor.add({ ...original, name: original.name, description: original.description, input: original.input, async execute(input, call) {
+          if (dependencies.assertHostExecution) await dependencies.assertHostExecution();
+          else if (await dependencies.status() === "only") throw new Error("Sandbox-only mode revoked this host tool snapshot. Nothing ran on the host.");
+          return execute(input, call);
+        } });
+      }
     }
+    if (catalogMode === "off") return;
     for (const definition of definitions) {
       const name = definition.name;
       editor.add({
         name: catalogMode === "only" ? name : `sandbox_${name}`,
         description: sandboxToolDescriptions[name],
         input: definition.input,
-        options: { codemode: true },
+        // Required mode must never require Code Mode's host-side interpreter:
+        // it has its own fetch/network surface outside the guest primitives.
+        options: { codemode: catalogMode !== "only" },
         async execute(input, call) {
           call.signal.throwIfAborted();
           if (closed) throw new Error("Sandbox tools are closed.");
@@ -86,6 +143,14 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   try {
     prompt = await context.session.hook("prompt", async () => {
       const next = await offeredMode(mode);
+      if (next === "only" && !hooksAvailable) throw new Error("Sandbox-only enforcement requires restarting the engine with supported guards. No prompt was admitted.");
+      if (next !== mcpMode && (next === "only" || mcpMode === "only")) {
+        if (!context.mcp?.reload) throw new Error("Sandbox mode changed. Restart the engine before continuing so MCP servers cannot escape the new mode.");
+        mode = next;
+        await context.mcp.reload();
+        mcpMode = next;
+        await context.tool.reload();
+      }
       if (closed || next === mode) return;
       const previous = mode;
       mode = next;
@@ -98,9 +163,19 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
     await registration.dispose();
     throw error;
   }
+  // Code Mode synthesizes execute plus browser namespaces after tool transforms.
+  // Filter the final per-inference catalog too: its host-side fetch interpreter
+  // must neither be advertised nor be required to reach the guest primitives.
+  const inference = await context.session.hook("context", async event => {
+    const current = modeSchema.parse(await dependencies.status());
+    if (current !== "only") return;
+    for (const id of Object.keys(event.tools)) if (!SANDBOX_TOOL_NAMES.some(name => id === name)) delete event.tools[id];
+  });
   return async () => {
     closed = true;
-    try { await prompt.dispose(); } finally { await registration.dispose(); }
+    try { await inference.dispose(); await prompt.dispose(); } finally {
+      try { await registration.dispose(); } finally { await servers?.dispose(); await guard?.dispose(); }
+    }
   };
 }
 
@@ -128,6 +203,7 @@ export default {
     };
     return setupSandboxTools(context, {
       async status() { return z.object({ mode: modeSchema }).strict().parse(await request({ operation: "status" })).mode; },
+      async assertHostExecution() { z.object({ allowed: z.literal(true) }).strict().parse(await request({ operation: "host" })); },
       async execute(name, input, call) {
         return resultSchema.parse(await request({ operation: "execute", name, input, sessionId: call.sessionID, ...(call.id ? { callId: call.id } : {}) }, call.signal));
       },

@@ -661,7 +661,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json"
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@openwork/managed-deployments": "workspace:*",

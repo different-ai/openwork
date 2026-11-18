@@ -9,21 +9,24 @@ import { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 import { onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
 import { resolveSandboxMounts, sandboxMountFingerprint, sandboxMountGrants } from "./sandbox-mounts.js";
 import { createSandboxToolHost, SANDBOX_TOOL_NAMES, sandboxToolSchemas, type SandboxToolCall } from "./sandbox-tool-host.js";
+import { readSandboxSettings } from "./sandbox-settings-store.js";
 
 const OPERATION_TIMEOUT = { timeoutMs: 120_000 };
 const IMAGE = "alpine:3.22";
 type Entry = { provider: SandboxProvider; handle: SandboxHandle; fingerprint: string; scope: string };
 export type LocalSandboxRuntimeDeps = {
-  access?: () => Promise<{ enabled: boolean; scope: string }>;
+  access?: () => Promise<{ enabled: boolean; scope: string; hostDenied?: boolean }>;
+  allowHostExecution?: () => Promise<boolean>;
   externalDirectories?: () => Promise<Record<string, unknown>>;
   provider?: (mounts: readonly MicrosandboxMount[]) => Promise<SandboxProvider>;
 };
 
-/** Local tools only. The first slice deliberately has no reachable sandbox-only setting yet. */
+/** Guest tools and mandatory-mode authority share the same server-owned preference and verified policy. */
 export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandboxRuntimeDeps = {}) {
   const entries = new Map<string, Entry>();
   const queues = new Map<string, Promise<unknown>>();
   const access = deps.access ?? (() => managedDesktopPolicy(config).localSandboxAccess());
+  const allowHostExecution = deps.allowHostExecution ?? (async () => (await readSandboxSettings(config)).allowHostExecution);
   const directories = deps.externalDirectories ?? (async () => runtimeExternalDirectory(await readGlobalRuntimeOpencodeConfig(config)));
   const providerFor = deps.provider ?? (async mounts => {
     const adapter = "@openwork/sandbox-microsandbox";
@@ -71,11 +74,13 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
   });
 
   return {
-    async status(directory: string): Promise<{ mode: "off" | "tools" }> {
-      if (closed || !config.workspaces.some(workspace => resolve(workspace.path) === resolve(directory))) return { mode: "off" };
+    async status(directory: string): Promise<{ mode: "off" | "tools" | "only" }> {
+      // Missing registration is an error, never an invitation to use host builtins.
+      workspace(directory);
+      const localAllows = await allowHostExecution();
       const permission = await access();
-      if (!permission.enabled && entries.has(directory)) void serial(directory, () => stop(directory)).catch(() => undefined);
-      return { mode: permission.enabled ? "tools" : "off" };
+      if ((!permission.enabled || closed) && entries.has(directory)) void serial(directory, () => stop(directory)).catch(() => undefined);
+      return { mode: !localAllows || permission.hostDenied ? "only" : permission.enabled && !closed ? "tools" : "off" };
     },
     async execute(directory: string, name: string, input: unknown, call?: SandboxToolCall) {
       workspace(directory);

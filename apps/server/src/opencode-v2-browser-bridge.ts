@@ -17,7 +17,7 @@ const requestSchema = z.object({
 /** Only the existing conversation-scoped browser and computer tools, with
  * their usual approval and policy checks. This credential does not authorize
  * app commands or the read bridge; the desktop's credential stays in the host. */
-export async function createV2BrowserBridge() {
+export async function createV2BrowserBridge(assertHostExecution: () => Promise<void> = async () => {}) {
   const token = randomBytes(32).toString("base64url");
   const tools = { ...(await browserTools()).tool, ...(await computerTools()).tool };
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
@@ -27,6 +27,7 @@ export async function createV2BrowserBridge() {
       const text = await request.text();
       if (text.length > 64_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
+      await assertHostExecution();
       const tool = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
       if (!tool) return new Response(null, { status: 404 });
       const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId, ...(call.agentName ? { agentName: call.agentName } : {}) } : {}), abort: request.signal });
