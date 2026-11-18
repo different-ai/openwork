@@ -79,7 +79,7 @@ const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>
   serialize: (value) => JSON.stringify(value),
 });
 
-export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
+export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string, snapshot: RuntimeOpencodeConfig) => void;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
 
@@ -600,7 +600,7 @@ function updateRuntimeConfig(
       }
       for (const name of changedMcpNames) revisions.set(name, updatedAt);
     }
-    for (const listener of writeListeners) listener(config, workspaceId);
+    for (const listener of writeListeners) listener(config, workspaceId, next);
     return { config: next, changed: true };
   });
   runtimeWrites.set(config, result);

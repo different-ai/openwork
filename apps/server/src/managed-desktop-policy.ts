@@ -99,9 +99,18 @@ class ManagedDesktopPolicy {
     const current = this.session;
     if (!current || sessionKey(current) !== sessionKey(session)) {
       this.generation++;
-      this.sandboxHostDenied = await readSandboxRequirement(this.config, session.baseUrl, session.orgId);
+      const generation = this.generation;
+      // Publish the new identity before the first await. Otherwise a concurrent
+      // host check could verify the old identity under this new generation.
+      this.session = session;
+      this.sandboxHostPolicyVerified = false;
+      this.sandboxHostDenied = false;
       this.installed = undefined;
       this.onV2OnlyChange?.(false);
+      const required = await readSandboxRequirement(this.config, session.baseUrl, session.orgId);
+      this.identityChanged(generation);
+      // A fresh read that completed during the DB read outranks stored state.
+      if (!this.sandboxHostPolicyVerified) this.sandboxHostDenied = required;
     }
     this.session = session;
     if (current && sessionKey(current) !== sessionKey(session)) {
@@ -118,6 +127,7 @@ class ManagedDesktopPolicy {
   async clearSession(): Promise<void> {
     this.session = null;
     this.sandboxHostDenied = false;
+    this.sandboxHostPolicyVerified = false;
     this.generation++;
     this.installed = undefined;
     this.lastKnown = undefined;
@@ -223,6 +233,7 @@ class ManagedDesktopPolicy {
       ? await writeManagedDesktopPolicy(this.config, policy)
       : await clearManagedDesktopPolicy(this.config);
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
+    this.sandboxHostPolicyVerified = true;
     this.sandboxHostDenied = resolveHostExecution({ localAllow: true, rules: agentPermissionRulesOf(policy) }).managed;
     await writeSandboxRequirement(this.config, session.baseUrl, session.orgId, this.sandboxHostDenied);
     this.identityChanged(generation);
@@ -365,15 +376,23 @@ class ManagedDesktopPolicy {
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
   private sandboxHostDenied = false;
+  /** Only a successful desktop-config read for this sign-in can grant host authority. */
+  private sandboxHostPolicyVerified = false;
+  /** Current local/verified authority, without fetching. Used before background
+   * location reads: even metadata can import project plugins in an unsafe engine. */
+  async requiresSandbox(localAllowHostExecution?: boolean): Promise<boolean> {
+    const allow = localAllowHostExecution ?? (await readSandboxSettings(this.config)).allowHostExecution;
+    return !allow || (this.session !== null && (!this.sandboxHostPolicyVerified || this.sandboxHostDenied));
+  }
   /** The local preference is independent of rollout. Turning the feature off must never restore host tools. */
   async sandboxSettings(): Promise<{ allowHostExecution: boolean; effectiveAllowHostExecution: boolean; managed: boolean; featureEnabled: boolean }> {
     const local = await readSandboxSettings(this.config);
     const access = await this.localSandboxAccess();
-    const effect = stricterAgentPermissionDecision(local.allowHostExecution ? "allow" : "deny", access.hostDenied ? "deny" : "allow");
+    const effect = stricterAgentPermissionDecision(local.allowHostExecution ? "allow" : "deny", access.hostDenied || !access.hostPolicyVerified ? "deny" : "allow");
     return { ...local, effectiveAllowHostExecution: effect === "allow", managed: access.hostDenied, featureEnabled: access.enabled };
   }
   /** Fresh control-plane authority only; no workspace file, environment enable switch or unscoped disk policy. */
-  async localSandboxAccess(): Promise<{ enabled: boolean; scope: string; hostDenied: boolean }> {
+  async localSandboxAccess(): Promise<{ enabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean }> {
     const session = this.session;
     const generation = this.generation;
     if (!session) {
@@ -387,13 +406,14 @@ class ManagedDesktopPolicy {
         const payload: unknown = await response.json();
         this.identityChanged(generation);
         const features = isRecord(payload) && isRecord(payload.features) ? payload.features : payload;
-        return { enabled: isRecord(features) && features.sandboxTools === true, scope: `signed-out:${url.origin}`, hostDenied: false };
-      } catch { return { enabled: false, scope: "unverified", hostDenied: false }; }
+        return { enabled: isRecord(features) && features.sandboxTools === true, scope: `signed-out:${url.origin}`, hostDenied: false, hostPolicyVerified: true };
+      } catch { return { enabled: false, scope: "unverified", hostDenied: false, hostPolicyVerified: true }; }
     }
     try {
       const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
       this.identityChanged(generation);
       const rules = agentPermissionRulesOf(policy);
+      this.sandboxHostPolicyVerified = true;
       this.sandboxHostDenied = resolveHostExecution({ localAllow: true, rules }).managed;
       await writeSandboxRequirement(this.config, session.baseUrl, session.orgId, this.sandboxHostDenied);
       this.identityChanged(generation);
@@ -402,19 +422,22 @@ class ManagedDesktopPolicy {
       const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       // Guest tools must not bypass existing command/edit/folder approval rules.
       const restrictive = rules.some(rule => ["shell", "edit", "external_directory"].includes(rule.action) && rule.effect !== "allow");
-      return { enabled: features.sandboxTools === true && !restrictive, scope: sessionKey(session), hostDenied: this.sandboxHostDenied };
+      return { enabled: features.sandboxTools === true && !restrictive, scope: sessionKey(session), hostDenied: this.sandboxHostDenied, hostPolicyVerified: true };
     } catch {
       this.identityChanged(generation);
-      const knownDenied = resolveHostExecution({ localAllow: true, rules: agentPermissionRulesOf(this.knownPolicy() ?? undefined) }).managed;
-      return { enabled: false, scope: "unverified", hostDenied: this.sandboxHostDenied || knownDenied };
+      // This host-specific state is updated by every verified desktop-config
+      // read. The general model-policy cache may still contain an older deny
+      // after a newer host-policy read lifted it, so it cannot override this.
+      return { enabled: false, scope: "unverified", hostDenied: this.sandboxHostDenied, hostPolicyVerified: this.sandboxHostPolicyVerified };
     }
   }
-  async assertHostExecution(): Promise<void> {
-    const local = await readSandboxSettings(this.config);
+  async assertHostExecution(localAllowHostExecution?: boolean): Promise<void> {
+    const local = { allowHostExecution: localAllowHostExecution ?? (await readSandboxSettings(this.config)).allowHostExecution };
     // A local denial does not need a network round trip to be authoritative.
     if (!local.allowHostExecution) throw new ApiError(403, "sandbox_only", "Host execution is disabled. Use the sandbox tools; nothing ran on the host.");
     if (!this.session) return;
     const access = await this.localSandboxAccess();
+    if (!access.hostPolicyVerified) throw new ApiError(503, "policy_unavailable", "Host permissions have not yet been verified for this sign-in. Reconnect and try again; nothing ran on the host.");
     const effect = stricterAgentPermissionDecision(local.allowHostExecution ? "allow" : "deny", access.hostDenied ? "deny" : "allow");
     if (effect !== "allow") throw new ApiError(403, "sandbox_only", "Your organization requires sandbox-only tools. Nothing ran on the host.");
   }

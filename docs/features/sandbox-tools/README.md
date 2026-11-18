@@ -18,7 +18,9 @@ trusted engine process. Authorized live rw bind mounts intentionally let the gue
 Den member/team agent permissions add **Run tools on this computer**. Turn it off to require sandbox-only.
 Settings -> Permissions has the same editable local control below Authorized Folders. Effective restriction is
 stricter-wins: local Allow cannot undo org Deny. Managed restrictions lock the local switch. The setting is
-engine-global, not imported from workspace files.
+engine-global, not imported from workspace files. Mode changes safely refresh the native engine before being
+acknowledged; busy or unknown activity returns 409 without changing the preference or stopping someone else's task.
+Required startup disables project configuration and project extension discovery; a tool reload alone is not enough.
 
 Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and host tools do not
 come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations

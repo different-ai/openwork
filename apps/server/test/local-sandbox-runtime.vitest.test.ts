@@ -9,6 +9,7 @@ import type { ServerConfig } from "../src/types.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { serve } from "../src/serve-node.js";
 import { renderOpencodeV2Config } from "../src/managed-opencode-v2.js";
+import { writeGlobalRuntimeOpencodeConfig } from "../src/runtime-opencode-config-store.js";
 
 async function fixture() {
   const temp = await mkdtemp(join(tmpdir(), "sandbox-runtime-"));
@@ -96,6 +97,58 @@ test("mount changes replace the guest before dispatch; provider failure never su
     expect(runs).toBe(2);
     expect(provider.fake.count("stop")).toBe(1);
   } finally { await runtime.close(); await f.cleanup(); }
+});
+
+test("mount revocation force-destroys an uncooperative guest after queued work, including A -> B -> A grants", async () => {
+  const f = await fixture();
+  const grants = { [`${f.external}/*`]: "allow" };
+  let release: () => void = () => {};
+  let started: () => void = () => {};
+  const running = new Promise<void>(resolve => { started = resolve; });
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  let runs = 0;
+  const provider = createFakeProvider({ id: "microsandbox", onOperation: operation => {
+    if (operation.name === "stop" && operation.sandboxId === oldId) throw new Error("guest refuses graceful shutdown");
+  }, onRun: async () => { if (++runs === 2) { started(); await hold; } return { exitCode: 0, stdout: "guest", stderr: "" }; } });
+  let oldId: string | undefined;
+  const runtime = createLocalSandboxRuntime(f.config, { access: async () => ({ enabled: true, scope: "fixture" }), provider: async () => provider });
+  try {
+    await writeGlobalRuntimeOpencodeConfig(f.config, () => ({ permission: { external_directory: grants } }));
+    await runtime.execute(f.workspace, "shell", { command: "true" });
+    oldId = (await provider.list({}))[0]!.ref.ref.sandboxId;
+    const inFlight = runtime.execute(f.workspace, "shell", { command: "queued guest work" });
+    await running;
+    await writeGlobalRuntimeOpencodeConfig(f.config, () => ({ permission: { external_directory: {} } }));
+    await writeGlobalRuntimeOpencodeConfig(f.config, () => ({ permission: { external_directory: grants } }));
+    expect(provider.fake.count("destroy")).toBe(0);
+    release(); await inFlight;
+    const replaced = await runtime.execute(f.workspace, "shell", { command: "true" });
+    expect(replaced.metadata).toMatchObject({ sandboxRestarted: true });
+    expect(provider.fake.sandboxes().find(sandbox => sandbox.id === oldId)?.state).toBe("missing");
+    expect(provider.fake.count("destroy", oldId)).toBeGreaterThanOrEqual(1);
+    expect(provider.fake.count("stop", oldId)).toBe(0);
+    // The destroyed tombstone is retried with the typed not_found response;
+    // it must still recreate/reset instead of resuming A's revoked guest.
+    expect(provider.fake.count("create")).toBe(2);
+  } finally { release(); await runtime.close(); await f.cleanup(); }
+});
+
+test("a message mentioning not_found never substitutes for the provider error code during revocation", async () => {
+  const f = await fixture();
+  let failDestroy = true;
+  let executions = 0;
+  const provider = createFakeProvider({ onRun: () => { executions++; return { exitCode: 0, stdout: "guest", stderr: "" }; }, onOperation: operation => { if (operation.name === "destroy" && failDestroy) throw new Error("not_found"); } });
+  const runtime = createLocalSandboxRuntime(f.config, { access: async () => ({ enabled: true, scope: "fixture" }), provider: async () => provider });
+  try {
+    await runtime.execute(f.workspace, "shell", { command: "true" });
+    await writeGlobalRuntimeOpencodeConfig(f.config, () => ({ permission: { external_directory: { [`${f.external}/*`]: "allow" } } }));
+    await expect(runtime.execute(f.workspace, "shell", { command: "must not run" })).rejects.toThrow("not_found");
+    expect(provider.fake.count("create")).toBe(1);
+    expect(executions).toBe(1);
+    failDestroy = false;
+    expect((await runtime.execute(f.workspace, "shell", { command: "true" })).metadata).toMatchObject({ sandboxRestarted: true });
+    expect(provider.fake.count("create")).toBe(2);
+  } finally { failDestroy = false; await runtime.close(); await f.cleanup(); }
 });
 
 test("a retained stopped entry resumes the same local guest before reuse", async () => {

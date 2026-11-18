@@ -594,6 +594,7 @@ async function main() {
       ? trace.children.every(child => GUEST_TOOLS.includes(child.tool) || child.status !== "completed")
       : GUEST_TOOLS.includes(trace.tool) || trace.tool === "execute" || !succeeded(trace)), describe(railsTurn.tools));
     check("host rails turn: the unmounted host file never reached the session", !JSON.stringify(railsTurn.messages).includes(hostSecret));
+    check("host rails turn: no request reached the independent host loopback witness", witness.hits.length === 0, `requests: ${witness.hits.length}`);
     observations.push(`host rails: Code Mode fetch reached a loopback listener on this host ${witness.hits.length} time(s)${witness.hits.length ? ` (${witness.hits.join(", ")}). The guest VM has no network, but Code Mode's own fetch runs in the engine on the host.` : "."}`);
 
     // ----- Phase 3: a read-only server; every bind mount must refuse writes -----

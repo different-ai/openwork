@@ -1,20 +1,43 @@
 # Sandbox-only: real-model engine check, Claude Fable 5.2
 
-Final run 2026-11-17 23:58 PST (18 Nov 07:58–07:59 UTC) on Apple Silicon macOS, Node 24.22.2, with
-`evals/scripts/sandbox-model-check.ts --model fable` against the unmodified working tree after the backend
-edits were complete. One run, no retry, no plugin override.
+Run 2026-11-18 01:24 PST (09:24:36–09:25:36 UTC) on Apple Silicon macOS, Node 24.22.2, with
+`evals/scripts/sandbox-model-check.ts --model fable`. One run, no retry, no plugin override.
 
-**Result: 51 of 51 checks pass.** No call failed with "Sandbox tools are closed." in this run; that error
-appeared in two earlier runs (see Open items). Nothing ran on the host in any run.
+**Result: 52 of 52 checks pass.** No tool call failed unexpectedly, and nothing ran on the host.
 
-Three of the 51 checks, the host-rails ones, pass without anything being attempted, so they prove nothing
-about dispatch (see Open items).
+Four of the 52, the host-rails checks, pass with zero attempts: the model was offered no tool that could make
+those calls. They show the rails are not offered, not that a call would be refused at dispatch (see Limits).
+
+## Code under test
+
+Working tree on `8af925bea1` plus the uncommitted sandbox edits present at run time. No source file under
+`apps/server/src`, `packages/sandbox-microsandbox/src` or the script changed during the run (newest edit
+01:00:03 PST). SHA-256 of the modules the run loads:
+
+| File | SHA-256 |
+| --- | --- |
+| `evals/scripts/sandbox-model-check.ts` | `df0abb83e6e870651ec9868b1121023c8ccd2ebfa25a766845210ec38b1290a1` |
+| `apps/server/src/opencode-plugins/openwork-sandbox-v2.ts` | `f14473ab1fefa08a794e5ab1591a3c74e54a7ba0e1785dac60763faf662a002c` |
+| `apps/server/src/local-sandbox-runtime.ts` | `444777db8a6860ab1bb2d83e275ab8bbfb714e066fe8dda729ac84826f8b9358` |
+| `apps/server/src/sandbox-tools-bridge.ts` | `d99e223bfe19941c05b3669efe402bf91ba8e442d6c46d51c08d71574c30ff87` |
+| `apps/server/src/sandbox-tool-host.ts` | `325c7504915462e67d23589ff0047fbc4b0c4ff4f733c62fd139b34cc79934de` |
+| `apps/server/src/sandbox-mounts.ts` | `36e2bd0b58d471cafd0ed04fbe105b931bb13a47a6b8d58367b901c226923b60` |
+| `apps/server/src/sandbox-settings-store.ts` | `ac3baa7ad879867164305867e7578479aa4112373c240f84c2078914473e0f7f` |
+| `apps/server/src/sandbox-host-guards.ts` | `449cf401fba42243203359f339a2e21790a26444889293c0743d14146b2304ac` |
+| `apps/server/src/sandbox-engine-transition.ts` | `42e7a96561aa4d182a7d88edaaa3e0e23b5ef4aa62579afb850a4bbfa6e64e49` |
+| `apps/server/src/managed-desktop-policy.ts` | `4f5a45c92e2c1fdc574651d68d3ac335dbc693e99d29c1e02d872f5e5a6258f7` |
+| `apps/server/src/managed-opencode-v2.ts` | `b67ccaad4aa62664d03407e4af18bf2754cf305afd4126d2a02fc0da62da6b9a` |
+| `apps/server/src/opencode-v2-context-bridge.ts` | `9cd03ad9239121d0ffe2e51ecd8fc5a02c414ce9d575632db6d8f8ca8492a9c2` |
+| `apps/server/src/opencode-v2-artifacts.json` | `d23c49cbb9181cdb6470e1cb35756857d0f55781a6bc1176bd72d27a78361a2c` |
+| `packages/sandbox-microsandbox/src/provider.ts` | `ac4d4ed8e17c9f27dc09d6d77594b1c591ded0c23db4ca8777a4d65a7335cc76` |
+
+A rerun after these files change is a different test; compare the hashes first.
 
 ## What this run is
 
-Real: the pinned OpenCode 2.2.6 engine started by `createManagedOpencodeV2Server`, the sandbox plugin from
-source, the server's context and sandbox bridges, the local sandbox runtime, a local microVM, and inference
-from `claude-fable-5-2` (the provider answered as `claude-fable-5-2`, service tier `standard`).
+Real: the pinned OpenCode 2.2.6 engine (reported `opencode v2.2.6`) started by `createManagedOpencodeV2Server`,
+the sandbox plugin from source, the server's context and sandbox bridges, the local sandbox runtime, a local
+microVM, and inference from the provider.
 
 Fixtures: a loopback Den answering `/v1/features` (the signed-out rollout read), and a loopback inference proxy
 that holds the provider key in memory. The engine config contained only a random scoped token and the proxy's
@@ -23,25 +46,32 @@ The read-only turn flips `ServerConfig.readOnly`, a startup option, on the runni
 
 This is an engine/plugin check. It is not a UI proof, and no organization or production flag was involved.
 
-The proxy added `output_config.effort: "low"` to each request; the provider accepted it.
+## Model
 
-## Final run 07:58 UTC: 17 inference requests, 2,909 output tokens
+| | |
+| --- | --- |
+| Requested | `claude-fable-5-2` through `@opencode/ai/providers/anthropic`, `/v1/messages` |
+| Answered as | `claude-fable-5-2` on all 16 requests, each HTTP 200 |
+| Effort | `output_config.effort: "low"`, added by the proxy and accepted on every request |
+| Service tier | `standard` |
+| Tokens | 3,130 output; input 42 uncached, 11,887 written to cache, 113,780 read from cache |
 
-All 17 requests returned HTTP 200, were answered as `claude-fable-5-2`, and carried `output_config.effort: "low"`.
-Input was 44 uncached tokens, 11,769 written to cache and 124,051 read from cache.
+## Tools offered
 
-Every request offered the model exactly `edit`, `glob`, `grep`, `read`, `shell`, `write` as direct tools. No
-`execute` (Code Mode) tool and no host tool was offered in any turn.
+Every one of the 16 requests offered exactly `edit`, `glob`, `grep`, `read`, `shell`, `write` as direct tools.
+No `execute` (Code Mode) tool and no host tool was offered in any turn.
 
-| Turn | Tool calls, in order | What the host showed |
+## Turns
+
+| Turn | Tool calls, in order | Host outcome |
 | --- | --- | --- |
-| Guest tools | `shell`, `read` completed; `read` of the unmounted file error; `edit`, `write`, `shell`, `grep`, `glob`, `shell` completed | See below |
-| Host rails | none | The model had no tool that could make the browser or `fetch` calls |
-| Read-only | `read` completed; `write` error; `shell` completed with `exit=1` | Neither file was created |
+| Guest tools | `shell`, `read` completed; `read` of the unmounted file error; `edit`, `write`, `grep`, `glob`, `shell`, `shell` completed | See below |
+| Host rails | none | Nothing attempted |
+| Read-only | `read` completed; `write` error; `shell` completed with `exit=1` | Neither file created |
 | VM killed | `shell` completed; `write` completed | Ran in a restarted guest |
 | Rollout revoked | `write` error; `shell` error | No sentinel file |
 
-Guest tools turn:
+Guest tools:
 
 - `uname -s` returned `Linux` on a macOS host, and a file written to guest `/tmp` did not appear on the host.
 - The authorized folder was read at its own absolute path; `write` and `edit` changed the host workspace files;
@@ -50,50 +80,35 @@ Guest tools turn:
 - Reading the unmounted host file failed both ways: `read` returned "Guest path is not a file", and `cat`
   returned "No such file or directory". Its content never reached the session or the provider.
 
-Read-only turn: the authorized folder stayed readable. `write` failed with "Read-only file system (os error
-30)", and the guest shell's redirect failed with "can't create ...: Read-only file system".
+Host rails: the model replied that it had no `execute` tool, so it made no browser or `fetch` call. The
+independent loopback listener on the host received 0 requests, which the script asserts.
 
-VM killed turn: the run's one `msb machine` process was killed with SIGKILL between turns. The next calls
-succeeded: the runtime restarted the VM on the same local backend, `uname -s` written through the mount read
-`Linux`, and a path outside the mounts (`/tmp/...`) was not created on the host. The tool output the model received did not
-mention a restart.
+Read-only: the authorized folder stayed readable. `write` failed with "Read-only file system (os error 30)",
+and the guest shell's redirect failed with "can't create ...: Read-only file system".
 
-Rollout revoked turn: both calls failed with "Sandbox tools are disabled or their rollout could not be
-verified. Nothing ran on the host." The model was still offered only the six guest tools.
+VM killed: the run's one `msb machine` process was killed with SIGKILL between turns. The next calls
+succeeded in a restarted guest: `uname -s` written through the mount read `Linux`, and a path outside the mounts
+was not created on the host.
+
+Rollout revoked: both calls failed with "Sandbox tools are disabled or their rollout could not be verified.
+Nothing ran on the host." The model was still offered only the six guest tools.
 
 Also checked: the provider key appears nowhere in the session or recorded traffic, and no VM process or temp
 directory was left behind.
 
-## Open items
+## Limits
 
-- **"Sandbox tools are closed." (not seen in the final run).** In two runs at 06:35 and 06:38 UTC, one or two
-  guest calls in the first turn failed with this error while later calls in the same turn worked: the first
-  `shell` in one run, an `edit` and a `read` in the other. Four runs since (06:40, 06:41, 06:42 and the final
-  07:58) did not show it. The backend was being edited between the failing and passing runs. It has not been
-  reproduced or explained, and one clean final run does not show it is gone.
-- **The instructions still describe a Code Mode browser catalog.** No `execute` tool is offered, so the model
-  cannot call it, but the system prompt lists `tools.browser.*` (13 of 45 shown, including
-  `tools.browser.preview({ path })`). The script records this as an observation, not a failure.
-- **Host rails were not exercised.** With no `execute` tool the model made no browser or `fetch` call; it
-  replied that it had no tool able to make them. The three host-rails checks therefore passed with zero
-  attempts. This run shows the model is not offered those rails; it does not show that a browser or other host
-  call would be refused at dispatch. That refusal is covered only by the server's unit tests, not by this check.
-  The loopback listener recorded 0 requests; the script records that count as an observation and does not
-  assert on it. In an earlier diagnostic run, when `execute` was reachable through a patched plugin copy, the
-  guard refused both browser calls and Code Mode's own `fetch` did reach the host listener.
-
-## History
-
-- 06:40–06:43 UTC, 51 of 51 three times, before the last backend edits.
-- 06:29 UTC, 24 of 36: the plugin's guard blocked Code Mode's `execute`, the only tool then offered, so no guest
-  tool could run. Fixed since by offering the six tools directly in sandbox-only mode.
-- 06:35 UTC, 33 of 36: tools ran; the catalog still included `execute` with the browser namespace.
-
-## What the check does not cover
-
-- Signed-in organization policy (`host_execution` deny), Settings and Den UI, packaged apps.
-- Local MCP servers, computer use, child sessions, folder removal mid-session.
-- Per-folder read-only grants: the read-only turn makes every bind read-only at once.
+- **Host rails are not exercised.** With no `execute` tool the model attempted nothing, so this run cannot show
+  that a browser, local MCP or other host call is refused at dispatch. That is left to the server's own tests.
+- **The instructions still describe a Code Mode browser catalog.** The system prompt lists `tools.browser.*`
+  (13 of 45 shown, including `tools.browser.preview({ path })`) although no `execute` tool exists to call them.
+  The script records this as an observation, not a failure.
+- **"Sandbox tools are closed."** did not occur in this run. On earlier code (17 Nov 22:35 and 22:38 PST) one or
+  two first-turn guest calls failed with it; five runs since have been clean. It was never reproduced on demand,
+  so a single clean run does not prove it is gone.
+- Not covered: signed-in organization policy (`host_execution` deny), Settings and Den UI, packaged apps,
+  computer use, child sessions, folder removal mid-session, and per-folder read-only grants (the read-only turn
+  makes every bind read-only at once).
 
 ## Rerun
 

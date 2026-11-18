@@ -102,7 +102,7 @@ test("wrong-provider, stopped and aborted handles never execute guest effects", 
   assert.equal(provider.fake.count("run"), 0);
 });
 
-async function pluginFixture(initial: SandboxToolMode) {
+async function pluginFixture(initial: SandboxToolMode, projectConfigDisabled?: boolean) {
   let mode = initial;
   let prompt: (() => Promise<void>) | undefined;
   let transform: Parameters<SandboxPluginContext["tool"]["transform"]>[0] | undefined;
@@ -127,6 +127,7 @@ async function pluginFixture(initial: SandboxToolMode) {
     session: { async hook(name, callback) { if (name === "prompt") prompt = callback; return { async dispose() { disposed += 1; if (name === "prompt") prompt = undefined; } }; } },
   };
   const stop = await setupSandboxTools(context, {
+    projectConfigDisabled,
     async status() { if (statusFailed) throw new Error("status unavailable"); return mode; },
     async execute() { executions += 1; return { content: [{ type: "text", text: "sandbox only" }] }; },
   });
@@ -149,7 +150,7 @@ test("normal mode adds six provider-safe sandbox IDs without replacing host tool
     assert.equal(fixture.reloads(), 1);
     assert.equal(fixture.tools.size, 0);
   } finally { await fixture.stop(); }
-  assert.equal(fixture.disposed(), 3);
+  assert.equal(fixture.disposed(), 5);
 });
 
 test("only mode replaces six primitive IDs and default-denies all other host tools", async () => {
@@ -167,6 +168,19 @@ test("only mode replaces six primitive IDs and default-denies all other host too
     assert.ok(fixture.tools.has("sandbox_shell"));
     assert.ok(fixture.builtins.has("shell"));
   } finally { await fixture.stop(); }
+});
+
+test("required mode refuses an engine started with writable project-plugin discovery, including live transitions", async () => {
+  for (const initial of ["tools", "only"] satisfies SandboxToolMode[]) {
+    const fixture = await pluginFixture(initial, false);
+    try {
+      fixture.setMode("only");
+      await assert.rejects(fixture.prompt(), /restarting the engine with project configuration disabled/);
+      const shell = fixture.tools.get(initial === "only" ? "shell" : "sandbox_shell"); assert.ok(shell);
+      await assert.rejects(shell.execute({ command: "touch /host-plugin-sentinel" }, call()), /project configuration disabled/);
+      assert.equal(fixture.executions(), 0);
+    } finally { await fixture.stop(); }
+  }
 });
 
 test("off mode can be enabled on a prompt and disposed tools fail closed", async () => {

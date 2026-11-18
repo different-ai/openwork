@@ -15,7 +15,9 @@ rollout is changed by this PR.
 This is **agent-tool confinement**, not a VM for the OpenWork/OpenCode process. Trusted engine internals still read
 configuration, maintain history and may perform filesystem bookkeeping. A malicious same-user host process or
 trusted installed engine plugin is outside this boundary. Live rw mounts deliberately allow writes to their host
-sources; sandbox-only does not mean host files cannot change through authorized mounts.
+sources; sandbox-only does not mean host files cannot change through authorized mounts. External host watchers
+that consume writable files are not sandboxed by this mode. Do not grant writable access to trusted harness,
+configuration or installation directories; use readonly/scratch workflows for untrusted changes.
 
 The v2 plugin uses `context.tool.transform`: remove native implementations and install guest replacements, as Pi
 removes built-ins with `--no-builtin-tools`. There is no shell-prefix mechanism. The host resolves the mode; neither
@@ -58,17 +60,31 @@ the host's loopback, outside guest network policy. That diagnostic change is **n
 Root fix: sandbox-only registers the six tools with `codemode: false`, removes every other registry implementation,
 and filters the final inference context too. Code Mode synthesizes its own `execute` and browser namespaces after
 registry transforms, so catalog removal alone was insufficient. Required mode advertises only the six direct tools;
-`execute` remains denied, including its host-network interpreter.
+`execute` remains denied, including its host-network interpreter. OpenCode's built-in patch hook also removes
+`edit`/`write` for `gpt-*` models after registry transforms. Required mode restores only the validated guest
+descriptors on context/generate/compaction hooks; executable registry snapshots still decide whether a tool can
+run. This fixes the real Sol failure without enabling host patch or weakening the six-tool assertion.
 
 Execution guards recheck current mode. Previously captured host implementations are wrapped while host mode is
 allowed, so a stale snapshot cannot execute the old host shell merely because its ID equals the new guest shell.
 Mode transitions reload tools and MCP state or refuse the prompt if the required reload capability is unavailable.
-An initial status failure refuses setup rather than guessing host mode; a known requirement never relaxes on a
-status error. This can make an unavailable control plane visible as a blocked turn, which is preferable to escape.
+An initial status failure refuses setup rather than guessing host mode; a newly signed-in, never-verified policy
+cannot grant host authority, and a known requirement never relaxes on a status error. A previously verified Allow
+can retain the existing same-session offline policy; this is not instantaneous offline organization revocation. This can make an unavailable control plane visible as a blocked turn, which is preferable to escape.
 
 ## 4. Other host-touching surfaces
 
-Required mode intentionally has a small default-deny supported surface:
+Required mode intentionally has a small default-deny supported surface. Before spawning, the native engine receives
+supported `OPENCODE_CONFIG_PROJECT_DISABLE=1`, because `.opencode/plugins` and configured project modules execute
+host JavaScript before any tool hook. Native regression fixtures prove ordinary discovery really executes those
+modules while required startup and later project writes do not. Required mode therefore ignores project
+`opencode.json(c)` and project extension discovery; use trusted host-managed provider settings instead.
+
+A live ordinary-to-required transition needs a **new native process**, not merely a tool/config reload. The host
+restarts safely as section 6 describes. Legacy bootstrap/command repair, reloads, reaper registration and native
+location reads are also guarded: metadata must not initialize an unsafe legacy/project location.
+
+Supported tool surfaces:
 
 | Surface | Decision |
 | --- | --- |
@@ -125,13 +141,23 @@ allow, managed status and feature availability. Writes use the existing collabor
 explicit local preference fails restrictive. A managed requirement locks the row; a direct local-allow request
 still cannot weaken the effective org decision.
 
+Saving waits for a serialized, fenced native-sidecar refresh when process isolation must change, in either
+direction. It probes pinned global session/job activity before persistence: busy or unknown activity returns 409,
+leaving the preference and running tasks intact. An idle transition changes PID and acknowledges only after the
+new process is ready. A refresh failure after persistence is 503, retaining restrictive admission rather than
+falling back. Org-policy changes and later verified ordinary authority use the same safe admission flow, and
+forwarding resolves fresh connection credentials after the fence. Guest scratch can reset during such refreshes;
+workspace/Authorized Folder bind data remains intact.
+
 The host sends `X-OpenWork-Sandbox-Only: 1` for desktop config. Den filters unknown actions for older clients and
 returns conservative known-action denies when a required policy cannot be represented. Old clients have no
 read/glob/grep policy action, so this fallback alone is **not a complete guarantee for obsolete desktops**: use
 `allowedDesktopVersions`/managed rollout to require compatible clients. This release does not retrofit old binaries.
 
-New restrictions can be configured only during the rollout; existing restrictions stay visible and removable
-when the flag is off. Feature loss never relaxes a requirement: keep guest-only tools that fail unavailable rather
+The Den editor admits new managed restrictions during the rollout; the local UI is offered while the rollout is
+on or a requirement already exists. Existing restrictions stay visible and removable when the flag is off.
+An explicit privileged local API request can still choose the more restrictive preference while unavailable;
+that blocks execution rather than granting a feature or restoring the host. Feature loss never relaxes a requirement: keep guest-only tools that fail unavailable rather
 than restore the host. Verified restrictive knowledge is persisted per control-plane/org scope for offline
 restart, deliberately conservative across members until a fresh policy is obtained.
 
@@ -155,10 +181,12 @@ Authorized Folders route in `server.ts`. **Not `config.authorizedRoots`.**
 - Exclude runtime DB/vault state and actual `MSB_HOME`, including ancestor/descendant overlaps. Host rename races,
   hardlink aliases and same-user tampering remain adversarial filesystem concerns, not solved by string matching.
 
-On change, recompute and fingerprint the mount plan. Serialize transitions with tool calls, stop stale instances,
-and **destroy/recreate** before the next use (plain SDK stop/start keeps the old configuration). The restart receipt
+On change, capture the written grants, recompute/fingerprint the mount plan and serialize transitions with tool
+calls. Force-destroy revoked instances rather than relying on guest cooperation with graceful stop, then recreate
+before use (plain SDK stop/start keeps old configuration). Invalidated tombstones prevent reuse even for A→B→A;
+only typed `not_found` is tolerated during destruction, and a failed destroy blocks later calls. The restart receipt
 states guest scratch was reset. Live bind contents survive. Unrelated config writes do not restart. Bounded
-in-flight work can finish before the queued mount transition; immediate descendant cancellation is not claimed.
+in-flight work can finish before the queued mount transition; zero-latency descendant cancellation is not claimed.
 
 Account/install/workspace scope plus mount fingerprints prevent reuse across authorities. After server restart,
 recreate old stable-name instances rather than adopting unknown old grants. Guest-only scratch persistence across

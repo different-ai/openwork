@@ -1,9 +1,11 @@
 /** @jsxImportSource react */
 import { useId } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Lock } from "lucide-react";
+import { Info, Lock } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { t } from "@/i18n";
 import type {
   OpenworkSandboxSettingsResponse,
@@ -14,7 +16,6 @@ import { safeStringify } from "../../../../app/utils";
 import { SettingsNotice } from "../settings-section";
 import {
   LayoutSectionItem,
-  LayoutSectionItemDescription,
   LayoutSectionItemFootnote,
   LayoutSectionItemHeader,
   LayoutSectionItemHeaderActions,
@@ -81,10 +82,19 @@ export function HostExecutionPanel(props: HostExecutionPanelProps) {
       data-host-execution-managed={row.lockedByOrganization ? "true" : "false"}
     >
       <LayoutSectionItem>
-        <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>{t("context_panel.host_execution")}</LayoutSectionItemTitle>
-          <LayoutSectionItemDescription>{t("context_panel.host_execution_desc")}</LayoutSectionItemDescription>
-          <LayoutSectionItemHeaderActions>
+        <LayoutSectionItemHeader className="items-center">
+          <LayoutSectionItemTitle>
+            {t("context_panel.host_execution")}
+            <Tooltip>
+              <TooltipTrigger render={(
+                <Button variant="ghost" size="icon-sm" className="text-muted-foreground" aria-label={t("context_panel.host_execution")}>
+                  <Info className="size-3.5" aria-hidden="true" />
+                </Button>
+              )} />
+              <TooltipContent>{t("context_panel.host_execution_desc")}</TooltipContent>
+            </Tooltip>
+          </LayoutSectionItemTitle>
+          <LayoutSectionItemHeaderActions className="self-center">
             <Switch
               data-testid="host-execution-switch"
               aria-label={t("context_panel.host_execution")}

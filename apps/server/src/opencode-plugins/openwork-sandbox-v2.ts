@@ -42,12 +42,14 @@ export type SandboxPluginContext = {
   };
   session: { hook: {
     (name: "prompt", callback: () => Promise<void>): Promise<Registration>;
-    (name: "context", callback: (event: { tools: Record<string, unknown> }) => Promise<void>): Promise<Registration>;
+    (name: "context" | "generate" | "compaction", callback: (event: { tools: Record<string, unknown> }) => Promise<void>): Promise<Registration>;
   } };
 };
 export type SandboxPluginDependencies = {
   status(): Promise<SandboxToolMode>;
   assertHostExecution?(): Promise<void>;
+  /** Process-start fact supplied by the trusted native entrypoint. */
+  projectConfigDisabled?: boolean;
   execute(name: SandboxToolName, input: unknown, call: SandboxToolCall): Promise<SandboxEngineResult>;
 };
 
@@ -68,6 +70,9 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   try { mode = modeSchema.parse(await dependencies.status()); }
   catch { mode = "only"; }
   let closed = false;
+  const assertProjectIsolation = () => {
+    if (dependencies.projectConfigDisabled === false) throw new Error("Sandbox-only mode requires restarting the engine with project configuration disabled. No guest operation or prompt was admitted.");
+  };
   const hooksAvailable = !!context.tool.hook && !!context.mcp;
   if (mode === "only" && !hooksAvailable) throw new Error("Sandbox-only enforcement is unavailable; host tools were not admitted.");
   let mcpMode = mode;
@@ -131,6 +136,7 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
           if (closed) throw new Error("Sandbox tools are closed.");
           // Never trust a stale inference snapshot after a workspace mode change.
           const current = modeSchema.parse(await dependencies.status());
+          if (current === "only") assertProjectIsolation();
           call.signal.throwIfAborted();
           if (current === "off" || current !== catalogMode) throw new Error("Sandbox tool mode changed; refresh the tool catalog before retrying.");
           const parsed = sandboxToolSchemas[name].parse(input);
@@ -143,6 +149,7 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   try {
     prompt = await context.session.hook("prompt", async () => {
       const next = await offeredMode(mode);
+      if (next === "only") assertProjectIsolation();
       if (next === "only" && !hooksAvailable) throw new Error("Sandbox-only enforcement requires restarting the engine with supported guards. No prompt was admitted.");
       if (next !== mcpMode && (next === "only" || mcpMode === "only")) {
         if (!context.mcp?.reload) throw new Error("Sandbox mode changed. Restart the engine before continuing so MCP servers cannot escape the new mode.");
@@ -166,14 +173,26 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   // Code Mode synthesizes execute plus browser namespaces after tool transforms.
   // Filter the final per-inference catalog too: its host-side fetch interpreter
   // must neither be advertised nor be required to reach the guest primitives.
-  const inference = await context.session.hook("context", async event => {
-    const current = modeSchema.parse(await dependencies.status());
-    if (current !== "only") return;
-    for (const id of Object.keys(event.tools)) if (!SANDBOX_TOOL_NAMES.some(name => id === name)) delete event.tools[id];
-  });
+  const inference: Registration[] = [];
+  for (const name of ["context", "generate", "compaction"] satisfies ("context" | "generate" | "compaction")[]) {
+    inference.push(await context.session.hook(name, async event => {
+      const current = modeSchema.parse(await dependencies.status());
+      if (current !== "only") return;
+      assertProjectIsolation();
+      for (const id of Object.keys(event.tools)) if (!SANDBOX_TOOL_NAMES.some(name => id === name)) delete event.tools[id];
+      // OpenCode 2.2.6's built-in patch hook removes edit/write for gpt-* on
+      // all three request kinds. Restore only our validated guest descriptors,
+      // never host patch or execute. Core matches these names to this request's
+      // executable registry snapshot, so a tool absent from that snapshot
+      // (e.g. denied by agent permissions) is still unavailable, not invented.
+      for (const definition of definitions) event.tools[definition.name] = {
+        description: sandboxToolDescriptions[definition.name], input: definition.input,
+      };
+    }));
+  }
   return async () => {
     closed = true;
-    try { await inference.dispose(); await prompt.dispose(); } finally {
+    try { for (const hook of inference) await hook.dispose(); await prompt.dispose(); } finally {
       try { await registration.dispose(); } finally { await servers?.dispose(); await guard?.dispose(); }
     }
   };
@@ -202,6 +221,7 @@ export default {
       return response.json();
     };
     return setupSandboxTools(context, {
+      projectConfigDisabled: ["1", "true"].includes(process.env.OPENCODE_CONFIG_PROJECT_DISABLE?.toLowerCase() ?? ""),
       async status() { return z.object({ mode: modeSchema }).strict().parse(await request({ operation: "status" })).mode; },
       async assertHostExecution() { z.object({ allowed: z.literal(true) }).strict().parse(await request({ operation: "host" })); },
       async execute(name, input, call) {

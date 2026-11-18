@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -95,6 +95,41 @@ test("verified org deny beats local allow, survives flag off/outage and scoped c
   } finally { await den.stop(); await f.cleanup(); }
 });
 
+test("a first unverified sign-in never grants host execution, even with local allow and no cached org deny", async () => {
+  const f = await fixture();
+  let unavailable = true;
+  let required = true;
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
+    if (unavailable) return new Response(null, { status: 503 });
+    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: false } });
+    return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: required ? "deny" : "allow", source: "Everyone" }] } });
+  } });
+  const session = { baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_first_read", token: "first-fixture-token" };
+  const policy = managedDesktopPolicy(f.config);
+  const runtime = createLocalSandboxRuntime(f.config);
+  try {
+    // Signed-out ordinary mode is unchanged, including when rollout cannot be read.
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    await policy.setSession(session);
+    await policy.current();
+    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    await expect(policy.assertHostExecution()).rejects.toThrow("not yet been verified for this sign-in");
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
+    unavailable = false;
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
+    await expect(policy.assertHostExecution()).rejects.toThrow("requires sandbox-only");
+    required = false;
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    // Previously verified Allow can keep its ordinary offline behaviour for
+    // this identity; a changed identity must verify again, never inherit it.
+    unavailable = true;
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    await policy.setSession({ ...session, token: "different-sign-in-fixture-token" });
+    await expect(policy.assertHostExecution()).rejects.toThrow("not yet been verified for this sign-in");
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
+  } finally { await runtime.close(); await policy.clearSession(); await den.stop(); await f.cleanup(); }
+});
+
 test("signed-out rollout reads only the trusted configured Den /v1/features without credentials", async () => {
   const f = await fixture();
   let enabled = true;
@@ -121,7 +156,7 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
   let mode: SandboxToolMode = "only";
   let before: ((event: { tool: string }) => Promise<void>) | undefined;
   let prompt: (() => Promise<void>) | undefined;
-  let inference: ((event: { tools: Record<string, unknown> }) => Promise<void>) | undefined;
+  const inference = new Map<string, (event: { tools: Record<string, unknown> }) => Promise<void>>();
   const originals = new Set([...SANDBOX_TOOL_NAMES, "patch", "browser_open", "computer_script", "custom_host_command", "drive_pull_file"]);
   const tools = new Map<string, HostNativeTool>();
   const mcp = new Map<string, unknown>([["local", { type: "local", command: ["sh", "-c", "touch /host-sentinel"] }], ["remote", { type: "remote", url: "https://fixture.invalid/mcp" }]]);
@@ -132,7 +167,7 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
       async reload() {}, async hook(_name, callback) { before = callback; return { async dispose() {} }; },
     },
     mcp: { async transform(callback) { callback({ list: () => mcp.entries(), set: (name, value) => { mcp.set(name, value); } }); return { async dispose() {} }; } },
-    session: { async hook(name, callback) { if (name === "prompt") prompt = callback; else inference = callback; return { async dispose() {} }; } },
+    session: { async hook(name, callback) { if (name === "prompt") prompt = callback; else inference.set(name, callback); return { async dispose() {} }; } },
   };
   const close = await setupSandboxTools(context, { status: async () => mode, execute: async () => { guestCalls++; throw new Error("guest down"); } });
   try {
@@ -140,9 +175,15 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
     expect([...tools.keys()]).toEqual([...SANDBOX_TOOL_NAMES]);
     expect([...mcp.values()].every(value => typeof value === "object" && value !== null && "disabled" in value && value.disabled === true)).toBe(true);
     expect([...tools.values()].every(tool => tool.options?.codemode === false)).toBe(true);
-    const finalCatalog = { tools: Object.fromEntries([...SANDBOX_TOOL_NAMES, "execute", "browser", "browser_open", "custom_host"].map(id => [id, {}])) };
-    await inference?.(finalCatalog);
-    expect(Object.keys(finalCatalog.tools)).toEqual([...SANDBOX_TOOL_NAMES]);
+    expect([...inference.keys()]).toEqual(["context", "generate", "compaction"]);
+    for (const hook of inference.values()) {
+      // OpenCode 2.2.6's patch preference deletes these before our hook for
+      // gpt-* models. Only guest definitions may be restored, on every flow.
+      const finalCatalog = { tools: Object.fromEntries([...SANDBOX_TOOL_NAMES.filter(name => name !== "edit" && name !== "write"), "patch", "execute", "browser", "browser_open", "custom_host"].map(id => [id, {}])) };
+      await hook(finalCatalog);
+      expect(Object.keys(finalCatalog.tools).sort()).toEqual([...SANDBOX_TOOL_NAMES].sort());
+      for (const name of SANDBOX_TOOL_NAMES) expect(finalCatalog.tools[name]).toEqual({ description: tools.get(name)!.description, input: tools.get(name)!.input });
+    }
     for (const tool of ["execute", "patch", "browser_open", "computer_script", "custom_host_command", "drive_pull_file"]) await expect(before?.({ tool })).rejects.toThrow("blocks this host tool");
     await expect(tools.get("shell")!.execute({ command: "touch /host-sentinel" }, { sessionID: "root", signal: new AbortController().signal })).rejects.toThrow("guest down");
     await expect(tools.get("shell")!.execute({ command: "touch /host-sentinel" }, { sessionID: "child", signal: new AbortController().signal })).rejects.toThrow("guest down");
@@ -261,9 +302,49 @@ test("server admission refuses a missing sandbox runtime while ordinary flag-off
   } finally { await engine.stop(); await f.cleanup(); }
 });
 
+test("cold trusted metadata and legacy reload/routing cannot initialize a v1 project in required mode", async () => {
+  const f = await fixture();
+  const marker = join(f.temp, "legacy-module-or-mcp-started");
+  await mkdir(join(f.workspace, ".opencode", "plugins"), { recursive: true });
+  await writeFile(join(f.workspace, ".opencode", "plugins", "unsafe.ts"), "export default { id: 'unsafe-fixture', setup() {} };\n");
+  let legacyRequests = 0;
+  const legacy = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => { legacyRequests++; await writeFile(marker, "legacy location initialized"); return Response.json({}); } });
+  f.config.externalOpencode = true;
+  f.config.engineAutoUpgrade = false;
+  f.config.workspaces[0]!.baseUrl = `http://127.0.0.1:${legacy.port}`;
+  const previewOverride = process.env.OPENWORK_ENGINE_V2_PREVIEW;
+  process.env.OPENWORK_ENGINE_V2_PREVIEW = "0";
+  await writeSandboxSettings(f.config, { allowHostExecution: false });
+  const { startServer } = await import("../src/server.js");
+  const { createEngineV2Preview } = await import("../src/engine-v2-preview.js");
+  const preview = createEngineV2Preview({ config: f.config, deferStart: true });
+  const server = await startServer(f.config, { deferManagedEngineStartup: true });
+  const root = `http://127.0.0.1:${server.port}`;
+  const headers = { authorization: `Bearer ${f.config.token}`, "content-type": "application/json" };
+  const before = await readdir(f.workspace);
+  try {
+    for (const path of ["authorized-folders", "config"]) expect((await fetch(`${root}/workspace/ws_sandbox/${path}`, { headers })).status).toBe(200);
+    expect((await fetch(`${root}/workspace/ws_sandbox/permissions/effective`, { headers })).status).toBe(403);
+    expect((await fetch(`${root}/workspace/ws_sandbox/engine/reload`, { method: "POST", headers, body: "{}" })).status).toBe(403);
+    await expect(preview.setChatRouting(false)).rejects.toMatchObject({ status: 403, code: "sandbox_only" });
+    await expect(preview.setEnabled(false)).rejects.toMatchObject({ status: 403, code: "sandbox_only" });
+    await delay(50);
+    expect(legacyRequests).toBe(0);
+    await expect(access(marker)).rejects.toThrow();
+    expect(await readdir(f.workspace)).toEqual(before);
+  } finally {
+    await preview.stop(); await server.stop(); await legacy.stop(); await f.cleanup();
+    if (previewOverride === undefined) delete process.env.OPENWORK_ENGINE_V2_PREVIEW;
+    else process.env.OPENWORK_ENGINE_V2_PREVIEW = previewOverride;
+  }
+});
+
 test("settings route requires approval before engine-global writes and leaves workspace files alone", async () => {
   const f = await fixture();
   f.config.approval = { mode: "manual", timeoutMs: 10_000 };
+  f.config.engineAutoUpgrade = false;
+  const previewOverride = process.env.OPENWORK_ENGINE_V2_PREVIEW;
+  process.env.OPENWORK_ENGINE_V2_PREVIEW = "0";
   const { startServer } = await import("../src/server.js");
   const server = await startServer(f.config, { deferManagedEngineStartup: true });
   const root = `http://127.0.0.1:${server.port}`;
@@ -288,5 +369,9 @@ test("settings route requires approval before engine-global writes and leaves wo
     expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
     expect((await fetch(`${root}/workspace/ws_sandbox/files/raw?path=missing.txt`, { headers })).status).toBe(403);
     expect((await fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: "yes" }) })).status).toBe(400);
-  } finally { await server.stop(); await f.cleanup(); }
+  } finally {
+    await server.stop(); await f.cleanup();
+    if (previewOverride === undefined) delete process.env.OPENWORK_ENGINE_V2_PREVIEW;
+    else process.env.OPENWORK_ENGINE_V2_PREVIEW = previewOverride;
+  }
 });

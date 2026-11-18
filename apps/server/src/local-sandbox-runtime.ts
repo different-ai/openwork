@@ -1,21 +1,21 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { ensureRunning, sandboxName, type SandboxHandle, type SandboxProvider } from "@openwork/sandbox";
+import { ensureRunning, sandboxName, sandboxErrorCode, type SandboxHandle, type SandboxProvider } from "@openwork/sandbox";
 import type { MicrosandboxMount } from "@openwork/sandbox-microsandbox";
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
-import { onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
+import { isEngineGlobalRuntimeConfigId, onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
 import { resolveSandboxMounts, sandboxMountFingerprint, sandboxMountGrants } from "./sandbox-mounts.js";
 import { createSandboxToolHost, SANDBOX_TOOL_NAMES, sandboxToolSchemas, type SandboxToolCall } from "./sandbox-tool-host.js";
 import { readSandboxSettings } from "./sandbox-settings-store.js";
 
 const OPERATION_TIMEOUT = { timeoutMs: 120_000 };
 const IMAGE = "alpine:3.22";
-type Entry = { provider: SandboxProvider; handle: SandboxHandle; fingerprint: string; scope: string };
+type Entry = { provider: SandboxProvider; handle: SandboxHandle; fingerprint: string; scope: string; invalidated?: boolean };
 export type LocalSandboxRuntimeDeps = {
-  access?: () => Promise<{ enabled: boolean; scope: string; hostDenied?: boolean }>;
+  access?: () => Promise<{ enabled: boolean; scope: string; hostDenied?: boolean; hostPolicyVerified?: boolean }>;
   allowHostExecution?: () => Promise<boolean>;
   externalDirectories?: () => Promise<Record<string, unknown>>;
   provider?: (mounts: readonly MicrosandboxMount[]) => Promise<SandboxProvider>;
@@ -49,28 +49,41 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
     void pending.finally(() => { if (queues.get(directory) === pending) queues.delete(directory); }).catch(() => undefined);
     return pending;
   }
+  async function destroy(entry: Pick<Entry, "provider" | "handle">) {
+    try { await entry.provider.destroy(entry.handle, OPERATION_TIMEOUT); }
+    catch (error) { if (sandboxErrorCode(error) !== "not_found") throw error; }
+  }
   async function stop(directory: string) {
     const entry = entries.get(directory);
     if (!entry) return;
-    await entry.provider.stop(entry.handle, OPERATION_TIMEOUT);
+    if (entry.invalidated) await destroy(entry);
+    else await entry.provider.stop(entry.handle, OPERATION_TIMEOUT);
     entries.delete(directory);
   }
-  async function mountsFor(directory: string) {
-    const grants = await directories();
+  async function mountsFor(directory: string, snapshot?: Record<string, unknown>) {
+    const grants = snapshot ?? await directories();
     return resolveSandboxMounts(sandboxMountGrants(directory, grants, config.readOnly), [
       runtimeStorageDir(config), process.env.MSB_HOME || join(homedir(), ".microsandbox"), join(homedir(), ".openwork", "msb"),
     ], grants);
   }
-  const unsubscribe = onRuntimeOpencodeConfigWrite((writtenConfig) => {
+  const unsubscribe = onRuntimeOpencodeConfigWrite((writtenConfig, workspaceId, snapshot) => {
     if (writtenConfig !== config) return;
-    for (const directory of entries.keys()) void serial(directory, async () => {
-      const entry = entries.get(directory);
-      if (!entry) return;
-      const mounts = await mountsFor(directory).catch(() => null);
-      if (mounts && sandboxMountFingerprint(mounts) === entry.fingerprint) return;
-      // Keep the old fingerprint so the next call recreates rather than resumes stale grants.
-      await entry.provider.stop(entry.handle, OPERATION_TIMEOUT);
-    }).catch(() => undefined);
+    for (const directory of entries.keys()) {
+      // Capture this write, not the eventual DB state after queued work. An
+      // A -> B -> A grant sequence still has to revoke the old A instance.
+      const grants = !deps.externalDirectories && isEngineGlobalRuntimeConfigId(workspaceId) ? runtimeExternalDirectory(snapshot) : undefined;
+      const observedMounts = mountsFor(directory, grants).catch(() => null);
+      void serial(directory, async () => {
+        const entry = entries.get(directory);
+        if (!entry) return;
+        const mounts = await observedMounts;
+        if (!entry.invalidated && mounts && sandboxMountFingerprint(mounts) === entry.fingerprint) return;
+        // Leave an invalidated tombstone until replacement, including after a
+        // failed destroy. Never resume old bindings because grants changed back.
+        entry.invalidated = true;
+        await destroy(entry);
+      }).catch(error => console.warn("[openwork:sandbox] forced mount revocation failed; guest calls remain blocked until destruction succeeds", { code: sandboxErrorCode(error) ?? "unknown" }));
+    }
   });
 
   return {
@@ -80,7 +93,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
       const localAllows = await allowHostExecution();
       const permission = await access();
       if ((!permission.enabled || closed) && entries.has(directory)) void serial(directory, () => stop(directory)).catch(() => undefined);
-      return { mode: !localAllows || permission.hostDenied ? "only" : permission.enabled && !closed ? "tools" : "off" };
+      return { mode: !localAllows || permission.hostDenied || permission.hostPolicyVerified === false ? "only" : permission.enabled && !closed ? "tools" : "off" };
     },
     async execute(directory: string, name: string, input: unknown, call?: SandboxToolCall) {
       workspace(directory);
@@ -100,8 +113,9 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
         const key = sandboxName(scope, "tools", workspace(directory).id);
         let entry = entries.get(directory);
         let restarted = false;
-        if (entry && (entry.fingerprint !== fingerprint || entry.scope !== scope)) {
-          await entry.provider.destroy(entry.handle, OPERATION_TIMEOUT);
+        if (entry && (entry.invalidated || entry.fingerprint !== fingerprint || entry.scope !== scope)) {
+          entry.invalidated = true;
+          await destroy(entry);
           entries.delete(directory);
           entry = undefined;
           restarted = true;
@@ -116,7 +130,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
           // Never adopt a stopped VM with stale mount grants after a server restart.
           const existing = await provider.find({ idempotencyKey: key });
           if (existing) {
-            await provider.destroy(existing, OPERATION_TIMEOUT);
+            await destroy({ provider, handle: existing });
             restarted = true;
           }
           const handle = await ensureRunning(provider, spec, OPERATION_TIMEOUT);

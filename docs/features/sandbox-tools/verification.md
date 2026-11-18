@@ -46,10 +46,15 @@ blocked the app's text-only session instructions update. No failing assertion wa
 - Exact Static CI command: **419 passed**, no failures/skips. The original CI failure was a missing Docker snapshot
   workspace dependency closure; both package COPY entries were added, leaving the assertion intact.
 - Den `test:api:security`: **159 passed**, no failures/skips. Audit coverage: **940/940** routes, disposable DB removed.
-- Agent-permission type tests: **10 passed**. Server/native-engine sandbox regressions: **39 passed** in the full
-  backend run, plus the product-proof integration regressions. Desktop computer-policy tests: **2 passed**.
+- Agent-permission type tests: **10 passed**. Final focused/native-engine sandbox regressions: **47 passed** across
+  seven files, including actual pinned-engine safe setting transitions, hostile project plugins and mount revocation.
+  Engine-switch-fence tests: **9 passed**. Desktop computer-policy tests: **2 passed**.
+- New real Den route/storage compatibility tests: **3 passed**, added to `test:api:security` rather than left outside
+  CI. They verify supported/old clients, hidden-rule preservation, scoped membership and rollout retention/removal.
 - `pnpm check`: all eight checks pass, including typecheck, feature registry and proof spec lint.
-- Server and desktop typecheck/build passed. Electron Node import of the final embedded-server bundle succeeds.
+- Server and desktop typecheck/build passed. Electron **43.8.1 / Node 24.22.0** successfully imports the final
+  embedded-server bundle; the separate test driver uses Node 24.22.2.
+- Source was merged with current `origin/dev` (no forced history rewrite). Final source checks rerun after that merge.
 
 ## Real models
 
@@ -58,11 +63,27 @@ service tiers, tool traces and intermediate failures. Fable uses accepted low ef
 a fast/priority tier and reports the actual returned tier. Separate tester subagents run the two models in parallel,
 with independent VM/runtime roots and no diagnostic plugin override.
 
+On the frozen merged implementation both testers obtained **52/52**, with all six actual tools offered and
+`write`/`edit` executing for Sol as well as Fable. Earlier Sol failures exposed the core GPT patch-tool preference;
+the product hooks now restore only validated guest descriptors, never host patch or Code Mode `execute`.
+Use the PR verification comment for the final immutable repeat; per-model source-module hashes are retained.
+
 The harness exercises actual OpenCode 2.2.6 sessions with real inference, the same plugin/host bridge/local runtime
 and actual microVMs. Rollout is supplied by a loopback Den fixture; this is not a real production-flag proof.
 Unadvertised host-tool checks with no model attempt do **not** establish dispatch enforcement; the hostile native
 registry/MCP and host-route tests provide that separate coverage. Loopback witness observations are not inflated
 into active exploit attempts.
+
+## Fixture isolation correction
+
+Early hand-written native regression fixtures omitted an explicit temporary history database and inherited the
+launcher profile, creating 18 synthetic test chats in persistent local history. The affected fixtures now pass
+isolated history paths; normal testkit Electron surfaces already strip inherited `OPENCODE_*` variables.
+
+Only those exact fixture records were revalidated by ID, title, directory, creation/update window, absent children
+and absent jobs. They were **reversibly archived (18), not deleted (0)**; no message content or unrelated work was
+modified or stopped. A metadata-only recovery record is kept privately outside Git. This cleanup is disclosed
+rather than presenting the early runs as fully isolated. Real-model runs always used explicit temporary history.
 
 ## Evidence locations
 

@@ -115,6 +115,8 @@ export interface OpencodeV2Connection {
 }
 
 export interface ManagedOpencodeV2Server extends OpencodeV2Connection {
+  /** Fixed at process startup; project JS/config cannot be disabled safely by a tool hook. */
+  readonly projectConfigDisabled: boolean;
   childPid: number | undefined;
   readonly exitCode: number | null;
   readonly stdout: string;
@@ -436,6 +438,22 @@ async function createManagedOpencodeV2ServerInner(
   const agentPermissionsPluginDirectory = join(instanceRoot, "agent-permissions-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
+  // Core 2.2.6's server-process maps this native option to config.project:false.
+  // Decide before spawn/import: guest-writable project plugins execute host JS
+  // before any tool hook. The private bridge, not an environment rollout flag,
+  // decides host authority. An unverifiable authority is restrictive.
+  const sandboxBridge = options.contextTools?.sandbox;
+  const projectConfigDisabled = sandboxBridge ? await (async () => {
+    try {
+      const response = await loopbackFetch(sandboxBridge.url, {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000),
+        headers: { Authorization: `Bearer ${sandboxBridge.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "host", directory: options.rootDir }),
+      });
+      const value: unknown = await response.json();
+      return !response.ok || !isRecord(value) || value.allowed !== true;
+    } catch { return true; }
+  })() : false;
   let url = "";
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   let skills: string[] = [...(options.skills ?? [])];
@@ -510,6 +528,7 @@ async function createManagedOpencodeV2ServerInner(
       ...inherited,
       ...(options.env?.OPENCODE_DISABLE_MODELS_FETCH ? { OPENCODE_DISABLE_MODELS_FETCH: options.env.OPENCODE_DISABLE_MODELS_FETCH } : {}),
       ...(options.providerSession ? { OPENWORK_PROVIDER_SESSION_FD: "3", OPENWORK_PROVIDER_SESSION_BROKER: providerCredentialBrokerPath } : {}),
+      ...(projectConfigDisabled ? { OPENCODE_CONFIG_PROJECT_DISABLE: "1" } : {}),
       OPENCODE_PASSWORD: password,
       OPENCODE_DB: historyDatabase,
       OPENCODE_CONFIG_DIR: configDir,
@@ -654,6 +673,7 @@ async function createManagedOpencodeV2ServerInner(
     get url() { return url; },
     username,
     password,
+    projectConfigDisabled,
     childPid: child.pid,
     get exitCode() {
       return child.exitCode;

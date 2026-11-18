@@ -87,6 +87,18 @@ live("a member turns off host tools and works in a real guest with only the fold
     expect(output).toContain("UNMOUNTED_HOST_FILE_IS_ABSENT");
     expect(output).not.toContain(world.nonce);
     expect(tools).toEqual(expectedTools);
+    // This is the first turn, so its rail is unambiguous even with chat
+    // virtualization. Expose the actual command output in the gallery.
+    await probe.eventually(() => probe.dom('[data-testid="completed-work-rail"]'), {
+      within: 5_000, label: "the guest command's activity is visible", until: snapshot => snapshot.elements.length > 0,
+    });
+    const folded = await probe.dom('[data-testid="completed-work-rail"][aria-expanded="false"]');
+    if (folded.elements.length) await user.click({ testId: "completed-work-rail" });
+    await user.click({ role: "button", label: "Show details for Ran a command" });
+    await user.see({ text: /Linux/ });
+    const visibleOutput = (await probe.dom('[data-text-command-output]')).elements.map(element => element.text).join("\n");
+    expect(visibleOutput).toContain("Linux");
+    expect(visibleOutput).toContain("UNMOUNTED_HOST_FILE_IS_ABSENT");
     await user.screenshot();
   });
 

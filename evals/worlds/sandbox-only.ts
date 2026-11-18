@@ -3,7 +3,7 @@ import { engineSessionProbe, evalIn, go } from "@openwork/behaviors";
 import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
 import type { MockAgentToolStep } from "@openwork/labs";
 import { randomUUID } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
 import { isRecord, records } from "./library.ts";
@@ -77,6 +77,22 @@ export async function sandboxSignedOutSettings(seed: Seed) {
   return { app, workspace, settingsPath: `/workspace/${workspace.workspaceId}/sandbox-settings` };
 }
 
+/** Own exactly one short runtime home; never delete it while its app may use it. */
+async function ownedSandboxHome(stack: AsyncDisposableStack) {
+  const path = await realpath(await mkdtemp("/tmp/owp-"));
+  let stopApp: (() => Promise<void>) | undefined;
+  stack.defer(async () => {
+    // stop() is idempotent, so testkit can also dispose its tracked surface.
+    // If stopping fails, leave the home intact and propagate the cleanup error.
+    await stopApp?.();
+    await rm(path, { recursive: true, force: true });
+  });
+  return {
+    path,
+    attachApp(app: { stop(): Promise<void> }) { stopApp = () => app.stop(); },
+  };
+}
+
 /**
  * LOCAL ONLY: a native Electron app forwards Riley's actual seeded Den session
  * to its embedded server. appWeb does not supply that native host-token bridge.
@@ -110,7 +126,8 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
     stack.defer(() => mock.stop());
     // The SDK's Unix sockets have macOS's 104-byte limit. Never inherit the
     // person's production MSB_HOME or put sockets under the long Electron HOME.
-    const sandboxHome = await realpath(await mkdtemp("/tmp/owp-"));
+    const runtimeHome = await ownedSandboxHome(stack);
+    const sandboxHome = runtimeHome.path;
     const env: Record<string, string> = { MSB_HOME: sandboxHome };
     if (brokenRuntime) {
       // A regular file cannot contain the SDK's sockets/database. This is a real
@@ -128,6 +145,7 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
     // after a config-reload race. The selected model is still verified in the UI.
     await writeFile(join(workspacePath, "opencode.json"), JSON.stringify(providerConfig));
     const app = await seed.desktop({ name: "sandbox-product", den: world.den, as: "riley", workspacePath, env });
+    runtimeHome.attachApp(app);
     try {
       await configureProvider(seed, app, app.workspaceId, "sandbox-proof", "witness", providerConfig, "v2");
     } catch (error) {
@@ -183,17 +201,24 @@ export const sandboxUnavailableDesktop = (seed: Seed, { place }: { place: Place 
 /** Managed Settings needs no inference provider or task: the policy itself is the subject. */
 export async function sandboxManagedDesktop(seed: Seed, { place }: { place: Place }) {
   if (place.kind !== "local") throw new Error("The managed native Settings proof requires local placement");
-  const world = await organization(seed, true);
-  const saved = await seed.api(world.den.admin, world.teamPath, {
-    method: "PUT", headers: { "X-OpenWork-Sandbox-Only": "1" },
-    body: JSON.stringify({ settings: { hostExecution: { decision: "deny" } } }),
-  });
-  if (!saved.response.ok) throw new Error(`Arranging the managed host restriction failed: ${saved.text}`);
-  const workspacePath = seed.tmpPath("sandbox-managed-settings");
-  await mkdir(workspacePath, { recursive: true });
-  const sandboxHome = await realpath(await mkdtemp("/tmp/owp-"));
-  const app = await seed.desktop({ name: "sandbox-managed-settings", den: world.den, as: "riley", workspacePath, env: { MSB_HOME: sandboxHome } });
-  return { ...world, app, settingsPath: `/workspace/${encodeURIComponent(app.workspaceId)}/sandbox-settings` };
+  const stack = new AsyncDisposableStack();
+  try {
+    const world = await organization(seed, true);
+    const saved = await seed.api(world.den.admin, world.teamPath, {
+      method: "PUT", headers: { "X-OpenWork-Sandbox-Only": "1" },
+      body: JSON.stringify({ settings: { hostExecution: { decision: "deny" } } }),
+    });
+    if (!saved.response.ok) throw new Error(`Arranging the managed host restriction failed: ${saved.text}`);
+    const workspacePath = join(seed.tmpPath("sandbox-managed-settings"), "work");
+    await mkdir(workspacePath, { recursive: true });
+    const runtimeHome = await ownedSandboxHome(stack);
+    const app = await seed.desktop({ name: "sandbox-managed-settings", den: world.den, as: "riley", workspacePath, env: { MSB_HOME: runtimeHome.path } });
+    runtimeHome.attachApp(app);
+    return {
+      ...world, app, settingsPath: `/workspace/${encodeURIComponent(app.workspaceId)}/sandbox-settings`,
+      async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
+    };
+  } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
 /** The public desktop-config response describes the permissions for that identity. */
