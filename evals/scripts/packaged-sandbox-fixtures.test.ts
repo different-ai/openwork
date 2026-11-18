@@ -4,12 +4,29 @@ import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { holdNewOwnedRuntime } from "../worlds/packaged-sandbox-startup-hold.ts";
 import { join } from "node:path";
+import { planWorlds } from "./world-plan.ts";
 import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, hasVisibleReplyEvidence, stoppedAssistantAnswer, inferenceFixture, isolatedParentEnvironment, offeredToolNames, ownedMicrosandboxProcesses, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const request = (overrides: Partial<InferenceRecord> = {}): InferenceRecord => ({ phase: "guest", path: "/v1/messages", requestedModel: "test", offeredTools: GUEST_TOOLS,
   codeModeTools: [], responseModel: "test", status: 200, completed: true, requestContainedHostSecret: false, ...overrides });
+
+describe("packaged proof pre-launch resource contract", () => {
+  it("statically plans all six packaged cases as native Electron before provisioning", () => {
+    const plan = planWorlds([join(import.meta.dirname, "../proofs/packaged-sandbox.proof.test.ts")], { surface: "electron" });
+    expect(plan.legacy).toEqual([]);
+    expect(plan.surfaces).toEqual(["desktop"]);
+    expect(plan.worlds).toHaveLength(5);
+    expect(plan.worlds.flatMap(world => world.titles)).toHaveLength(6);
+    for (const world of plan.worlds) {
+      expect(world.dynamicTitles).toBe(false);
+      expect(world.world).toMatch(/^packagedSandbox[A-Za-z]+$/);
+      expect(world.resources?.nativeReason).toContain("branch-built macOS .app");
+      expect(world.resources?.services).toEqual(["den", "mock"]);
+    }
+  });
+});
 
 describe("native packaged turn completion", () => {
   const answer = (id: string) => ({ id, type: "assistant", finish: "stop", content: [{ type: "text", text: "Darwin; status: draft" }] });

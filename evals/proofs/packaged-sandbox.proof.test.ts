@@ -1,4 +1,4 @@
-import { spec, type SpecWorldOptions } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
 import { runToolTurn } from "@openwork/behaviors";
 import { packagedSandboxFlagOff, packagedSandboxManaged, packagedSandboxManagedComputer, packagedSandboxRegression, packagedSandboxUnavailable } from "../worlds/packaged-sandbox-regression.ts";
@@ -6,12 +6,11 @@ import { packagedSandboxFlagOff, packagedSandboxManaged, packagedSandboxManagedC
 // Prepared, branch-built artifact only. Unlike sandbox-only's ordinary source
 // lane, this refuses development Electron and verifies the ASAR server/runtime.
 // Real-inference companion: evals/scripts/packaged-sandbox-check.ts (Fable + Sol).
-const packagedOptions: SpecWorldOptions = { timeout: 900_000,
+const test = spec.world(packagedSandboxRegression, { timeout: 900_000,
   resources: { surfaces: ["desktop"], services: ["den", "mock"],
     nativeReason: "The subject is the branch-built macOS .app: its ASAR embedded server, staged native SDK and shipping Electron runtime must boot and run a real microVM." },
   needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
-};
-const test = spec.world(packagedSandboxRegression, packagedOptions);
+});
 
 test("a member of a packaged install disables host tools and edits a live authorized folder in Linux", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: the member opens the packaged app with ordinary host tools allowed", async () => {
@@ -147,7 +146,11 @@ test("a member sees real sandbox preparation before commands can run in the pack
   });
 });
 
-const unavailableTest = spec.world(packagedSandboxUnavailable, packagedOptions);
+const unavailableTest = spec.world(packagedSandboxUnavailable, { timeout: 900_000,
+  resources: { surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The subject is the branch-built macOS .app: its ASAR embedded server, staged native SDK and shipping Electron runtime must boot and run a real microVM." },
+  needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
+});
 unavailableTest("a member repairs an unsupported sandbox installation and retries without host fallback", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: a fresh packaged install still offers the explicit computer choice", async () => {
     await agent.run("route.settings.authorized_folders");
@@ -181,46 +184,87 @@ unavailableTest("a member repairs an unsupported sandbox installation and retrie
 
 // These worlds use real isolated Den organizations and the ordinary native host-token
 // handoff. They are not renderer props or forged desktop-config policy responses.
-for (const scenario of [
-  { name: "sandbox", world: packagedSandboxManaged, allowHostExecution: false, selected: "sandbox-location-sandbox" },
-  { name: "computer", world: packagedSandboxManagedComputer, allowHostExecution: true, selected: "sandbox-location-computer" },
-]) {
-  const managedTest = spec.world(scenario.world, packagedOptions);
-  managedTest(`a member sees the organization's locked ${scenario.name} location in the packaged app`, async ({ world, user, agent, probe, step, evidence }) => {
-    await step("before: the organization policy arrives through the normal signed-in host context", async () => {
-      await user.see("composer", { editable: true, timeoutMs: 120_000 });
-      const result = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
-        within: 120_000, label: "the signed-in member's organization policy is effective",
-        until: value => value.status === 200 && JSON.stringify(value.body).includes('"managed":true') && JSON.stringify(value.body).includes(`"effectiveAllowHostExecution":${scenario.allowHostExecution}`),
-      });
-      expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: scenario.allowHostExecution });
-      evidence.recordAssertionEvidence("An isolated Den rule, not a renderer override, selects the managed location", JSON.stringify(result.body), result.status === 200);
-      await user.screenshot();
+const managedSandboxTest = spec.world(packagedSandboxManaged, { timeout: 900_000,
+  resources: { surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The subject is the branch-built macOS .app: its ASAR embedded server, staged native SDK and shipping Electron runtime must boot and run a real microVM." },
+  needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
+});
+managedSandboxTest("a member sees the organization's locked sandbox location in the packaged app", async ({ world, user, agent, probe, step, evidence }) => {
+  await step("before: the organization policy arrives through the normal signed-in host context", async () => {
+    await user.see("composer", { editable: true, timeoutMs: 120_000 });
+    const result = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
+      within: 120_000, label: "the signed-in member's organization policy is effective",
+      until: value => value.status === 200 && JSON.stringify(value.body).includes('"managed":true') && JSON.stringify(value.body).includes('"effectiveAllowHostExecution":false'),
     });
-    await step("when the member opens Settings both execution choices are locked", async () => {
-      await agent.run("route.settings.authorized_folders");
-      await user.see("Where the agent runs commands");
-      await user.see("Managed by your organization. An admin can change it in agent permissions.");
-      const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
-      const selected = await probe.dom(`[data-testid="${scenario.selected}"][aria-checked="true"]`);
-      evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
-      expect(disabled.elements).toHaveLength(2);
-      expect(selected.elements).toHaveLength(1);
-      await user.screenshot();
-    });
-    await step("after: revisiting Settings preserves the organization lock", async () => {
-      await user.click("Back to app");
-      await agent.run("route.settings.authorized_folders");
-      await user.see({ testId: scenario.selected });
-      const result = await probe.desktopApi(world.settingsPath);
-      expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: scenario.allowHostExecution });
-      evidence.recordAssertionEvidence("Revisiting does not turn a managed location into a personal preference", JSON.stringify(result.body), result.status === 200);
-      await user.screenshot();
-    });
+    expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: false });
+    evidence.recordAssertionEvidence("An isolated Den rule, not a renderer override, selects the managed location", JSON.stringify(result.body), result.status === 200);
+    await user.screenshot();
   });
-}
+  await step("when the member opens Settings both execution choices are locked", async () => {
+    await agent.run("route.settings.authorized_folders");
+    await user.see("Where the agent runs commands");
+    await user.see("Managed by your organization. An admin can change it in agent permissions.");
+    const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
+    const selected = await probe.dom('[data-testid="sandbox-location-sandbox"][aria-checked="true"]');
+    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
+    expect(disabled.elements).toHaveLength(2);
+    expect(selected.elements).toHaveLength(1);
+    await user.screenshot();
+  });
+  await step("after: revisiting Settings preserves the organization lock", async () => {
+    await user.click("Back to app");
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-location-sandbox" });
+    const result = await probe.desktopApi(world.settingsPath);
+    expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: false });
+    evidence.recordAssertionEvidence("Revisiting does not turn a managed location into a personal preference", JSON.stringify(result.body), result.status === 200);
+    await user.screenshot();
+  });
+});
 
-const flagOffTest = spec.world(packagedSandboxFlagOff, packagedOptions);
+const managedComputerTest = spec.world(packagedSandboxManagedComputer, { timeout: 900_000,
+  resources: { surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The subject is the branch-built macOS .app: its ASAR embedded server, staged native SDK and shipping Electron runtime must boot and run a real microVM." },
+  needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
+});
+managedComputerTest("a member sees the organization's locked computer location in the packaged app", async ({ world, user, agent, probe, step, evidence }) => {
+  await step("before: the organization policy arrives through the normal signed-in host context", async () => {
+    await user.see("composer", { editable: true, timeoutMs: 120_000 });
+    const result = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
+      within: 120_000, label: "the signed-in member's organization policy is effective",
+      until: value => value.status === 200 && JSON.stringify(value.body).includes('"managed":true') && JSON.stringify(value.body).includes('"effectiveAllowHostExecution":true'),
+    });
+    expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: true });
+    evidence.recordAssertionEvidence("An isolated Den rule, not a renderer override, selects the managed location", JSON.stringify(result.body), result.status === 200);
+    await user.screenshot();
+  });
+  await step("when the member opens Settings both execution choices are locked", async () => {
+    await agent.run("route.settings.authorized_folders");
+    await user.see("Where the agent runs commands");
+    await user.see("Managed by your organization. An admin can change it in agent permissions.");
+    const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
+    const selected = await probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]');
+    evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
+    expect(disabled.elements).toHaveLength(2);
+    expect(selected.elements).toHaveLength(1);
+    await user.screenshot();
+  });
+  await step("after: revisiting Settings preserves the organization lock", async () => {
+    await user.click("Back to app");
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-location-computer" });
+    const result = await probe.desktopApi(world.settingsPath);
+    expect(result.body).toMatchObject({ managed: true, effectiveAllowHostExecution: true });
+    evidence.recordAssertionEvidence("Revisiting does not turn a managed location into a personal preference", JSON.stringify(result.body), result.status === 200);
+    await user.screenshot();
+  });
+});
+
+const flagOffTest = spec.world(packagedSandboxFlagOff, { timeout: 900_000,
+  resources: { surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The subject is the branch-built macOS .app: its ASAR embedded server, staged native SDK and shipping Electron runtime must boot and run a real microVM." },
+  needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
+});
 flagOffTest("a member outside the sandbox rollout sees no execution-location controls", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: this isolated organization has no sandbox rollout", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });

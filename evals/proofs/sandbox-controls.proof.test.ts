@@ -25,8 +25,15 @@ controls("an owner enables host tools for one team without giving other members 
     expect(rules).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "deny", source: "Contractors" }));
     expect(otherRules.some(rule => rule.effect === "deny")).toBe(false);
     expect((await probe.dom(`${row}[data-decision="deny"]`)).elements).toHaveLength(1);
-    expect((await probe.dom(`${row} option`)).elements.map(option => option.text)).toEqual(["Member chooses", "On this computer", "In a sandbox (isolated)"]);
+    // DenSelect mounts its public role=option buttons in a portal only while open;
+    // there are no native <option> elements to inspect in the closed row.
+    await user.click(location);
+    await user.see({ role: "option", text: "Member chooses" });
+    expect((await probe.dom('[role="listbox"] [role="option"]')).elements.map(option => option.text)).toEqual(["Member chooses", "On this computer", "In a sandbox (isolated)"]);
+    expect((await probe.dom('[role="listbox"] [role="option"][aria-selected="true"]')).elements.map(option => option.text)).toEqual(["In a sandbox (isolated)"]);
+    expect((await probe.dom('[role="listbox"] [role="option"][disabled]')).elements).toHaveLength(0);
     await user.screenshot();
+    await user.press("Escape");
   });
 
   await step("when the owner selects On this computer for Contractors and saves", async () => {
@@ -42,6 +49,7 @@ controls("an owner enables host tools for one team without giving other members 
     evidence.recordAssertionEvidence("The saved location explicitly selects this computer for the team", `team setting: ${decision}; member's rules: ${JSON.stringify(rules)}`, decision === "allow" && rules.some(rule => rule.effect === "allow" && rule.source === "Contractors"));
     expect(decision).toBe("allow");
     expect(rules).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "allow", source: "Contractors" }));
+    expect((await probe.dom(`${row} [aria-haspopup="listbox"]`)).elements.map(control => control.text)).toEqual(["On this computer"]);
     await user.screenshot();
   });
 
@@ -61,6 +69,7 @@ controls("an owner enables host tools for one team without giving other members 
     evidence.recordAssertionEvidence("Everyone's default applies outside the team's explicit exception", `contractor: ${JSON.stringify(rules)}; staff: ${JSON.stringify(staff)}`, !rules.some(rule => rule.effect === "deny") && staff.some(rule => rule.effect === "deny"));
     expect(rules.some(rule => rule.effect === "deny")).toBe(false);
     expect(staff).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "deny" }));
+    expect((await probe.dom(`${row} [aria-haspopup="listbox"]`)).elements.map(control => control.text)).toEqual(["In a sandbox (isolated)"]);
     await user.screenshot();
   });
 
@@ -91,6 +100,7 @@ controls("an owner enables host tools for one team without giving other members 
     evidence.recordAssertionEvidence("Member chooses removes the default mandate without clearing the team's explicit location", `staff: ${JSON.stringify(staff)}; contractor: ${JSON.stringify(contractor)}`, staff.length === 0 && contractor.some(rule => rule.effect === "allow" && rule.source === "Contractors"));
     expect(staff).toHaveLength(0);
     expect(contractor).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "allow", source: "Contractors" }));
+    expect((await probe.dom(`${row} [aria-haspopup="listbox"]`)).elements.map(control => control.text)).toEqual(["Member chooses"]);
     await user.screenshot();
   });
 });

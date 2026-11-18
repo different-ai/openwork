@@ -256,11 +256,13 @@ export async function packagedSandboxWorld(options: Options) {
       const active = await api(`/workspace/${workspaceId}/opencode2/api/session/active`);
       // Applying the queued setting replaces the engine after idle; its proxy can
       // briefly be unavailable. No request is replayed, and the deadline still fails.
-      if ([503, 504].includes(active.status)) { idle = 0; await delay(500); continue; }
+      if ([502, 503, 504].includes(active.status)) { idle = 0; await delay(500); continue; }
       if (active.status !== 200) throw new Error(`Active session read failed: ${active.status}`);
       const running = JSON.stringify(active.body).includes(sessionId);
       idle = running ? 0 : idle + 1;
       const snapshot = await native().snapshot(sessionId);
+      if ([502, 503, 504].includes(snapshot.status)) { idle = 0; await delay(500); continue; }
+      if (!snapshot.ok) throw new Error(`Native snapshot failed with HTTP ${snapshot.status}: ${JSON.stringify(snapshot.body)}`);
       const phaseRequests = inference.records.filter(entry => entry.phase === state.phase);
       const rejected = phaseRequests.find(entry => entry.status >= 400);
       if (rejected) throw new Error(`Real inference rejected ${rejected.requestedModel}: HTTP ${rejected.status} at ${rejected.path}: ${rejected.responseError ?? "no response detail"}`);
