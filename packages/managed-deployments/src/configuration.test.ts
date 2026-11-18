@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { z } from "zod"
-import { updateStackCommand } from "@openwork/managed-deployments/aws"
+import { approvalCheckUrl, updateStackCommand } from "@openwork/managed-deployments/aws"
 import {
   deploymentConfigurationRejectionMessage, planDeploymentConfigurationChange,
   type DeploymentConfiguration, type DeploymentConfigurationPlan,
@@ -99,7 +99,7 @@ test("turning on the gateway runtime with Daytona is one runtime entry plus the 
   assert.deepEqual([runtimeOnly.targetChanged, runtimeOnly.enablesGateway], [true, true])
 })
 
-test("computers change on a gateway deployment and restart only the runner", () => {
+test("each computer change on a gateway deployment is recorded as restarting the runner", () => {
   const off = accepted(planDeploymentConfigurationChange(gatewayWithDaytona, request(gatewayWithDaytona, { target: { assistants: assistants(gatewayWithDaytona, { computerProvider: "off" }) } })))
   assert.deepEqual(off.changes, [
     { field: "target.assistants.computerProvider", before: "daytona", after: "off", effect: "restarts_runner" },
@@ -279,4 +279,36 @@ test("views carry the configuration block only when it is sent, and an approval 
   assert.deepEqual(managedDeploymentLaunchSchema.parse(result), { deployment: launch.deployment, kind: "configure", approvalUrl: null, command: text, handoff: launch.handoff, expiresAt: launch.expiresAt })
   assert.equal(deploymentConfigurationChangeResultSchema.parse({ outcome: "saved", deployment }).outcome, "saved")
   assert.equal(deploymentConfigurationChangeResultSchema.parse({ outcome: "withdrawn", deployment }).outcome, "withdrawn")
+})
+
+// ---- Handoff: what only a configuration change's command does ----
+
+const launch = {
+  deploymentId, ...change, target: awsTargetSchema.parse(identity), includeAssistantParameters: false, includeRuntimeProfileParameter: false,
+  domainName: "openwork.example.com", ownerEmail: "admin@example.com", size: "small", release,
+}
+const NETWORK_PARAMETERS = ["NetworkMode", "VpcId", "ServiceSubnetIds", "LoadBalancerSubnetIds", "EcsClusterArn"]
+
+test("a configuration change's command asks OpenWork before update-stack; retry and update commands are unchanged", () => {
+  const plain = updateStackCommand(launch)
+  assert.ok(!plain.includes("curl") && !plain.includes("approval-check"), "retry and update do not call OpenWork")
+  assert.equal(plain, updateStackCommand({ ...launch, approvalCheck: false, includeNetworkParameters: true }), "both options default to today's command")
+
+  const checked = updateStackCommand({ ...launch, approvalCheck: true })
+  const url = approvalCheckUrl(release.apiOrigin, deploymentId, change.runId)
+  assert.equal(url, `https://control.example.com/v1/managed-deployments/${deploymentId}/runs/${change.runId}/approval-check`)
+  const [account, confirm, update] = [checked.indexOf("aws sts get-caller-identity"), checked.indexOf("curl "), checked.indexOf("aws cloudformation update-stack")]
+  assert.ok(account >= 0 && account < confirm && confirm < update, "account, then OpenWork, then the stack")
+  assert.ok(checked.includes(`--data '${JSON.stringify({ challenge: change.challenge })}' '${url}')" = 200 ]`), "only a 200 from that exact address continues")
+  assert.ok(!/--location|-L\b/.test(checked), "a redirect is never followed")
+  assert.ok(checked.endsWith(plain.slice(plain.indexOf("aws cloudformation update-stack"))), "the stack update is the last step, exactly as in a retry")
+  assert.deepEqual([...parameters(checked)], [...parameters(plain)], "the parameters are still the command's literal JSON tail")
+})
+
+test("network parameters are left out only when asked, for a record stored before network choice existed", () => {
+  const sent = parameters(updateStackCommand(launch))
+  assert.deepEqual(NETWORK_PARAMETERS.map((key) => sent.get(key)), ["dedicated", "", "", "", ""])
+  const omitted = parameters(updateStackCommand({ ...launch, includeNetworkParameters: false }))
+  for (const key of NETWORK_PARAMETERS) assert.equal(omitted.has(key), false, `${key} is not sent`)
+  assert.deepEqual([...omitted.keys()], [...sent.keys()].filter((key) => !NETWORK_PARAMETERS.includes(key)), "nothing else is left out")
 })

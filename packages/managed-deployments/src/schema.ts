@@ -259,6 +259,12 @@ export const deploymentConfigurationViewSchema = z.object({
   gatewayAvailable: z.boolean(),
   change: z.object({
     runId: z.string().uuid(),
+    /**
+     * `applying` from the moment the approval command confirms the change with OpenWork
+     * (the run still awaits enrollment and `run.lastSeenAt` is that moment), and for as
+     * long as no final report arrives: a passed deadline (`run.expired`) does not end it,
+     * because it says nothing about what AWS did.
+     */
     state: z.enum(["awaiting_approval", "applying", "failed", "expired"]),
     requestedAt: z.string().datetime(),
     expiresAt: z.string().datetime(),
@@ -342,6 +348,9 @@ export const deploymentConfigurationChangeResultSchema = z.discriminatedUnion("o
     changes: z.array(deploymentConfigurationChangeSchema),
   }),
 ])
+/** Sent by the approval command itself, before it changes anything in the customer's cloud. */
+export const deploymentApprovalCheckInputSchema = z.object({ challenge: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+export const deploymentApprovalCheckResultSchema = z.object({ ok: z.literal(true), expiresAt: z.string().datetime() })
 export const deploymentConfigurationErrorSchema = z.object({ error: z.string(), message: z.string().optional(), field: deploymentConfigurationFieldSchema.optional() })
 export const managedDeploymentConfigurationSchema = z.object({
   /** Requires both managed deployment features for this caller. */

@@ -20,7 +20,7 @@ import { db } from "../../db.js"
 import { organizationFeatureEnabled, requireFeature } from "../../features.js"
 import { markFeaturesUsed } from "../../feature-usage.js"
 import { type ManagedDeploymentRelease } from "../../managed-deployments/config.js"
-import { appliedConfiguration, configurationChangeRecord, configurationView, withdrawConfigurationChange, type DeploymentRow, type RunRow } from "../../managed-deployments/configuration.js"
+import { appliedConfiguration, approvalClaimed, configurationChangeRecord, configurationView, heldByCloud, withdrawConfigurationChange, type DeploymentRow, type RunRow } from "../../managed-deployments/configuration.js"
 import { effectiveInstallerReadiness, effectiveInstallerRelease } from "../../managed-deployments/releases.js"
 import { jsonValidator, orgPermissionRoute, paramValidator, tokenRoute } from "../../middleware/index.js"
 import { jsonResponse } from "../../openapi.js"
@@ -31,7 +31,7 @@ const PATH = "/v1/managed-deployments"
 export const RUN_LIFETIME_MS = 3 * 60 * 60 * 1000
 const MAX_HEARTBEAT_BYTES = 16_384
 export const deploymentParam = z.object({ deploymentId: z.string().uuid() })
-const runParam = deploymentParam.extend({ runId: z.string().uuid() })
+export const runParam = deploymentParam.extend({ runId: z.string().uuid() })
 const acceptedSchema = z.object({ ok: z.literal(true) })
 const enrollmentResponseSchema = z.object({ token: z.string(), expiresAt: z.string().datetime() })
 const errorSchema = z.object({ error: z.string() })
@@ -88,6 +88,9 @@ export function launchDetails(row: DeploymentRow, run: RunRow) {
   const launch: AwsLaunch = {
     ...common, target: awsTarget(row), includeAssistantParameters: Object.hasOwn(row.target, "assistants"),
     includeRuntimeProfileParameter: Object.hasOwn(row.target, "runtimeProfile"),
+    // A configuration change re-runs the installed template, which may predate network choice; a record
+    // stored without `network` was created then. Install, Retry and Update use the published template.
+    ...(run.kind === "configure" ? { approvalCheck: true, includeNetworkParameters: Object.hasOwn(row.target, "network") } : {}),
   }
   if (run.kind === "install") {
     const url = quickCreateUrl(launch)
@@ -104,7 +107,9 @@ export function launchDetails(row: DeploymentRow, run: RunRow) {
     approvalUrl: null, command,
     handoff: {
       action: "run_in_cloud_shell" as const, url: awsCloudShellUrl(launch.target.region), command,
-      instructions: `Open AWS CloudShell signed in to account ${launch.target.accountId}, then paste and run the command. It checks the account and updates only the existing installer; nothing is deleted.`,
+      instructions: run.kind === "configure"
+        ? `Open AWS CloudShell signed in to account ${launch.target.accountId}, then paste and run the command. It checks the account, asks OpenWork whether this change is still the one to apply, and only then updates the existing installer; nothing is deleted. Once OpenWork has confirmed it, the change can no longer be edited or discarded.`
+        : `Open AWS CloudShell signed in to account ${launch.target.accountId}, then paste and run the command. It checks the account and updates only the existing installer; nothing is deleted.`,
     },
   }
 }
@@ -276,7 +281,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const release = await releaseFor(row)
         if (!release) return { error: "release_not_configured", status: 503 } as const
         const [active] = row.active_run_id ? await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, row.active_run_id)).limit(1) : []
-        const live = active && active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")
+        // A configuration change AWS may be applying holds the deployment whatever its deadline says.
+        const live = active && (heldByCloud(active) || (active.expires_at > now && (active.state === "awaiting_approval" || active.state === "provisioning")))
         if (live && runtimeProfile && storedTarget && runtimeProfile !== storedTarget.runtimeProfile) return launchError("deployment_settings_frozen", 409)
         if (changedTarget && !changedTarget.success) return launchError("invalid_runtime_settings", 400)
         // The target is frozen for the whole live run, including its approval URL.
@@ -352,21 +358,27 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const token = randomBytes(32).toString("base64url")
       const enrolled = await db.transaction(async (tx) => {
         const [deployment] = await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1).for("update")
-        if (!deployment || deployment.active_run_id !== runId) return false
+        if (!deployment || deployment.active_run_id !== runId) return null
         const [current] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
-        if (!current || current.state !== "awaiting_approval" || current.expires_at < new Date()) return false
-        // The kill switch reaches a change that was prepared but has not started: it is withdrawn
-        // before the installer downloads anything. A change that already enrolled finishes.
-        if (current.kind === "configure" && !await organizationFeatureEnabled(deployment.org_id, "managedDeploymentConfigUpdates", { database: tx, lock: "share", userId: configurationChangeRecord(current).requestedBy.userId })) {
+        if (!current || current.state !== "awaiting_approval" || current.expires_at < new Date()) return null
+        // The kill switch reaches a change whose command was run without its approval check: it is
+        // withdrawn before the installer downloads anything. A change the check confirmed was approved
+        // while the feature was on and its stack may already be updated, so it finishes like one that enrolled.
+        if (current.kind === "configure" && !approvalClaimed(current) && !await organizationFeatureEnabled(deployment.org_id, "managedDeploymentConfigUpdates", { database: tx, lock: "share", userId: configurationChangeRecord(current).requestedBy.userId })) {
           await withdrawConfigurationChange(tx, deployment, current)
-          return false
+          return null
         }
-        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: new Date() }).where(eq(ManagedDeploymentRunTable.id, runId))
-        return true
+        const enrolledAt = new Date()
+        // An approved change gets the whole execution lifetime from here, however long the approval waited.
+        const expiresAt = current.kind === "configure" ? new Date(enrolledAt.getTime() + RUN_LIFETIME_MS) : current.expires_at
+        await tx.update(ManagedDeploymentRunTable).set({ state: "provisioning", token_hash: hashToken(token), last_seen_at: enrolledAt, expires_at: expiresAt }).where(eq(ManagedDeploymentRunTable.id, runId))
+        // Read back: the deadline the installer is told is the one stored.
+        const [stored] = await tx.select({ expiresAt: ManagedDeploymentRunTable.expires_at }).from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
+        return stored ?? null
       })
       if (!enrolled) return c.json({ error: "deployment_run_conflict" }, 409)
       c.header("Cache-Control", "no-store")
-      return c.json({ token, expiresAt: run.expires_at.toISOString() })
+      return c.json({ token, expiresAt: enrolled.expiresAt.toISOString() })
     })
 
   app.post(`${PATH}/:deploymentId/runs/:runId/events`, operation("Report an installer milestone", "Called by an enrolled installer to report the next ordered milestone with an allowlisted outcome code.", acceptedSchema, { mcp: false }, [{ bearerAuth: [] }]),

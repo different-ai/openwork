@@ -4,14 +4,18 @@
  * their own AWS account, and when Den records the change as applied.
  */
 import assert from "node:assert/strict"
+import { execFile } from "node:child_process"
 import { createHash, randomBytes, randomUUID } from "node:crypto"
+import { accessSync, constants, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { delimiter, join } from "node:path"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { ManagedDeploymentRunTable, ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { enrollmentProof, runnerRoleName } from "@openwork/managed-deployments/aws"
 import { hashToken } from "@openwork/managed-deployments/lifecycle"
-import { bootDen, field, isRecord, list, summary, text, type Call } from "./harness.js"
+import { bootDen, field, isRecord, list, startFakeHttpServer, summary, text, type Call } from "./harness.js"
 
 const ACCOUNT = "123456789012"
 const STS = "https://sts.us-east-1.amazonaws.com/"
@@ -57,6 +61,7 @@ const { db } = await import("../../src/db.js")
 const { dbQueryCounter } = await import("../../src/observability/db-query-count.js")
 
 const DAY = 24 * 60 * 60 * 1000
+const NETWORK_PARAMETERS = ["NetworkMode", "VpcId", "ServiceSubnetIds", "LoadBalancerSubnetIds", "EcsClusterArn"]
 const STEPS = ["runner_connected", "release_verified", "account_verified", "infrastructure_applied", "services_ready", "health_verified"]
 const identity = { accountId: ACCOUNT, region: "us-east-1", route53ZoneId: "ZTEST" }
 const gatewayTarget = { ...identity, network: { mode: "dedicated" }, runtimeProfile: "gateway", assistants: { headlessRunnerEnabled: true, workbotEnabled: true, slackAssistantEnabled: true, computerProvider: "off" } }
@@ -144,6 +149,19 @@ const enroll = (id: string, prepared: ReturnType<typeof handoff>) => den.request
 const report = (id: string, runId: string, token: string, sequence: number, failure?: string) => den.request(token, "POST", `/v1/managed-deployments/${id}/runs/${runId}/events`, {
   body: { sequence, step: STEPS[sequence - 1], outcome: failure ? "failed" : "succeeded", ...(failure ? { errorCode: failure } : {}) },
 })
+
+/** What the approval command asks OpenWork before it touches the stack. */
+const check = (id: string, prepared: { runId: string; parameters: Map<string, string> }, challenge = prepared.parameters.get("Challenge") ?? "") =>
+  den.request(null, "POST", `/v1/managed-deployments/${id}/runs/${prepared.runId}/approval-check`, { body: { challenge } })
+
+const launch = (id: string, kind: "retry" | "update") => owner("POST", `/v1/managed-deployments/${id}/launch`, { kind })
+const expire = (runId: string) => db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() - 1000) }).where(eq(ManagedDeploymentRunTable.id, runId))
+const HOURS = 60 * 60 * 1000
+/** A deadline a full run lifetime (three hours) from now, within the time a test takes. */
+function fullLifetime(iso: unknown) {
+  const left = new Date(text(iso, "deadline")).getTime() - Date.now()
+  return left > 3 * HOURS - 60_000 && left <= 3 * HOURS
+}
 
 /** Arrange a run the installer has already enrolled for; its milestones are then reported over HTTP. */
 async function enrolled(runId: string) {
@@ -289,6 +307,15 @@ test("asking again reopens the same approval, a different request supersedes it,
   const again = handoff(await change(id, email("first.admin@example.com"), { revision: stale }))
   assert.equal(again.runId, first.runId)
   assert.equal(again.command, first.command)
+
+  // Reading the approval back is all an older view may do: with a name of its own it is a write.
+  assert.equal(field((await change(id, (current) => ({ ...current, name: "Renamed by a teammate", ownerEmail: "first.admin@example.com" }))).body, "outcome"), "approval_required")
+  const undo = await owner("POST", `/v1/managed-deployments/${id}/configuration-changes`, {
+    expectedRevision: stale, configuration: { ...draft(await view(id)), name: "Managed deployment", ownerEmail: "first.admin@example.com" },
+  })
+  refused(undo, 409, "configuration_changed")
+  assert.equal(field(await view(id), "name"), "Renamed by a teammate", "a stale request did not undo the rename")
+  assert.equal(handoff(await change(id, email("first.admin@example.com"), { revision: stale })).command, first.command, "the same stale caller still reads the approval back")
 
   refused(await change(id, email("second.admin@example.com"), { revision: stale }), 409, "configuration_changed")
   const second = handoff(await change(id, email("second.admin@example.com")))
@@ -488,11 +515,15 @@ test("another workspace's owner and a member without deployment access cannot pr
   assert.equal(field(await view(id), "run", "id"), baseRunId)
 })
 
-test("the recorded email changes only when the approved run verifies health; a failed run and a replaced run change nothing", async () => {
+test("the recorded email changes only when the approved run verifies health; a failed run changes nothing and a run that stopped reporting is not replaced", async () => {
   const { id } = await installed()
   const prepared = handoff(await change(id, email("first.admin@example.com")))
+  // The approval waited almost its whole lifetime; the installer still gets a full one to work in.
+  await db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() + 60_000) }).where(eq(ManagedDeploymentRunTable.id, prepared.runId))
   const enrollment = await enroll(id, prepared)
   assert.equal(enrollment.status, 200, summary(enrollment))
+  assert.ok(fullLifetime(field(enrollment.body, "expiresAt")), summary(enrollment))
+  assert.equal(field(await view(id), "run", "expiresAt"), field(enrollment.body, "expiresAt"), "the installer is told the deadline that is stored")
   const token = text(field(enrollment.body, "token"), "run token")
   for (let sequence = 1; sequence <= 5; sequence += 1) {
     assert.equal((await report(id, prepared.runId, token, sequence)).status, 200)
@@ -533,21 +564,27 @@ test("the recorded email changes only when the approved run verifies health; a f
   assert.equal(field(failed, "configuration", "lock"), null, "the owner can review and try again")
   assert.equal((await report(id, failing.runId, failingToken, 5)).status, 409, "a failed run accepts no further milestones")
 
-  // A run that stopped reporting is replaced by the next change; its token then reports to nothing.
+  // A run that stopped reporting is not a run that stopped: nothing replaces it, whatever its deadline says.
   const stalled = handoff(await change(id, email("third.admin@example.com")))
   const stalledToken = await enrolled(stalled.runId)
   assert.equal((await report(id, stalled.runId, stalledToken, 1)).status, 200)
-  await db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() - 1000) }).where(eq(ManagedDeploymentRunTable.id, stalled.runId))
-  assert.equal(field(await view(id), "configuration", "change", "state"), "failed")
-  const replacement = handoff(await change(id, email("fourth.admin@example.com")))
-  await db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() + DAY) }).where(eq(ManagedDeploymentRunTable.id, stalled.runId))
-  const late = await report(id, stalled.runId, stalledToken, 2)
-  assert.equal(late.status, 404, summary(late))
-  assert.equal(field(late.body, "error"), "deployment_not_found")
+  await expire(stalled.runId)
+  const silent = await view(id)
+  assert.equal(field(silent, "run", "expired"), true)
+  assert.equal(field(silent, "configuration", "change", "state"), "applying", "not known to have failed")
+  assert.equal(field(silent, "configuration", "lock"), "run_in_progress")
+  refused(await change(id, email("fourth.admin@example.com")), 409, "run_in_progress")
+  refused(await change(id, unchanged), 409, "run_in_progress")
+  for (const kind of ["retry", "update"] as const) {
+    const blocked = await launch(id, kind)
+    assert.equal(blocked.status, 409, summary(blocked))
+    assert.equal(field(blocked.body, "error"), "deployment_run_in_progress")
+  }
+  assert.equal((await report(id, stalled.runId, stalledToken, 2)).status, 401, "its token is past the deadline")
   const after = await view(id)
   assert.equal(field(after, "ownerEmail"), "first.admin@example.com")
-  assert.equal(field(after, "run", "id"), replacement.runId)
-  assert.equal(field(after, "run", "state"), "awaiting_approval")
+  assert.equal(field(after, "run", "id"), stalled.runId)
+  assert.equal(field(after, "run", "state"), "provisioning")
 })
 
 test("a final milestone that arrives while its run is being replaced records nothing", async () => {
@@ -656,7 +693,7 @@ test("a historical record keeps the parameters its installer template has, in th
   const { id } = await installed()
   const prepared = handoff(await change(id, email("first.admin@example.com")))
   assert.equal(prepared.parameters.get("OwnerEmail"), "first.admin@example.com")
-  for (const absent of ["ManagedRuntimeProfile", "HeadlessRunnerEnabled", "HeadlessComputerProvider"]) assert.equal(prepared.parameters.has(absent), false, `${absent} is not sent`)
+  for (const absent of ["ManagedRuntimeProfile", "HeadlessRunnerEnabled", "HeadlessComputerProvider", ...NETWORK_PARAMETERS]) assert.equal(prepared.parameters.has(absent), false, `${absent} is not sent`)
   const token = await enrolled(prepared.runId)
   for (let sequence = 1; sequence <= 6; sequence += 1) assert.equal((await report(id, prepared.runId, token, sequence)).status, 200)
   assert.equal(field(await view(id), "ownerEmail"), "first.admin@example.com")
@@ -665,6 +702,29 @@ test("a historical record keeps the parameters its installer template has, in th
   const command = text(field(retry.body, "command"), "Retry command")
   assert.ok(command.includes(JSON.stringify({ ParameterKey: "OwnerEmail", ParameterValue: "first.admin@example.com" })))
   assert.ok(!command.includes("ManagedRuntimeProfile") && !command.includes("HeadlessRunnerEnabled"), "applying the change did not rewrite the stored target")
+  assert.ok(command.includes(JSON.stringify({ ParameterKey: "NetworkMode", ParameterValue: "dedicated" })), "Retry runs the published template and sends the network as before")
+  assert.ok(!command.includes("curl") && !command.includes("approval-check"), "Retry's command is unchanged")
+})
+
+test("a record stored with its network sends it in a configuration change; one stored before network choice existed does not", async () => {
+  const network = { mode: "existing", vpcId: "vpc-0abc12345", serviceSubnetIds: ["subnet-0abc12345", "subnet-0abc12346"], loadBalancerSubnetIds: ["subnet-0abc12347", "subnet-0abc12348"] }
+  const chosen = await installed({ target: { ...identity, network } })
+  const withNetwork = handoff(await change(chosen.id, email("first.admin@example.com"))).parameters
+  assert.deepEqual(NETWORK_PARAMETERS.map((key) => withNetwork.get(key)), ["existing", "vpc-0abc12345", "subnet-0abc12345,subnet-0abc12346", "subnet-0abc12347,subnet-0abc12348", ""])
+  const dedicated = await installed({ target: { ...identity, network: { mode: "dedicated" } } })
+  const stored = handoff(await change(dedicated.id, email("first.admin@example.com"))).parameters
+  assert.deepEqual(NETWORK_PARAMETERS.map((key) => stored.get(key)), ["dedicated", "", "", "", ""])
+
+  // Created before network choice existed: the installer template it ran then has no such parameters.
+  const original = await installed({ release: older })
+  const without = handoff(await change(original.id, email("first.admin@example.com"))).parameters
+  for (const key of NETWORK_PARAMETERS) assert.equal(without.has(key), false, `${key} is not sent`)
+  assert.equal(without.get("OwnerEmail"), "first.admin@example.com")
+  assert.equal(field(await view(original.id), "target", "network", "mode"), "dedicated", "it is shown as the dedicated network it has")
+  // Adding the gateway is only possible on the published installer, whose template has the network parameters.
+  const upgraded = await installed()
+  const gateway = handoff(await change(upgraded.id, gatewayWithDaytona)).parameters
+  assert.equal(gateway.get("NetworkMode"), "dedicated")
 })
 
 test("a change re-runs the installed installer, not the published one, and only when it can be run as it was installed", async () => {
@@ -683,10 +743,51 @@ test("a change re-runs the installed installer, not the published one, and only 
   assert.equal(field(pending, "run", "version"), older.version)
   assert.equal(field(pending, "installedVersion"), older.version)
 
-  const movable = await installed({ release: { ...older, templateUrl: `${SOURCE}${older.version}/cloudformation.json` } })
-  assert.equal(field(await view(movable.id), "configuration", "lock"), "installer_unavailable")
-  refused(await change(movable.id, email("first.admin@example.com")), 409, "installer_unavailable")
-  assert.equal(field(await view(movable.id), "run", "id"), movable.baseRunId)
+  for (const movable of [{ templateUrl: `${SOURCE}${older.version}/cloudformation.json` }, { bundleUrl: `${SOURCE}${older.version}/bundle.tar.gz` }]) {
+    const unpinned = await installed({ release: { ...older, ...movable } })
+    assert.equal(field(await view(unpinned.id), "configuration", "lock"), "installer_unavailable")
+    refused(await change(unpinned.id, email("first.admin@example.com")), 409, "installer_unavailable")
+    assert.equal(field(await view(unpinned.id), "run", "id"), unpinned.baseRunId)
+  }
+})
+
+test("the published installer is no exception: a deployment on it cannot be edited unless both of its objects are exact versions", async () => {
+  // An operator can still publish a release through the four separate settings, which accept unversioned addresses.
+  const settings = ["RELEASE", "TEMPLATE_URL", "BUNDLE_URL", "BUNDLE_SHA256", "VERSION"].map((name) => `DEN_MANAGED_DEPLOYMENT_AWS_${name}`)
+  const environment = settings.map((name) => process.env[name])
+  const unversioned = { templateUrl: `${SOURCE}${published.version}/cloudformation.json`, bundleUrl: `${SOURCE}${published.version}/bundle.tar.gz` }
+  try {
+    for (const movable of [{ templateUrl: unversioned.templateUrl }, { bundleUrl: unversioned.bundleUrl }, unversioned]) {
+      const release = { ...published, ...movable }
+      delete process.env.DEN_MANAGED_DEPLOYMENT_AWS_RELEASE
+      Object.assign(process.env, {
+        DEN_MANAGED_DEPLOYMENT_AWS_TEMPLATE_URL: release.templateUrl, DEN_MANAGED_DEPLOYMENT_AWS_BUNDLE_URL: release.bundleUrl,
+        DEN_MANAGED_DEPLOYMENT_AWS_BUNDLE_SHA256: release.bundleSha256, DEN_MANAGED_DEPLOYMENT_AWS_VERSION: release.version,
+      })
+      // The deployment is installed from exactly what is published.
+      const { id, baseRunId } = await installed({ release })
+      const shown = await view(id)
+      assert.equal(field(shown, "availableVersion"), published.version)
+      assert.equal(field(shown, "updateAvailable"), false)
+      assert.equal(field(shown, "configuration", "lock"), "installer_unavailable")
+      assert.equal(field(shown, "configuration", "gatewayAvailable"), false)
+      refused(await change(id, email("first.admin@example.com")), 409, "installer_unavailable")
+      refused(await change(id, gatewayWithDaytona), 409, "installer_unavailable")
+      assert.equal(field(await view(id), "run", "id"), baseRunId)
+      // Install, Retry and Update are not configuration changes: Retry still runs the published release.
+      const retry = await launch(id, "retry")
+      assert.equal(retry.status, 200, summary(retry))
+      assert.ok(text(field(retry.body, "command"), "Retry command").includes(`--template-url '${release.templateUrl}'`))
+    }
+  } finally {
+    settings.forEach((name, index) => {
+      const value = environment[index]
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    })
+  }
+  const pinned = await installed()
+  assert.equal(field(await view(pinned.id), "configuration", "lock"), null)
 })
 
 test("a request, a rename and a withdrawal are audited; milestones are recorded on the run", async () => {
@@ -723,4 +824,280 @@ test("a request, a rename and a withdrawal are audited; milestones are recorded 
   assert.equal(field(withdrawn, "changes", "before", "computerProvider"), "daytona")
   assert.equal(field(withdrawn, "changes", "after", "computerProvider"), "off")
   assert.equal(field(withdrawn, "changes", "after", "runId"), prepared.runId)
+})
+
+test("the approval check confirms only the deployment's current, unexpired change, and asking again changes nothing", async () => {
+  const { id, baseRunId } = await installed()
+  const first = handoff(await change(id, email("first.admin@example.com")))
+  const second = handoff(await change(id, email("second.admin@example.com")))
+
+  const replaced = await check(id, first)
+  assert.equal(replaced.status, 409, summary(replaced))
+  assert.equal(field(replaced.body, "error"), "approval_not_current")
+  assert.equal(replaced.headers.get("cache-control"), "no-store")
+  const guessed = await check(id, second, "0".repeat(64))
+  assert.equal(guessed.status, 404, summary(guessed))
+  const base = await db.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, baseRunId))
+  const install = await check(id, { runId: baseRunId, parameters: new Map([["Challenge", base[0]?.challenge ?? ""]]) })
+  assert.equal(install.status, 404, "only a configuration change has an approval check")
+  assert.equal((await check(randomUUID(), second)).status, 404)
+  assert.equal((await den.request(null, "POST", `/v1/managed-deployments/${id}/runs/${second.runId}/approval-check`, { body: {} })).status, 400)
+  const untouched = await view(id)
+  assert.equal(field(untouched, "run", "lastSeenAt"), null, "a refused check claims nothing")
+  assert.equal(field(untouched, "configuration", "change", "state"), "awaiting_approval")
+  assert.equal(field(untouched, "configuration", "lock"), null)
+
+  // The approval waited; from the check it has a full run lifetime to reach its installer.
+  await db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() + 60_000) }).where(eq(ManagedDeploymentRunTable.id, second.runId))
+  const before = stsRequests
+  const confirmed = await check(id, second)
+  assert.equal(confirmed.status, 200, summary(confirmed))
+  assert.equal(confirmed.headers.get("cache-control"), "no-store")
+  assert.deepEqual(Object.keys(isRecord(confirmed.body) ? confirmed.body : {}).sort(), ["expiresAt", "ok"], "no token is issued")
+  assert.ok(fullLifetime(field(confirmed.body, "expiresAt")), summary(confirmed))
+  assert.equal(stsRequests, before, "the check proves who holds the command, not an AWS identity")
+  const claimed = await view(id)
+  assert.equal(field(claimed, "run", "id"), second.runId)
+  assert.equal(field(claimed, "run", "state"), "awaiting_approval", "the installer has not enrolled")
+  assert.ok(typeof field(claimed, "run", "lastSeenAt") === "string", "the claim is the run's last-seen time")
+  assert.equal(field(claimed, "run", "expiresAt"), field(confirmed.body, "expiresAt"))
+  assert.equal(field(claimed, "configuration", "change", "state"), "applying")
+  assert.equal(field(claimed, "configuration", "lock"), "run_in_progress")
+  assert.equal(field(claimed, "ownerEmail"), "admin@example.com")
+
+  const again = await check(id, second)
+  assert.equal(again.status, 200, summary(again))
+  assert.equal(field(again.body, "expiresAt"), field(confirmed.body, "expiresAt"), "asking again never moves the deadline")
+  assert.equal(field(await view(id), "run", "lastSeenAt"), field(claimed, "run", "lastSeenAt"))
+})
+
+test("a claimed change cannot be edited, replaced, discarded or bypassed by Retry or Update, even after its deadline", async () => {
+  const { id } = await installed({ release: older })
+  const stale = text(field(await view(id), "configuration", "revision"), "revision")
+  const prepared = handoff(await change(id, email("first.admin@example.com")))
+  assert.equal((await check(id, prepared)).status, 200)
+
+  async function held() {
+    refused(await change(id, email("second.admin@example.com")), 409, "run_in_progress")
+    refused(await change(id, unchanged), 409, "run_in_progress")
+    refused(await change(id, rename("Renamed while claimed")), 409, "run_in_progress")
+    refused(await change(id, (current) => ({ ...current, name: "Renamed while claimed", ownerEmail: "first.admin@example.com" })), 409, "run_in_progress")
+    for (const kind of ["retry", "update"] as const) {
+      const blocked = await launch(id, kind)
+      assert.equal(blocked.status, 409, summary(blocked))
+      assert.equal(field(blocked.body, "error"), "deployment_run_in_progress")
+    }
+    const shown = await view(id)
+    assert.equal(field(shown, "run", "id"), prepared.runId)
+    assert.equal(field(shown, "run", "state"), "awaiting_approval")
+    assert.equal(field(shown, "name"), "Managed deployment")
+    assert.equal(field(shown, "ownerEmail"), "admin@example.com")
+    assert.equal(field(shown, "configuration", "change", "state"), "applying")
+    assert.equal(field(shown, "configuration", "lock"), "run_in_progress")
+    return shown
+  }
+  await held()
+  // The same request only reads the approval back, so its command can be run again while it lasts.
+  for (const revision of [undefined, stale]) assert.equal(handoff(await change(id, email("first.admin@example.com"), { revision })).command, prepared.command)
+
+  await expire(prepared.runId)
+  assert.equal(field(await held(), "run", "expired"), true)
+  const late = await check(id, prepared)
+  assert.equal(late.status, 409, summary(late))
+  refused(await change(id, email("first.admin@example.com")), 409, "run_in_progress")
+  const tooLate = await enroll(id, prepared)
+  assert.equal(tooLate.status, 409, summary(tooLate))
+  await held()
+})
+
+test("a check and a request that replaces or discards the same change happen one after the other: exactly one wins", async () => {
+  for (const rival of [email("second.admin@example.com"), unchanged]) {
+    const { id, baseRunId } = await installed()
+    const prepared = handoff(await change(id, email("first.admin@example.com")))
+    const shown = await view(id)
+    const body = { expectedRevision: field(shown, "configuration", "revision"), configuration: rival({ ...draft(shown) }) }
+    // Both arrive while the deployment is held, as it is by any writer, and proceed when it is released.
+    const racing = await db.transaction(async (tx) => {
+      await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, id)).for("update")
+      const calls = Promise.all([check(id, prepared), owner("POST", `/v1/managed-deployments/${id}/configuration-changes`, body)])
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      return { calls }
+    })
+    const [checked, requested] = await racing.calls
+    const after = await view(id)
+    if (checked.status === 200) {
+      refused(requested, 409, "run_in_progress")
+      assert.equal(field(after, "run", "id"), prepared.runId, "the claimed change is still the deployment's")
+      assert.equal(field(after, "configuration", "change", "state"), "applying")
+    } else {
+      assert.equal(checked.status, 409, summary(checked))
+      assert.equal(requested.status, 200, summary(requested))
+      assert.notEqual(field(after, "run", "id"), prepared.runId)
+      assert.equal(field(after, "run", "id"), rival === unchanged ? baseRunId : field(requested.body, "deployment", "run", "id"))
+      assert.equal(field(after, "run", "lastSeenAt"), null, "the refused command claimed nothing")
+    }
+    assert.equal((await check(id, prepared)).status, checked.status, "and the command gets the same answer when it asks again")
+  }
+  assert.deepEqual(den.production?.concurrentStatements ?? [], [])
+})
+
+test("the approval check refuses once the feature is off; a change it already confirmed enrolls and finishes", async () => {
+  const waiting = await installed()
+  const confirmed = await installed()
+  const unclaimed = handoff(await change(waiting.id, email("first.admin@example.com")))
+  const claimed = handoff(await change(confirmed.id, email("first.admin@example.com")))
+  assert.equal((await check(confirmed.id, claimed)).status, 200)
+  await db.update(ManagedDeploymentRunTable).set({ expires_at: new Date(Date.now() + 60_000) }).where(eq(ManagedDeploymentRunTable.id, claimed.runId))
+
+  assert.equal((await den.setFeature(org.orgId, "managedDeploymentConfigUpdates", false)).status, 200)
+  try {
+    const off = await check(waiting.id, unclaimed)
+    assert.equal(off.status, 409, summary(off))
+    assert.equal(field(off.body, "error"), "approval_not_current")
+    assert.equal((await check(confirmed.id, claimed)).status, 409, "asking again is not a second approval")
+
+    // Its stack may already be updated: withdrawing it now would record that nothing happened.
+    const enrollment = await enroll(confirmed.id, claimed)
+    assert.equal(enrollment.status, 200, summary(enrollment))
+    assert.ok(fullLifetime(field(enrollment.body, "expiresAt")), summary(enrollment))
+    const token = text(field(enrollment.body, "token"), "run token")
+    for (let sequence = 1; sequence <= 6; sequence += 1) assert.equal((await report(confirmed.id, claimed.runId, token, sequence)).status, 200)
+  } finally {
+    assert.equal((await den.setFeature(org.orgId, "managedDeploymentConfigUpdates", true)).status, 200)
+  }
+  const finished = await view(confirmed.id)
+  assert.equal(field(finished, "ownerEmail"), "first.admin@example.com")
+  assert.equal(field(finished, "run", "state"), "ready")
+  assert.equal(field(finished, "configuration", "lock"), null)
+  const never = await view(waiting.id)
+  assert.equal(field(never, "run", "lastSeenAt"), null)
+  assert.equal(field(never, "configuration", "change", "state"), "awaiting_approval", "a refused check withdrew nothing either")
+
+  // Adding the gateway is confirmed only while gateway deployments are on.
+  const gateway = await installed()
+  const adding = handoff(await change(gateway.id, gatewayWithDaytona))
+  assert.equal((await den.setFeature(org.orgId, "managedDeploymentAssistants", false)).status, 200)
+  try {
+    assert.equal((await check(gateway.id, adding)).status, 409)
+  } finally {
+    assert.equal((await den.setFeature(org.orgId, "managedDeploymentAssistants", true)).status, 200)
+  }
+  assert.equal((await check(gateway.id, adding)).status, 200)
+})
+
+// ---- The command itself, run by a shell ----
+// `aws` and `curl` are stand-ins on PATH. `curl` records its arguments and then runs the real curl
+// against this test's Den; `aws` answers the account question and records every other call.
+
+function executable(name: string) {
+  for (const directory of (process.env.PATH ?? "").split(delimiter)) {
+    try { accessSync(join(directory, name), constants.X_OK); return join(directory, name) } catch { /* next directory */ }
+  }
+  throw new Error(`${name} is not installed`)
+}
+
+test("the command a shell runs never reaches update-stack unless OpenWork itself confirms the change", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "openwork-approval-command-"))
+  const log = join(directory, "calls.log")
+  writeFileSync(join(directory, "aws"), `#!/bin/sh\nif [ "$1 $2" = "sts get-caller-identity" ]; then printf '%s\\n' "$STUB_ACCOUNT"; exit 0; fi\nprintf 'aws %s\\n' "$*" >> "$STUB_LOG"\nprintf '{"StackId":"stub"}\\n'\n`, { mode: 0o755 })
+  writeFileSync(join(directory, "curl"), `#!/bin/bash\nprintf 'curl %s\\n' "$*" >> "$STUB_LOG"\nexec "$REAL_CURL" "\${@//"$STUB_FROM"/$STUB_TO}"\n`, { mode: 0o755 })
+  const checks: string[] = []
+  const bridge = await startFakeHttpServer(async (request, body, response) => {
+    checks.push(`${request.method} ${request.url}`)
+    const call = await den.request(null, request.method === "POST" ? "POST" : "GET", request.url ?? "/", { rawBody: body, headers: { "content-type": String(request.headers["content-type"] ?? "") } })
+    response.writeHead(call.status, { "content-type": "application/json" }).end(call.text)
+  })
+  const redirector = await startFakeHttpServer((request, _body, response) => { response.writeHead(307, { location: `${bridge.url}${request.url ?? ""}` }).end() })
+  const failing = await startFakeHttpServer((_request, _body, response) => { response.writeHead(503).end("{\"ok\":true}") })
+  const truncated = await startFakeHttpServer((_request, _body, response) => {
+    response.writeHead(200, { "content-length": "1000" })
+    response.flushHeaders()
+    response.write("partial")
+    setImmediate(() => response.destroy())
+  })
+
+  /** Runs the command as CloudShell would and returns what it asked `curl` and `aws` to do. */
+  async function run(command: string, options: { account?: string; openwork?: string } = {}) {
+    writeFileSync(log, "")
+    const result = await new Promise<{ code: number; stderr: string }>((resolve) => {
+      execFile("bash", ["-c", command], {
+        env: { PATH: `${directory}:/usr/bin:/bin`, STUB_LOG: log, STUB_ACCOUNT: options.account ?? ACCOUNT, STUB_FROM: "http://127.0.0.1:8790", STUB_TO: options.openwork ?? bridge.url, REAL_CURL: executable("curl") },
+        timeout: 60_000,
+      }, (error, _stdout, stderr) => resolve({ code: error ? (typeof error.code === "number" ? error.code : 1) : 0, stderr }))
+    })
+    const calls = readFileSync(log, "utf8").split("\n").filter(Boolean)
+    return { ...result, calls, confirmed: calls.filter((line) => line.startsWith("curl ")).length, updates: calls.filter((line) => line.startsWith("aws cloudformation update-stack")) }
+  }
+  function stopped(result: Awaited<ReturnType<typeof run>>, reason: string) {
+    assert.notEqual(result.code, 0, reason)
+    assert.deepEqual(result.updates, [], `${reason}: update-stack was never called`)
+    assert.deepEqual(result.calls.filter((line) => line.startsWith("aws ")), [], `${reason}: nothing in AWS was called`)
+  }
+
+  try {
+    const { id, baseRunId } = await installed()
+    const first = handoff(await change(id, email("first.admin@example.com")))
+    const second = handoff(await change(id, email("second.admin@example.com")))
+
+    const superseded = await run(first.command)
+    stopped(superseded, "a replaced command")
+    assert.equal(superseded.confirmed, 1)
+    assert.match(superseded.stderr, /OpenWork did not confirm this approval, so this command changed nothing/)
+    assert.deepEqual(checks, [`POST /v1/managed-deployments/${id}/runs/${first.runId}/approval-check`])
+
+    const otherAccount = await run(second.command, { account: "210987654321" })
+    stopped(otherAccount, "another AWS account")
+    assert.equal(otherAccount.confirmed, 0, "OpenWork is not asked from the wrong account")
+    assert.match(otherAccount.stderr, new RegExp(`Switch to AWS account ${ACCOUNT}`))
+
+    checks.length = 0
+    stopped(await run(second.command, { openwork: redirector.url }), "a redirect")
+    assert.deepEqual(checks, [], "the redirect was not followed")
+    stopped(await run(second.command, { openwork: failing.url }), "an error answer with a body that says ok")
+    stopped(await run(second.command, { openwork: truncated.url }), "HTTP 200 followed by a transport failure")
+    stopped(await run(second.command, { openwork: "http://127.0.0.1:1" }), "an OpenWork that cannot be reached")
+
+    assert.equal((await den.setFeature(org.orgId, "managedDeploymentConfigUpdates", false)).status, 200)
+    try {
+      stopped(await run(second.command), "the feature turned off")
+    } finally {
+      assert.equal((await den.setFeature(org.orgId, "managedDeploymentConfigUpdates", true)).status, 200)
+    }
+    assert.equal(field(await view(id), "run", "lastSeenAt"), null, "none of the refused attempts claimed the change")
+
+    const approved = await run(second.command)
+    assert.equal(approved.code, 0, approved.stderr)
+    assert.equal(approved.confirmed, 1)
+    assert.equal(approved.updates.length, 1)
+    assert.ok(approved.calls.findIndex((line) => line.startsWith("curl ")) < approved.calls.findIndex((line) => line.startsWith("aws cloudformation update-stack")), "OpenWork is asked first")
+    const update = approved.updates[0] ?? ""
+    assert.ok(update.includes(`--template-url ${second.templateUrl}`), update)
+    assert.ok(update.includes(JSON.stringify({ ParameterKey: "RunId", ParameterValue: second.runId })) && update.includes(JSON.stringify({ ParameterKey: "OwnerEmail", ParameterValue: "second.admin@example.com" })), update)
+    const claimed = await view(id)
+    assert.equal(field(claimed, "configuration", "change", "state"), "applying")
+    assert.equal(field(claimed, "configuration", "lock"), "run_in_progress")
+    assert.equal(field(claimed, "ownerEmail"), "admin@example.com")
+
+    // The replaced command stays refused, and the confirmed one may be run again while its deadline lasts.
+    stopped(await run(first.command), "the replaced command, after the other was confirmed")
+    assert.equal((await run(second.command)).updates.length, 1)
+    await expire(second.runId)
+    stopped(await run(second.command), "a confirmed command past its deadline")
+
+    const discarded = await installed()
+    const withdrawn = handoff(await change(discarded.id, email("first.admin@example.com")))
+    assert.equal(field((await change(discarded.id, unchanged)).body, "outcome"), "withdrawn")
+    stopped(await run(withdrawn.command), "a discarded command")
+    const lapsed = await installed()
+    const expired = handoff(await change(lapsed.id, email("first.admin@example.com")))
+    await expire(expired.runId)
+    stopped(await run(expired.command), "an approval that expired before it was run")
+    assert.equal(field(await view(lapsed.id), "configuration", "change", "state"), "expired", "and it can still be discarded or prepared again")
+    assert.equal(field((await change(lapsed.id, unchanged)).body, "outcome"), "withdrawn")
+    assert.equal(field(await view(id), "run", "id"), second.runId)
+    assert.notEqual(second.runId, baseRunId)
+  } finally {
+    await Promise.all([bridge.close(), redirector.close(), failing.close(), truncated.close()])
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

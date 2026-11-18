@@ -31,7 +31,7 @@ export type ConfigurationBasis =
     /** The latest ready run: the installer and configuration that are installed. */
     base: RunRow
     active: RunRow | null
-    /** A change whose command has been issued and has not reached the cloud, of any age. */
+    /** A change whose command has been issued and has not been run, of any age. */
     pending: RunRow | null
     /** The active run to return to if a new change is withdrawn. */
     restoresRunId: string
@@ -69,6 +69,32 @@ function reachedCloud(run: RunRow) {
   return run.token_hash !== null
 }
 
+/**
+ * Whether the approval command has claimed this change: it asked OpenWork to
+ * confirm the run and was told to go ahead, so `update-stack` may follow.
+ *
+ * The mark is the run's `last_seen_at`. Only the customer's side writes that
+ * column: the approval check while the run awaits approval, then enrollment and
+ * each installer milestone. On a configure run that still awaits approval it can
+ * therefore only be the approval check's mark. It is set once, under the
+ * deployment and run locks, and nothing clears it: a claimed change leaves this
+ * state only by enrolling.
+ */
+export function approvalClaimed(run: RunRow) {
+  return run.kind === "configure" && run.state === "awaiting_approval" && run.last_seen_at !== null
+}
+
+/**
+ * A change the customer's AWS account may be applying: claimed by its approval
+ * command or enrolled, with no final report. A passed deadline says nothing about
+ * what AWS did or is still doing, so such a run holds the deployment at any age:
+ * no other change, install, retry or update is prepared until it reports
+ * success or failure.
+ */
+export function heldByCloud(run: RunRow) {
+  return run.kind === "configure" && (run.state === "provisioning" || approvalClaimed(run))
+}
+
 function sameCoordinates(run: RunRow, release: Coordinates | null) {
   return Boolean(release) && run.version === release?.version && run.template_url === release.templateUrl && run.bundle_url === release.bundleUrl && run.bundle_sha256 === release.bundleSha256
 }
@@ -81,15 +107,17 @@ export function configurationBasis(row: DeploymentRow, runs: RunRow[], published
   if (row.provider !== "aws") return { lock: "aws_only" }
   if (!row.installed_version) return { lock: "not_installed" }
   const active = runs.find((run) => run.id === row.active_run_id) ?? null
-  if (active && active.expires_at > now && (active.state === "provisioning" || (active.state === "awaiting_approval" && active.kind !== "configure"))) return { lock: "run_in_progress" }
+  if (active && heldByCloud(active)) return { lock: "run_in_progress" }
+  if (active && active.kind !== "configure" && active.expires_at > now && (active.state === "provisioning" || active.state === "awaiting_approval")) return { lock: "run_in_progress" }
   const base = runs.filter((run) => run.state === "ready").sort((left, right) => right.created_at.getTime() - left.created_at.getTime())[0]
   if (!base || base.version !== row.installed_version) return { lock: "installer_unknown" }
   // An install, retry or update prepared since then may have replaced the installer
   // or the recorded target, whether or not it was approved.
   if (runs.some((run) => run.kind !== "configure" && run.created_at > base.created_at)) return { lock: "unfinished_run" }
+  // Re-running the installed release needs the same bytes, so both objects must be exact object
+  // versions. The published release is no exception: its unversioned URLs can be republished too.
+  if (!immutableInstallerUrl("aws", base.template_url) || !immutableInstallerUrl("aws", base.bundle_url)) return { lock: "installer_unavailable" }
   const gatewayAvailable = sameCoordinates(base, published)
-  // Re-running the installed release needs the same bytes: object versions, or the published release itself.
-  if (!gatewayAvailable && !(immutableInstallerUrl("aws", base.template_url) && immutableInstallerUrl("aws", base.bundle_url))) return { lock: "installer_unavailable" }
   const unapproved = active && active.kind === "configure" && !reachedCloud(active) ? active : null
   return {
     lock: null, base, active, gatewayAvailable,
@@ -99,9 +127,10 @@ export function configurationBasis(row: DeploymentRow, runs: RunRow[], published
 }
 
 function changeState(run: RunRow, now: Date): NonNullable<ConfigurationView["change"]>["state"] {
-  const expired = run.expires_at < now
-  if (run.state === "awaiting_approval") return expired ? "expired" : "awaiting_approval"
-  return run.state === "provisioning" && !expired ? "applying" : "failed"
+  if (run.state === "failed") return "failed"
+  // Claimed or enrolled, at any age: it is not known to have failed and cannot be replaced or discarded.
+  if (heldByCloud(run)) return "applying"
+  return run.expires_at < now ? "expired" : "awaiting_approval"
 }
 
 /** The `configuration` block of a deployment view. */
