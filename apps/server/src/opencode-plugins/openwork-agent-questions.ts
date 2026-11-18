@@ -17,4 +17,12 @@ export const askArgs = z.object({
 }).strict();
 
 // All model-facing guidance for asking lives here.
-export const askDescription = "Ask the person something without stopping. Takes the same questions as the question tool but returns at once: their answer arrives later as a message in this chat, and starts a new turn if yours has ended. Use it when other parts of the task do not depend on the answer, and keep working on those; use question when nothing useful can continue until they answer. Either way, never end your turn asking the person to reply, approve or tell you when they are done: ask with one of these tools instead. Do not ask again while a question is open.";
+// How to write a question, for both the engine's question tool and ask_without_waiting.
+export const questionWritingGuidance = "Keep each question to one short sentence that names the decision, such as \"Did the app record get created?\" Put steps, values to copy and other context in a chat message before you ask, not in the question; the card shows only a few lines. Each option says what that answer means, without repeating the instructions.";
+
+export const askDescription = `Ask the person something without stopping. Takes the same questions as the question tool but returns at once: their answer arrives later as a message in this chat, and starts a new turn if yours has ended. Use it when other parts of the task do not depend on the answer, and keep working on those; use question when nothing useful can continue until they answer. Either way, never end your turn asking the person to reply, approve or tell you when they are done: ask with one of these tools instead. Do not ask again while a question is open. ${questionWritingGuidance}`;
+
+/** Adds the writing guidance to the engine's own question tool. */
+export function questionToolDefinition(input: { toolID: string }, output: { description: string }) {
+  if (input.toolID === "question") output.description += `\n\n${questionWritingGuidance}`;
+}
