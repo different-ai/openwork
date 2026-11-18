@@ -64,6 +64,8 @@ export interface RemoteRunnerStatus {
   phase: "credentials" | "registration" | "inventory" | "access" | "recovery" | "work"
   failures: number
   observedAt: number
+  /** What this Location takes right now: its exact allowlist entry capped by the last acknowledged organization policy. */
+  access: "off" | "created"
   /** Stable local diagnosis; never contains provider errors, credentials, or prompts. */
   error: string | null
 }
@@ -114,10 +116,11 @@ export function createRemoteRunnerController(input: {
   let queued = false
   let failures = 0
   let phase: RemoteRunnerStatus["phase"] = "credentials"
-  let status: RemoteRunnerStatus = { state: "waiting", phase, failures: 0, observedAt: now(), error: null }
+  let status: RemoteRunnerStatus = { state: "waiting", phase, failures: 0, observedAt: now(), access: "off", error: null }
   const statusKey = `remoteSessions/status/${hash(ctx.location.directory)}`
   const recordStatus = async (state: RemoteRunnerStatus["state"], error: string | null = null) => {
-    status = { state, phase, failures, observedAt: now(), error }
+    const access = active && directory ? headlessSessionAccess(input.sessionChoices ?? {}, directory, active.sessionPolicy) : "off"
+    status = { state, phase, failures, observedAt: now(), access, error }
     // Health recording is best-effort, unlike the execution journal. A broken
     // diagnostic store must not turn an acknowledged native effect into failure.
     await hostRead(() => ctx.storage.set(statusKey, { ...status }), AbortSignal.timeout(1000)).catch(() => {})
@@ -281,7 +284,7 @@ export function createRemoteRunnerController(input: {
     phase = "access"
     if (!isHeadlessSessionPolicy(response.sessionAccess)) throw new Error("OpenWork must support headless owner choice before taking tasks.")
     state.sessionPolicy = response.sessionAccess
-    const access = headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy)
+    let access = headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy)
     // Registration is not consent. Report the exact Location's explicit deny-by-default choice;
     // no local-session inventory or attach capability is ever published by this headless runner.
     const report = await runnerRequest(state, "/v1/session-runners/sessions", signal, { access, chosen: true, sessions: [] })
@@ -292,14 +295,17 @@ export function createRemoteRunnerController(input: {
       throw new Error("OpenWork returned an invalid owner-choice acknowledgement.")
     }
     state.sessionPolicy = report.sessionAccess
-    if (headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy) === "off") return
+    access = headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy)
     // Restore receipts and pending outboxes before claiming more work, but only after consent is acknowledged.
+    // While off, the core makes no native call: it settles unfinished journaled work as remote_access_off and
+    // acknowledges results that already happened, so Den is not left holding claims nobody will finish.
     phase = "recovery"
     await state.runner.reconcile(signal)
     const journal = await state.runner.inspect()
     if (journal.commands.length >= 200 || journal.requests.length >= 200) {
       await state.runner.prune({ retainCommands: 128, retainRequests: 128 })
     }
+    if (access === "off") return
     phase = "work"
     for (const item of response.items) {
       signal.throwIfAborted()

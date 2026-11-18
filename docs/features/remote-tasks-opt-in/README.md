@@ -97,7 +97,9 @@ requirements](../../../packages/opencode-plugin/README.md#optional-remote-sessio
 
 The runner registers `remote_session_choice_v1`, obtains the live organization
 ceiling and reports `{ access, chosen: true, sessions: [] }` through the existing
-session-runner routes before recovering or claiming work. No database mutation,
+session-runner routes before recovering or claiming work. While a Location is
+`off` it still reconciles its journal without native calls, settling unfinished
+work as `remote_access_off`, but never claims new work. No database mutation,
 new owner-consent endpoint, or rollout change is required. The local default is
 always `off`, even with this rollout disabled; the server still enforces the
 organization's ceiling. An older server that cannot acknowledge the choice

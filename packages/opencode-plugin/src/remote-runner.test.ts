@@ -117,7 +117,7 @@ test("a native inventory failure is inspectable without leaking its exception or
   f.host.ctx.model.list = async () => { throw new Error("Native decoder failed: Bearer private-test-credential") }
   await f.controller.poll()
   const status = f.controller.inspectStatus()
-  assert.deepEqual(status, { state: "retrying", phase: "inventory", failures: 1, observedAt: f.now, error: "inventory_failed" })
+  assert.deepEqual(status, { state: "retrying", phase: "inventory", failures: 1, observedAt: f.now, access: "off", error: "inventory_failed" })
   const recorded = [...f.host.storage.entries()].find(([key]) => key.startsWith("remoteSessions/status/"))?.[1]
   assert.deepEqual(recorded, status)
   assert.ok(!JSON.stringify(recorded).includes("private-test-credential"))
@@ -546,6 +546,47 @@ test("a lowered organization ceiling stops journal recovery, native reads and cl
   await f.controller.poll()
   assert.equal(nativePrompts(f), 1, "restoring access resumes observation, not the original prompt")
   await f.controller.close()
+})
+
+test("while off, recovery still acknowledges a result that already happened, with no native call or new claim", async () => {
+  const f = fixture()
+  f.completionStatus = 500
+  await f.controller.poll()
+  assert.equal(nativePrompts(f), 1)
+  assert.equal(f.journals()[0]?.commands[0]?.completionAcknowledged, false)
+  assert.equal(f.controller.inspectStatus().state, "retrying")
+  f.completionStatus = 200
+  f.sessionPolicy = { ceiling: "off", optIn: true }
+  const native = f.host.calls.length
+  const http = f.calls.length
+  await f.controller.poll()
+  const later = f.calls.slice(http)
+  assert.ok(!f.host.calls.slice(native).some(call => call.method.startsWith("session.")), "no native read or prompt while off")
+  assert.ok(!later.some(call => call.path.endsWith("/claim") || call.path.endsWith("/session")))
+  const completion = later.find(call => call.path.endsWith(`/${f.command.commandId}/complete`))
+  assert.ok(isRecord(completion?.body) && completion.body.status === "delivered", "Den is not left holding an unfinished claim")
+  assert.equal(f.journals()[0]?.commands[0]?.completionAcknowledged, true)
+  assert.deepEqual(later.find(call => call.path.endsWith("/sessions"))?.body, { access: "off", chosen: true, sessions: [] })
+  assert.equal(f.controller.inspectStatus().state, "connected")
+  assert.equal(f.controller.inspectStatus().access, "off")
+  await f.controller.close()
+})
+
+test("status says whether this exact Location takes tasks right now", async () => {
+  const allowed = fixture()
+  await allowed.controller.poll()
+  assert.equal(allowed.controller.inspectStatus().access, "created")
+  allowed.sessionPolicy = { ceiling: "off", optIn: true }
+  await allowed.controller.poll()
+  assert.equal(allowed.controller.inspectStatus().access, "off")
+  await allowed.controller.close()
+  assert.equal(allowed.controller.inspectStatus().access, "off")
+  const unlisted = fixture({})
+  await unlisted.controller.poll()
+  assert.deepEqual({ ...unlisted.controller.inspectStatus(), observedAt: 0 },
+    { state: "connected", phase: "recovery", failures: 0, observedAt: 0, access: "off", error: null })
+  assert.equal(nativePrompts(unlisted), 0)
+  await unlisted.controller.close()
 })
 
 test("a policy lowered in the consent acknowledgement wins over the earlier work response", async () => {
