@@ -1,7 +1,7 @@
 # LiteLLM: member Microsoft Entra sign-in
 
 Feature key: `litellmEntraMemberSignIn` (cloud and self-hosted, off by default).
-Author: `openwork` (team).
+Author: `benjaminshafii`.
 
 ## What changes
 
