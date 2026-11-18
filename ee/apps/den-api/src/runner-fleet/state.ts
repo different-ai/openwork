@@ -48,7 +48,7 @@ export function unreachableNode(id: string, error: string, limitBytes: number | 
   return {
     id, state: "unreachable", error: error.slice(0, 40), shedReason: null,
     memory: { usedBytes: 0, limitBytes, ratio: null, residentBytes: 0, inUseBytes: 0, workingSetBytes: null, retainedBytes: null, heapBytes: null, externalBytes: null },
-    cells: { resident: 0, owned: null, waitingForRoom: 0, starting: 0, residents: [], residentsTruncated: false },
+    cells: { resident: 0, owned: null, waitingForRoom: 0, starting: 0, residents: [], residentsTruncated: false, inMemory: [] },
     sockets: 0, cpuPercent: null, moved: { handedOff: 0, rebalanced: 0, shed: 0 }, isolates: null, version: null,
   }
 }
@@ -100,6 +100,8 @@ export function nodeFromState(id: string, raw: unknown, limitBytes: number | nul
       starting: (count(state.activating) ?? 0) + (count(state.activation_waiting) ?? 0),
       residents,
       residentsTruncated: listed.length > residents.length || resident > residents.length,
+      // Whose each is and since when: added by the service, which knows the conversations (cells.ts).
+      inMemory: [],
     },
     sockets: count(load?.host_websockets) ?? 0,
     cpuPercent: cpu === null ? null : cpu / 100,
@@ -138,6 +140,7 @@ export function fleetFromNodes(nodes: RunnerFleetNode[], now: Date, discoveryErr
       usedBytes: reachable.reduce((sum, node) => sum + node.memory.usedBytes, 0),
     },
     discoveryError,
+    cellNamesError: null,
   }
 }
 
@@ -146,5 +149,6 @@ export function notConfiguredFleet(now: Date): AdminRunnerFleet {
     status: "not_configured", generatedAt: now.toISOString(), nodes: [],
     totals: { nodes: 0, reachable: 0, closed: 0, residentCells: 0, ownedCells: null, waitingForRoom: 0, usedBytes: 0 },
     discoveryError: null,
+    cellNamesError: null,
   }
 }

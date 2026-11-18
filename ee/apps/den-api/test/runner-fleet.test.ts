@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { adminRunnerFleetHistorySchema, adminRunnerFleetSchema } from "@openwork/types/den/admin-runner-fleet"
+import { workbotPersonKey } from "@openwork-ee/headless-protocol/workbot-routing"
+import { describeCells, emptyDirectory, knownCellNames, nextSeen, residentKey, RESIDENT_SEEN_LIMIT, shortCellId, storedSeen, type IndexedConversation, type KnownCell } from "../src/runner-fleet/cells.js"
 import { runnerFleetConfig } from "../src/runner-fleet/config.js"
 import { runnerFleetEvents } from "../src/runner-fleet/events.js"
 import { BUCKET_MS, emptyHour, foldFleet, historyFromHours, hourKey, mergeHours, storedHour } from "../src/runner-fleet/history.js"
@@ -44,7 +46,7 @@ test("a node's own report becomes the page's node", () => {
   assert.equal(node.memory.usedBytes, 820 * MB)
   assert.equal(node.memory.ratio, 0.2002)
   assert.deepEqual({ retained: node.memory.retainedBytes, heap: node.memory.heapBytes, external: node.memory.externalBytes }, { retained: 120 * MB, heap: 330 * MB, external: 21 * MB })
-  assert.deepEqual(node.cells, { resident: 3, owned: 2100, waitingForRoom: 0, starting: 3, residents: ["0001abababab", "0002abababab", "0003abababab"], residentsTruncated: false })
+  assert.deepEqual(node.cells, { resident: 3, owned: 2100, waitingForRoom: 0, starting: 3, residents: ["0001abababab", "0002abababab", "0003abababab"], residentsTruncated: false, inMemory: [] })
   assert.deepEqual({ sockets: node.sockets, cpu: node.cpuPercent, moved: node.moved, isolates: node.isolates, version: node.version },
     { sockets: 5, cpu: 12.5, moved: { handedOff: 40, rebalanced: 32, shed: 7 }, isolates: { live: 3, retiring: 1 }, version: "v-2f9c1e" })
 })
@@ -179,4 +181,71 @@ test("the live stream sends the fleet on connect and again each interval, then e
   assert.equal(await next(), "event: end\ndata: {}\n\n")
   assert.equal((await reader.read()).done, true)
   assert.deepEqual({ reads, closed }, { reads: 3, closed: 1 })
+})
+
+const NOW_MS = Date.parse("2026-11-18T01:00:00.000Z")
+const minutesAgo = (minutes: number) => new Date(NOW_MS - minutes * 60_000)
+const conversation = (extra: Partial<IndexedConversation> & Pick<IndexedConversation, "sessionId">): IndexedConversation => ({ organizationId: "org_acme", memberId: "mem_dana", kind: "workbot", updatedAt: minutesAgo(30), activeTurnSince: null, ...extra })
+
+test("each conversation Den knows is offered under the cell names the runner uses", () => {
+  const person = workbotPersonKey("org_acme", "mem_dana")
+  const names = knownCellNames([
+    // A person's main chat lives in their own cell, with their memory; its id carries their key.
+    conversation({ sessionId: `hs_wb_${person}`, updatedAt: minutesAgo(90) }),
+    // A side chat has a cell of its own, and its person's cell is as active as it is.
+    conversation({ sessionId: "hs_c_0123456789abcdef0123456789abcdef", updatedAt: minutesAgo(2), activeTurnSince: minutesAgo(1) }),
+    conversation({ sessionId: "hs_3f2a9c0e7b5d4a6f8091a2b3c4d5e6f7", kind: "slack", organizationId: "org_north", memberId: null }),
+    conversation({ sessionId: "hs_9b8a7c6d5e4f30219b8a7c6d5e4f3021", kind: "automation", organizationId: "org_north", memberId: "mem_lee" }),
+    conversation({ sessionId: "not a session id" }),
+  ])
+  assert.deepEqual([...names.keys()].sort(), [
+    `owner:wb:${person}`, "service", "session:hs_3f2a9c0e7b5d4a6f8091a2b3c4d5e6f7", "session:hs_9b8a7c6d5e4f30219b8a7c6d5e4f3021",
+    "session:hs_c_0123456789abcdef0123456789abcdef", `session:hs_wb_${person}`,
+  ].sort())
+  assert.deepEqual(names.get(`owner:wb:${person}`), { kind: "person", product: "workbot", organizationId: "org_acme", lastActiveAt: minutesAgo(2).getTime(), turnRunning: true })
+  assert.deepEqual(names.get("session:hs_3f2a9c0e7b5d4a6f8091a2b3c4d5e6f7"), { kind: "conversation", product: "slack", organizationId: "org_north", lastActiveAt: minutesAgo(30).getTime(), turnRunning: false })
+  // Only Workbot gives a person a cell: an Automation's member has none.
+  assert.equal([...names.keys()].some((name) => name.startsWith("owner:") && name !== `owner:wb:${person}`), false)
+  assert.deepEqual(names.get("service"), { kind: "service", product: null, organizationId: null, lastActiveAt: null, turnRunning: false })
+})
+
+test("a cell is as old as the first reading that saw it in memory, on any replica, and new again when it comes back", () => {
+  const fleet = (cells: Record<string, string[]>) => ({ nodes: Object.entries(cells).map(([id, residents]) => ({ ...nodeFromState(id, celldState(), LIMIT), cells: { ...nodeFromState(id, celldState(), LIMIT).cells, residents } })) })
+  const first = nextSeen(fleet({ "10.0.0.1": ["aaa", "bbb"] }), {}, 1_000)
+  assert.deepEqual(first, { "10.0.0.1|aaa": 1_000, "10.0.0.1|bbb": 1_000 })
+  // Still there: the first sighting stands. Gone: forgotten. New, or moved to another node: seen now.
+  const second = nextSeen(fleet({ "10.0.0.1": ["aaa", "ccc"], "10.0.0.2": ["bbb"] }), first, 9_000)
+  assert.deepEqual(second, { "10.0.0.1|aaa": 1_000, "10.0.0.1|ccc": 9_000, "10.0.0.2|bbb": 9_000 })
+  // Another replica saw it earlier: the earlier sighting wins. One from the future is not believed.
+  assert.deepEqual(nextSeen(fleet({ "10.0.0.1": ["aaa", "ccc"] }), second, 12_000, { "10.0.0.1|ccc": 4_000, "10.0.0.1|aaa": 50_000 }), { "10.0.0.1|aaa": 1_000, "10.0.0.1|ccc": 4_000 })
+  assert.equal(residentKey("10.0.0.1", "aaa"), "10.0.0.1|aaa")
+  // A fleet stuffed with cells keeps a bounded number of sightings.
+  const many = nextSeen(fleet({ "10.0.0.1": Array.from({ length: RESIDENT_SEEN_LIMIT + 50 }, (_, index) => `c${index}`) }), {}, 1)
+  assert.equal(Object.keys(many).length, RESIDENT_SEEN_LIMIT)
+  // What is kept between readings, and anything else reads as nothing kept.
+  assert.deepEqual(storedSeen({ v: 1, seen: { a: 5, b: "x", c: -1 } }), { a: 5 })
+  for (const payload of [null, [], { v: 2, seen: { a: 5 } }, { v: 1 }, "seen"]) assert.deepEqual(storedSeen(payload), {})
+})
+
+test("each cell in memory is described by whose it is and since when, and one Den cannot name is still listed", () => {
+  const acme: KnownCell = { kind: "conversation", product: "workbot", organizationId: "org_acme", lastActiveAt: minutesAgo(3).getTime(), turnRunning: true }
+  const person: KnownCell = { kind: "person", product: "workbot", organizationId: "org_acme", lastActiveAt: minutesAgo(40).getTime(), turnRunning: false }
+  const service: KnownCell = { kind: "service", product: null, organizationId: null, lastActiveAt: null, turnRunning: false }
+  const reading = fleetFromNodes([nodeFromState("10.0.0.1", celldState(), LIMIT)], new Date(NOW_MS), null)
+  const [one, two, three] = reading.nodes[0]?.cells.residents ?? []
+  assert.equal(one, shortCellId(cell(1).slice("HeadlessCell:".length)))
+  const directory = { byId: new Map([[one ?? "", acme], [two ?? "", person], ["unseen", service]]), organizations: new Map([["org_acme", "Acme Robotics"]]), error: null }
+  const described = describeCells(reading, directory, { [residentKey("10.0.0.1", one ?? "")]: minutesAgo(50).getTime() })
+  assert.equal(adminRunnerFleetSchema.safeParse(described).success, true)
+  assert.deepEqual(described.nodes[0]?.cells.inMemory, [
+    { id: one, since: minutesAgo(50).toISOString(), kind: "conversation", product: "workbot", organization: { id: "org_acme", name: "Acme Robotics" }, lastActiveAt: minutesAgo(3).toISOString(), turnRunning: true },
+    { id: two, since: null, kind: "person", product: "workbot", organization: { id: "org_acme", name: "Acme Robotics" }, lastActiveAt: minutesAgo(40).toISOString(), turnRunning: false },
+    { id: three, since: null, kind: "unknown", product: null, organization: null, lastActiveAt: null, turnRunning: false },
+  ])
+  assert.equal(described.cellNamesError, null)
+  // The rest of the reading is untouched, and a runner that cannot name cells says so while the cells stay listed.
+  assert.deepEqual([described.status, described.totals, described.nodes[0]?.cells.residents], [reading.status, reading.totals, reading.nodes[0]?.cells.residents])
+  const unnamed = describeCells(reading, emptyDirectory("http_404"), {})
+  assert.deepEqual([unnamed.cellNamesError, unnamed.nodes[0]?.cells.inMemory.map((entry) => entry.kind)], ["http_404", ["unknown", "unknown", "unknown"]])
+  assert.equal(adminRunnerFleetSchema.safeParse(unnamed).success, true)
 })

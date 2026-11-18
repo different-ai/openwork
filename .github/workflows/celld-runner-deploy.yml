@@ -210,7 +210,7 @@ jobs:
           echo "name=workbot-desktop-freestyle-$image-$guest" >> "$GITHUB_OUTPUT"
 
       - name: Check model and smoke result boundaries
-        run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts scripts/route-failure.test.ts scripts/idle-upkeep.test.ts scripts/computer-fleet.test.ts
+        run: pnpm --filter @openwork-ee/headless-runner exec tsx --test scripts/model-responses.test.ts scripts/celld-smoke-result.test.ts scripts/route-failure.test.ts scripts/idle-upkeep.test.ts scripts/computer-fleet.test.ts scripts/cell-ids.test.ts
 
       # A sandbox gateway keeps its own copies of the desktop: its template names a Fast Sandbox template and a Freestyle
       # snapshot, and this run can update neither. Those computers stay on the older image until a person rebuilds them

@@ -19,7 +19,7 @@ import { DenSegmented } from "../../../app/(den)/_components/ui/segmented";
 import { AdminAccessScreen } from "../admin-access-screen";
 import { useRunnerFleet, useRunnerFleetHistory, type FleetConnection } from "./runner-fleet-data";
 import { CellDistribution, HistoryGrids, STATE_FILL } from "./runner-fleet-grids";
-import { formatMegabytes, formatPercent, NODE_STATE_LABEL, type HistoryMetric } from "./runner-fleet-model";
+import { cellNamesNotice, formatMegabytes, formatPercent, NODE_STATE_LABEL, type HistoryMetric } from "./runner-fleet-model";
 
 const STATE_TONE: Record<RunnerFleetNodeState, DenBadgeTone> = { open: "success", no_headroom: "warning", closed: "danger", draining: "neutral", unreachable: "neutral" };
 const RANGE_OPTIONS: Array<{ value: RunnerFleetHistoryRange; label: string }> = [{ value: "24h", label: "24 hours" }, { value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }];
@@ -217,9 +217,10 @@ export function RunnerFleetPage() {
           <section aria-labelledby="runner-fleet-cells" className="flex flex-col gap-3">
             <div>
               <h2 id="runner-fleet-cells" className="text-[16px] font-medium text-gray-950">Where the cells are</h2>
-              <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">A sleeping cell wakes only on the node that owns it, and a new cell starts on the node its first request reaches, so an uneven share is where one node fills up first. Each square is one cell in memory.</p>
+              <p className="mt-1 max-w-3xl text-[13px] leading-5 text-gray-600">A sleeping cell wakes only on the node that owns it, and a new cell starts on the node its first request reaches, so an uneven share is where one node fills up first. Each square is one cell in memory: paler when it has just arrived, more solid the longer it has stayed. Point at one to see whose it is.</p>
             </div>
-            <DenCard className="!rounded-lg" data-testid="runner-fleet-cells"><CellDistribution nodes={fleet.nodes} /></DenCard>
+            {cellNamesNotice(fleet.cellNamesError) ? <DenNotice tone="info" message={cellNamesNotice(fleet.cellNamesError)} /> : null}
+            <DenCard className="!rounded-lg" data-testid="runner-fleet-cells"><CellDistribution nodes={fleet.nodes} now={now} unnamed={fleet.cellNamesError !== null} /></DenCard>
           </section>
 
           <section aria-labelledby="runner-fleet-history" className="flex flex-col gap-3">

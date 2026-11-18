@@ -1,16 +1,24 @@
 "use client";
 
-import type { AdminRunnerFleetHistory, RunnerFleetHistoryRange, RunnerFleetNode, RunnerFleetNodeState } from "@openwork/types/den/admin-runner-fleet";
+import type { AdminRunnerFleetHistory, RunnerFleetCell, RunnerFleetHistoryRange, RunnerFleetNode, RunnerFleetNodeState } from "@openwork/types/den/admin-runner-fleet";
 import { useMemo } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../../app/(den)/_components/ui/tooltip";
 import {
   bucketLevel,
   bucketTitle,
   bucketValue,
+  CELL_AGE_STEPS,
+  cellAge,
+  cellFacts,
+  cellName,
+  cellNote,
+  cellSummary,
   fleetBuckets,
   formatMegabytes,
   formatPercent,
   historyGrid,
   ownershipShares,
+  type CellAge,
   type GridLevel,
   type HistoryMetric,
 } from "./runner-fleet-model";
@@ -33,6 +41,38 @@ export const STATE_FILL: Record<RunnerFleetNodeState, string> = {
   draining: "bg-slate-400",
   unreachable: "bg-slate-300",
 };
+
+/** A cell in memory: green, faded when it has just arrived and solid once it has been there for hours. */
+const CELL_SQUARE = "h-[13px] w-[13px] rounded-[3px]";
+const CELL_SHADE: Record<CellAge, string> = { 0: "bg-emerald-200", 1: "bg-emerald-300", 2: "bg-emerald-500", 3: "bg-emerald-600", 4: "bg-emerald-800" };
+
+/** One cell as a square; pointing at it, or reaching it with the keyboard, says whose it is and how long it has been there. */
+function CellSquare({ cell, now, unnamed }: { cell: RunnerFleetCell; now: number; unnamed: boolean }) {
+  const note = cellNote(cell, unnamed);
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        aria-label={cellSummary(cell, now)}
+        data-testid="runner-fleet-cell"
+        data-age={cellAge(cell, now)}
+        data-kind={cell.kind}
+        className={`${CELL_SQUARE} ${CELL_SHADE[cellAge(cell, now)]} outline-none ring-offset-1 hover:ring-2 hover:ring-emerald-900/40 focus-visible:ring-2 focus-visible:ring-emerald-900 ${cell.turnRunning ? "ring-1 ring-emerald-900/60" : ""}`}
+      />
+      <TooltipContent className="!max-w-[300px] !px-3.5 !py-3" data-testid="runner-fleet-cell-popover">
+        <p className="text-[13px] font-medium leading-5 text-white">{cellName(cell)}</p>
+        {note ? <p className="mt-0.5 text-[12px] leading-[18px] text-gray-300">{note}</p> : null}
+        <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[12px] leading-[18px]">
+          {cellFacts(cell, now).map((fact) => (
+            <div key={fact.name} className="contents">
+              <dt className="text-gray-400">{fact.name}</dt>
+              <dd className={`min-w-0 break-words text-white ${fact.name === "Cell" ? "font-mono" : ""}`}>{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 const METRIC_NAME: Record<HistoryMetric, string> = { memory: "Memory", cells: "Cells in memory", waiting: "Cells waiting for room" };
 const RANGE_NAME: Record<RunnerFleetHistoryRange, string> = { "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days" };
@@ -140,7 +180,7 @@ export function HistoryGrids({ history, metric, liveIds, now }: { history: Admin
 }
 
 /** Who owns the fleet's cells, as one bar, and each node's cells in memory, one square each. */
-export function CellDistribution({ nodes }: { nodes: readonly RunnerFleetNode[] }) {
+export function CellDistribution({ nodes, now, unnamed = false }: { nodes: readonly RunnerFleetNode[]; now: number; unnamed?: boolean }) {
   const shares = useMemo(() => ownershipShares(nodes), [nodes]);
   const total = shares.reduce((sum, node) => sum + node.cells, 0);
   const reachable = nodes.filter((node) => node.state !== "unreachable");
@@ -157,6 +197,20 @@ export function CellDistribution({ nodes }: { nodes: readonly RunnerFleetNode[] 
           {shares.map((node) => node.share > 0 ? <span key={node.id} title={`${node.id}: ${node.cells.toLocaleString("en-US")} cells (${formatPercent(node.share)})`} className={`${STATE_FILL[node.state]} border-r border-white last:border-r-0`} style={{ width: `${node.share * 100}%` }} /> : null)}
         </div>
       </div>
+      <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] leading-5 text-gray-600" aria-label="How long a cell has been in memory">
+        <li className="text-gray-700">In memory:</li>
+        {CELL_AGE_STEPS.map((step) => (
+          <li key={step.level} className="flex items-center gap-1.5">
+            <span aria-hidden="true" className={`${CELL_SQUARE} ${CELL_SHADE[step.level]}`} />
+            <span>{step.label}</span>
+          </li>
+        ))}
+        <li className="flex items-center gap-1.5">
+          <span aria-hidden="true" className={`${CELL_SQUARE} bg-emerald-300 ring-1 ring-emerald-900/60`} />
+          <span>A turn is under way</span>
+        </li>
+      </ul>
+      <TooltipProvider delay={80}>
       <ul className="flex flex-col gap-5">
         {reachable.map((node) => {
           const asleep = node.cells.owned === null ? null : Math.max(0, node.cells.owned - node.cells.resident);
@@ -171,16 +225,24 @@ export function CellDistribution({ nodes }: { nodes: readonly RunnerFleetNode[] 
                   {`, ${formatPercent(share)} of the fleet`}
                 </span>
               </div>
-              {node.cells.residents.length > 0 ? (
+              {node.cells.inMemory.length > 0 ? (
+                <div className="flex flex-wrap gap-[3px]" role="group" aria-label={`${node.cells.resident.toLocaleString("en-US")} cells in memory on ${node.id}`}>
+                  {node.cells.inMemory.map((cell) => <CellSquare key={cell.id} cell={cell} now={now} unnamed={unnamed} />)}
+                </div>
+              ) : node.cells.residents.length > 0 ? (
+                // A server from before cells were described: the squares, without whose they are.
                 <div className="flex flex-wrap gap-[2px]" role="img" aria-label={`${node.cells.resident.toLocaleString("en-US")} cells in memory on ${node.id}`}>
                   {node.cells.residents.map((cell) => <span key={cell} title={`Cell ${cell}`} className={`${SQUARE} ${STATE_FILL[node.state]}`} />)}
                 </div>
               ) : <p className="text-[12px] text-gray-600">No cells in memory.</p>}
-              {node.cells.residentsTruncated ? <p className="mt-1 text-[12px] text-gray-600">Showing the first {node.cells.residents.length.toLocaleString("en-US")} of {node.cells.resident.toLocaleString("en-US")}.</p> : null}
+              {node.cells.inMemory.length > 0 && node.cells.resident > node.cells.inMemory.length
+                ? <p className="mt-1 text-[12px] text-gray-600">Showing the first {node.cells.inMemory.length.toLocaleString("en-US")} of {node.cells.resident.toLocaleString("en-US")}.</p>
+                : node.cells.inMemory.length === 0 && node.cells.residentsTruncated ? <p className="mt-1 text-[12px] text-gray-600">Showing the first {node.cells.residents.length.toLocaleString("en-US")} of {node.cells.resident.toLocaleString("en-US")}.</p> : null}
             </li>
           );
         })}
       </ul>
+      </TooltipProvider>
     </div>
   );
 }

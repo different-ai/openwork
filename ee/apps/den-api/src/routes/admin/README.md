@@ -130,6 +130,15 @@ This area is intentionally small for now, but it is its own folder so future adm
   samples at a time through the `runner_fleet_sampler` lease.
 - `history.ts`: folds readings into 10-minute buckets that keep the worst of each figure.
 - `events.ts`: the live stream.
+- `cells.ts`: whose each cell in memory is, and since when. A node lists its cells by id alone. Den knows the
+  conversations (`headless_session_index`, read at most every five minutes, or every minute while a cell in memory
+  has no name), offers each under the runner's cell names (`session:<id>`, and `owner:wb:<key>` for a person's
+  Workbot cell), and asks the runner once which id each name has (`POST /v1/cells/ids`, derived from the name: no
+  cell is woken). A node does not say when a cell came into memory either: the first reading that saw it there is
+  kept, in this replica's memory and, for every replica, in one `admin_metric_snapshot` row the sampler replaces
+  each minute (metric `runner_fleet_residents`). The page gets the organization and kind of conversation for each
+  cell, never a conversation's name, a member or content. A runner from before the id route answers 404: cells are
+  then listed without whose they are, and the page says so.
 
 celld's internal listener is its operator API and has no authentication, so it must only be reachable on a private
 network. Payloads are counts, byte sizes and the first 12 characters of cell ids: no conversation content or owners.
