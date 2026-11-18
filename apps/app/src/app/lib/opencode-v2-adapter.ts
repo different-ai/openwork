@@ -1,3 +1,4 @@
+import { readAgentForm, type AgentForm } from "@openwork/types/agent-form";
 import type {
   Agent,
   ApiError,
@@ -291,7 +292,7 @@ type V2QuestionField = {
   options: { value: string; label: string; description: string }[];
 };
 
-function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
+function mapV2Question(value: unknown): { request: QuestionRequest & { form?: AgentForm }; fields: V2QuestionField[] } | null {
   if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
   const id = readString(value, "id");
   const sessionID = readString(value, "sessionID");
@@ -320,7 +321,8 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const form = readAgentForm(value.metadata, fields.length);
+  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}), ...(form ? { form } : {}) }, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";

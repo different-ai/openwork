@@ -126,6 +126,7 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { AgentFormCard } from "@/react-app/domains/session/modals/agent-form-card";
 import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
@@ -4040,7 +4041,20 @@ export function SessionSurface(props: SessionSurfaceProps) {
             </SessionHistoryBoundary>
             {threadQuestion ? (
               <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
-                <QuestionPanel
+{threadQuestion.form ? (
+                  <AgentFormCard
+                    key={threadQuestion.id}
+                    form={threadQuestion.form}
+                    busy={props.questionReplyBusy ?? false}
+                    onReply={(answers) => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                    }}
+                    onDismiss={props.respondQuestion ? () => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                    } : undefined}
+                  />
+                ) : (
+                                <QuestionPanel
                   key={threadQuestion.id}
                   variant="thread"
                   questions={threadQuestion.questions}
@@ -4053,6 +4067,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
                   } : undefined}
                 />
+                )}
               </div>
             ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
