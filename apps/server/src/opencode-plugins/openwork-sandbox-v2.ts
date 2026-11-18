@@ -128,9 +128,9 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
         name: catalogMode === "only" ? name : `sandbox_${name}`,
         description: sandboxToolDescriptions[name],
         input: definition.input,
-        // Required mode must never require Code Mode's host-side interpreter:
-        // it has its own fetch/network surface outside the guest primitives.
-        options: { codemode: catalogMode !== "only" },
+        // Guest operations are direct tools in both modes. Code Mode's host-side
+        // interpreter must never be required to reach the local microVM.
+        options: { codemode: false },
         async execute(input, call) {
           call.signal.throwIfAborted();
           if (closed) throw new Error("Sandbox tools are closed.");
