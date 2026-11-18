@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openwork": {
+      "type": "http",
+      "url": "https://api.openworklabs.com/mcp/agent"
+    }
+  }
+}

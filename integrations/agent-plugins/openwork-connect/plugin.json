@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "openwork-connect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Use the skills, MCP connections, and connected services assigned to you through OpenWork.",
   "author": {
     "name": "OpenWork",

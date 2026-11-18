@@ -1,0 +1,13 @@
+{
+  "name": "openwork",
+  "owner": {
+    "name": "OpenWork"
+  },
+  "plugins": [
+    {
+      "name": "openwork-connect",
+      "source": "./integrations/agent-plugins/openwork-connect",
+      "description": "Use your organization's OpenWork skills and connections."
+    }
+  ]
+}
