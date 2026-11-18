@@ -9,7 +9,9 @@ import { isInferenceCredentialKindSupported } from "@openwork-ee/utils/inference
 import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
 import { microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { createOauthRefresher, providerHoldsRefreshableKind, sameOauthVersion, type OauthCredentialRow, type OauthRefreshStore } from "../src/credentials/oauth-refresh.js"
+import { resolveFeatures, type FeatureContext } from "@openwork/features"
+import { createLiteLlmEntraFeatureCheck } from "../src/litellm-entra-feature.js"
+import { createOauthRefresher, providerHoldsRefreshableKind, sameOauthVersion, type OauthCredentialRow, type OauthRefreshStore, type RefreshMemberToken } from "../src/credentials/oauth-refresh.js"
 import type { GatewayAccessRow } from "../src/provider-access.js"
 import type { GatewayCredential, GatewayCredentialLookup, GatewayProvider } from "../src/provider-credentials.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
@@ -321,11 +323,22 @@ test("access revocation during renewal neither stores nor returns the new token"
   }
 })
 
-function app(input: { settings: Record<string, unknown>; credential: GatewayCredential; credentialSet?: Partial<GatewayAccessRow["credentialSet"]>; reloadedProvider?: Partial<GatewayProvider> }) {
+function app(input: {
+  settings: Record<string, unknown>
+  credential: GatewayCredential
+  credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
+  reloadedProvider?: Partial<GatewayProvider>
+  featureEnabled?: () => Promise<boolean>
+  refreshMemberToken?: RefreshMemberToken
+  onCredentialRead?: () => void
+}) {
   const sent: Request[] = []
   const row = accessRow()
   Object.assign(row.credentialSet, input.credentialSet)
   let providerReads = 0
+  const providerConsistencies: Array<"primary" | undefined> = []
+  const accessConsistencies: Array<"primary" | undefined> = []
+  const credentialConsistencies: Array<"primary" | undefined> = []
   const provider: GatewayProvider = {
     id: providerId, organization_id: organizationId, provider_id: "litellm", status: "active", settings: input.settings,
     provider_config: { id: "litellm", name: "LiteLLM", npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] },
@@ -346,9 +359,14 @@ function app(input: { settings: Record<string, unknown>; credential: GatewayCred
     updateRequestLog: async () => true,
     reporter: { request: () => {}, handledError: () => {} },
     checkUsage: async () => { throw new Error("per-member LiteLLM sign-in is budgeted by LiteLLM, not OpenWork") },
-    loadGatewayProvider: async () => ++providerReads === 1 ? provider : { ...provider, ...input.reloadedProvider },
-    loadGatewayAccess: async () => [row],
-    loadProviderCredential: async () => input.credential,
+    loadGatewayProvider: async (lookup) => {
+      providerConsistencies.push(lookup.consistency)
+      return ++providerReads <= 2 ? provider : { ...provider, ...input.reloadedProvider }
+    },
+    checkLiteLlmEntraFeature: input.featureEnabled ?? (async () => true),
+    refreshMemberToken: input.refreshMemberToken,
+    loadGatewayAccess: async (_scope, consistency) => { accessConsistencies.push(consistency); return [row] },
+    loadProviderCredential: async (lookup) => { credentialConsistencies.push(lookup.consistency); input.onCredentialRead?.(); return input.credential },
     catalog: createProviderCatalog({ litellm: { npm: "@ai-sdk/openai-compatible", env: ["LITELLM_API_KEY"] } }),
     now: () => now,
   })
@@ -357,7 +375,7 @@ function app(input: { settings: Record<string, unknown>; credential: GatewayCred
     headers: { "content-type": "application/json", authorization: "Bearer ow_gw_caller_key_fixture" },
     body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }] }),
   })
-  return { sent, send }
+  return { sent, send, providerReads: () => providerReads, providerConsistencies, accessConsistencies, credentialConsistencies }
 }
 
 function entraCredential(identityScope: string | undefined): GatewayCredential {
@@ -365,9 +383,13 @@ function entraCredential(identityScope: string | undefined): GatewayCredential {
 }
 
 test("a member's own Entra access token is the bearer LiteLLM receives", async () => {
-  const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope) })
+  const { sent, send, providerConsistencies, accessConsistencies, credentialConsistencies } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope) })
   const response = await send()
   assert.equal(response.status, 200)
+  assert.deepEqual(providerConsistencies, [undefined, "primary", "primary"])
+  assert.deepEqual(accessConsistencies, ["primary", "primary"])
+  assert.ok(credentialConsistencies.length > 0)
+  assert.ok(credentialConsistencies.every((value) => value === "primary"))
   assert.equal(sent.length, 1)
   assert.equal(sent[0]?.url, "https://litellm.example.com/v1/chat/completions")
   assert.equal(sent[0]?.headers.get("authorization"), "Bearer entra-member-access-fixture")
@@ -437,8 +459,90 @@ test("a key-based LiteLLM provider never forwards an Entra ID token", async () =
   }
 })
 
-test("a member's own LiteLLM key is still the bearer for a key-based provider", async () => {
-  const { sent, send } = app({ settings: liteLlmSettings("personal"), credential: { id: credentialId, kind: "api_key", secret: "sk-member-litellm-fixture", expires_at: null, status: "active" } })
+test("a member's own LiteLLM key keeps its read path without feature or extra provider reads", async () => {
+  let featureReads = 0
+  const { sent, send, providerReads, providerConsistencies, accessConsistencies, credentialConsistencies } = app({ settings: liteLlmSettings("personal"), credential: { id: credentialId, kind: "api_key", secret: "sk-member-litellm-fixture", expires_at: null, status: "active" },
+    featureEnabled: async () => { featureReads++; throw new Error("feature storage unavailable") } })
   assert.equal((await send()).status, 200)
   assert.equal(sent[0]?.headers.get("authorization"), "Bearer sk-member-litellm-fixture")
+  assert.equal(featureReads, 0)
+  assert.equal(providerReads(), 1)
+  assert.deepEqual(providerConsistencies, [undefined])
+  assert.ok(accessConsistencies.every((value) => value === undefined))
+  assert.ok(credentialConsistencies.every((value) => value === undefined))
+})
+
+test("disabled, killed, organization and member overrides stop Entra before credential work", async () => {
+  const enabled: FeatureContext = { deployment: "cloud", locks: {}, overrides: {}, rollouts: { litellmEntraMemberSignIn: { enabled: true, killed: false } } }
+  const states: FeatureContext[] = [
+    { ...enabled, rollouts: {} },
+    { ...enabled, overrides: { litellmEntraMemberSignIn: false } },
+    { ...enabled, memberOverrides: { litellmEntraMemberSignIn: false } },
+    { ...enabled, locks: { litellmEntraMemberSignIn: false }, memberOverrides: { litellmEntraMemberSignIn: true } },
+    { ...enabled, rollouts: { litellmEntraMemberSignIn: { enabled: true, killed: true } }, overrides: { litellmEntraMemberSignIn: true }, memberOverrides: { litellmEntraMemberSignIn: true } },
+  ]
+  const userId = createDenTypeId("user")
+  for (const state of states) {
+    let credentialReads = 0
+    let refreshes = 0
+    const featureEnabled = createLiteLlmEntraFeatureCheck({
+      loadActiveMember: async (scope) => {
+        assert.equal(scope.organizationId, organizationId)
+        assert.equal(scope.orgMembershipId, orgMembershipId)
+        return { userId }
+      },
+      readMemberFeatures: async (org, user) => {
+        assert.equal(org, organizationId)
+        assert.equal(user, userId)
+        assert.notEqual(user, orgMembershipId)
+        return resolveFeatures(state)
+      },
+    })
+    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: { ...entraCredential(apiScope), expires_at: new Date(now.getTime() + 1_000) }, featureEnabled,
+      onCredentialRead: () => { credentialReads++ }, refreshMemberToken: async () => { refreshes++; return { kind: "auth_required" } } })
+    const response = await send()
+    assert.equal(response.status, 403)
+    assert.equal((await response.json()).error.code, "feature_disabled")
+    assert.equal(credentialReads, 0)
+    assert.equal(refreshes, 0)
+    assert.equal(sent.length, 0)
+  }
+})
+
+test("missing active user and failed feature reads fail closed", async () => {
+  const checks = [
+    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => null, readMemberFeatures: async () => { throw new Error("must not read") } }),
+    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => ({ userId: null }), readMemberFeatures: async () => { throw new Error("must not read") } }),
+    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => ({ userId: createDenTypeId("user") }), readMemberFeatures: async () => { throw new Error("unavailable") } }),
+    async () => { throw new Error("unavailable") },
+  ]
+  for (const featureEnabled of checks) {
+    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), featureEnabled })
+    assert.equal((await send()).status, 403)
+    assert.equal(sent.length, 0)
+  }
+})
+
+test("disabling Entra while credentials prepare stops the final dispatch", async () => {
+  let enabled = true
+  let reads = 0
+  let credentialReads = 0
+  const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope),
+    featureEnabled: async () => { reads++; return enabled }, onCredentialRead: () => { if (++credentialReads === 3) enabled = false } })
+  const response = await send()
+  assert.equal(response.status, 403)
+  assert.equal((await response.json()).error.code, "feature_disabled")
+  assert.equal(reads, 4)
+  assert.equal(sent.length, 0)
+})
+
+test("disabling Entra during credential lookup stops renewal before its network call", async () => {
+  let enabled = true
+  let refreshes = 0
+  const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: { ...entraCredential(apiScope), expires_at: new Date(now.getTime() + 1_000) },
+    featureEnabled: async () => enabled, onCredentialRead: () => { enabled = false },
+    refreshMemberToken: async () => { refreshes++; return { kind: "auth_required" } } })
+  assert.equal((await send()).status, 403)
+  assert.equal(refreshes, 0)
+  assert.equal(sent.length, 0)
 })
