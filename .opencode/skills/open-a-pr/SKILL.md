@@ -52,6 +52,11 @@ users rely on always needs a note.
 
 Title: conventional commit, imperative, under 70 characters.
 
+A short Mermaid diagram or a small table is welcome under an existing heading
+when it shows the cause or the before → after faster than a sentence would:
+one of them, a handful of nodes or rows, and it replaces prose rather than
+adding to it. It does not count toward the word limit.
+
 ## Evidence
 
 PRs run only the quick check; specs do not run on PRs automatically. Run the
