@@ -177,8 +177,10 @@ const commonInput = {
   ownerEmail: z.string().trim().email().max(254),
   size: z.literal("small").default("small"),
 }
+export const awsManagedDeploymentInputSchema = z.object({ ...commonInput, provider: z.literal("aws"), target: awsTargetCreateSchema }).strict()
+export type AwsManagedDeploymentInput = z.infer<typeof awsManagedDeploymentInputSchema>
 export const managedDeploymentInputSchema = z.discriminatedUnion("provider", [
-  z.object({ ...commonInput, provider: z.literal("aws"), target: awsTargetCreateSchema }).strict(),
+  awsManagedDeploymentInputSchema,
   z.object({ ...commonInput, provider: z.literal("gcp"), target: gcpTargetSchema }).strict(),
 ])
 export type ManagedDeploymentInput = z.infer<typeof managedDeploymentInputSchema>
@@ -188,7 +190,10 @@ export const deploymentStepSchema = z.enum([
   "runner_connected", "release_verified", "account_verified", "infrastructure_applied", "services_ready", "health_verified",
 ])
 export const deploymentRunStateSchema = z.enum(["awaiting_approval", "provisioning", "ready", "failed"])
-export const deploymentRunKindSchema = z.enum(["install", "update", "retry"])
+/** What the launch route prepares. A `configure` run is prepared only by a configuration change. */
+export const deploymentLaunchKindSchema = z.enum(["install", "update", "retry"])
+export type DeploymentLaunchKind = z.infer<typeof deploymentLaunchKindSchema>
+export const deploymentRunKindSchema = z.enum(["install", "update", "retry", "configure"])
 export const deploymentEventInputSchema = z.object({
   sequence: z.number().int().min(1).max(100),
   step: deploymentStepSchema,
@@ -237,6 +242,66 @@ export const deploymentHealthSchema = z.object({
   checks: z.array(healthCheckSchema),
 })
 
+// ---- Configuration changes after installation (AWS, same installer version) ----
+export const deploymentConfigurationFieldSchema = z.enum([
+  "name", "domainName", "ownerEmail",
+  "target.accountId", "target.region", "target.route53ZoneId", "target.network", "target.runtimeProfile",
+  "target.assistants.headlessRunnerEnabled", "target.assistants.workbotEnabled", "target.assistants.slackAssistantEnabled",
+  "target.assistants.modelProtocol", "target.assistants.modelBaseUrl", "target.assistants.model", "target.assistants.modelSecretArn",
+  "target.assistants.computerProvider", "target.assistants.computerSecretArn", "target.assistants.computerSnapshot",
+  "target.assistants.daytonaApiUrl", "target.assistants.daytonaTarget",
+])
+export type DeploymentConfigurationField = z.infer<typeof deploymentConfigurationFieldSchema>
+export const deploymentConfigurationEffectSchema = z.enum(["saved_immediately", "restarts_den", "restarts_runner", "adds_gateway_runtime"])
+export const deploymentConfigurationChangeSchema = z.object({
+  field: deploymentConfigurationFieldSchema,
+  /** Raw values. Secret ARNs are references, never secret values. */
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+  effect: deploymentConfigurationEffectSchema,
+}).strict()
+export type DeploymentConfigurationChange = z.infer<typeof deploymentConfigurationChangeSchema>
+export const deploymentConfigurationChangeInputSchema = z.object({
+  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  /** The complete document, so a fixed field is refused by name. An omitted runtimeProfile keeps the recorded one. */
+  configuration: awsManagedDeploymentInputSchema,
+}).strict()
+/** Stored on a configure run. Targets are in storage form. */
+export const deploymentConfigurationChangeRecordSchema = z.object({
+  version: z.literal(1),
+  requestedBy: z.object({ memberId: z.string(), userId: z.string() }).strict(),
+  baseRunId: z.string().uuid(),
+  /** The active run to return to if the change is withdrawn. */
+  restoresRunId: z.string().uuid(),
+  previous: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
+  requested: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
+  /** Never contains `name`: a rename is saved at once, without a run. */
+  changes: z.array(deploymentConfigurationChangeSchema),
+}).strict()
+export const deploymentConfigurationLockSchema = z.enum(["aws_only", "not_installed", "run_in_progress", "unfinished_run", "installer_unknown", "installer_unavailable"])
+export const deploymentConfigurationViewSchema = z.object({
+  revision: z.string().regex(/^[a-f0-9]{64}$/),
+  /** Null when the configuration can be changed now. */
+  lock: deploymentConfigurationLockSchema.nullable(),
+  /** The installed installer is the published one, so the gateway runtime can be turned on. */
+  gatewayAvailable: z.boolean(),
+  change: z.object({
+    runId: z.string().uuid(),
+    /**
+     * `applying` from the moment the approval command confirms the change with OpenWork
+     * (the run still awaits enrollment and `run.lastSeenAt` is that moment), and for as
+     * long as no final report arrives: a passed deadline (`run.expired`) does not end it,
+     * because it says nothing about what AWS did.
+     */
+    state: z.enum(["awaiting_approval", "applying", "failed", "expired"]),
+    requestedAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+    changes: z.array(deploymentConfigurationChangeSchema),
+    /** A valid request `configuration`, to edit the change or try it again. */
+    requested: awsManagedDeploymentInputSchema,
+  }).nullable(),
+})
+
 // ---- API views ----
 export const deploymentRunSchema = z.object({
   id: z.string().uuid(),
@@ -264,6 +329,8 @@ const managedDeploymentViewSchema = z.object({
   updateAvailable: z.boolean(),
   health: deploymentHealthSchema,
   run: deploymentRunSchema.nullable(),
+  /** Present only when the caller can change the configuration after installation. */
+  configuration: deploymentConfigurationViewSchema.optional(),
 })
 export const managedDeploymentSchema = z.discriminatedUnion("provider", [
   managedDeploymentViewSchema.extend({ provider: z.literal("aws"), target: awsTargetSchema }),
@@ -271,13 +338,14 @@ export const managedDeploymentSchema = z.discriminatedUnion("provider", [
 ])
 export const managedDeploymentListSchema = z.object({ deployments: z.array(managedDeploymentSchema) })
 export const managedDeploymentLaunchInputSchema = z.object({
-  kind: deploymentRunKindSchema.default("install"),
+  kind: deploymentLaunchKindSchema.default("install"),
   /** Reconfigure the AWS runtime only with a newer, customer-approved installer. */
   runtimeProfile: awsRuntimeProfileSchema.optional(),
   assistants: awsAssistantsSchema.optional(),
 }).strict().superRefine((input, context) => {
   if ((input.assistants || input.runtimeProfile) && input.kind !== "update") context.addIssue({ code: "custom", path: ["runtimeProfile"], message: "Change the runtime profile or computers with a version-increasing Update, not Install or Retry." })
 })
+const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() })
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
@@ -294,10 +362,24 @@ export const managedDeploymentLaunchSchema = z.object({
    */
   handoff: z.discriminatedUnion("action", [
     z.object({ action: z.literal("open_link"), url: z.string().url(), command: z.null(), instructions: z.string() }),
-    z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() }),
+    cloudShellHandoffSchema,
   ]).optional(),
   expiresAt: z.string().datetime(),
 })
+/** `approval_required` is also a valid launch, so one screen shows either handoff. */
+export const deploymentConfigurationChangeResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("saved"), deployment: managedDeploymentSchema }),
+  z.object({ outcome: z.literal("withdrawn"), deployment: managedDeploymentSchema }),
+  z.object({
+    outcome: z.literal("approval_required"), deployment: managedDeploymentSchema, kind: z.literal("configure"),
+    approvalUrl: z.null(), command: z.string(), handoff: cloudShellHandoffSchema, expiresAt: z.string().datetime(),
+    changes: z.array(deploymentConfigurationChangeSchema),
+  }),
+])
+/** Sent by the approval command itself, before it changes anything in the customer's cloud. */
+export const deploymentApprovalCheckInputSchema = z.object({ challenge: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+export const deploymentApprovalCheckResultSchema = z.object({ ok: z.literal(true), expiresAt: z.string().datetime() })
+export const deploymentConfigurationErrorSchema = z.object({ error: z.string(), message: z.string().optional(), field: deploymentConfigurationFieldSchema.optional() })
 export const managedDeploymentConfigurationSchema = z.object({
   /** Requires both managed deployment features for this caller. */
   assistantsAvailable: z.boolean().default(false),

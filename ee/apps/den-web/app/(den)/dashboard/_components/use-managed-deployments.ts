@@ -2,7 +2,7 @@
 
 import {
   awsTargetSchema, managedDeploymentConfigurationSchema, managedDeploymentLaunchSchema, managedDeploymentListSchema,
-  type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type ManagedDeployment,
+  type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { useEffect, useRef, useState } from "react";
 import type { z } from "zod";
@@ -72,7 +72,7 @@ export function useManagedDeployments() {
     setDeployments((previous) => previous.some((entry) => entry.id === item.id) ? previous.map((entry) => entry.id === item.id ? item : entry) : [...previous, item]);
   }
 
-  async function prepare(deployment: ManagedDeployment, kind: DeploymentLaunch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
+  async function prepare(deployment: ManagedDeployment, kind: DeploymentLaunchKind, assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) {
     if ((assistants || runtimeProfile) && deployment.provider === "aws") {
       const parsed = awsTargetSchema.safeParse({ ...deployment.target, ...(runtimeProfile ? { runtimeProfile } : {}), ...(assistants ? { assistants } : {}) });
       if (!parsed.success) { setActionError(parsed.error.issues[0]?.message ?? "Check the assistant settings."); return; }
@@ -99,7 +99,7 @@ export function useManagedDeployments() {
    */
   async function reopen(deployment: ManagedDeployment): Promise<boolean> {
     const run = deployment.run;
-    if (!run) return false;
+    if (!run || run.kind === "configure") return false;
     const current = generation.current;
     try {
       const result = await requestJson(`/v1/managed-deployments/${deployment.id}/launch`, { method: "POST", body: JSON.stringify({ kind: run.kind }) });

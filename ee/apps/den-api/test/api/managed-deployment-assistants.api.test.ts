@@ -165,6 +165,7 @@ test("same-version, Retry, foreign secrets, other workspaces and unauthorized me
   const path = `/v1/managed-deployments/${id}/launch`
   const change = { kind: "update", runtimeProfile: "gateway", assistants: computers }
   assert.equal((await owner("POST", path, { ...change, kind: "retry" })).status, 400)
+  assert.equal((await owner("POST", path, { kind: "configure" })).status, 400)
   assert.equal((await owner("POST", path, { ...change, assistants: { ...computers, computerSecretArn: computerSecretArn.replace("123456789012", "210987654321") } })).status, 400)
   assert.equal((await den.as(member, org.orgId)("POST", path, change)).status, 403)
   assert.equal((await den.setFeature(foreign.orgId, "managedDeployments", true)).status, 200)

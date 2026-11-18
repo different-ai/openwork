@@ -38,8 +38,10 @@ gateway. See [the AI Gateway guide](../terraform/AI_GATEWAY.md).
 
 The root's default `legacy` profile preserves previous installations and image
 inventories. Moving an existing installation to `gateway` requires an explicit,
-version-increasing, customer-approved Update with the new template and complete
-image inventory. GCP keeps its legacy behavior. Offline plans are not live
+customer-approved run of a template and complete image inventory that have the
+profile: a version-increasing Update, or, when the installed release is the
+published one and `managedDeploymentConfigUpdates` is on, a configuration change
+that re-runs that release. GCP keeps its legacy behavior. Offline plans are not live
 qualification; Gateway infrastructure health alone does not prove model access.
 
 ## Stable installer candidate verification
@@ -175,7 +177,13 @@ provider upgrade. That requires the separate live Update proof.
 
 ### New-version Update and test handoff
 
-Den intentionally rejects same-version Update; Retry is not Update. For an
+Den intentionally rejects same-version Update; Retry is not Update. That rule
+lives only in Den's launch route and dashboard. The installer never compared versions: the
+bootstrap checks that the bundle matches its `OPENWORK_VERSION`, and a new
+`RunId` is what starts a run. Den may therefore re-run the installed release
+with changed parameters (a configuration change, feature
+`managedDeploymentConfigUpdates`); the runner's refusal to delete or replace
+data-bearing resources applies to that run as to any other. For an
 isolated test-only newer installer version using a verified existing application
 pair, build with `--image-pins <approved-json-file>` containing `den_api`
 and `den_web` fixed-repository Linux/amd64 digests (plus both assistant images

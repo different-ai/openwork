@@ -3,14 +3,14 @@
 import { Dialog } from "@base-ui/react/dialog";
 import {
   assistantsEnabled, awsSignInSchema, deploymentStepSchema, gatewayAssistants,
-  type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type ManagedDeployment,
+  type AwsAssistants, type AwsRuntimeProfile, type AwsSignIn, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
 import { CheckCircle2, ChevronRight, CircleDashed, Copy, ExternalLink, LockKeyhole, X, XCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
-import { getDeploymentsRoute, permissionLockReason } from "../../_lib/den-org";
+import { getDeploymentsRoute, orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { BackLink, ItemHeader, ItemPage, SectionTitle } from "./item-header";
@@ -22,6 +22,9 @@ import {
 } from "./managed-deployments-screen";
 import { assistantSettingsState, deploymentStatus, providerName, type DeploymentTone } from "./managed-deployments-state";
 import { useManagedDeployments, type DeploymentLaunch } from "./use-managed-deployments";
+import { ManagedDeploymentConfigurationDialog } from "./managed-deployment-configuration-dialog";
+import { CHANGE_STOPPED_REPORTING, approvalReserved, changeFailureMessage, changeNeverApproved, configurationEntry, currentHandoff, runtimeBlock } from "./managed-deployment-configuration-state";
+import { ConfigurationLockLine, ManagedDeploymentConfigurationSummary, type ConfigurationControls } from "./managed-deployment-configuration-summary";
 
 const TONE_TEXT: Record<DeploymentTone, string> = { neutral: "", warning: "text-amber-700", danger: "text-red-700" };
 const ROW_CLASS = "flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 py-2";
@@ -225,10 +228,12 @@ export function GuidedDeploymentsList() {
 
 /** One deployment: what to do next in the cloud account, then how it is running. */
 export function GuidedDeploymentPage({ deploymentId }: { deploymentId: string }) {
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
+  const [configuring, setConfiguring] = useState(false);
+  const configUpdates = orgFeatureEnabled(orgContext, "managedDeploymentConfigUpdates");
   const router = useRouter();
   const {
-    enabled, access, deployments, configuration, loading, error, actionError, setActionError, launch, busy, assistantsAvailable, prepare, reopen, remove, saveAwsSignIn,
+    enabled, access, deployments, configuration, loading, error, actionError, setActionError, launch, setLaunch, replace, busy, assistantsAvailable, prepare, reopen, remove, saveAwsSignIn,
   } = useManagedDeployments();
   const [signInOpen, setSignInOpen] = useState(false);
   const route = getDeploymentsRoute(orgSlug);
@@ -238,11 +243,15 @@ export function GuidedDeploymentPage({ deploymentId }: { deploymentId: string })
   const canPrepare = Boolean(deployment) && (configuration?.providers.some((entry) => entry.provider === deployment?.provider && entry.available) ?? false)
     && !(deployment?.provider === "aws" && (deployment.target.runtimeProfile === "gateway" || assistantsEnabled(deployment.target.assistants)) && !assistantsAvailable);
   const run = deployment?.run ?? null;
-  const awaiting = Boolean(run && run.state === "awaiting_approval" && !run.expired);
-  const activeLaunch = launch && deployment && launch.deployment.id === deployment.id && launch.deployment.run?.id === run?.id ? launch : null;
+  const awaiting = Boolean(run && run.state === "awaiting_approval" && !run.expired && !approvalReserved(run));
+  const activeLaunch = deployment ? currentHandoff(launch, deployment) : null;
+  const configurationControls: ConfigurationControls | null = configUpdates ? {
+    onEdit: () => setConfiguring(true), runReauthableAction, reauthDialogOpen, permissionReason: permissionLockReason("deployments.manage"),
+    onResult: (item, next) => { replace(item); setLaunch(next); setActionError(null); },
+  } : null;
 
   // Coming back to an approval that is still open: fetch its link again, once for each sign-in.
-  const reopenKey = deployment && run && awaiting && canManage && canPrepare && !activeLaunch ? `${run.id} ${signIn?.portalUrl ?? ""} ${signIn?.roleName ?? ""}` : null;
+  const reopenKey = deployment && run && run.kind !== "configure" && awaiting && canManage && canPrepare && !activeLaunch ? `${run.id} ${signIn?.portalUrl ?? ""} ${signIn?.roleName ?? ""}` : null;
   const attempted = useRef<string | null>(null);
   const reopenRef = useRef<() => Promise<boolean>>(async () => false);
   reopenRef.current = () => deployment ? reopen(deployment) : Promise.resolve(false);
@@ -269,20 +278,22 @@ export function GuidedDeploymentPage({ deploymentId }: { deploymentId: string })
   return (
     <>
       <DeploymentView key={`${deployment.id}:${run?.id ?? "none"}`} deployment={deployment} launch={activeLaunch} reopening={reopening} busy={busy} canManage={canManage} canPrepare={canPrepare}
-        assistantsAvailable={assistantsAvailable} signIn={signIn} actionError={actionError} backHref={route}
+        assistantsAvailable={assistantsAvailable} signIn={signIn} actionError={actionError} backHref={route} configurationControls={configurationControls}
         onPrepare={(kind, assistants, profile) => { void prepare(deployment, kind, assistants, profile); }}
         onCopyFailed={() => setActionError("Couldn't copy. Open Technical details and copy it from there.")}
         onSignIn={() => setSignInOpen(true)}
         onRemove={async () => { await remove(deployment); router.push(route); }} />
       <AwsSignInDialog open={signInOpen} onClose={() => setSignInOpen(false)} saved={signIn} onSave={saveAwsSignIn} />
+      {configurationControls ? <ManagedDeploymentConfigurationDialog deployment={deployment} open={configuring} onOpenChange={setConfiguring} assistantsAvailable={assistantsAvailable} controls={configurationControls} /> : null}
     </>
   );
 }
 
-function DeploymentView({ deployment, launch, reopening, busy, canManage, canPrepare, assistantsAvailable, signIn, actionError, backHref, onPrepare, onCopyFailed, onSignIn, onRemove }: {
+function DeploymentView({ deployment, launch, reopening, busy, canManage, canPrepare, assistantsAvailable, signIn, actionError, backHref, onPrepare, onCopyFailed, onSignIn, onRemove, configurationControls }: {
   deployment: ManagedDeployment; launch: DeploymentLaunch | null; reopening: boolean; busy: boolean; canManage: boolean; canPrepare: boolean; assistantsAvailable: boolean;
   signIn: AwsSignIn | null; actionError: string | null; backHref: string;
-  onPrepare: (kind: DeploymentLaunch["kind"], assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) => void;
+  onPrepare: (kind: DeploymentLaunchKind, assistants?: AwsAssistants, runtimeProfile?: AwsRuntimeProfile) => void;
+  configurationControls: ConfigurationControls | null;
   onCopyFailed: () => void; onSignIn: () => void; onRemove: () => Promise<void>;
 }) {
   const [assistantDraft, setAssistantDraft] = useState<AwsAssistants | null>(null);
@@ -292,20 +303,24 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
   const [technicalOpen, setTechnicalOpen] = useState(false);
   const assistantState = assistantSettingsState(deployment, assistantsAvailable, canManage);
   const status = deploymentStatus(deployment);
+  const configurationControl = configurationEntry(deployment, { enabled: configurationControls !== null, canManage, permissionReason: configurationControls?.permissionReason });
+  const runtime = runtimeBlock(deployment, assistantState.reason, configurationControl, assistantsAvailable);
+  const changeRun = deployment.run?.kind === "configure";
   const cloud = providerName(deployment.provider);
   const aws = deployment.provider === "aws";
   const shell = aws ? "AWS CloudShell" : "Google Cloud Shell";
   const account = cloudAccount(deployment);
   const run = deployment.run;
+  const launchKind = run?.kind === "configure" ? null : run?.kind;
   const installed = Boolean(deployment.installedVersion);
-  const awaiting = Boolean(run && run.state === "awaiting_approval" && !run.expired);
+  const awaiting = Boolean(run && run.state === "awaiting_approval" && !run.expired && !approvalReserved(run));
   const runFailed = Boolean(run && (run.state === "failed" || run.expired));
   const failure = run?.events.find((event) => event.outcome === "failed");
   const nextStep = run?.events.length ?? 0;
   const neverStarted = !installed && (!run || run.state === "awaiting_approval");
   const health = deployment.health;
   const until = run ? clock(run.expiresAt) : "";
-  const canUpdate = canManage && installed && deployment.updateAvailable && !(run?.state === "provisioning" && !run.expired) && !awaiting;
+  const canUpdate = canManage && installed && deployment.updateAvailable && !(run?.state === "provisioning" && !run.expired) && !awaiting && !(changeRun && deployment.configuration?.lock === "run_in_progress");
   const shellUrl = launch?.handoff?.url ?? (deployment.provider === "gcp"
     ? `https://console.cloud.google.com/?project=${encodeURIComponent(deployment.target.projectId)}&cloudshell=true`
     : `https://${deployment.target.region}.console.aws.amazon.com/cloudshell/home?region=${deployment.target.region}`);
@@ -324,7 +339,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
   ];
 
   const signInStep = aws && signIn ? 0 : 1;
-  const approve = awaiting && run ? (
+  const approve = awaiting && run && !approvalReserved(run) ? (
     <section className="flex flex-col gap-2.5" data-testid="deployment-approve">
       <SectionTitle title={`Approve in ${cloud}`} meta={`Open until ${until}`} />
       <ItemPanel>
@@ -360,22 +375,22 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
           ) : (
             <>
               <StepText title={`Review and approve in ${cloud}`} description={!canManage ? "Someone who can manage deployments does this step" : reopening ? "Getting your approval link" : "Prepare the approval again to get its link"} />
-              {canManage && !reopening ? <DenButton type="button" size="sm" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(run.kind)}>Prepare {cloud} approval</DenButton> : null}
+              {canManage && !reopening && launchKind ? <DenButton type="button" size="sm" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(launchKind)}>Prepare {cloud} approval</DenButton> : null}
             </>
           )}
         </div>
         <div className={ROW_CLASS}>
           <StepNumber value={aws ? signInStep + 2 : 2} />
-          <StepText pending title={run.kind === "update" ? "OpenWork updates" : "OpenWork installs"} description="About 20 minutes" />
+          <StepText pending title={changeRun ? "OpenWork applies the configuration change" : run.kind === "update" ? "OpenWork updates" : "OpenWork installs"} description="About 20 minutes" />
         </div>
       </ItemPanel>
     </section>
   ) : null;
 
   const started = run?.events[0]?.receivedAt ?? null;
-  const steps = run && run.state !== "ready" && !awaiting ? (
+  const steps = run && run.state !== "ready" && !awaiting && !changeNeverApproved(run) ? (
     <section className="flex flex-col gap-2.5">
-      <SectionTitle title={`${run.kind === "update" ? "Update to" : run.kind === "retry" ? "Retry" : "Install"} ${run.version}`}
+      <SectionTitle title={changeRun ? "Configuration change" : `${run.kind === "update" ? "Update to" : run.kind === "retry" ? "Retry" : "Install"} ${run.version}`}
         meta={failure ? `Stopped at ${clock(failure.receivedAt)}` : started ? `Started ${clock(started)}` : undefined} />
       <ol data-testid="managed-deployment-steps" className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
         {deploymentStepSchema.options.map((step, index) => {
@@ -393,8 +408,8 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
     </section>
   ) : null;
 
-  const failureMessage = failure?.errorCode ? (aws ? FAILURE_LABELS[failure.errorCode] : gcpFailureMessage(failure.errorCode))
-    : run?.expired && run.state !== "ready" ? `The installer stopped reporting. Open the installer logs in ${cloud}, then retry.` : null;
+  const failureMessage = failure?.errorCode ? (aws ? (changeRun ? changeFailureMessage(failure.errorCode) : null) ?? FAILURE_LABELS[failure.errorCode] : gcpFailureMessage(failure.errorCode))
+    : run?.expired && run.state !== "ready" && !changeNeverApproved(run) ? (changeRun ? CHANGE_STOPPED_REPORTING : `The installer stopped reporting. Open the installer logs in ${cloud}, then retry.`) : null;
 
   return (
     <ItemPage testId="managed-deployment-detail">
@@ -402,14 +417,17 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
         state={<span className={TONE_TEXT[status.tone]} data-testid="managed-deployment-status">{status.label}{awaiting ? ` · until ${until}` : installed && status.tone === "neutral" && !run?.expired ? ` · ${deployment.installedVersion}` : ""}</span>}
         actions={<>
           {canManage && !installed && !run ? <DenButton type="button" loading={busy} disabled={!canPrepare} data-testid="deployment-prepare" onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null}
-          {canManage && runFailed ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
+          {canManage && runFailed && !changeRun ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
           {canUpdate ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>Update to {deployment.availableVersion}</DenButton> : null}
           {installed ? <a className={buttonVariants({ variant: canUpdate || (canManage && runFailed) ? "secondary" : "primary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
+          {configurationControl.shown ? <DenButton type="button" variant="secondary" data-testid="managed-deployment-edit-configuration" disabled={configurationControl.disabled || busy} onClick={configurationControls?.onEdit}>Edit configuration</DenButton> : null}
           <ItemMenu label="More" size="md" entries={menu} testId="managed-deployment-more" />
         </>} />
 
       {actionError ? <p role="alert" className="text-[13px] text-red-700">{actionError}</p> : null}
       {failureMessage ? <p role="alert" className="text-[13px] text-red-700" data-testid="managed-deployment-failure">{failureMessage}</p> : null}
+      <ConfigurationLockLine reason={configurationControl.reason} testId="managed-deployment-configuration-lock" />
+      {configurationControls ? <ManagedDeploymentConfigurationSummary deployment={deployment} canManage={canManage} commandShown={Boolean(launch?.command)} controls={configurationControls} /> : null}
       {approve}
       {steps}
 
@@ -434,7 +452,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
 
       {deployment.provider === "aws" ? <ManagedDeploymentAssistants value={assistantDraft ?? deployment.target.assistants} profile={runtimeProfileDraft ?? deployment.target.runtimeProfile} onChange={setAssistantDraft}
         onUpgrade={() => { setRuntimeProfileDraft("gateway"); setAssistantDraft(gatewayAssistants(deployment.target.assistants)); }}
-        enabled={assistantsAvailable} disabled={!assistantState.editable || busy} lockReason={assistantState.reason ?? undefined} /> : null}
+        enabled={assistantsAvailable} disabled={!assistantState.editable || busy} lockReason={runtime.reason ?? undefined} viaConfiguration={runtime.viaConfiguration} /> : null}
 
       <section className="flex flex-col gap-2.5" data-testid="managed-deployment-configuration">
         <SectionTitle title="Details" />
@@ -445,6 +463,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
             : [{ label: "Project number", value: deployment.target.projectNumber }, { label: "DNS zone", value: deployment.target.dnsZoneName }]),
           { label: "Version", value: `${deployment.installedVersion ?? "Not installed"}${deployment.updateAvailable && deployment.availableVersion ? ` · ${deployment.availableVersion} available` : ""}` },
           { label: "Updates", value: "Approval required" },
+          ...(configurationControls ? [{ label: "First administrator", value: deployment.ownerEmail }] : []),
           ...(aws ? [{
             label: "AWS sign-in",
             value: canManage

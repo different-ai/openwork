@@ -38,7 +38,13 @@ export function readinessMessage(entry: ProviderReadiness) {
 export function deploymentStatus(deployment: ManagedDeployment): { label: string; tone: DeploymentTone } {
   const run = deployment.run;
   const installed = Boolean(deployment.installedVersion);
-  if (run && run.state !== "ready") {
+  if (run?.kind === "configure") {
+    if (run.state === "awaiting_approval" && run.lastSeenAt) return { label: "AWS approval reserved", tone: "neutral" };
+    // A change nobody approved in time left the installation as it was, so its health is the status.
+    if (run.state === "provisioning") return run.expired ? { label: "Configuration change stopped reporting", tone: "danger" } : { label: "Applying configuration change", tone: "neutral" };
+    if (run.state === "failed") return { label: "Configuration change failed", tone: "danger" };
+  }
+  if (run && run.state !== "ready" && !(run.kind === "configure" && run.expired)) {
     if (run.expired) return { label: installed ? "Update stopped reporting" : "Installer stopped reporting", tone: "danger" };
     if (run.state === "failed") return { label: installed ? "Update failed" : "Install failed", tone: "danger" };
     if (run.state === "awaiting_approval") return { label: `Awaiting ${deployment.provider === "gcp" ? "Google Cloud" : "AWS"} approval`, tone: "neutral" };

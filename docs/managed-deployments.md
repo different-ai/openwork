@@ -62,8 +62,11 @@ published release and approved customer-project install pass. Design and contrac
 With `managedDeployments` and `managedDeploymentAssistants` enabled for the
 organization (cloud only, off), new AWS installations include the complete
 Gateway-backed runtime. Only computers are optional. Existing core/legacy
-installations keep their topology until an explicit newer approved Update
-selects the Gateway profile. GCP keeps its existing profile.
+installations keep their topology until the owner selects the Gateway profile
+and approves it in AWS: with an explicit newer Update, or, with
+`managedDeploymentConfigUpdates` on, with a configuration change at the
+installed version (see "Configuration changes" below). GCP keeps its existing
+profile.
 
 - **AI/model Gateway**: included at `https://models.<address>`. After first
   sign-in, configure upstream provider credentials, model grants and the default
@@ -197,6 +200,34 @@ clear them or bypass throttling.
 - Deleting the installer stack does **not** delete OpenWork, its database or the
   Terraform state. Decommissioning is a manual, customer-run `terraform destroy`
   against the retained state (disable RDS deletion protection first).
+
+## Configuration changes (approval required)
+
+With `managedDeploymentConfigUpdates` on (cloud only, off by default), an owner
+edits an installed AWS deployment without waiting for a newer installer:
+**Edit configuration** changes the first administrator email, adds the gateway
+runtime, or changes its cloud computers. Renaming is saved at once.
+
+- The change re-runs the installer the deployment already has, with the new
+  values, through the same account-checked AWS CloudShell command an Update
+  uses. Nothing changes in AWS until the customer runs it, and the deployment
+  keeps showing its installed configuration until that run has verified health.
+- The address, AWS account, region, hosted zone and network are fixed at
+  installation, and the gateway runtime cannot be turned off. Such a request is
+  refused before anything is prepared.
+- Adding the gateway runtime this way requires the deployment to run the
+  currently published installer; otherwise Update adds it together with the
+  newer installer.
+- Editing is locked while an install, retry or update is unfinished. A prepared
+  change that was not approved can be replaced or discarded; its command, if
+  run afterwards, is refused when the installer enrolls and changes nothing in
+  the deployment.
+- A change to the first administrator email matters before first sign-in or
+  when no active owner is left. It never removes or replaces an administrator
+  who has signed in.
+
+Agents cannot prepare configuration changes through MCP. Details, refusal codes
+and the kill switch: `docs/features/managed-deployment-config-updates/README.md`.
 
 ## Operator setup
 

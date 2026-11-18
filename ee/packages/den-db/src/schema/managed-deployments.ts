@@ -20,11 +20,11 @@ export const ManagedDeploymentTable = mysqlTable("managed_deployment", {
   ...timestamps,
 }, (table) => [index("managed_deployment_org").on(table.org_id)])
 
-/** One installer execution: initial install, retry, or approved update. */
+/** One installer execution: initial install, retry, approved update, or a configuration change at the installed version. */
 export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   id: varchar("id", { length: 36 }).notNull().primaryKey(),
   deployment_id: varchar("deployment_id", { length: 36 }).notNull(),
-  kind: mysqlEnum("kind", ["install", "update", "retry"]).notNull(),
+  kind: mysqlEnum("kind", ["install", "update", "retry", "configure"]).notNull(),
   version: varchar("version", { length: 80 }).notNull(),
   // The exact release approved for this run, frozen when it was prepared.
   template_url: varchar("template_url", { length: 2048 }).notNull(),
@@ -37,6 +37,8 @@ export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   last_sequence: int("last_sequence").notNull().default(0),
   last_seen_at: timestamp("last_seen_at", { fsp: 3 }),
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  // Only on a configure run: what was requested, validated by @openwork/managed-deployments on every read.
+  configuration_change: json("configuration_change").$type<Record<string, unknown>>(),
   ...timestamps,
 }, (table) => [index("managed_deployment_run_deployment").on(table.deployment_id)])
 

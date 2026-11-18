@@ -40,6 +40,7 @@ test("a profile change is explicit Update input, never Retry", () => {
   assert.equal(schema.managedDeploymentLaunchInputSchema.safeParse({ kind: "update", runtimeProfile: "gateway" }).success, true)
   assert.equal(schema.managedDeploymentLaunchInputSchema.safeParse({ kind: "retry", runtimeProfile: "gateway" }).success, false)
   assert.equal(schema.managedDeploymentLaunchInputSchema.safeParse({ kind: "install", runtimeProfile: "gateway" }).success, false)
+  assert.equal(schema.managedDeploymentLaunchInputSchema.safeParse({ kind: "configure" }).success, false)
 })
 
 test("gateway handoffs use the exact profile parameter and never direct-model values", () => {
