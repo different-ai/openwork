@@ -6,6 +6,26 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join, resolve } from "node:path";
 
 export const GUEST_TOOLS = ["edit", "glob", "grep", "read", "shell", "write"];
+
+/** Select only msb machine descendants of the app this proof launched. */
+export function ownedMicrosandboxProcesses(snapshot: string, ownerPid: number) {
+  if (!Number.isSafeInteger(ownerPid) || ownerPid <= 1) throw new Error("An owned packaged app PID is required before selecting a runtime fault target");
+  const rows = snapshot.split("\n").flatMap(line => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" }] : [];
+  });
+  const parents = new Map(rows.map(row => [row.pid, row.ppid]));
+  return rows.filter(row => {
+    if (row.pid === ownerPid || !/(?:^|\/)msb machine\b/.test(row.command)) return false;
+    const seen = new Set<number>();
+    for (let current = row.ppid; !seen.has(current); current = parents.get(current) ?? 0) {
+      if (current === ownerPid) return true;
+      if (current <= 1) return false;
+      seen.add(current);
+    }
+    return false;
+  });
+}
 export const profiles = {
   fable: { model: "claude-fable-5-2", name: "Fable 5.2", provider: "packaged_anthropic", npm: "@ai-sdk/anthropic", upstream: "https://api.anthropic.com", keyEnv: "ANTHROPIC_API_KEY" },
   sol: { model: "gpt-6.1-sol", name: "GPT 6.1 Sol", provider: "packaged_openai", npm: "@ai-sdk/openai", upstream: "https://api.openai.com", keyEnv: "OPENAI_API_KEY" },
@@ -21,10 +41,26 @@ export function rawMessages(body: unknown) {
 }
 
 /** Native idle markers are messages too; completion belongs to a new assistant stop message. */
+export function stoppedAssistantAnswer(body: unknown, previousMessageIds: ReadonlySet<string>) {
+  for (const message of rawMessages(body).toReversed()) {
+    if (typeof message.id !== "string" || previousMessageIds.has(message.id) || message.type !== "assistant" || message.finish !== "stop" || !Array.isArray(message.content)) continue;
+    const text = message.content.filter(isRecord).filter(part => part.type === "text" && typeof part.text === "string").map(part => String(part.text)).join("\n");
+    if (text.length > 0) return { id: message.id, text };
+  }
+  return null;
+}
 export function hasStoppedAssistantAnswer(body: unknown, previousMessageIds: ReadonlySet<string>) {
-  return rawMessages(body).some(message => typeof message.id === "string" && !previousMessageIds.has(message.id)
-    && message.type === "assistant" && message.finish === "stop" && Array.isArray(message.content)
-    && message.content.some(part => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.length > 0));
+  return stoppedAssistantAnswer(body, previousMessageIds) !== null;
+}
+
+export type ReplyVisibility = {
+  messageId: string | null;
+  role: string | null;
+  matches: { text: string; visible: boolean; rect: { x: number; y: number; width: number; height: number } | null }[];
+};
+export function hasVisibleReplyEvidence(observed: ReplyVisibility, expectedId: string, requiredTexts: readonly string[]) {
+  return observed.messageId === expectedId && observed.role === "assistant" && requiredTexts.length > 0
+    && requiredTexts.every(text => text.length > 0 && observed.matches.some(match => match.text === text && match.visible && match.rect !== null && match.rect.width > 0 && match.rect.height > 0));
 }
 
 export function redact(text: string, secrets: readonly string[]) {

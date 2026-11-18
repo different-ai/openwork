@@ -2380,19 +2380,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "permissions":
         return (
           <SettingsStack>
-            <AuthorizedFoldersPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              openworkServerCapabilities={routeOpenworkCapabilities}
-              runtimeWorkspaceId={runtimeWorkspaceId}
-              selectedWorkspaceRoot={selectedWorkspaceRoot}
-              onConfigUpdated={() => {
-                setConfigActionStatus(t("settings.config_updated"));
-                setPermissionsRefreshToken((token) => token + 1);
-                void providerAuthStore.refreshProviders();
-                void connectionsStore.refreshMcpServers();
-              }}
-            />
             <HostExecutionPanel
               openworkServerClient={openworkClient}
               openworkServerStatus={routeOpenworkStatus}
@@ -2400,6 +2387,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               sandboxRolloutEnabled={sandboxToolsEnabled}
               onUpdated={() => {
                 setPermissionsRefreshToken((token) => token + 1);
+                void connectionsStore.refreshMcpServers();
+              }}
+            />
+            <AuthorizedFoldersPanel
+              openworkServerClient={openworkClient}
+              openworkServerStatus={routeOpenworkStatus}
+              openworkServerCapabilities={routeOpenworkCapabilities}
+              runtimeWorkspaceId={runtimeWorkspaceId}
+              selectedWorkspaceRoot={selectedWorkspaceRoot}
+              sandboxRolloutEnabled={sandboxToolsEnabled}
+              onConfigUpdated={() => {
+                setConfigActionStatus(t("settings.config_updated"));
+                setPermissionsRefreshToken((token) => token + 1);
+                void providerAuthStore.refreshProviders();
                 void connectionsStore.refreshMcpServers();
               }}
             />

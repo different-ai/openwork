@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
+import { holdNewOwnedRuntime } from "../worlds/packaged-sandbox-startup-hold.ts";
 import { join } from "node:path";
-import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, inferenceFixture, isolatedParentEnvironment, offeredToolNames, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
+import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, hasVisibleReplyEvidence, stoppedAssistantAnswer, inferenceFixture, isolatedParentEnvironment, offeredToolNames, ownedMicrosandboxProcesses, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -46,7 +48,131 @@ describe("native packaged turn completion", () => {
   });
 });
 
+describe("controlled startup slowdown safety", () => {
+  const app = "100 1 /owned/OpenWork\n101 100 /owned/server";
+  const guest = `${app}\n102 101 /owned/msb machine start new-owned-guest`;
+  function processAccess(snapshots: string[]) {
+    let snapshotIndex = 0;
+    let state = "R";
+    const signals: { pid: number; signal: string }[] = [];
+    return {
+      signals,
+      access: {
+        snapshot: async () => snapshots[Math.min(snapshotIndex++, snapshots.length - 1)] ?? "",
+        state: async () => state,
+        signal: (pid: number, signal: "SIGSTOP" | "SIGCONT") => { signals.push({ pid, signal }); state = signal === "SIGSTOP" ? "T" : "R"; },
+      },
+    };
+  }
+  it("refuses a startup hold when an owned guest already existed before arming", async () => {
+    const process = processAccess([guest]);
+    await expect(holdNewOwnedRuntime(100, process.access)).rejects.toThrow("no existing owned guest");
+    expect(process.signals).toEqual([]);
+  });
+  it("holds only the new owned descendant, verifies OS stop and resumes it once", async () => {
+    const process = processAccess([app, guest]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    expect(await hold.waitHeld()).toMatchObject({ state: "held", stopVerified: true, target: { pid: 102 } });
+    expect(await hold.resume()).toMatchObject({ state: "resumed", resumeVerified: true, readyVerified: false });
+    await hold.dispose();
+    expect(process.signals).toEqual([{ pid: 102, signal: "SIGSTOP" }, { pid: 102, signal: "SIGCONT" }]);
+  });
+  it("cleanup releases a held guest even when no explicit resume followed the screenshot", async () => {
+    const process = processAccess([app, guest]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    await hold.waitHeld();
+    expect(await hold.dispose()).toMatchObject({ state: "resumed", resumeVerified: true });
+    expect(process.signals.at(-1)).toEqual({ pid: 102, signal: "SIGCONT" });
+  });
+  it("a cancelled watcher never sends a signal to a later process", async () => {
+    const process = processAccess([app]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    expect(await hold.dispose()).toMatchObject({ state: "cancelled", stopVerified: false });
+    expect(process.signals).toEqual([]);
+  });
+  it("never pauses an unrelated app's guest and exposes the bounded watch failure", async () => {
+    const process = processAccess([`${app}\n201 200 /person/msb machine start other-guest`]);
+    const hold = await holdNewOwnedRuntime(100, process.access, { watchMs: 25 });
+    await expect(hold.waitHeld()).rejects.toThrow("bounded startup-watch deadline");
+    await expect(hold.dispose()).rejects.toThrow("cleanup was blocked");
+    expect(process.signals).toEqual([]);
+  });
+  it("refuses ambiguous multiple new owned guests without signalling either", async () => {
+    const process = processAccess([app, `${guest}\n103 101 /owned/msb machine start second-owned-guest`]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    await expect(hold.waitHeld()).rejects.toThrow("found 2");
+    await expect(hold.dispose()).rejects.toThrow("cleanup was blocked");
+    expect(process.signals).toEqual([]);
+  });
+  it("rechecks exact ancestry and command before sending SIGSTOP", async () => {
+    const process = processAccess([app, guest, `${app}\n102 200 /person/msb machine start reused-pid`]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    await expect(hold.waitHeld()).rejects.toThrow("ownership changed");
+    await expect(hold.dispose()).rejects.toThrow("cleanup was blocked");
+    expect(process.signals).toEqual([]);
+  });
+  it("rechecks ownership before SIGCONT and reports a reused target instead of signalling it", async () => {
+    const process = processAccess([app, guest, guest, `${app}\n102 200 /person/msb machine start reused-pid`]);
+    const hold = await holdNewOwnedRuntime(100, process.access);
+    await hold.waitHeld();
+    await expect(hold.resume()).rejects.toThrow("refusing to signal a reused PID");
+    await expect(hold.dispose()).rejects.toThrow("refusing to signal a reused PID");
+    expect(process.signals).toEqual([{ pid: 102, signal: "SIGSTOP" }]);
+  });
+  it("the safety deadline automatically resumes the owned guest and records the intervention", async () => {
+    const process = processAccess([app, guest]);
+    const hold = await holdNewOwnedRuntime(100, process.access, { maxHoldMs: 20 });
+    await hold.waitHeld();
+    const deadline = Date.now() + 500;
+    while (!hold.receipt.resumeVerified && Date.now() < deadline) await delay(10);
+    expect(hold.receipt.resumeVerified).toBe(true);
+    expect(hold.receipt.detail).toContain("safety deadline");
+    await hold.dispose();
+    expect(process.signals.at(-1)).toEqual({ pid: 102, signal: "SIGCONT" });
+  });
+});
+
+describe("packaged reply screenshot witnesses", () => {
+  const visible = { messageId: "current-answer", role: "assistant", matches: [{ text: "Linux", visible: true, rect: { x: 400, y: 300, width: 40, height: 20 } }] };
+  it("uses the latest stopped assistant's ID and text, not the user prompt or idle marker", () => {
+    expect(stoppedAssistantAnswer({ messages: { data: [
+      { id: "earlier-answer", type: "assistant", finish: "stop", content: [{ type: "text", text: "Darwin" }] },
+      { id: "current-user", type: "user", content: [{ type: "text", text: "Please quote Linux" }] },
+      { id: "current-answer", type: "assistant", finish: "stop", content: [{ type: "text", text: "System:" }, { type: "text", text: "Linux" }] },
+      { id: "current-idle", type: "idle", content: [] },
+    ] } }, new Set(["earlier-answer"]))).toEqual({ id: "current-answer", text: "System:\nLinux" });
+  });
+  it("accepts only visible text in the exact current assistant reply", () => {
+    expect(hasVisibleReplyEvidence(visible, "current-answer", ["Linux"])).toBe(true);
+    expect(hasVisibleReplyEvidence(visible, "earlier-answer", ["Linux"])).toBe(false);
+    expect(hasVisibleReplyEvidence({ ...visible, role: "user" }, "current-answer", ["Linux"])).toBe(false);
+    expect(hasVisibleReplyEvidence({ ...visible, messageId: null }, "current-answer", ["Linux"])).toBe(false);
+  });
+  it("rejects absent, clipped or zero-area text even when the reply exists in the DOM", () => {
+    expect(hasVisibleReplyEvidence({ ...visible, matches: [{ text: "Linux", visible: false, rect: { x: 400, y: -100, width: 40, height: 20 } }] }, "current-answer", ["Linux"])).toBe(false);
+    expect(hasVisibleReplyEvidence({ ...visible, matches: [{ text: "Linux", visible: true, rect: null }] }, "current-answer", ["Linux"])).toBe(false);
+    expect(hasVisibleReplyEvidence({ ...visible, matches: [{ text: "Linux", visible: true, rect: { x: 400, y: 300, width: 0, height: 20 } }] }, "current-answer", ["Linux"])).toBe(false);
+  });
+  it("requires every requested evidence string and never accepts an empty witness", () => {
+    expect(hasVisibleReplyEvidence(visible, "current-answer", ["Linux", "host-later-nonce"])).toBe(false);
+    expect(hasVisibleReplyEvidence(visible, "current-answer", [])).toBe(false);
+    expect(hasVisibleReplyEvidence(visible, "current-answer", [""])).toBe(false);
+  });
+});
+
 describe("packaged sandbox proof prerequisites", () => {
+  it("targets only native guest descendants of the exact app the proof owns", () => {
+    const snapshot = [
+      "100 1 /owned/OpenWork", "101 100 /owned/server", "102 101 /owned/msb machine start owned-guest",
+      "200 1 /person/OpenWork", "201 200 /person/msb machine start person-guest",
+      "300 1 /owned/msb machine start unrelated-root", "103 101 /owned/msb version",
+      "400 401 /owned/msb machine start cycle", "401 400 /owned/server",
+    ].join("\n");
+    expect(ownedMicrosandboxProcesses(snapshot, 100)).toEqual([{ pid: 102, ppid: 101, command: "/owned/msb machine start owned-guest" }]);
+    expect(ownedMicrosandboxProcesses(snapshot, 999)).toEqual([]);
+    expect(() => ownedMicrosandboxProcesses(snapshot, 1)).toThrow("owned packaged app PID");
+    expect(() => ownedMicrosandboxProcesses(snapshot, Number.NaN)).toThrow("owned packaged app PID");
+  });
   it("never inherits a member's history, config, provider credentials or source overrides", () => {
     const env = isolatedParentEnvironment({ PATH: "/bin", TMPDIR: "/owned/tmp", OPENCODE_DB: "/member/history.db", OPENCODE_TEST_HOME: "/member", HOME: "/member", XDG_DATA_HOME: "/member/data", MSB_HOME: "/member/vm", OPENWORK_SERVER_CONFIG: "/member/server.json", OPENWORK_ELECTRON_START_URL: "http://source", ANTHROPIC_API_KEY: "secret", OPENAI_API_KEY: "secret2", INFISICAL_TOKEN: "secret3", NODE_OPTIONS: "--import source.ts", NODE_PATH: "/checkout/node_modules", ELECTRON_RUN_AS_NODE: "1" });
     expect(env).toEqual({ PATH: "/bin", TMPDIR: "/owned/tmp" });

@@ -1,13 +1,41 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentPermissionBlockedBy, hostExecutionRowVisible, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
+import { agentPermissionDefinition } from "@openwork/types/den/agent-permissions";
+import { agentPermissionBlockedBy, agentPermissionChoiceOptions, agentPermissionChoiceValue, hostExecutionRowVisible, storedAgentPermissionDecision, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
 
 const keys = (hostExecution: boolean) => visibleAgentPermissionGroups("all", { hostExecution }).flatMap((group) => group.definitions.map((definition) => definition.key));
 
-test("Run tools on this computer sits with commands, and only when the editor offers it", () => {
+test("Where the agent runs commands sits with commands, and only when the editor offers it", () => {
   assert.deepEqual(keys(true).slice(0, 2), ["commands", "hostExecution"]);
   assert.equal(keys(false).includes("hostExecution"), false);
   assert.equal(visibleAgentPermissionGroups("browser").flatMap((group) => group.definitions).some((definition) => definition.key === "hostExecution"), false);
+});
+
+test("execution location names environments and preserves explicit computer versus member choice", () => {
+  const definition = agentPermissionDefinition("hostExecution");
+  assert.equal(definition.label, "Where the agent runs commands");
+  assert.deepEqual(agentPermissionChoiceOptions(definition, null), [
+    { value: "inherit", label: "Member chooses" },
+    { value: "allow", label: "On this computer" },
+    { value: "deny", label: "In a sandbox (isolated)" },
+  ]);
+  assert.equal(agentPermissionChoiceValue(definition, undefined, "allow"), "inherit");
+  assert.equal(agentPermissionChoiceValue(definition, "allow", "allow"), "allow");
+  assert.equal(agentPermissionChoiceValue(definition, "deny", "deny"), "deny");
+  assert.equal(storedAgentPermissionDecision(definition, null, "allow"), "allow");
+  assert.equal(storedAgentPermissionDecision(definition, null, undefined), undefined);
+});
+
+test("teams show Everyone's actual location and reset through Use Everyone's, not an inherit choice", () => {
+  const definition = agentPermissionDefinition("hostExecution");
+  assert.deepEqual(agentPermissionChoiceOptions(definition, "Research", "deny"), [
+    { value: "allow", label: "On this computer" },
+    { value: "deny", label: "In a sandbox (isolated)" },
+  ]);
+  assert.equal(agentPermissionChoiceValue(definition, undefined, "deny", "deny"), "deny");
+  assert.equal(agentPermissionChoiceValue(definition, "allow", "allow", "deny"), "allow");
+  assert.equal(agentPermissionChoiceValue(definition, undefined, "allow", undefined), "inherit");
+  assert.equal(agentPermissionChoiceOptions(definition, "Research")[0]?.label, "Member chooses");
 });
 
 test("with the rollout off the row shows only where a setting is already saved", () => {

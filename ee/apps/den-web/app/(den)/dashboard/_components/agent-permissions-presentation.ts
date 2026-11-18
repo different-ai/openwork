@@ -23,7 +23,7 @@ const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computer
 
 /** What the editor shows beyond the definitions: rollouts it reads from the organization. */
 export type AgentPermissionEditorFeatures = {
-  /** The sandboxTools rollout. Off hides "Run tools on this computer" unless it is already set. */
+  /** The sandboxTools rollout. Off hides execution location unless it is already set. */
   sandboxOnly: boolean;
 };
 
@@ -75,30 +75,38 @@ export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea) {
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 
-export function agentPermissionChoiceOptions(definition: AgentPermissionDefinition, team: string | null): { value: AgentPermissionDecision | "inherit"; label: string }[] {
+export function agentPermissionChoiceOptions(definition: AgentPermissionDefinition, team: string | null, inheritedDecision?: AgentPermissionDecision): { value: AgentPermissionDecision | "inherit"; label: string }[] {
+  if (definition.control === "execution-location") {
+    return [
+      ...(team === null || inheritedDecision === undefined ? [{ value: "inherit" as const, label: "Member chooses" }] : []),
+      { value: "allow", label: "On this computer" },
+      { value: "deny", label: "In a sandbox (isolated)" },
+    ];
+  }
   return [
     ...(agentPermissionMemberDecides(definition.key) ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
     ...agentPermissionDecisionsFor(definition).map((decision) => ({ value: decision, label: agentPermissionDecisionLabels[decision] })),
   ];
 }
 
-export function agentPermissionChoiceValue(definition: AgentPermissionDefinition, decision: AgentPermissionDecision | undefined, effective: AgentPermissionDecision): AgentPermissionDecision | "inherit" {
+export function agentPermissionChoiceValue(definition: AgentPermissionDefinition, decision: AgentPermissionDecision | undefined, effective: AgentPermissionDecision, inheritedDecision?: AgentPermissionDecision): AgentPermissionDecision | "inherit" {
+  if (definition.control === "execution-location") return decision ?? inheritedDecision ?? "inherit";
   return agentPermissionMemberDecides(definition.key) ? decision ?? "inherit" : effective;
 }
 
 /** Preserve an explicit Ask/Allow of a member-decided permission: they differ from the member-controlled default. */
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
-  return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
+  return team === null && definition.control !== "execution-location" && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
 }
 
 /** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */
 export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {
   const sandboxRequired = (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";
   if (key === "hostExecution" && sandboxRequired && features && !features.sandboxOnly) {
-    return { key: "sandbox-off", reason: "The sandbox is turned off for this organization, so agents can't run for these members. Turn this on to let them run again." };
+    return { key: "sandbox-off", reason: "The sandbox is turned off, so agents can't run for these members. Remove the sandbox requirement to let them choose again." };
   }
   if (BLOCKED_WITH_HOST_EXECUTION.includes(key) && sandboxRequired) {
-    return { key: "host-execution", reason: "Blocked while Run tools on this computer is off." };
+    return { key: "host-execution", reason: "Blocked while commands run in a sandbox (isolated)." };
   }
   if (key === "commands" && (settings.fileEdits?.decision ?? everyone?.fileEdits?.decision) === "deny") {
     return { key: "edits", reason: "Blocked while Edit files is blocked, because any command can change files." };

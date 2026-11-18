@@ -126,7 +126,9 @@ native execution must not be presumed confined by this evidence.
 
 Definition in `packages/types/src/den/agent-permissions.ts`:
 
-- Key `hostExecution`, host action `host_execution`, Commands section, toggle **Run tools on this computer**.
+- Key `hostExecution`, host action `host_execution`, Commands section, **Where the agent runs commands** with
+  **On this computer** / **In a sandbox (isolated)**. Den Everyone additionally supports **Member chooses**; a team
+  follows Everyone's actual value or changes it through the existing scoped-setting pattern.
 - Default `allow` preserves current behavior. `deny` requires sandbox-only. No `ask` variant or allow/block lists
   for a whole-run mode.
 - Included in harness keys/actions. **Not added to the engine `v2Action` permission grammar.**
@@ -136,11 +138,16 @@ new independent provider-policy table. Existing team-versus-Everyone semantics a
 result is then merged with the local preference using `stricterAgentPermissionDecision`. Local Allow cannot undo
 org Deny; local Deny is stricter than org Allow.
 
-Settings -> Permissions adds an editable row below Authorized Folders. Local storage is a typed engine-global
+Settings -> Permissions places the execution choices **above** the folder list. One explicitly requested sentence
+explains that the sandbox can see the workspace and the authorized folders below. When sandbox is selected/applied,
+the list becomes **Folders the sandbox can see**, with real read/write metadata rather than invented folder roles.
+The chat header quietly identifies applied sandbox execution. Local storage is a typed engine-global
 SQLite row, never imported from workspace JSON. GET/PUT `/workspace/:id/sandbox-settings` returns local/effective
 allow, managed status and feature availability. Writes use the existing collaborator/approval boundary. A corrupt
-explicit local preference fails restrictive. A managed requirement locks the row; a direct local-allow request
-still cannot weaken the effective org decision.
+explicit local preference fails restrictive. Both explicit organization choices lock the row with **Managed by your
+organization**; an unconfigured default Allow does not. A direct local-allow request still cannot weaken org denial,
+and explicit org computer mode never relaxes an existing stricter local sandbox choice. The latter stays selected
+and locked with a device-restriction explanation.
 
 Saving records desired intent separately from applied local policy. Busy or unknown native activity returns a
 successful save with `pending: true`; current tasks retain their applied local authority, while the switch and its
@@ -155,13 +162,20 @@ pending intent is never an org-policy bypass. A refresh failure remains restrict
 forwarding resolves fresh connection credentials after the fence. Guest scratch can reset during refreshes;
 workspace/Authorized Folder bind data remains intact.
 
+The shared guest reports `idle`, `starting`, `ready`, `unsupported`, and `failed`. GET observes without booting;
+authenticated `POST /workspace/:id/sandbox-prepare` starts/retries asynchronously and remains idempotent. Preparation
+reports two actual steps, file/image import and guest startup; the package already contains the image, so no download
+is fabricated. Stable error codes select plain recovery copy. Healthy-guest file/edit failures do not mark the entire
+sandbox failed. Unsupported installation access and a stopped guest have separate real fault proofs and Retry.
+
 The host sends `X-OpenWork-Sandbox-Only: 1` for desktop config. Den filters unknown actions for older clients and
 returns conservative known-action denies when a required policy cannot be represented. Old clients have no
 read/glob/grep policy action, so this fallback alone is **not a complete guarantee for obsolete desktops**: use
 `allowedDesktopVersions`/managed rollout to require compatible clients. This release does not retrofit old binaries.
 
-The Den editor admits new managed restrictions during the rollout; the local UI is offered while the rollout is
-on or a requirement already exists. Existing restrictions stay visible and removable when the flag is off.
+The Den editor admits new managed choices during the rollout and keeps existing constraints removable by an admin.
+The desktop section is hidden with the rollout off, per the requested state matrix; this visibility exception does
+not relax any stored or managed requirement.
 An explicit privileged local API request can still choose the more restrictive preference while unavailable;
 that blocks execution rather than granting a feature or restoring the host. Feature loss never relaxes a requirement: keep guest-only tools that fail unavailable rather
 than restore the host. Verified restrictive knowledge is persisted per control-plane/org scope for offline

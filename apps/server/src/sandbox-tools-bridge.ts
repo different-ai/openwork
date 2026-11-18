@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
-import { createLocalSandboxRuntime, type LocalSandboxRuntimeDeps } from "./local-sandbox-runtime.js";
+import { localSandboxRuntime, type LocalSandboxRuntimeDeps } from "./local-sandbox-runtime.js";
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
@@ -14,7 +14,7 @@ const requestSchema = z.object({
 /** Engine-only API. Its credential authorizes guest operations, never host filesystem/shell APIs. */
 export async function createSandboxToolsBridge(config: ServerConfig, deps: LocalSandboxRuntimeDeps = {}) {
   const token = randomBytes(32).toString("base64url");
-  const runtime = createLocalSandboxRuntime(config, deps);
+  const runtime = localSandboxRuntime(config, deps);
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const supplied = Buffer.from(request.headers.get("authorization") ?? "");
     const expected = Buffer.from(`Bearer ${token}`);

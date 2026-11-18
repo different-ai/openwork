@@ -372,7 +372,7 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
 /** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
-  hostExecution: "Off runs commands and files in a local sandbox, and blocks apps, the built-in browser and local MCP servers",
+  hostExecution: "A stricter choice on the member's device is kept",
   fileEdits: "Create, change and delete files in the member's folders",
   externalFolders: "Read and change files outside the member's workspace folders",
   computerUse: "See and control apps on the member's computer",
@@ -420,6 +420,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
+                  executionLocationEnabled={features.sandboxOnly}
                   blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
@@ -433,7 +434,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   );
 }
 
-export function PermissionRow({ definition, team, scope, setting, everyoneSetting, editable, blockedBy, onChange }: {
+export function PermissionRow({ definition, team, scope, setting, everyoneSetting, editable, executionLocationEnabled = true, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
   /** Everyone or the team, for the row's chip. */
@@ -441,6 +442,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
   setting: AgentPermissionSetting | undefined;
   everyoneSetting: AgentPermissionSetting | undefined;
   editable: boolean;
+  executionLocationEnabled?: boolean;
   blockedBy: { key: string; reason: string } | null;
   onChange: (setting: AgentPermissionSetting | null) => void;
 }) {
@@ -470,7 +472,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
           <ScopeChip scope={scope} changed={changed} />
           {changed && editable ? <UseEveryonesButton settingLabel={definition.label} onClick={() => onChange(null)} /> : null}
         </div>
-        <div className={`flex shrink-0 justify-end ${agentPermissionMemberDecides(definition.key) ? "w-[190px]" : "w-[140px]"}`}>
+        <div className={`flex shrink-0 justify-end ${definition.control === "execution-location" ? "w-[210px]" : agentPermissionMemberDecides(definition.key) ? "w-[190px]" : "w-[140px]"}`}>
           {definition.control === "toggle" ? (
             <DenSwitch
               size="sm"
@@ -485,11 +487,11 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
                 size="sm"
                 aria-labelledby={labelId}
                 disabled={!editable}
-                value={agentPermissionChoiceValue(definition, ownDecision, effective)}
+                value={agentPermissionChoiceValue(definition, ownDecision, effective, team ? everyoneSetting?.decision : undefined)}
                 onChange={(event) => setDecision(agentPermissionDecisionsFor(definition).find((decision) => decision === event.target.value))}
               >
-                {agentPermissionChoiceOptions(definition, team).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                {agentPermissionChoiceOptions(definition, team, team ? everyoneSetting?.decision : undefined).map((option) => (
+                  <option key={option.value} value={option.value} disabled={definition.control === "execution-location" && !executionLocationEnabled && option.value !== "inherit"}>{option.label}</option>
                 ))}
               </DenSelect>
             </div>

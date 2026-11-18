@@ -471,12 +471,25 @@ export type OpenworkAuthorizedFoldersResponse = {
   workspaceRoot: string;
 };
 
+export type OpenworkSandboxRuntime = {
+  state: "idle" | "starting" | "ready" | "unsupported" | "failed";
+  stage?: string;
+  progress?: { completed: number; total: number };
+  reason?: "unsupported_platform" | "virtualization_unavailable" | "app_update_required" | "runtime_unavailable" | "runtime_permission_denied" | "runtime_failed" | "stopped";
+  message?: string;
+  canRetry: boolean;
+};
+
 export type OpenworkSandboxSettingsResponse = {
   allowHostExecution: boolean;
   effectiveAllowHostExecution: boolean;
   pending?: boolean;
   managed: boolean;
+  managedMode?: "computer" | "sandbox" | null;
+  deviceRestricted?: boolean;
   featureEnabled: boolean;
+  runtime?: OpenworkSandboxRuntime | null;
+  folderAccess?: "read" | "read-write";
 };
 
 export type OpenworkPermissionAction = "allow" | "ask" | "deny";
@@ -1972,6 +1985,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           body: { allowHostExecution },
           timeoutMs: timeouts.config,
         },
+      ),
+    prepareSandbox: (workspaceId: string) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-prepare`,
+        { token, hostToken, method: "POST", timeoutMs: 120_000 },
       ),
     getRuntimeDisabledProviders: (workspaceId: string) =>
       requestJson<OpenworkRuntimeDisabledProvidersResult>(

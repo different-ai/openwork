@@ -15,10 +15,19 @@ trusted engine process. Authorized live rw bind mounts intentionally let the gue
 
 ## Control it
 
-Den member/team agent permissions add **Run tools on this computer**. Turn it off to require sandbox-only.
-Settings -> Permissions has the same editable local control below Authorized Folders. Effective restriction is
-stricter-wins: local Allow cannot undo org Deny. Managed restrictions lock the local switch. The setting is
-engine-global, not imported from workspace files. Saving during a task persists the desired preference and returns
+Settings -> Permissions begins with **Where the agent runs commands**: **On this computer** or **In a sandbox
+(isolated)**. The sandbox choice requires the six guest replacements. Its one explanatory sentence connects it to
+**Folders the sandbox can see** below; actual enforced access is shown beside each folder. The ordinary folder list
+is still Authorized Folders when computer execution is selected. A quiet Sandbox indicator in chat follows applied
+execution authority, not a pending personal choice.
+
+Den member/team agent permissions use the same execution-location words. Everyone can leave **Member chooses**;
+teams follow Everyone's actual value unless changed, with the existing **Use Everyone's** reset. Explicit managed
+computer and sandbox choices are read-only in the desktop with **Managed by your organization**. Restriction remains
+stricter-wins: an organization computer choice never silently relaxes a stricter device sandbox requirement. That
+case keeps the effective sandbox selection locked and says the stricter device choice is kept.
+
+The preference is engine-global, not imported from workspace files. Saving during a task persists desired intent and returns
 200 with `pending: true`: “Saved. Applies when current tasks finish.” Current tasks keep the applied local policy,
 including subsequent tool calls in the same turn; organization denials remain live and strict. New native admissions
 are refused while the desired/applied policy or native process isolation differs. Existing session metadata/messages,
@@ -34,12 +43,14 @@ project configuration and project extension discovery; a tool reload alone is no
 `GET` and `PUT /workspace/:id/sandbox-settings` describe the engine-global setting (the workspace path scopes access,
 not the preference). PUT still accepts exactly `{ allowHostExecution: boolean }`, with existing approval and audit
 checks. Both responses retain `allowHostExecution`, `effectiveAllowHostExecution`, `managed`, and `featureEnabled`,
-and add `pending: boolean`. `allowHostExecution` is durable desired local intent; `effectiveAllowHostExecution` is the
+and add `pending: boolean`, managed-choice provenance (`managedMode`, `deviceRestricted`), actual `folderAccess`,
+and an optional `runtime` observation. `allowHostExecution` is durable desired local intent; `effectiveAllowHostExecution` is the
 applied host policy, bounded by native process isolation and live organization authority, including tasks allowed to
 finish under the previous local preference. During
 a local disable, `false / true / pending: true` is intentional, not an authorization grant for a new turn. During a
 local enable, `true / false / pending: true` means the reverse transition has not yet applied. Clients poll while
-pending and render the toggle from desired intent, never from the old process's permission. Older synchronous hosts
+pending and render personal radio choices from desired intent, never from the old process's permission. Managed
+choices display the effective restriction and remain read-only. Older synchronous hosts
 omit `pending`; the client treats that as false.
 
 Desired and applied local preferences are separate host-owned runtime database rows. Cold startup installs desired
@@ -47,8 +58,8 @@ intent before spawning a fresh native process. During a running process, only it
 advances applied intent; failed refreshes never fall back to a host engine. Feature-off ordinary mode stays ordinary;
 a saved or managed restriction is not cleared by rollout loss.
 
-Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and host tools do not
-come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations
+The desktop section is hidden when the rollout is off, as requested; this is visibility only. Existing requirements
+survive rollout loss and host tools do not come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations
 requiring complete confinement, because old binaries cannot enforce new read-tool restrictions.
 
 ## Folders and runtime
@@ -60,6 +71,12 @@ refused. Canonical aliases and protected runtime paths are checked before mounti
 
 Changing grants stops/recreates the guest before reuse. Host bind contents survive; guest-only scratch is reset,
 with a restart receipt. In-flight operations are bounded, not promised instantaneous descendant cancellation.
+
+`POST /workspace/:id/sandbox-prepare` idempotently starts or retries the real shared guest. It acknowledges asynchronously;
+GET reports `idle`, `starting`, `ready`, `unsupported`, or `failed` without creating a guest. Starting uses two measured
+steps (bundled-file preparation, then guest startup), not a fictitious image download. The image is bundled and
+pinned. Unsupported installations give a plain recovery action; genuine guest failures offer Retry. Expected file,
+edit, or readonly errors do not mark a healthy sandbox as failed. A real guest-health inspection distinguishes them.
 
 Use Apple Silicon macOS or Linux KVM, a short `MSB_HOME` on macOS, and the normal feature registry for rollout in a
 disposable test organization. No production rollout is changed here. Missing runtime/image/hypervisor support is

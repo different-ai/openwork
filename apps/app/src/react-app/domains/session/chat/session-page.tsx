@@ -102,6 +102,7 @@ import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
 import { FloatingSlotProvider, SessionFloatingLayer } from "../panel/floating-slot";
 import { useDesktopFeature } from "../status/use-desktop-feature";
+import { SandboxExecutionIndicator } from "../status/sandbox-execution-indicator";
 import { SelectionSideChat } from "../links/selection-side-chat";
 import { SideQuestionPanel } from "../links/side-question-panel";
 import { showSideChatTab } from "../links/side-question-store";
@@ -686,6 +687,7 @@ export function SessionPage(props: SessionPageProps) {
   });
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
+  const sandboxToolsEnabled = useDesktopFeature("sandboxTools");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   // The button hides itself when this computer can't run it and no VM is connected.
@@ -1647,6 +1649,14 @@ export function SessionPage(props: SessionPageProps) {
                 </span>
               ) : null}
               </>}
+              {!props.primarySlot && !hasMainContentTakeover && !props.mainContentHeaderActionsRef ? (
+                <SandboxExecutionIndicator
+                  client={props.openworkServerClient}
+                  workspaceId={props.runtimeWorkspaceId}
+                  status={props.openworkServerStatus}
+                  enabled={sandboxToolsEnabled}
+                />
+              ) : null}
               {props.developerMode && !props.mainContentHeaderActionsRef ? (
                 <span className="hidden text-[12px] text-dls-secondary lg:inline">
                   {props.headerStatus}

@@ -34,7 +34,7 @@ import { z } from "zod";
  * browser_upload, file_send and host_execution are enforced by the OpenWork
  * host and must never enter the engine grammar.
  *
- * host_execution is the sandbox-only switch: blocking it means the agent's
+ * host_execution records execution location: blocking it means the agent's
  * commands and files run in the local sandbox, and everything else that runs
  * on the member's computer (apps, the built-in browser, local MCP servers) is
  * refused by the host. A member's own setting can only be stricter.
@@ -76,8 +76,8 @@ type AgentPermissionDefinitionEntry = {
   /** One sentence, shown as the row's tooltip. */
   description: string;
   action: AgentPermissionAction;
-  /** `choice` is a picklist of decisions; `toggle` is on (allow) or off (deny). */
-  control: "choice" | "toggle";
+  /** Execution location names the two environments instead of presenting an on/off permission. */
+  control: "choice" | "toggle" | "execution-location";
   /** The patterns its lists hold, or null when it has no lists. */
   patterns: AgentPermissionPatternKind | null;
   /** What one pattern names, for "Always block a command". */
@@ -98,10 +98,10 @@ export const agentPermissionDefinitions = [
   {
     key: "hostExecution",
     section: "commands",
-    label: "Run tools on this computer",
-    description: "When off, the agent's commands and files run only in a local sandbox on the member's computer, with the workspace and authorized folders mounted. Using apps, the built-in browser and local MCP servers are blocked, and desktop apps that cannot run the sandbox refuse to run agents.",
+    label: "Where the agent runs commands",
+    description: "Commands and files run on this computer or in an isolated local sandbox with the workspace and authorized folders mounted. In a sandbox, apps, the built-in browser and local MCP servers are blocked. A stricter device choice is kept.",
     action: "host_execution",
-    control: "toggle",
+    control: "execution-location",
     patterns: null,
     patternNoun: null,
   },
@@ -246,7 +246,7 @@ export const agentPermissionDecisionLabels: Record<AgentPermissionDecision, stri
 
 /** The decision each control offers: a toggle cannot ask. */
 export function agentPermissionDecisionsFor(definition: Pick<AgentPermissionDefinition, "control">): readonly AgentPermissionDecision[] {
-  return definition.control === "toggle" ? ["allow", "deny"] : AGENT_PERMISSION_DECISIONS;
+  return definition.control === "choice" ? AGENT_PERMISSION_DECISIONS : ["allow", "deny"];
 }
 
 /** Existing permissions allow by default: the member's own settings apply. */
@@ -580,7 +580,7 @@ function normalizePatternList(kind: AgentPermissionPatternKind | null, value: un
 export function normalizeAgentPermissionSetting(definition: AgentPermissionDefinition, value: unknown): AgentPermissionSetting | null {
   if (!isRecord(value)) return null;
   const blockedNames = definition.patterns === null && Array.isArray(value.block) && value.block.length > 0;
-  const stored = definition.control === "toggle" && (value.decision === "ask" || blockedNames) ? "deny" : value.decision;
+  const stored = definition.control !== "choice" && (value.decision === "ask" || blockedNames) ? "deny" : value.decision;
   const decision = isAgentPermissionDecision(stored) && agentPermissionDecisionsFor(definition).includes(stored)
     ? stored
     : undefined;
@@ -685,22 +685,28 @@ export function agentPermissionRulesForClient(
 }
 
 /**
- * The member's own "Run tools on this computer" setting merged with the
- * organization's: the stricter wins. A member's Allow cannot undo the
- * organization's Block, and a member's Block stands when the organization allows.
+ * The member's execution location merged with the organization's: the stricter
+ * wins. Explicit organization choices are managed in either direction, but a
+ * computer choice never restores host execution over a stricter device choice.
+ * The default Allow has no rule and must not make an unmanaged device read-only.
  */
 export function resolveHostExecution(input: {
   /** The member's own setting; true is the default. */
   localAllow: boolean;
   /** The organization's delivered rules, or undefined when signed out. */
   rules: readonly AgentPermissionRule[] | undefined;
-}): { decision: "allow" | "deny"; managed: boolean; source: string | null } {
+}): { decision: "allow" | "deny"; managed: boolean; source: string | null; managedMode: "computer" | "sandbox" | null; deviceRestricted: boolean } {
   const rule = matchingAgentPermissionRule(input.rules, "host_execution", "*");
-  // host_execution is a switch: anything but Allow from the organization blocks.
+  // host_execution cannot ask: anything but Allow from the organization blocks.
   const organization: AgentPermissionDecision = rule && rule.effect !== "allow" ? "deny" : "allow";
   const decision = stricterAgentPermissionDecision(input.localAllow ? "allow" : "deny", organization);
-  const managed = organization === "deny";
-  return { decision: decision === "allow" ? "allow" : "deny", managed, source: managed ? rule?.source ?? null : null };
+  return {
+    decision: decision === "allow" ? "allow" : "deny",
+    managed: rule !== null,
+    source: rule?.source ?? null,
+    managedMode: rule === null ? null : organization === "allow" ? "computer" : "sandbox",
+    deviceRestricted: rule?.effect === "allow" && !input.localAllow,
+  };
 }
 
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
@@ -779,18 +785,19 @@ export function resolveAgentPermissions(input: {
  * exceptions, and blocked patterns come last so they always win. A
  * permission that allows adds no rules: the member's own settings apply,
  * except an explicit Allow of a member-decided permission (browser uploads,
- * files sent to connected accounts), which authorizes skipping its prompt.
+ * files sent to connected accounts), which authorizes skipping its prompt,
+ * or host_execution, which preserves the managed choice's provenance.
  * An unset member-decided Ask emits no base rule or administrator source.
  */
 export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[]): AgentPermissionRule[] {
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, an explicit Allow of a member-decided
-    // permission is authority to skip the member's prompt. An unset Ask has
-    // no admin source or base rule.
+    // Host execution retains an explicit Allow's source without overriding
+    // stricter device policy. Member-decided permissions use it as authority
+    // to skip a prompt; an unset default has no admin source or base rule.
     const memberDecides = actionMemberDecides(action);
-    const explicit = decisionSource !== null && (restricted || memberDecides);
+    const explicit = decisionSource !== null && (restricted || memberDecides || action === "host_execution");
     return [
       ...(explicit ? [{ action, resource: "*", effect: decision, source: decisionSource }] : []),
       ...(restricted || memberDecides ? allow.map(({ pattern, source }) => ({ action, resource: pattern, effect: "allow" as const, source })) : []),

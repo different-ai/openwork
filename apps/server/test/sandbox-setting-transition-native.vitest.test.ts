@@ -126,7 +126,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     // The hostile location was not initialized in the old project-enabled process.
     const setting = await request("/workspace/hostile/sandbox-settings", "PUT", { allowHostExecution: false });
     expect(setting.status, await setting.clone().text()).toBe(200);
-    expect(await setting.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: true });
+    expect(await setting.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: true, folderAccess: "read-write", runtime: { state: "idle", canRetry: false } });
     const isolatedPid = await pid(); expect(isolatedPid).not.toBe(originalPid);
     const plugins = await request("/workspace/hostile/opencode2/api/agent");
     expect(plugins.status, await plugins.clone().text()).toBe(200);

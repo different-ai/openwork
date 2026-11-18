@@ -11,11 +11,11 @@ const flagOff = spec.world(sandboxControlsFlagOff, { timeout: 600_000,
 const signedOut = spec.world(sandboxSignedOutSettings, { timeout: 600_000,
   resources: { surfaces: ["appWeb"], services: [] } });
 const row = '[data-testid="agent-permission-hostExecution"]';
-const toggle = { role: "switch" as const, label: "Run tools on this computer" };
+const location = { label: "Where the agent runs commands" };
 
 controls("an owner enables host tools for one team without giving other members the same exception", async ({ world, user, probe, step, evidence }) => {
   await step("before: Contractors cannot run tools on their computers but a staff member is unaffected", async () => {
-    await user.see(toggle, { timeoutMs: 60_000 });
+    await user.see(location, { timeoutMs: 60_000 });
     const contractor = await probe.api(world.riley, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } });
     const staff = await probe.api(world.morgan, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } });
     const rules = hostRules(contractor.body);
@@ -25,26 +25,32 @@ controls("an owner enables host tools for one team without giving other members 
     expect(rules).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "deny", source: "Contractors" }));
     expect(otherRules.some(rule => rule.effect === "deny")).toBe(false);
     expect((await probe.dom(`${row}[data-decision="deny"]`)).elements).toHaveLength(1);
+    expect((await probe.dom(`${row} option`)).elements.map(option => option.text)).toEqual(["Member chooses", "On this computer", "In a sandbox (isolated)"]);
     await user.screenshot();
   });
 
-  await step("when the owner enables Run tools on this computer for Contractors and saves", async () => {
-    await user.click(toggle);
+  await step("when the owner selects On this computer for Contractors and saves", async () => {
+    await user.click(location);
+    await user.press("Home");
+    await user.press("ArrowDown");
+    await user.press("Enter");
     await user.click("Save changes");
     const rules = await probe.eventually(async () => hostRules((await probe.api(world.riley, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body), {
       within: 30_000, label: "Contractors no longer receives a host-execution denial", until: value => !value.some(rule => rule.effect === "deny"),
     });
     const decision = (await probe.dom(`${row}[data-decision="allow"]`)).elements.length === 1 ? "allow" : "deny";
-    evidence.recordAssertionEvidence("The saved team toggle enables the member", `team setting: ${decision}; member's rules: ${JSON.stringify(rules)}`, decision === "allow" && !rules.some(rule => rule.effect === "deny"));
+    evidence.recordAssertionEvidence("The saved location explicitly selects this computer for the team", `team setting: ${decision}; member's rules: ${JSON.stringify(rules)}`, decision === "allow" && rules.some(rule => rule.effect === "allow" && rule.source === "Contractors"));
     expect(decision).toBe("allow");
-    expect(rules.some(rule => rule.effect === "deny")).toBe(false);
+    expect(rules).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "allow", source: "Contractors" }));
     await user.screenshot();
   });
 
-  await step("when the owner turns off host tools for Everyone", async () => {
+  await step("when the owner selects In a sandbox (isolated) for Everyone", async () => {
     await user.navigate(world.everyoneUrl);
-    await user.see(toggle, { timeoutMs: 60_000 });
-    await user.click(toggle);
+    await user.see(location, { timeoutMs: 60_000 });
+    await user.click(location);
+    await user.press("End");
+    await user.press("Enter");
     await user.click("Save changes");
     const rules = await probe.eventually(async () => hostRules((await probe.api(world.riley, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body), {
       within: 30_000, label: "the team's explicit exception remains in effect", until: value => !value.some(rule => rule.effect === "deny"),
@@ -60,7 +66,7 @@ controls("an owner enables host tools for one team without giving other members 
 
   await step("after: only Contractors keep their exception and the ordinary member cannot open the team's policy", async () => {
     await user.navigate(world.teamUrl);
-    await user.see(toggle, { timeoutMs: 60_000 });
+    await user.see(location, { timeoutMs: 60_000 });
     const contractor = hostRules((await probe.api(world.riley, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body);
     const staff = hostRules((await probe.api(world.morgan, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body);
     const forbidden = await probe.api(world.riley, "/v1/agent-permissions");
@@ -69,6 +75,22 @@ controls("an owner enables host tools for one team without giving other members 
     expect(contractor.some(rule => rule.effect === "deny")).toBe(false);
     expect(staff.some(rule => rule.effect === "deny")).toBe(true);
     expect(forbidden.response.status).toBe(403);
+    await user.screenshot();
+  });
+  await step("when the owner restores Member chooses for Everyone the team's explicit computer choice remains", async () => {
+    await user.navigate(world.everyoneUrl);
+    await user.see(location, { timeoutMs: 60_000 });
+    await user.click(location);
+    await user.press("Home");
+    await user.press("Enter");
+    await user.click("Save changes");
+    const staff = await probe.eventually(async () => hostRules((await probe.api(world.morgan, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body), {
+      within: 30_000, label: "the ordinary staff member chooses their own execution location again", until: value => value.length === 0,
+    });
+    const contractor = hostRules((await probe.api(world.riley, "/v1/me/desktop-config", { headers: { "X-OpenWork-Sandbox-Only": "1" } })).body);
+    evidence.recordAssertionEvidence("Member chooses removes the default mandate without clearing the team's explicit location", `staff: ${JSON.stringify(staff)}; contractor: ${JSON.stringify(contractor)}`, staff.length === 0 && contractor.some(rule => rule.effect === "allow" && rule.source === "Contractors"));
+    expect(staff).toHaveLength(0);
+    expect(contractor).toContainEqual(expect.objectContaining({ action: "host_execution", effect: "allow", source: "Contractors" }));
     await user.screenshot();
   });
 });
@@ -99,28 +121,28 @@ flagOff("an owner outside the rollout does not see a new host-tools switch", asy
   });
 });
 
-signedOut("a signed-out person keeps their stricter local setting and can restore host tools explicitly", async ({ world, user, probe, step, evidence }) => {
-  await step("before: the saved local restriction remains visible without a verified sandbox rollout", async () => {
-    await user.see({ testId: "host-execution-switch" }, { timeoutMs: 60_000 });
-    const settings = await probe.desktopApi(world.settingsPath);
-    evidence.recordAssertionEvidence("Sign-out does not silently re-enable host execution", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":false'));
-    expect(settings.body).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
-    expect((await probe.dom('[data-testid="host-execution-note"][data-host-execution-note="sandbox_unavailable"]')).elements).toHaveLength(1);
-    await user.screenshot();
-  });
-  await step("when the signed-out person explicitly enables Run tools on this computer", async () => {
-    await user.click({ testId: "host-execution-switch" });
-    const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), { within: 30_000, label: "the explicit local preference saves", until: result => JSON.stringify(result.body).includes('"effectiveAllowHostExecution":true') });
-    evidence.recordAssertionEvidence("An explicit local choice restores host tools", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"allowHostExecution":true'));
-    expect(settings.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: true, managed: false });
-    await user.screenshot();
-  });
-  await step("after: reloading does not bring back the old restriction", async () => {
-    await user.reload();
+signedOut("a signed-out person outside the rollout keeps their stricter saved choice without seeing flagged controls", async ({ world, user, probe, step, evidence }) => {
+  await step("before: sign-out does not silently re-enable commands on this computer", async () => {
     await user.see({ text: "Authorized folders" }, { timeoutMs: 60_000 });
     const settings = await probe.desktopApi(world.settingsPath);
-    evidence.recordAssertionEvidence("The local preference survives a reload", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":true'));
-    expect(settings.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: true, featureEnabled: false });
+    evidence.recordAssertionEvidence("The stricter saved choice remains effective without a verified rollout", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":false'));
+    expect(settings.body).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    await user.screenshot();
+  });
+  await step("when permissions are open the flagged execution-location section is absent", async () => {
+    await user.notSee({ testId: "host-execution-row" });
+    const rows = await probe.dom('[data-testid="host-execution-row"]');
+    evidence.recordAssertionEvidence("Flag-off hides the entire execution-location section, not just one option", JSON.stringify(rows), rows.elements.length === 0);
+    expect(rows.elements).toHaveLength(0);
+    await user.screenshot();
+  });
+  await step("after: reloading preserves the restriction and does not reveal the flagged section", async () => {
+    await user.reload();
+    await user.see({ text: "Authorized folders" }, { timeoutMs: 60_000 });
+    await user.notSee({ testId: "host-execution-row" });
+    const settings = await probe.desktopApi(world.settingsPath);
+    evidence.recordAssertionEvidence("A reload neither enables host commands nor opts a signed-out person into the rollout", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":false'));
+    expect(settings.body).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, featureEnabled: false });
     await user.screenshot();
   });
 });

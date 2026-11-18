@@ -101,7 +101,7 @@ test("verified org deny beats local allow, survives flag off/outage and scoped c
     const policy = managedDesktopPolicy(f.config);
     await policy.setSession(session);
     await policy.current();
-    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: true, featureEnabled: true });
+    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: true, managedMode: "sandbox", deviceRestricted: false, featureEnabled: true });
     expect(headers.every(header => header === "1")).toBe(true);
     await expect(policy.assertHostExecution()).rejects.toThrow("requires sandbox-only");
     expect((await policy.computerRules()).map(rule => rule.effect)).toEqual(["deny", "deny", "deny", "deny"]);
@@ -113,10 +113,37 @@ test("verified org deny beats local allow, survives flag off/outage and scoped c
     expect(await restarted.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
     unavailable = false;
     deny = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: true, managedMode: "computer", deviceRestricted: false, featureEnabled: false });
     await writeSandboxSettings(f.config, { allowHostExecution: false });
-    expect(await policy.sandboxSettings()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: true, managedMode: "computer", deviceRestricted: true });
   } finally { await den.stop(); await f.cleanup(); }
+});
+
+test("managed computer and sandbox choices are distinct from unconfigured Allow and never overwrite a stricter device choice", async () => {
+  const f = await fixture();
+  let decision: "allow" | "deny" | undefined;
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
+    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: true } });
+    return Response.json({ agentPermissions: { rules: decision ? [{ action: "host_execution", resource: "*", effect: decision, source: "Everyone" }] : [] } });
+  } });
+  const policy = managedDesktopPolicy(f.config);
+  try {
+    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_location", token: "location-fixture-token" });
+    await policy.current();
+    expect(await policy.sandboxSettings()).toMatchObject({ managed: false, managedMode: null, effectiveAllowHostExecution: true });
+    decision = "allow";
+    expect(await policy.sandboxSettings()).toMatchObject({ managed: true, managedMode: "computer", effectiveAllowHostExecution: true, deviceRestricted: false });
+    await writeSandboxSettings(f.config, { allowHostExecution: false });
+    await applySandboxSettings(f.config);
+    expect(await policy.sandboxSettings()).toMatchObject({ managed: true, managedMode: "computer", effectiveAllowHostExecution: false, deviceRestricted: true });
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
+    decision = "deny";
+    expect(await policy.sandboxSettings()).toMatchObject({ managed: true, managedMode: "sandbox", effectiveAllowHostExecution: false, deviceRestricted: false });
+    decision = undefined;
+    expect(await policy.sandboxSettings()).toMatchObject({ managed: false, managedMode: null, effectiveAllowHostExecution: false });
+    expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
+  } finally { await policy.clearSession(); await den.stop(); await f.cleanup(); }
 });
 
 test("a first unverified sign-in never grants host execution, even with local allow and no cached org deny", async () => {
@@ -136,14 +163,14 @@ test("a first unverified sign-in never grants host execution, even with local al
     await expect(policy.assertHostExecution()).resolves.toBeUndefined();
     await policy.setSession(session);
     await policy.current();
-    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: false });
     await expect(policy.assertHostExecution()).rejects.toThrow("not yet been verified for this sign-in");
     expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
     unavailable = false;
     expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: false, managed: true, featureEnabled: false });
     await expect(policy.assertHostExecution()).rejects.toThrow("requires sandbox-only");
     required = false;
-    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toMatchObject({ effectiveAllowHostExecution: true, managed: true, managedMode: "computer", deviceRestricted: false, featureEnabled: false });
     // Previously verified Allow can keep its ordinary offline behaviour for
     // this identity; a changed identity must verify again, never inherit it.
     unavailable = true;
@@ -165,10 +192,10 @@ test("signed-out rollout reads only the trusted configured Den /v1/features with
   f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
   try {
     const policy = managedDesktopPolicy(f.config);
-    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, featureEnabled: true });
+    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: true });
     enabled = false;
     await writeSandboxSettings(f.config, { allowHostExecution: false });
-    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    expect(await policy.sandboxSettings()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: false });
     expect(calls).toEqual([{ path: "/v1/features", authorization: null }, { path: "/v1/features", authorization: null }]);
     f.config.trustedDenOrigin = `${f.config.trustedDenOrigin}/untrusted-path`;
     expect((await policy.localSandboxAccess()).enabled).toBe(false);
@@ -393,7 +420,7 @@ test("settings route requires approval before engine-global writes and leaves wo
   const hostHeaders = { "x-openwork-host-token": f.config.hostToken, "content-type": "application/json" };
   try {
     const route = `${root}/workspace/ws_sandbox/sandbox-settings`;
-    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managed: false, featureEnabled: false });
+    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: false, folderAccess: "read-write", runtime: null });
     const pending = fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: false }) });
     let approvalId: string | undefined;
     for (let attempt = 0; attempt < 50 && !approvalId; attempt++) {
@@ -406,7 +433,7 @@ test("settings route requires approval before engine-global writes and leaves wo
     await fetch(`${root}/approvals/${approvalId}`, { method: "POST", headers: hostHeaders, body: JSON.stringify({ reply: "allow" }) });
     const updated = await pending;
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: false });
+    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, managedMode: null, deviceRestricted: false, featureEnabled: false, folderAccess: "read-write", runtime: null });
     expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
     expect((await fetch(`${root}/workspace/ws_sandbox/files/raw?path=missing.txt`, { headers })).status).toBe(403);
     expect((await fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: "yes" }) })).status).toBe(400);

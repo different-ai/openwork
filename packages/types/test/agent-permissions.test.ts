@@ -27,11 +27,12 @@ const rulesFor = (everyone: AgentPermissionSettings, teams: { source: string; se
   resolveAgentPermissionRules({ everyone: { source: AGENT_PERMISSION_EVERYONE, settings: everyone }, teams })
 const required: AgentPermissionRule = { action: "host_execution", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE }
 
-test("hostExecution is a Commands switch that allows by default and is host-enforced", () => {
+test("hostExecution is a named execution-location choice that allows by default and is host-enforced", () => {
   const definition = agentPermissionDefinition("hostExecution")
   assert.equal(definition.action, "host_execution")
   assert.equal(definition.section, "commands")
-  assert.equal(definition.label, "Run tools on this computer")
+  assert.equal(definition.label, "Where the agent runs commands")
+  assert.equal(definition.control, "execution-location")
   assert.deepEqual(agentPermissionDecisionsFor(definition), ["allow", "deny"])
   assert.equal(agentPermissionDefaultDecision("hostExecution"), "allow")
   assert.ok(AGENT_HARNESS_PERMISSION_KEYS.some((key) => key === "hostExecution"))
@@ -47,7 +48,7 @@ test("settings store a block, reject Ask first and lists, and read a stale Ask a
 
 test("nothing set delivers no rule; a block delivers one deny rule and nothing for other actions", () => {
   assert.deepEqual(rulesFor({}), [])
-  assert.deepEqual(rulesFor({ hostExecution: { decision: "allow" } }), [])
+  assert.deepEqual(rulesFor({ hostExecution: { decision: "allow" } }), [{ ...required, effect: "allow" }])
   assert.deepEqual(rulesFor({ hostExecution: { decision: "deny" } }), [required])
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor({ hostExecution: { decision: "deny" } })), true)
   assert.equal(agentPermissionRulesRequireSandbox([]), false)
@@ -59,6 +60,8 @@ test("a team's own decision replaces Everyone's, and the strictest of a member's
   const allow = { hostExecution: { decision: "allow" as const } }
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor({}, [{ source: "Finance", settings: block }])), true)
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor(block, [{ source: "Research", settings: allow }])), false)
+  assert.deepEqual(rulesFor(block, [{ source: "Research", settings: allow }]), [{ ...required, effect: "allow", source: "Research" }])
+  assert.deepEqual(rulesFor({}, [{ source: "Research", settings: {} }]), [])
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor({}, [{ source: "Research", settings: allow }, { source: "Finance", settings: block }])), true)
 })
 
@@ -96,13 +99,21 @@ test("the other capability filters are unchanged", () => {
   assert.deepEqual(agentPermissionRulesForClient(rules, everything), rules)
 })
 
-test("the member's setting and the organization's merge to the stricter", () => {
-  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: undefined }), { decision: "allow", managed: false, source: null })
-  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: [] }), { decision: "allow", managed: false, source: null })
-  assert.deepEqual(resolveHostExecution({ localAllow: false, rules: [] }), { decision: "deny", managed: false, source: null })
-  // A member's Allow cannot undo the organization's Block.
-  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: [required] }), { decision: "deny", managed: true, source: AGENT_PERMISSION_EVERYONE })
-  assert.deepEqual(resolveHostExecution({ localAllow: false, rules: [required] }), { decision: "deny", managed: true, source: AGENT_PERMISSION_EVERYONE })
+test("explicit managed choices retain their source, but the stricter device choice always wins", () => {
+  const unmanaged = { managed: false, source: null, managedMode: null, deviceRestricted: false }
+  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: undefined }), { decision: "allow", ...unmanaged })
+  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: rulesFor({}) }), { decision: "allow", ...unmanaged })
+  assert.deepEqual(resolveHostExecution({ localAllow: false, rules: [] }), { decision: "deny", ...unmanaged })
+  const managedSandbox = { managed: true, source: AGENT_PERMISSION_EVERYONE, managedMode: "sandbox", deviceRestricted: false }
+  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: [required] }), { decision: "deny", ...managedSandbox })
+  assert.deepEqual(resolveHostExecution({ localAllow: false, rules: [required] }), { decision: "deny", ...managedSandbox })
+  const computer = rulesFor({ hostExecution: { decision: "allow" } })
+  assert.deepEqual(resolveHostExecution({ localAllow: true, rules: computer }), {
+    decision: "allow", managed: true, source: AGENT_PERMISSION_EVERYONE, managedMode: "computer", deviceRestricted: false,
+  })
+  assert.deepEqual(resolveHostExecution({ localAllow: false, rules: computer }), {
+    decision: "deny", managed: true, source: AGENT_PERMISSION_EVERYONE, managedMode: "computer", deviceRestricted: true,
+  })
   // A rule that somehow asks is still not permission to run on the host.
   assert.equal(resolveHostExecution({ localAllow: true, rules: [{ ...required, effect: "ask" }] }).decision, "deny")
 })

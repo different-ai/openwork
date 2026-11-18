@@ -23,6 +23,8 @@ import {
   safeStringify,
 } from "../../../../app/utils";
 import { usePlatform } from "../../../kernel/platform";
+import { useSandboxSettings } from "@/react-app/infra/use-sandbox-settings";
+import { hostExecutionRow } from "./host-execution-panel-state";
 import {
   authorizedFoldersReducer,
   buildAuthorizedFoldersStatus,
@@ -46,11 +48,13 @@ export type AuthorizedFoldersPanelProps = {
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
+  sandboxRolloutEnabled?: boolean;
   onConfigUpdated: () => void;
 };
 
 type AuthorizedFolderItemProps = {
   folder: string;
+  access?: "read" | "read-write";
   workspaceRootFolder: string;
   authorizedFoldersLoading: boolean;
   authorizedFoldersSaving: boolean;
@@ -68,7 +72,7 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
   const folderName = getFolderName(props.folder);
 
   return (
-    <li className="flex flex-row items-center justify-between gap-3 rounded-2xl border border-dls-border px-4 py-3">
+    <li className="flex flex-row items-center justify-between gap-3 border-b border-border py-3 last:border-b-0">
       <div className="flex min-w-0 gap-3">
         <div className="min-w-0 flex flex-col gap-2">
           <div className="flex items-center gap-2">
@@ -83,6 +87,8 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
           <span className="truncate font-mono text-xs text-muted-foreground ps-6">{props.folder}</span>
         </div>
       </div>
+      <div className="flex shrink-0 items-center gap-2">
+      {props.access ? <span className="text-xs text-muted-foreground" data-testid="sandbox-folder-access">{t(props.access === "read" ? "context_panel.folder_access_read" : "context_panel.folder_access_read_write")}</span> : null}
       {!isWorkspaceRoot ? (
         <Button
           variant="ghost"
@@ -109,12 +115,15 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
           <TooltipContent>{t("context_panel.always_available")}</TooltipContent>
         </Tooltip>
       )}
+      </div>
     </li>
   );
 }
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const platform = usePlatform();
+  const sandboxSettings = useSandboxSettings({ client: props.openworkServerClient, workspaceId: props.runtimeWorkspaceId, enabled: Boolean(props.sandboxRolloutEnabled && props.openworkServerStatus === "connected") });
+  const sandboxFolders = Boolean(props.sandboxRolloutEnabled && hostExecutionRow(sandboxSettings.data ?? null, true).sandboxFolders);
   const [serverWorkspaceRoot, setServerWorkspaceRoot] = useState("");
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
@@ -271,11 +280,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     <LayoutSectionItem className="gap-6">
       <LayoutSectionItemHeader>
         <LayoutSectionItemTitle>
-          {t("context_panel.authorized_folders")}
+          {t(sandboxFolders ? "context_panel.sandbox_folders" : "context_panel.authorized_folders")}
         </LayoutSectionItemTitle>
-        <LayoutSectionItemDescription>
+        {!sandboxFolders ? <LayoutSectionItemDescription>
           {t("context_panel.authorized_folders_desc")}
-        </LayoutSectionItemDescription>
+        </LayoutSectionItemDescription> : null}
         {canUseNativeFilePicker ? (
           <LayoutSectionItemHeaderActions>
             <Button
@@ -302,6 +311,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
                 <AuthorizedFolderItem
                   key={folder}
                   folder={folder}
+                  access={sandboxFolders ? sandboxSettings.data?.folderAccess : undefined}
                   workspaceRootFolder={workspaceRootFolder}
                   authorizedFoldersLoading={authorizedFoldersLoading}
                   authorizedFoldersSaving={authorizedFoldersSaving}

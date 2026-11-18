@@ -120,6 +120,7 @@ import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
 import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { closeLocalSandboxRuntime, localSandboxRuntime } from "./local-sandbox-runtime.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
@@ -1275,6 +1276,7 @@ export async function startServer(
     anonymousInference.stop();
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
+    await closeLocalSandboxRuntime(config).catch(() => undefined);
     await stopCloudComputer();
     engineInstanceReaper.close();
     clearEngineInstanceReaperForConfig(config);
@@ -1393,6 +1395,7 @@ export async function startServer(
       anonymousInference.stop();
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
+      await closeLocalSandboxRuntime(config).catch(() => undefined);
       engineInstanceReaper.close();
       clearEngineInstanceReaperForConfig(config);
       invalidateEngineMcpServerState(config, engineMcpServerState);
@@ -3394,11 +3397,31 @@ function createRoutes(
     });
   });
 
-  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
-    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+  async function sandboxSettingsResponse(directory: string) {
     const settings = await managedDesktopPolicy(config).sandboxSettings();
     const processPolicy = await engineV2Preview.projectIsolationStatus();
-    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+    const runtime = await localSandboxRuntime(config).runtimeStatus(directory);
+    return {
+      ...settings, pending: processPolicy.pending,
+      effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution,
+      folderAccess: config.readOnly ? "read" : "read-write", runtime,
+    };
+  }
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse(await sandboxSettingsResponse(workspace.path));
+  });
+  addRoute(routes, "POST", "/workspace/:id/sandbox-prepare", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    // Applying a saved preference uses the existing idle fence. A prepare request
+    // cannot start a guest or change engines underneath current tasks.
+    await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
+    if ((await engineV2Preview.projectIsolationStatus()).pending) return jsonResponse(await sandboxSettingsResponse(workspace.path));
+    const runtime = localSandboxRuntime(config);
+    if (await runtime.runtimeStatus(workspace.path) === null) throw new ApiError(403, "sandbox_unavailable", "Sandbox is not available under the current app or team settings.");
+    void runtime.prepare(workspace.path).catch(() => undefined);
+    return jsonResponse(await sandboxSettingsResponse(workspace.path), 202);
   });
   addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
     ensureWritable(config);
@@ -3417,9 +3440,7 @@ function createRoutes(
       id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
       action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
     });
-    const settings = await managedDesktopPolicy(config).sandboxSettings();
-    const processPolicy = await engineV2Preview.projectIsolationStatus();
-    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+    return jsonResponse(await sandboxSettingsResponse(workspace.path));
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {

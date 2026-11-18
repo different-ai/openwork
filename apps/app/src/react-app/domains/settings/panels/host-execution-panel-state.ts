@@ -1,31 +1,37 @@
 import type { OpenworkSandboxSettingsResponse } from "../../../../app/lib/openwork-server";
 
-export type HostExecutionRowNote = "managed" | "sandbox_unavailable" | "sandbox_only" | "pending_host" | "pending_sandbox" | null;
+export type HostExecutionRowNote = "managed" | "sandbox_unavailable" | "pending_host" | "pending_sandbox" | null;
+export type SandboxRuntimeStatus = "idle" | "starting" | "ready" | "unsupported" | "failed" | null;
 
-export type HostExecutionRow = {
-  visible: boolean;
-  hostToolsAllowed: boolean;
-  desiredHostToolsAllowed: boolean;
-  lockedByOrganization: boolean;
-  note: HostExecutionRowNote;
-};
-
-export function hostExecutionRow(settings: OpenworkSandboxSettingsResponse | null, rolloutEnabled: boolean): HostExecutionRow {
-  if (!settings) return { visible: false, hostToolsAllowed: true, desiredHostToolsAllowed: true, lockedByOrganization: false, note: null };
-  const hostToolsAllowed = settings.effectiveAllowHostExecution;
-  const desiredHostToolsAllowed = settings.allowHostExecution && !settings.managed;
-  const sandboxAvailable = rolloutEnabled && settings.featureEnabled;
-  const requirementStandsWithoutRollout = !desiredHostToolsAllowed || !hostToolsAllowed || settings.pending === true;
+export function hostExecutionRow(settings: OpenworkSandboxSettingsResponse | null, rolloutEnabled: boolean) {
+  const hostToolsAllowed = settings?.effectiveAllowHostExecution ?? true;
+  const desiredHostToolsAllowed = settings?.managed ? hostToolsAllowed : settings?.allowHostExecution ?? true;
   return {
-    visible: rolloutEnabled || requirementStandsWithoutRollout,
+    visible: rolloutEnabled,
     hostToolsAllowed,
     desiredHostToolsAllowed,
-    lockedByOrganization: settings.managed,
-    note: settings.pending ? hostToolsAllowed ? "pending_host" : "pending_sandbox"
-      : settings.managed ? "managed" : hostToolsAllowed ? null : sandboxAvailable ? "sandbox_only" : "sandbox_unavailable",
-  };
+    lockedByOrganization: settings?.managed ?? false,
+    sandboxFolders: Boolean(settings && (!hostToolsAllowed || !desiredHostToolsAllowed)),
+    note: settings?.pending ? hostToolsAllowed ? "pending_host" : "pending_sandbox"
+      : settings?.managed ? "managed" : settings && !settings.featureEnabled && !hostToolsAllowed ? "sandbox_unavailable" : null,
+  } satisfies { note: HostExecutionRowNote; visible: boolean; hostToolsAllowed: boolean; desiredHostToolsAllowed: boolean; lockedByOrganization: boolean; sandboxFolders: boolean };
+}
+
+export function sandboxRuntimeStatus(settings: OpenworkSandboxSettingsResponse | null): SandboxRuntimeStatus {
+  if (!settings || settings.effectiveAllowHostExecution) return null;
+  if (!settings.featureEnabled) return "unsupported";
+  return settings.runtime?.state ?? null;
+}
+
+export function canPrepareSandbox(settings: OpenworkSandboxSettingsResponse | null | undefined) {
+  return Boolean(settings?.featureEnabled && !settings.effectiveAllowHostExecution && !settings.pending && settings.runtime?.state === "idle");
+}
+
+export function canRetrySandbox(settings: OpenworkSandboxSettingsResponse | null | undefined) {
+  return Boolean(settings?.featureEnabled && !settings.effectiveAllowHostExecution && !settings.pending && (settings.runtime?.state === "failed" || settings.runtime?.state === "unsupported") && settings.runtime.canRetry);
 }
 
 export function withOwnHostExecutionSetting(settings: OpenworkSandboxSettingsResponse, allowHostExecution: boolean): OpenworkSandboxSettingsResponse {
-  return { ...settings, allowHostExecution, pending: (allowHostExecution && !settings.managed) !== settings.effectiveAllowHostExecution };
+  if (settings.managed) return settings;
+  return { ...settings, allowHostExecution, pending: allowHostExecution !== settings.effectiveAllowHostExecution };
 }

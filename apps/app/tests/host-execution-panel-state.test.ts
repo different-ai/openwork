@@ -1,44 +1,53 @@
 import { expect, test } from "bun:test";
-import { hostExecutionRow, withOwnHostExecutionSetting } from "../src/react-app/domains/settings/panels/host-execution-panel-state.ts";
+import type { OpenworkSandboxSettingsResponse } from "../src/app/lib/openwork-server";
+import { canPrepareSandbox, canRetrySandbox, hostExecutionRow, sandboxRuntimeStatus, withOwnHostExecutionSetting } from "../src/react-app/domains/settings/panels/host-execution-panel-state";
+import { sandboxSettingsPollInterval } from "../src/react-app/infra/use-sandbox-settings";
 
-const allowed = { allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, featureEnabled: true };
+const allowed: OpenworkSandboxSettingsResponse = { allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, featureEnabled: true };
+const isolated: OpenworkSandboxSettingsResponse = { ...allowed, allowHostExecution: false, effectiveAllowHostExecution: false };
 
-test("the row is offered with the rollout on and hidden without it while host tools are allowed", () => {
-  expect(hostExecutionRow(allowed, true)).toEqual({ visible: true, hostToolsAllowed: true, desiredHostToolsAllowed: true, lockedByOrganization: false, note: null });
-  expect(hostExecutionRow({ ...allowed, featureEnabled: false }, false).visible).toBe(false);
-  expect(hostExecutionRow(null, true).visible).toBe(false);
+test("flag off hides every section state without changing policy", () => {
+  for (const settings of [null, allowed, isolated, { ...isolated, managed: true }, { ...isolated, pending: true }]) {
+    expect(hostExecutionRow(settings, false).visible).toBe(false);
+  }
+  expect(hostExecutionRow(null, true).visible).toBe(true);
+  expect(hostExecutionRow(isolated, false).hostToolsAllowed).toBe(false);
 });
 
-test("the member's own Off is editable and explains sandbox-only", () => {
-  const settings = { ...allowed, allowHostExecution: false, effectiveAllowHostExecution: false };
-  expect(hostExecutionRow(settings, true)).toEqual({ visible: true, hostToolsAllowed: false, desiredHostToolsAllowed: false, lockedByOrganization: false, note: "sandbox_only" });
-});
-
-test("the organization's requirement locks the row whatever the member chose", () => {
-  for (const allowHostExecution of [true, false]) {
-    const settings = { allowHostExecution, effectiveAllowHostExecution: false, managed: true, featureEnabled: true };
-    expect(hostExecutionRow(settings, true)).toEqual({ visible: true, hostToolsAllowed: false, desiredHostToolsAllowed: false, lockedByOrganization: true, note: "managed" });
+test("managed policy locks either selected location to effective rather than own preference", () => {
+  for (const effectiveAllowHostExecution of [false, true]) {
+    const settings = { ...allowed, managed: true, allowHostExecution: !effectiveAllowHostExecution, effectiveAllowHostExecution };
+    const row = hostExecutionRow(settings, true);
+    expect(row.lockedByOrganization).toBe(true);
+    expect(row.desiredHostToolsAllowed).toBe(effectiveAllowHostExecution);
+    expect(withOwnHostExecutionSetting(settings, !effectiveAllowHostExecution)).toEqual(settings);
   }
 });
 
-test("losing the rollout keeps a standing requirement on screen instead of restoring host tools", () => {
-  const own = { allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false };
-  expect(hostExecutionRow(own, false)).toEqual({ visible: true, hostToolsAllowed: false, desiredHostToolsAllowed: false, lockedByOrganization: false, note: "sandbox_unavailable" });
-  expect(hostExecutionRow({ ...own, managed: true }, false)).toEqual({ visible: true, hostToolsAllowed: false, desiredHostToolsAllowed: false, lockedByOrganization: true, note: "managed" });
-  expect(hostExecutionRow(own, true).note).toBe("sandbox_unavailable");
-});
-
-test("the saved toggle and effective policy stay distinct while either direction is pending", () => {
-  expect(hostExecutionRow({ ...allowed, allowHostExecution: false, pending: true }, true)).toEqual({
-    visible: true, hostToolsAllowed: true, desiredHostToolsAllowed: false, lockedByOrganization: false, note: "pending_host",
-  });
-  expect(hostExecutionRow({ ...allowed, effectiveAllowHostExecution: false, pending: true }, true)).toEqual({
-    visible: true, hostToolsAllowed: false, desiredHostToolsAllowed: true, lockedByOrganization: false, note: "pending_sandbox",
-  });
-});
-
-test("the switch moves at once without falsely reporting that the process already changed", () => {
+test("pending locations preserve current execution and label sandbox folders in either direction", () => {
+  for (const current of [true, false]) {
+    const settings = { ...allowed, allowHostExecution: !current, effectiveAllowHostExecution: current, pending: true };
+    const row = hostExecutionRow(settings, true);
+    expect(row.desiredHostToolsAllowed).toBe(!current);
+    expect(row.hostToolsAllowed).toBe(current);
+    expect(row.sandboxFolders).toBe(true);
+    expect(row.note).toBe(current ? "pending_host" : "pending_sandbox");
+  }
   expect(withOwnHostExecutionSetting(allowed, false)).toEqual({ ...allowed, allowHostExecution: false, pending: true });
-  const managed = { allowHostExecution: false, effectiveAllowHostExecution: false, managed: true, featureEnabled: true };
-  expect(withOwnHostExecutionSetting(managed, true).effectiveAllowHostExecution).toBe(false);
+});
+
+test("runtime state table does not invent readiness for an older server", () => {
+  expect(sandboxRuntimeStatus(isolated)).toBeNull();
+  for (const state of ["idle", "starting", "ready", "unsupported", "failed"] satisfies NonNullable<OpenworkSandboxSettingsResponse["runtime"]>["state"][]) {
+    const settings = { ...isolated, runtime: { state, canRetry: true } };
+    expect(sandboxRuntimeStatus(settings)).toBe(state);
+    expect(canPrepareSandbox(settings)).toBe(state === "idle");
+    expect(canRetrySandbox(settings)).toBe(state === "failed" || state === "unsupported");
+    expect(sandboxSettingsPollInterval(settings)).toBe(state === "starting" || state === "idle" ? 1_000 : 5_000);
+    expect(canPrepareSandbox({ ...settings, pending: true })).toBe(false);
+    expect(canRetrySandbox({ ...settings, pending: true })).toBe(false);
+    expect(canRetrySandbox({ ...settings, effectiveAllowHostExecution: true })).toBe(false);
+  }
+  expect(sandboxSettingsPollInterval({ ...allowed, pending: true })).toBe(1_000);
+  expect(sandboxRuntimeStatus({ ...isolated, featureEnabled: false })).toBe("unsupported");
 });

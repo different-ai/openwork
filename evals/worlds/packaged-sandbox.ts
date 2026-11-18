@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { attachSurface, browserScript, clickTarget, evaluateOnSurface, reload, typeText, waitForLocated, type AttachedSurface } from "@openwork/cdp";
 import { control, createAndSelectWorkspace, engineSessionProbe, waitFor, waitForText } from "@openwork/behaviors";
 import { localHost } from "@openwork/hosts";
-import { GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, inferenceFixture, isRecord, isolatedParentEnvironment, packagedBundle, profiles, rawMessages, redact, sandboxDenFixture, type ModelKey } from "./packaged-sandbox-fixtures.ts";
+import { GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, inferenceFixture, isRecord, isolatedParentEnvironment, packagedBundle, profiles, rawMessages, redact, sandboxDenFixture, stoppedAssistantAnswer, hasVisibleReplyEvidence, type ModelKey } from "./packaged-sandbox-fixtures.ts";
 
 const exec = promisify(execFile);
 type Options = { binary: string; model: ModelKey; realKey: string; evidenceDir: string; keepRoot?: boolean; expectedGitSha?: string; expectedBundleSha256?: string };
@@ -59,6 +59,7 @@ export async function packagedSandboxWorld(options: Options) {
   let workspaceId = "";
   let sessionId = "";
   let previousMessageIds = new Set<string>();
+  let lastStoppedAnswer: { id: string; text: string } | null = null;
   function turnMessages(snapshot: Awaited<ReturnType<ReturnType<typeof engineSessionProbe>["snapshot"]>>) {
     const rows = rawMessages(snapshot.body);
     return snapshot.data.messages.filter((_message, index) => {
@@ -87,17 +88,113 @@ export async function packagedSandboxWorld(options: Options) {
       return { status: response.status, body };
     }, [path, method, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true, timeoutMs: 35_000 });
   }
-  async function screenshot(name: string) {
+  async function replyVisibility(messageId: string, requiredTexts: string[]) {
+    return evaluateOnSurface(surface(), browserScript((messageId, requiredTexts) => {
+      const message = Array.from(document.querySelectorAll<HTMLElement>('[data-message-id][data-message-role="assistant"]')).find(node => node.dataset.messageId === messageId);
+      const prose = Array.from(message?.querySelectorAll<HTMLElement>(".prose") ?? []);
+      const matches = requiredTexts.map(text => {
+        let fallback: { text: string; visible: boolean; rect: { x: number; y: number; width: number; height: number } | null; clip: { left: number; right: number; top: number; bottom: number } | null } = { text, visible: false, rect: null, clip: null };
+        for (const content of prose) {
+          const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+          const nodes: { node: Node; start: number; end: number }[] = [];
+          let fullText = "";
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const start = fullText.length;
+            fullText += node.textContent ?? "";
+            nodes.push({ node, start, end: fullText.length });
+          }
+          for (let index = fullText.indexOf(text); text.length > 0 && index >= 0; index = fullText.indexOf(text, index + text.length)) {
+            const first = nodes.find(node => node.start <= index && node.end > index);
+            const last = nodes.find(node => node.start < index + text.length && node.end >= index + text.length);
+            if (!first || !last) continue;
+            const range = document.createRange();
+            range.setStart(first.node, index - first.start);
+            range.setEnd(last.node, index + text.length - last.start);
+            const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
+            let clip = { left: 0, right: innerWidth, top: 0, bottom: innerHeight };
+            for (let ancestor: HTMLElement | null = content; ancestor; ancestor = ancestor.parentElement) {
+              const style = getComputedStyle(ancestor);
+              const rect = ancestor.getBoundingClientRect();
+              if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) clip = { ...clip, left: Math.max(clip.left, rect.left), right: Math.min(clip.right, rect.right) };
+              if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) clip = { ...clip, top: Math.max(clip.top, rect.top), bottom: Math.min(clip.bottom, rect.bottom) };
+            }
+            const visible = rects.length > 0 && rects.every(rect => {
+              if (rect.left < clip.left || rect.right > clip.right || rect.top < clip.top || rect.bottom > clip.bottom) return false;
+              const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+              return hit !== null && content.contains(hit);
+            });
+            const rect = rects[0];
+            const match = { text, visible, rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null, clip };
+            if (visible) return match;
+            if (!fallback.rect) fallback = match;
+          }
+        }
+        return fallback;
+      });
+      const jumpVisible = Array.from(document.querySelectorAll("button")).some(button => {
+        const rect = button.getBoundingClientRect();
+        return button.textContent?.trim() === "Jump to latest" && rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight;
+      });
+      const hidden = matches.find(match => !match.visible && match.rect && match.clip);
+      const rect = hidden?.rect;
+      const clip = hidden?.clip;
+      return {
+        messageId: message?.dataset.messageId ?? null, role: message?.dataset.messageRole ?? null, matches, jumpVisible,
+        wheel: rect && clip ? {
+          x: Math.min(clip.right - 10, Math.max(clip.left + 10, rect.x + rect.width / 2)),
+          y: (clip.top + clip.bottom) / 2,
+          deltaY: Math.max(-600, Math.min(600, rect.y + rect.height / 2 - (clip.top + clip.bottom) / 2)),
+        } : null,
+      };
+    }, [messageId, requiredTexts]));
+  }
+  async function revealStoppedReply(requiredTexts: string[]) {
+    const answer = lastStoppedAnswer;
+    if (!answer) throw new Error("A stopped native assistant reply is required for a reply screenshot");
+    for (const text of requiredTexts) if (!answer.text.includes(text)) throw new Error(`The actual final assistant reply does not contain the screenshot evidence: ${text}`);
+    const deadline = Date.now() + 60_000;
+    let last = await replyVisibility(answer.id, requiredTexts);
+    for (let attempts = 0; Date.now() < deadline && attempts < 40; attempts++) {
+      if (hasVisibleReplyEvidence(last, answer.id, requiredTexts)) return last;
+      if (last.jumpVisible) {
+        await clickTarget(surface(), { role: "button", label: "Jump to latest" });
+        await waitFor(surface(), () => !Array.from(document.querySelectorAll("button")).some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0),
+          { timeoutMs: Math.min(10_000, Math.max(1, deadline - Date.now())), label: "the real Jump to latest navigation settles before rechecking the actual reply" });
+      } else if (last.wheel && Math.abs(last.wheel.deltaY) > 1) {
+        await surface().client.send("Input.dispatchMouseEvent", { type: "mouseWheel", ...last.wheel, deltaX: 0 });
+      } else {
+        await waitFor(surface(), browserScript((messageId, texts) => {
+          const message = Array.from(document.querySelectorAll<HTMLElement>('[data-message-id][data-message-role="assistant"]')).find(node => node.dataset.messageId === messageId);
+          return texts.every(text => Array.from(message?.querySelectorAll(".prose") ?? []).some(content => content.textContent?.includes(text)))
+            || Array.from(document.querySelectorAll("button")).some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0);
+        }, [answer.id, requiredTexts]), { timeoutMs: Math.max(1, deadline - Date.now()), label: "the current stopped assistant reply, not a prompt or tool summary, renders in the packaged UI" });
+      }
+      await evaluateOnSurface(surface(), () => new Promise<void>(resolve => requestAnimationFrame(() => resolve())), { awaitPromise: true });
+      last = await replyVisibility(answer.id, requiredTexts);
+    }
+    throw new Error(`The current assistant reply is not visibly readable in the viewport: ${JSON.stringify(last)}`);
+  }
+  async function screenshot(name: string, requiredReplyTexts?: string[]) {
+    if (requiredReplyTexts) {
+      try { await revealStoppedReply(requiredReplyTexts); }
+      catch (error) {
+        const draft: unknown = await surface().client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        await mkdir(join(evidenceDir, "draft"), { recursive: true });
+        if (isRecord(draft) && typeof draft.data === "string") await writeFile(join(evidenceDir, "draft", `${options.model}-${name}.png`), Buffer.from(draft.data, "base64"));
+        await writeFile(join(evidenceDir, "draft", `${options.model}-${name}.txt`), String(error));
+        throw error;
+      }
+    }
     const jumpVisible = await evaluateOnSurface(surface(), () => Array.from(document.querySelectorAll("button"))
       .some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0));
-    if (jumpVisible) {
+    if (jumpVisible && !requiredReplyTexts) {
       await clickTarget(surface(), { role: "button", label: "Jump to latest" });
       await waitFor(surface(), () => !Array.from(document.querySelectorAll("button"))
         .some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0),
       { timeoutMs: 10_000, label: "the latest packaged reply is visible before its screenshot" });
     }
     await evaluateOnSurface(surface(), async () => {
-      const control = document.querySelector('[data-testid="host-execution-switch"]');
+      const control = document.querySelector('[data-testid="host-execution-row"]');
       if (control) await Promise.race([
         Promise.allSettled(control.getAnimations({ subtree: true }).map(animation => animation.finished)),
         new Promise(resolve => setTimeout(resolve, 500)),
@@ -105,6 +202,17 @@ export async function packagedSandboxWorld(options: Options) {
     }, { awaitPromise: true, timeoutMs: 2000 });
     const result: unknown = await surface().client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     if (!isRecord(result) || typeof result.data !== "string") throw new Error("Screenshot returned no PNG");
+    if (requiredReplyTexts) {
+      const answer = lastStoppedAnswer;
+      const visible = answer ? await replyVisibility(answer.id, requiredReplyTexts) : null;
+      const accepted = Boolean(answer && visible && hasVisibleReplyEvidence(visible, answer.id, requiredReplyTexts));
+      if (!accepted) {
+        await mkdir(join(evidenceDir, "draft"), { recursive: true });
+        await writeFile(join(evidenceDir, "draft", `${options.model}-${name}.png`), Buffer.from(result.data, "base64"));
+        await writeFile(join(evidenceDir, "draft", `${options.model}-${name}.txt`), JSON.stringify({ reason: "The required current assistant reply was not visible immediately after capture", visible }, null, 2));
+      }
+      check(`${name}: the captured current assistant reply visibly contains the claimed evidence`, accepted, visible);
+    }
     await writeFile(join(evidenceDir, `${options.model}-${name}.png`), Buffer.from(result.data, "base64"));
   }
   const settingsPath = () => `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`;
@@ -112,9 +220,11 @@ export async function packagedSandboxWorld(options: Options) {
   async function settings() { return api(settingsPath()); }
   async function settingsRoute() {
     await control(surface(), "route.settings.authorized_folders");
-    await waitForLocated(surface(), { testId: "host-execution-switch" }, { timeoutMs: 60_000 });
+    await waitForLocated(surface(), { testId: "sandbox-location-computer" }, { timeoutMs: 60_000 });
   }
-  async function clickSwitch() { await clickTarget(surface(), { testId: "host-execution-switch" }); }
+  async function selectLocation(allowHostExecution: boolean) {
+    await clickTarget(surface(), { testId: allowHostExecution ? "sandbox-location-computer" : "sandbox-location-sandbox" });
+  }
   async function returnToChat() {
     await clickTarget(surface(), { role: "button", label: "Back to app" });
     await waitForLocated(surface(), "composer", { timeoutMs: 90_000 });
@@ -122,6 +232,7 @@ export async function packagedSandboxWorld(options: Options) {
     await waitForLocated(surface(), "composer", { timeoutMs: 90_000 });
   }
   async function send(text: string) {
+    lastStoppedAnswer = null;
     // This is the normal composer input + Run task button, not prompt_async or an engine API.
     if (sessionId) {
       const before = await native().snapshot(sessionId);
@@ -157,6 +268,7 @@ export async function packagedSandboxWorld(options: Options) {
       const hasAnswer = phaseRequests.length > 0 && phaseRequests.every(entry => entry.completed)
         && hasStoppedAssistantAnswer(snapshot.body, previousMessageIds);
       if (idle >= 4 && hasAnswer) {
+        lastStoppedAnswer = stoppedAssistantAnswer(snapshot.body, previousMessageIds);
         transcripts.push({ phase: state.phase, ...snapshot });
         check(`${state.phase}: run finishes with no tool still running`, snapshot.ok && currentMessages.flatMap(message => message.parts).every(part => part.type !== "tool" || !["pending", "running"].includes(part.status)), currentMessages);
         return currentMessages.flatMap(message => message.parts);
@@ -198,14 +310,24 @@ export async function packagedSandboxWorld(options: Options) {
     await settingsRoute();
     const stillActive = await api(`/workspace/${workspaceId}/opencode2/api/session/active`);
     check(`${phase}: chat remains active immediately before clicking the switch`, stillActive.status === 200 && JSON.stringify(stillActive.body).includes(sessionId));
-    await clickSwitch();
+    await selectLocation(desiredAllowHostExecution);
     const pending = await waitSettings(body => body.pending === true && body.allowHostExecution === desiredAllowHostExecution && body.effectiveAllowHostExecution === !desiredAllowHostExecution);
     check(`${phase}: desired setting is saved while the current run keeps its effective execution mode`, pending.pending === true, pending);
-    await waitFor(surface(), browserScript((checked) => document.querySelector('[data-testid="host-execution-switch"]')?.getAttribute("aria-checked") === String(checked), [desiredAllowHostExecution]),
-      { timeoutMs: 15_000, label: "the switch displays the saved choice while application is pending" });
+    await waitFor(surface(), browserScript((allowHostExecution) => {
+      const selected = allowHostExecution ? "sandbox-location-computer" : "sandbox-location-sandbox";
+      return document.querySelector(`[data-testid="${selected}"]`)?.getAttribute("aria-checked") === "true";
+    }, [desiredAllowHostExecution]), { timeoutMs: 15_000, label: "the selected location displays the saved choice while application is pending" });
     await waitForText(surface(), "finish", { timeoutMs: 15_000 });
+    const pendingPresentation = await evaluateOnSurface(surface(), () => {
+      const row = document.querySelector('[data-testid="host-execution-row"]');
+      const note = row?.querySelector('[data-testid="host-execution-note"]');
+      return { note: note?.textContent ?? "", redWarnings: row?.querySelectorAll('[class*="text-destructive"], [role="alert"]').length ?? 0 };
+    });
+    check(`${phase}: the saved pending location uses a calm explanation, not a failure warning`, pendingPresentation.note.includes("Applies when the current task finishes") && pendingPresentation.redWarnings === 0, pendingPresentation);
     await screenshot(`${phase}-pending`);
     await returnToChat();
+    await waitForLocated(surface(), { testId: "session-sandbox-indicator" }, { timeoutMs: 15_000 });
+    await screenshot(`${phase}-pending-chat-indicator`);
     const final = await finished();
     check(`${phase}: the ongoing shell finishes in ${expectedOs} after the switch changes`, final.some(part => part.tool === "shell" && part.status === "completed" && part.output.includes(expectedOs)), final.filter(part => part.tool === "shell"));
     check(`${phase}: a later read in the same ongoing turn is not revoked`, final.some(part => part.tool === "read" && part.status === "completed" && JSON.stringify(part.input).includes(files.notes) && part.output.includes("status:")), final.filter(part => part.tool === "read"));
@@ -362,7 +484,7 @@ export async function packagedSandboxWorld(options: Options) {
     check("guest edit updates host workspace", (await readFile(files.notes, "utf8")).includes("status: final"));
     check("host-only bytes never enter transcripts or inference", !JSON.stringify(parts).includes(hostSecret) && inference.records.every(entry => !entry.requestContainedHostSecret));
     check("unmounted host path was actually attempted with read and shell", ["read", "shell"].every(tool => tools.some(part => part.tool === tool && JSON.stringify(part.input).includes(files.private) && (part.status === "error" || /No such file|not found|not mounted|outside/i.test(part.output)))));
-    await screenshot("six-tools-linux");
+    await screenshot("six-tools-linux", ["Linux"]);
 
     state.phase = "live-host-edit";
     await writeFile(files.reference, updated);
@@ -371,7 +493,7 @@ export async function packagedSandboxWorld(options: Options) {
     check("running guest observes later host edit at unchanged absolute path", live.some(part => part.tool === "read" && part.output.includes(updated)));
     check("guest edit writes back into same host file", (await readFile(files.reference, "utf8")) === guest);
     check("live followup still offers only six direct tools", hasOnlyDirectGuestTools(inference.records.filter(entry => entry.phase === state.phase)));
-    await screenshot("live-edits-both-directions");
+    await screenshot("live-edits-both-directions", [updated]);
 
     await activeToggle(true, "active-sandbox-to-host", "Linux");
     check("every phase used the selected real model", inference.records.length > 0 && inference.records.every(entry => entry.status === 200 && entry.completed && entry.requestedModel === profile.model && entry.responseModel?.startsWith(profile.model)), inference.records);
