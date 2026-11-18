@@ -52,6 +52,7 @@ import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
 import {
+  automationProposalCalls,
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
@@ -286,7 +287,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return start ? [{ start, call }] : []
   }) : []
   const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
-  if (foldTool && !remoteStart && remoteStarts.length === 0) return null
+  const proposals = calls && part.type === "dynamic-tool" ? automationProposalCalls(part) : []
+  if (foldTool && !remoteStart && remoteStarts.length === 0 && proposals.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -297,12 +299,13 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   if (part.type === "dynamic-tool") {
-    if (calls && remoteStarts.length > 0) {
-      const started = new Set(remoteStarts.map(({ call }) => call.toolCallId))
+    if (calls && (remoteStarts.length > 0 || proposals.length > 0)) {
+      const started = new Set([...remoteStarts.map(({ call }) => call.toolCallId), ...proposals.map((call) => call.toolCallId)])
       return (
         <div className="flex min-w-0 flex-col gap-1">
           {!foldTool && <CodeModeTool part={part} calls={calls.filter((call) => !started.has(call.toolCallId))} lifecycle={lifecycle} connectors={connectorIdentities} />}
           {promptCall && <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />}
+          {proposals.map((call) => <OpenWorkAutomationProposalTool key={call.toolCallId} part={call} />)}
           {remoteStarts.filter(({ call }) => !pinnedRemoteThreads.has(call.toolCallId))
             .map(({ start, call }) => <RemoteThreadRunLine key={start.key} start={start} part={call} />)}
         </div>
