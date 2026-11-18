@@ -299,7 +299,7 @@ test("a configuration change's command asks OpenWork before update-stack; retry 
   assert.equal(url, `https://control.example.com/v1/managed-deployments/${deploymentId}/runs/${change.runId}/approval-check`)
   const [account, confirm, update] = [checked.indexOf("aws sts get-caller-identity"), checked.indexOf("curl "), checked.indexOf("aws cloudformation update-stack")]
   assert.ok(account >= 0 && account < confirm && confirm < update, "account, then OpenWork, then the stack")
-  assert.ok(checked.includes(`--data '${JSON.stringify({ challenge: change.challenge })}' '${url}')" = 200 ]`), "only a 200 from that exact address continues")
+  assert.ok(checked.includes(`--data '${JSON.stringify({ challenge: change.challenge })}' '${url}') && [ "$_openwork_approval_status" = 200 ]`), "curl must succeed and report a 200 from that exact address")
   assert.ok(!/--location|-L\b/.test(checked), "a redirect is never followed")
   assert.ok(checked.endsWith(plain.slice(plain.indexOf("aws cloudformation update-stack"))), "the stack update is the last step, exactly as in a retry")
   assert.deepEqual([...parameters(checked)], [...parameters(plain)], "the parameters are still the command's literal JSON tail")
