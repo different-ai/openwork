@@ -25,10 +25,10 @@ test("a member of a packaged install disables host tools and edits a live author
   });
   await step("when the member chooses In a sandbox (isolated) and authorizes one folder", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see("Where the agent runs commands");
+    await user.see({ role: "heading", label: "Where the agent runs commands" });
     await user.see({ testId: "sandbox-location-computer" });
     await user.click({ testId: "sandbox-location-sandbox" });
-    await user.see("Folders the sandbox can see");
+    await user.see({ role: "heading", label: "Folders the sandbox can see" });
     const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
       within: 90_000, label: "the selected sandbox location is persisted", until: result => result.status === 200 && JSON.stringify(result.body).includes('"effectiveAllowHostExecution":false'),
     });
@@ -88,9 +88,9 @@ test("a member of a packaged install disables host tools and edits a live author
 test("a member sees real sandbox preparation before commands can run in the packaged app", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: the member explicitly chooses where commands run", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see("Where the agent runs commands");
-    await user.see("On this computer");
-    await user.see("In a sandbox (isolated)");
+    await user.see({ role: "heading", label: "Where the agent runs commands" });
+    await user.see({ role: "radio", label: "On this computer" });
+    await user.see({ role: "radio", label: "In a sandbox (isolated)" });
     const selected = await probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]');
     evidence.recordAssertionEvidence("The computer is selected before sandbox preparation", JSON.stringify(selected), selected.elements.length === 1);
     expect(selected.elements).toHaveLength(1);
@@ -116,8 +116,12 @@ test("a member sees real sandbox preparation before commands can run in the pack
     await world.resumeHeldRuntime();
   });
   await step("after: sandbox readiness and folder access are visible together", async () => {
-    await user.see("Sandbox ready", { timeoutMs: 180_000 });
-    await user.see("Folders the sandbox can see");
+    await user.see({ testId: "sandbox-runtime-status" }, { timeoutMs: 180_000 });
+    const readyStatus = await probe.eventually(() => probe.dom('[data-testid="sandbox-runtime-status"][data-sandbox-state="ready"]'), {
+      within: 180_000, label: "the visible runtime status reaches ready", until: value => value.elements.length === 1 && value.elements[0]?.text.includes("Sandbox ready") === true,
+    });
+    expect(readyStatus.elements[0]?.text).toBe("Sandbox ready");
+    await user.see({ role: "heading", label: "Folders the sandbox can see" });
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ effectiveAllowHostExecution: false, pending: false, runtime: { state: "ready" } });
     const startupControl = world.startupHoldReceipt();
@@ -138,7 +142,11 @@ test("a member sees real sandbox preparation before commands can run in the pack
   });
   await step("after: Retry replaces the crashed guest without changing the selected location", async () => {
     await user.click({ testId: "sandbox-retry" });
-    await user.see("Sandbox ready", { timeoutMs: 180_000 });
+    await user.see({ testId: "sandbox-runtime-status" }, { timeoutMs: 180_000 });
+    const readyStatus = await probe.eventually(() => probe.dom('[data-testid="sandbox-runtime-status"][data-sandbox-state="ready"]'), {
+      within: 180_000, label: "the visible runtime status reaches ready", until: value => value.elements.length === 1 && value.elements[0]?.text.includes("Sandbox ready") === true,
+    });
+    expect(readyStatus.elements[0]?.text).toBe("Sandbox ready");
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ effectiveAllowHostExecution: false, runtime: { state: "ready" } });
     evidence.recordAssertionEvidence("A real guest becomes ready again and host commands stay disabled", JSON.stringify(result.body), result.status === 200);
@@ -154,7 +162,7 @@ const unavailableTest = spec.world(packagedSandboxUnavailable, { timeout: 900_00
 unavailableTest("a member repairs an unsupported sandbox installation and retries without host fallback", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: a fresh packaged install still offers the explicit computer choice", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see("On this computer");
+    await user.see({ role: "radio", label: "On this computer" });
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ effectiveAllowHostExecution: true });
     evidence.recordAssertionEvidence("The failure fixture is only a regular file at this world's own MSB_HOME", "Owned filesystem fault; real packaged server and native SDK; no simulated runtime response", result.status === 200 && world.isPackaged);
@@ -166,7 +174,10 @@ unavailableTest("a member repairs an unsupported sandbox installation and retrie
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ effectiveAllowHostExecution: false, runtime: { state: "unsupported", reason: "runtime_unavailable", canRetry: true } });
     const selected = await probe.dom('[data-testid="sandbox-location-sandbox"][aria-checked="true"]');
-    await user.see({ testId: "sandbox-runtime-status", text: "Restore access or reinstall OpenWork" });
+    await user.see({ testId: "sandbox-runtime-status" });
+    const status = await probe.dom('[data-testid="sandbox-runtime-status"][data-sandbox-state="unsupported"]');
+    expect(status.elements).toHaveLength(1);
+    expect(status.elements[0]?.text).toContain("OpenWork cannot access its sandbox folder. Restore access or reinstall OpenWork, then try again.");
     evidence.recordAssertionEvidence("A real installation-path failure does not switch to host commands; this is not a claim about unsupported Mac hardware", JSON.stringify(result.body), result.status === 200 && selected.elements.length === 1);
     expect(selected.elements).toHaveLength(1);
     await user.screenshot();
@@ -174,7 +185,11 @@ unavailableTest("a member repairs an unsupported sandbox installation and retrie
   await step("after: repairing only the owned runtime directory lets the real Retry start a guest", async () => {
     await world.repairOwnedRuntime();
     await user.click({ testId: "sandbox-retry" });
-    await user.see("Sandbox ready", { timeoutMs: 180_000 });
+    await user.see({ testId: "sandbox-runtime-status" }, { timeoutMs: 180_000 });
+    const readyStatus = await probe.eventually(() => probe.dom('[data-testid="sandbox-runtime-status"][data-sandbox-state="ready"]'), {
+      within: 180_000, label: "the visible runtime status reaches ready", until: value => value.elements.length === 1 && value.elements[0]?.text.includes("Sandbox ready") === true,
+    });
+    expect(readyStatus.elements[0]?.text).toBe("Sandbox ready");
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ effectiveAllowHostExecution: false, runtime: { state: "ready" } });
     evidence.recordAssertionEvidence("Retry prepared the real guest without enabling host commands", JSON.stringify(result.body), result.status === 200);
@@ -202,8 +217,9 @@ managedSandboxTest("a member sees the organization's locked sandbox location in 
   });
   await step("when the member opens Settings both execution choices are locked", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see("Where the agent runs commands");
-    await user.see("Managed by your organization. An admin can change it in agent permissions.");
+    await user.see({ role: "heading", label: "Where the agent runs commands" });
+    await user.see({ testId: "host-execution-note" });
+    expect((await probe.dom('[data-testid="host-execution-note"][data-host-execution-note="managed"]')).elements.map(note => note.text)).toEqual(["Managed by your organization. An admin can change it in agent permissions."]);
     const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
     const selected = await probe.dom('[data-testid="sandbox-location-sandbox"][aria-checked="true"]');
     evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
@@ -240,8 +256,9 @@ managedComputerTest("a member sees the organization's locked computer location i
   });
   await step("when the member opens Settings both execution choices are locked", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see("Where the agent runs commands");
-    await user.see("Managed by your organization. An admin can change it in agent permissions.");
+    await user.see({ role: "heading", label: "Where the agent runs commands" });
+    await user.see({ testId: "host-execution-note" });
+    expect((await probe.dom('[data-testid="host-execution-note"][data-host-execution-note="managed"]')).elements.map(note => note.text)).toEqual(["Managed by your organization. An admin can change it in agent permissions."]);
     const disabled = await probe.dom('[data-testid^="sandbox-location-"][disabled]');
     const selected = await probe.dom('[data-testid="sandbox-location-computer"][aria-checked="true"]');
     evidence.recordAssertionEvidence("Both choices are disabled and the policy-selected location remains explicit", JSON.stringify({ disabled, selected }), disabled.elements.length === 2 && selected.elements.length === 1);
@@ -284,7 +301,7 @@ flagOffTest("a member outside the sandbox rollout sees no execution-location con
   await step("after: revisiting cannot reveal the flagged controls", async () => {
     await user.click("Back to app");
     await agent.run("route.settings.authorized_folders");
-    await user.notSee("Where the agent runs commands");
+    await user.notSee({ role: "heading", label: "Where the agent runs commands" });
     const result = await probe.desktopApi(world.settingsPath);
     expect(result.body).toMatchObject({ featureEnabled: false });
     evidence.recordAssertionEvidence("Settings navigation did not opt this organization into sandbox execution", JSON.stringify(result.body), result.status === 200);
