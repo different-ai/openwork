@@ -262,6 +262,16 @@ A computer already on the gateway stays there, and the gateway's own refusals
 Organizations without the flag never use the gateway. See the runner's
 [sandbox gateway notes](../../ee/apps/headless-runner/README.md#sandbox-gateway).
 
+The [sandbox tools design](../features/sandbox-tools/design.md) reuses `sandboxGateway`
+for its planned Remote mode, alongside the new `sandboxTools` tool rollout. Remote
+would use this existing Differently adapter and project/template setup, not separate
+Freestyle/Daytona credentials in OpenWork. Unlike the Workbot behavior above, those
+new tools must fail closed if the gateway is unavailable or refuses a request; they
+must not use the runner's fallback router or switch to direct providers, local
+microsandbox or host execution. Local microsandbox is an explicit, in-process mode
+and does not use Differently. No sandbox-tool routing is implemented yet, and this
+design does not change existing Workbot placement or fallback.
+
 ## Transport and rollout
 
 The Workbot server checks signed-in membership and the organization flags before

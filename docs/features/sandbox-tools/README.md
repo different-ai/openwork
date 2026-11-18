@@ -1,50 +1,59 @@
 # Sandbox tools
 
-Feature `sandboxTools` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
+Tool rollout: `sandboxTools` (cloud and self-hosted, off). Remote availability reuses `sandboxGateway` (off).
+Author: `benjaminshafii`.
 
-**Status: the flag and the local microVM adapter exist; the tools are not wired into the app yet.** Turning the flag
-on changes nothing today. [design.md](design.md) is the plan, the reasons and the evidence behind it.
+**Status: design and local microVM adapter foundation only. The tools are not wired into the app.** Turning either
+flag on does not enable these new tools today. [design.md](design.md) covers the architecture, prerequisites and
+verification plan.
 
 ## What changes
 
-With the feature on and a sandbox chosen for the workspace, the agent gets extra tools next to its usual ones:
+The agent gets extra tools next to its usual host shell and file tools:
 
 | Tool | For |
 | --- | --- |
-| `sandbox_bash` | run a command inside the sandbox |
-| `sandbox_job` | check on, or stop, a command started in the background |
-| `sandbox_read`, `sandbox_write` | read and write files inside the sandbox |
-| `sandbox_preview` | get a link to a web app running inside the sandbox |
-| `sandbox_status` | what the sandbox is, which folders it can see and what it can reach on the network |
+| `sandbox_bash` | run a command in the selected sandbox |
+| `sandbox_job` | inspect or stop background work |
+| `sandbox_read`, `sandbox_write` | read and write guest files |
+| `sandbox_preview` | obtain an approved web preview |
+| `sandbox_status` | see location, verified grants, mounts, state and jobs |
 
-The agent's usual shell and file tools keep working on this computer. The sandbox is an extra, isolated place to run
-things: it sees only the folders it was given, and it has no network unless hosts are listed for it.
+Setup chooses one execution location:
 
-Three sandboxes can back the tools:
+- **Remote** (the default remote path): use the existing Differently gateway and an approved template/profile.
+  Differently chooses the Freestyle/Daytona pool by policy and holds the provider keys. OpenWork has only a
+  project-scoped gateway connection, not separate upstream accounts or credentials.
+- **This computer**: local microsandbox, in-process, on Apple Silicon macOS or Linux with KVM. No gateway or
+  provider key is needed. Differently explicitly does not support microsandbox's embedded runtime.
 
-- **This computer** (`microsandbox`): a local microVM. Apple Silicon Macs and Linux with KVM. No account or key.
-- **Freestyle**: a cloud VM.
-- **Daytona**: a cloud sandbox. A container by default; a Linux VM where the organization configured that class.
+The workspace starts off until setup is accepted. It never changes execution location because a runtime or gateway
+is unavailable. Remote sees no local workspace folder; Local sees only approved mounts, read-only by default.
+Network defaults to denied. Required remote isolation/network/preview grants must be enforceable by the gateway;
+otherwise the Remote option is unavailable on that connection.
 
-When the sandbox cannot start or cannot be reached, the tool says why and whether the command started. Nothing runs
-on this computer in its place, and no other sandbox is tried.
+## Flags and failure behavior
 
-## Who gets it
+`sandboxTools` rolls out the new tool surface. `sandboxGateway` is reused for Remote, which requires both flags.
+Local does not require `sandboxGateway`. No duplicate remote-provider rollout or direct-provider setup is added.
+Both use the registry's normal member/org/deployment resolution. Den org settings bound each workspace choice;
+without an org, use the deployment's `/v1/features` and explicitly configured local/gateway setup.
 
-People on the OpenCode v2 engine whose organization has `sandboxTools` on, or, signed out, whose deployment has it
-on for everyone. Which sandbox is used comes from the organization's setting, narrowed by the person's choice for the
-workspace (design.md, "Provider choice and credentials").
+Gateway down, missing connection, policy refusal, flag off: return unavailable. **No fallback to a direct provider,
+local VM or host execution.** Existing Workbot's different fallback behavior is unchanged; these tools do not use
+its fallback router. A dispatched command whose result is lost is outcome-unknown, not proof it did not run.
 
-## Turning it on and off
+Killing `sandboxTools` stops new admission for both modes; killing `sandboxGateway` stops only Remote, without
+switching it to Local. Authorization is checked server-side on each call with at most 60 seconds of verified-policy
+reuse. Stop owned sandboxes on revocation/sign-out; retain disks as the documented provider TTL permits.
 
-Turn `sandboxTools` on for an organization in `/admin` (Features, or the organization's row). Off, or with the kill
-switch used, the tools are no longer offered from the next message on and are refused within a minute. A command
-already running finishes inside the sandbox. Sandboxes are stopped and keep their files until the workspace is removed
-or the person resets the sandbox; nothing is moved to this computer.
+## Implementation and evidence
 
-What to watch: `sandbox_unavailable` tool results by reason (runtime missing, no hypervisor access, image pull,
-credentials, settings could not be verified), sandbox start time, and local microVMs left running.
+- `packages/sandbox-microsandbox`: the new unwired local adapter; run its `test` and opt-in `test:live` scripts.
+- `packages/sandbox-differently`: reuse this existing remote adapter. Design section 9 lists its metadata and
+  admission gaps and the required Differently-side network/preview/profile work.
+- `packages/features/src/flags/sandbox-gateway.ts` and
+  [Workbot gateway documentation](../../computer-use/workbot.md#through-a-sandbox-gateway): existing gateway setup.
 
-Code: `packages/sandbox-microsandbox` (adapter, `pnpm --filter @openwork/sandbox-microsandbox test`, and
-`MICROSANDBOX_LIVE=1 pnpm --filter @openwork/sandbox-microsandbox test:live` for real microVMs),
-`packages/sandbox` (the contract every sandbox implements).
+Watch unavailable reasons, gateway policy refusals, unknown execution outcomes, start latency and uncollected
+sandboxes. No guest application-secret injection in v1. No provider keys leave Differently.
