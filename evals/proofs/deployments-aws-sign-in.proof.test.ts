@@ -29,7 +29,7 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     const rows = await text('[data-testid="managed-deployment-row"]');
     const setting = (await text('[data-testid="aws-sign-in-setting"]')).join(" ");
     await user.screenshot();
-    const listed = rows.length === 1 && rows[0].includes(DEPLOYMENT_NAME) && rows[0].includes(account) && rows[0].includes("Awaiting AWS approval") && setting.includes("Not set");
+    const listed = rows.length === 1 && rows[0].includes(DEPLOYMENT_NAME) && rows[0].includes(account) && rows[0].includes("Awaiting AWS approval") && setting.includes("Optional · Not set");
     evidence.recordAssertionEvidence("The list shows the deployment with its account and state, and AWS sign-in as not set", `row: ${rows.join(" | ")}; setting: ${setting}`, listed);
     expect(listed).toBe(true);
     await user.click({ testId: "managed-deployment-row" });
@@ -40,18 +40,40 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     const signIn = (await text('[data-testid="deployment-approve-sign-in"]')).join(" ");
     const href = (await probe.linkTargets('[data-testid="deployment-approve-link"]'))[0] ?? "";
     await user.screenshot();
-    const ok = signIn.includes(`Sign in to AWS account ${account}`) && signIn.includes("Save your sign-in page") && href.startsWith("https://us-east-1.console.aws.amazon.com/");
-    evidence.recordAssertionEvidence("Step 1 names the AWS account and offers to save the sign-in page; the approval button is the plain console link", `step 1: ${signIn}; button opens: ${href.slice(0, 60)}`, ok);
+    const ok = signIn.includes(`Sign in to AWS account ${account}`) && signIn.includes("Use an access portal (optional)") && href.startsWith("https://us-east-1.console.aws.amazon.com/");
+    evidence.recordAssertionEvidence("Step 1 names the AWS account and offers an access portal as optional; the approval button is the plain console link", `step 1: ${signIn}; button opens: ${href.slice(0, 60)}`, ok);
     expect(ok).toBe(true);
   });
 
-  await step("the admin saves the AWS access portal and role", async () => {
+  await step("after: the admin saves only the access portal and AWS asks them to choose a role", async () => {
     await user.click({ testId: "aws-sign-in-open" });
-    await user.see({ testId: "aws-sign-in-dialog" });
+    await user.see({ text: "Role name (optional)" });
     await user.type({ testId: "aws-sign-in-portal" }, PORTAL_URL);
     await user.screenshot();
     await user.click({ testId: "aws-sign-in-save" });
     await user.see({ text: `Signs in through ${PORTAL_HOST}` }, { timeoutMs: 60_000 });
+    await user.reload();
+    await user.see({ testId: "deployment-approve-link" }, { timeoutMs: 60_000 });
+    const saved = await world.savedSignIn();
+    const href = (await probe.linkTargets('[data-testid="deployment-approve-link"]'))[0] ?? "";
+    const params = new URLSearchParams(href.slice(href.indexOf("?") + 1));
+    const signIn = (await text('[data-testid="deployment-approve-sign-in"]')).join(" ");
+    await user.screenshot();
+    const ok = saved?.portalUrl === PORTAL_URL && saved.roleName === null && href.startsWith(`${PORTAL_URL}/#/console?`)
+      && !params.has("role_name") && params.get("account_id") === ACCOUNT_ID
+      && (params.get("destination") ?? "").startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/")
+      && signIn.includes("Choose role at sign-in");
+    evidence.recordAssertionEvidence("Saving a portal without a role leaves role selection to AWS", `saved role: ${saved?.roleName}; row: ${signIn}; role parameter present: ${params.has("role_name")}; account: ${params.get("account_id")}`, ok);
+    expect(ok).toBe(true);
+  });
+
+  await step("the admin can also save an exact role name", async () => {
+    await user.click({ testId: "aws-sign-in-detail" });
+    await user.see({ testId: "aws-sign-in-dialog" });
+    await user.type({ testId: "aws-sign-in-role" }, ROLE_NAME);
+    await user.screenshot();
+    await user.click({ testId: "aws-sign-in-save" });
+    await user.see({ text: `Account ${account} · ${ROLE_NAME}` }, { timeoutMs: 60_000 });
     const saved = await world.savedSignIn();
     const ok = saved?.portalUrl === PORTAL_URL && saved.roleName === ROLE_NAME;
     evidence.recordAssertionEvidence("Den saved the sign-in for the organization", `portal: ${saved?.portalUrl}; role: ${saved?.roleName}`, ok);

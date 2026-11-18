@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
+import { ManagedDeploymentAwsSignInTable, ManagedDeploymentTable } from "@openwork-ee/den-db/schema"
 import { bootDen, field, list, summary, text } from "./harness.js"
 
 const den = await bootDen({ env: {
@@ -58,6 +58,8 @@ test("only someone who can manage deployments saves a sign-in, and only an AWS a
     { ...signIn, portalUrl: "https://acme.awsapps.com.example.com/start" },
     { ...signIn, portalUrl: "http://acme.awsapps.com/start" },
     { ...signIn, roleName: "Administrator Access" },
+    { ...signIn, roleName: "Admin/Access" },
+    { ...signIn, roleName: "a".repeat(65) },
   ]) {
     const invalid = await owner("PUT", SIGN_IN_PATH, { awsSignIn })
     assert.equal(invalid.status, 400, summary(invalid))
@@ -99,6 +101,48 @@ test("a saved sign-in opens the approval link, CloudShell and the stack through 
   const update = await owner("POST", path, { kind: "update" })
   assert.equal(update.status, 200, summary(update))
   assert.equal(portalRequest(text(field(update.body, "handoff", "url"), "CloudShell URL")).destination, "https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1")
+})
+
+test("a portal URL alone saves a null role and every AWS link leaves role selection to the portal", async () => {
+  for (const awsSignIn of [
+    { portalUrl: signIn.portalUrl },
+    { portalUrl: signIn.portalUrl, roleName: "" },
+    { portalUrl: signIn.portalUrl, roleName: " \t " },
+    { portalUrl: signIn.portalUrl, roleName: null },
+  ]) {
+    const saved = await owner("PUT", SIGN_IN_PATH, { awsSignIn })
+    assert.equal(saved.status, 200, summary(saved))
+    assert.deepEqual(field(saved.body, "awsSignIn"), { portalUrl: signIn.portalUrl, roleName: null })
+    assert.deepEqual(await savedSignIn(), { portalUrl: signIn.portalUrl, roleName: null })
+    const [row] = await db.select().from(ManagedDeploymentAwsSignInTable).where(eq(ManagedDeploymentAwsSignInTable.org_id, org.orgId))
+    assert.equal(row?.role_name, "")
+  }
+
+  const id = await create()
+  const path = `/v1/managed-deployments/${id}/launch`
+  const install = await owner("POST", path, { kind: "install" })
+  assert.equal(install.status, 200, summary(install))
+  const approval = portalRequest(text(field(install.body, "approvalUrl"), "approval URL"))
+  assert.deepEqual({ account: approval.account, role: approval.role }, { account: "123456789012", role: null })
+  assert.ok(approval.destination.startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/"))
+  assert.ok(text(field(install.body, "handoff", "instructions"), "instructions").includes("through your access portal, where you choose your role, then opens the installer"))
+
+  const listed = await owner("GET", "/v1/managed-deployments")
+  assert.equal(listed.status, 200, summary(listed))
+  for (const deployment of list(field(listed.body, "deployments"))) {
+    const stack = portalRequest(text(field(deployment, "consoleUrl"), "stack URL"))
+    assert.equal(stack.role, null)
+    assert.equal(stack.account, "123456789012")
+    assert.ok(stack.destination.includes("/cloudformation/"))
+  }
+
+  await db.update(ManagedDeploymentTable).set({ installed_version: "1.0.1", active_run_id: null }).where(eq(ManagedDeploymentTable.id, id))
+  const update = await owner("POST", path, { kind: "update" })
+  assert.equal(update.status, 200, summary(update))
+  const shell = portalRequest(text(field(update.body, "handoff", "url"), "CloudShell URL"))
+  assert.deepEqual(shell, { account: "123456789012", role: null, destination: "https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1" })
+  assert.ok(text(field(update.body, "handoff", "instructions"), "instructions").includes("where you choose your role"))
+  assert.equal((await owner("PUT", SIGN_IN_PATH, { awsSignIn: signIn })).status, 200)
 })
 
 test("the sign-in belongs to one organization, stops applying when the feature is off, and can be removed", async () => {

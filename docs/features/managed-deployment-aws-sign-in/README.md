@@ -23,9 +23,11 @@ With this feature on:
 - **If AWS shows something else** answers the four cases people hit: a root or
   IAM sign-in page, "Select a role", a different account number, a closed tab.
 - **AWS sign-in** (Deployments › Settings, and each AWS deployment's Details)
-  saves the organization's access portal URL and role once. Every AWS link Den
-  issues afterwards (approval, CloudShell, the stack) opens through the portal
-  in the deployment's own account, with the original page as its destination.
+  saves the organization's access portal URL and, optionally, a role once.
+  Without a saved role, AWS asks the person to choose one when signing in.
+  Every AWS link Den issues afterwards (approval, CloudShell, the stack) opens
+  through the portal in the deployment's own account, with the original page
+  as its destination.
 
 | Off | On |
 | --- | --- |
