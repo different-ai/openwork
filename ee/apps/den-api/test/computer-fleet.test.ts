@@ -200,6 +200,26 @@ test("a computer awake for most of its life is flagged, even though its provider
   assert.deepEqual([fleet.status, fleet.attentionCounts?.long_running, fleet.sandboxes[0]?.id, fleet.sandboxes[0]?.runSeconds], ["warning", 1, "awake", days(10.7)])
 })
 
+test("a computer still running hours after its conversation went quiet is flagged, whatever its provider sees", () => {
+  const vm = { source: "direct" as const, provider: "freestyle", pool: null, backend: null, region: null, lastActivityAt: ago(1), updatedAt: ago(1) }
+  const acme = { id: "org_acme", name: "Acme" }
+  const at = (minutes: number) => NOW.getTime() - minutes * 60_000
+  const owners = new Map<string, ComputerOwner>([
+    // The provider sees a busy desktop; the conversation's last turn was twelve days ago.
+    ["hc-left", { ...acme, activeAt: at(12 * 1440), turnRunning: false }],
+    ["hc-busy", { ...acme, activeAt: at(12 * 1440), turnRunning: true }],
+    ["hc-recent", { ...acme, activeAt: at(90), turnRunning: false }],
+    ["hc-asleep", { ...acme, activeAt: at(12 * 1440), turnRunning: false }],
+    // An index that does not say when the conversation was active decides nothing.
+    ["hc-unsaid", acme],
+  ])
+  const fleet = computerFleetFrom(listed([computer("left", vm), computer("busy", vm), computer("recent", vm), computer("asleep", { ...vm, status: "paused" }), computer("unsaid", vm), computer("stranger", vm)]), owners, NOW)
+  assert.deepEqual(Object.fromEntries(fleet.sandboxes.map((sandbox) => [sandbox.id, sandbox.attention])), { left: "idle_running", busy: null, recent: null, asleep: null, unsaid: null, stranger: null })
+  // The page gets the organization, never when its conversation was active.
+  assert.deepEqual(fleet.sandboxes.find((sandbox) => sandbox.id === "left")?.organization, acme)
+  assert.equal(adminComputerFleetSchema.safeParse(fleet).success, true)
+})
+
 test("the list can be narrowed to one organization, and the page is told which organizations have computers", () => {
   const owners = new Map<string, ComputerOwner>([["hc-a", { id: "org_acme", name: "Acme" }], ["hc-b", { id: "org_acme", name: "Acme" }], ["hc-c", { id: "org_north", name: "Northwind" }]])
   const list = listed([computer("a"), computer("b", { status: "paused" }), computer("c", { status: "failed", updatedAt: ago(5), endedAt: ago(5) }), computer("d"), computer("e", { key: null })])
@@ -267,6 +287,9 @@ test("a computer nobody at Den knows, with events the runner's key may not read,
   const bare = computerDetailFrom(runnerDetail({ events: null, eventsError: "http_403", placement: null }), null, null, { reported: null, events: [] }, NOW)
   assert.equal(adminComputerDetailSchema.safeParse(bare).success, true)
   assert.deepEqual([bare.computer.organization, bare.conversation, bare.reported, bare.events, bare.providerEventsError, bare.placement], [null, null, null, [], "http_403", null])
+  // Read fresh for the page: a conversation quiet for days flags its running computer, and a turn under way clears it.
+  const quietFor = (minutes: number, turn: Date | null) => computerDetailFrom(runnerDetail(), { id: "org_acme", name: "Acme" }, { ...conversation, lastActiveAt: new Date(ago(minutes)), activeTurnSince: turn }, { reported: null, events: [] }, NOW).computer.attention
+  assert.deepEqual([quietFor(3 * 1440, null), quietFor(3 * 1440, new Date(ago(2))), quietFor(30, null)], ["idle_running", null, null])
   // A failure from last week is not on the list any more, but its page still opens.
   const old = computerDetailFrom(runnerDetail({ computer: computer("sbx_old", { status: "failed", statusReason: "backend rejected the sandbox", updatedAt: ago(9000), endedAt: ago(9000) }) }), null, null, { reported: null, events: [] }, NOW)
   assert.deepEqual([old.computer.state, old.computer.attention, old.computer.statusReason], ["failed", "failed", "backend rejected the sandbox"])

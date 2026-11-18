@@ -147,6 +147,13 @@ test("a running computer says what is using it, or that nothing is", () => {
   assert.deepEqual([left.tone, left.headline], ["warning", "Running with nothing using it for 3 h 20 min."]);
   assert.match(left.points[0] ?? "", /Most likely a pause that failed, or a runner that lost track of it/);
   assert.equal(explainComputer(detail({}, { lastActivityAt: null }), NOW).headline, "Running. Its provider does not say when it was last used.");
+  // Flagged from the conversation, while the provider still sees a busy desktop.
+  const quiet = explainComputer(detail({ conversation: { ...detail().conversation!, lastActiveAt: ago(12 * 1440) } }, { source: "direct", provider: "freestyle", attention: "idle_running", lastActivityAt: ago(1) }), NOW);
+  assert.deepEqual([quiet.tone, quiet.headline], ["warning", "Running, but its conversation has been quiet for 12 d."]);
+  assert.match(quiet.points[0] ?? "", /either running a long background job, or the runner has lost track of it/);
+  assert.match(quiet.points[1] ?? "", /^Its provider last saw activity 1 min ago\. A desktop's browser keeps connections open/);
+  // An open view counts as the conversation being in use.
+  assert.equal(explainComputer(detail({ conversation: { ...detail().conversation!, lastActiveAt: ago(12 * 1440) }, reported: { state: "ready", detail: null, at: ago(10) } }, { attention: "idle_running", lastActivityAt: ago(200) }), NOW).headline, "Running with nothing using it for 3 h 20 min.");
   const awake = explainComputer(detail({}, { source: "direct", provider: "freestyle", attention: "long_running", createdAt: ago(11 * 1440), runSeconds: Math.round(10.5 * 86_400), lastActivityAt: ago(1) }), NOW);
   assert.deepEqual([awake.tone, awake.headline], ["warning", "Running, and awake for 10 d 12 h of the 11 d since it was made."]);
   assert.match(awake.points[0] ?? "", /a background job that never ends, a view left open in a browser, turns that arrive faster than it can pause, or a pause the runner never made/);

@@ -136,9 +136,11 @@ the runner credentials it already has. The page needs no setting of its own and 
 
 - `state.ts`: one vocabulary of states for every provider, what needs a look (failed in the last day, stuck
   starting, pausing or stopping, past its expiry, running with no use for 30 minutes or longer where the runner's
-  pause or the provider's own idle rule is longer, or awake for more than half of a life of two days or more, where
-  the provider counts run time), totals and the overall status. The last one exists because a desktop is never
-  silent on the network: a provider's own idle rule does not stop a computer the runner failed to pause. A computer's key is `hc-` and a
+  pause or the provider's own idle rule is longer, running two hours after its conversation last had a turn or an
+  open view, or awake for more than half of a life of two days or more, where the provider counts run time), totals
+  and the overall status. The last two exist because a desktop is never
+  silent on the network: a provider's own idle rule does not stop a computer the runner failed to pause, so Den's
+  own record of the conversation is the reliable sign. A provider's run total can lag by days while a computer runs. A computer's key is `hc-` and a
   hash of its conversation's session id, which is how it is tied to an organization.
 - `service.ts`: readers within 15 seconds share one read of the runner's list. Organization names come from
   `headless_session_index` (Workbot conversations) and `remote_device`, read at most every five minutes. A

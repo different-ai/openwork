@@ -6,6 +6,7 @@ import {
   COMPUTER_FLEET_LIST_LIMIT,
   COMPUTER_FLEET_LONG_RUNNING,
   COMPUTER_FLEET_ORGANIZATION_LIMIT,
+  COMPUTER_FLEET_QUIET_HOURS,
   COMPUTER_FLEET_STUCK_MINUTES,
   COMPUTER_FLEET_UNKNOWN_ORGANIZATION,
   type AdminComputerDetail,
@@ -30,7 +31,11 @@ import type { RunnerComputer, RunnerComputerDetail, RunnerComputerFleet, RunnerC
 /** A computer's key at its provider, from its conversation's session id (Computers.slug in headless-computer). */
 export const computerKey = (sessionId: string) => `hc-${createHash("sha256").update(sessionId).digest("hex").slice(0, 40)}`
 
-export type ComputerOwner = { id: string; name: string }
+/**
+ * Whose a computer is. `activeAt`: when its conversation last had a turn or an open view (epoch ms), and
+ * `turnRunning`: whether one is under way; both left out when Den does not say.
+ */
+export type ComputerOwner = { id: string; name: string; activeAt?: number | null; turnRunning?: boolean }
 const MINUTE_MS = 60_000
 const EXPIRY_GRACE_MS = 10 * MINUTE_MS
 /** Past a provider's own idle rule, it has had this long to act on it. */
@@ -74,7 +79,7 @@ function idleRunningAfterMs(raw: Pick<RunnerComputer, "idleTimeoutSeconds">, set
   return Math.max(COMPUTER_FLEET_IDLE_RUNNING_MINUTES * MINUTE_MS, runner, provider)
 }
 
-function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfter: number): ComputerFleetAttention | null {
+function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfter: number, owner: ComputerOwner | null): ComputerFleetAttention | null {
   if (sandbox.state === "failed") return "failed"
   const since = stepStartedAt(sandbox)
   const stuck = (minutes: number) => since !== null && now - since > minutes * MINUTE_MS
@@ -86,6 +91,8 @@ function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfte
   // The last sign of use: activity, or the start that put it in this state. Never guessed when the provider gives none.
   const used = ms(sandbox.lastActivityAt)
   if (sandbox.state === "running" && used !== null && now - Math.max(used, ms(sandbox.lastChangedAt) ?? 0) > idleRunningAfter) return "idle_running"
+  // Its provider sees a desktop as always in use. Den knows better: the conversation has been quiet for hours.
+  if (sandbox.state === "running" && owner && owner.turnRunning !== true && typeof owner.activeAt === "number" && now - owner.activeAt > COMPUTER_FLEET_QUIET_HOURS * 60 * MINUTE_MS) return "idle_running"
   // In use as far as its provider can tell, yet awake most of its life: something never lets it sleep.
   const created = ms(sandbox.createdAt)
   if (sandbox.state === "running" && sandbox.runSeconds !== null && created !== null) {
@@ -97,6 +104,7 @@ function attentionOf(sandbox: ComputerFleetSandbox, now: number, idleRunningAfte
 
 function sandboxOf(raw: RunnerComputer, owners: ReadonlyMap<string, ComputerOwner>, settings: RunnerComputerSettings | null, now: number, keepOldFailure = false): ComputerFleetSandbox | null {
   const state = STATES[raw.status.toLowerCase()] ?? "unknown"
+  const owner = raw.key ? (owners.get(raw.key) ?? null) : null
   const sandbox: ComputerFleetSandbox = {
     id: raw.id,
     source: raw.source,
@@ -118,7 +126,7 @@ function sandboxOf(raw: RunnerComputer, owners: ReadonlyMap<string, ComputerOwne
     lastActivityAt: moment(raw.lastActivityAt),
     expiresAt: moment(raw.expiresAt),
     endedAt: moment(raw.endedAt),
-    organization: raw.key ? (owners.get(raw.key) ?? null) : null,
+    organization: owner ? { id: owner.id, name: owner.name } : null,
     image: raw.image?.slice(0, 200) || null,
     imageCurrent: raw.imageCurrent,
     runSeconds: whole(raw.runSeconds),
@@ -128,7 +136,7 @@ function sandboxOf(raw: RunnerComputer, owners: ReadonlyMap<string, ComputerOwne
     const failedAt = ms(sandbox.endedAt) ?? ms(sandbox.lastChangedAt) ?? ms(sandbox.createdAt)
     if (failedAt === null || now - failedAt > COMPUTER_FLEET_FAILURE_HOURS * 60 * MINUTE_MS) return null
   }
-  sandbox.attention = attentionOf(sandbox, now, idleRunningAfterMs(raw, settings))
+  sandbox.attention = attentionOf(sandbox, now, idleRunningAfterMs(raw, settings), owner)
   return sandbox
 }
 
@@ -268,7 +276,9 @@ function providerMessage(details: Record<string, string>) {
  */
 export function computerDetailFrom(detail: RunnerComputerDetail, owner: ComputerOwner | null, conversation: ComputerConversation | null, reports: ComputerReports, now: Date): AdminComputerDetail {
   const raw = detail.computer
-  const computer = sandboxOf(raw, raw.key && owner ? new Map([[raw.key, owner]]) : new Map(), detail.settings, now.getTime(), true)
+  // Read now, not from the list's shared index: whether a turn is under way decides what this page says.
+  const activity = conversation ? { activeAt: Math.max(conversation.lastActiveAt?.getTime() ?? 0, reports.reported?.at?.getTime() ?? 0) || null, turnRunning: conversation.activeTurnSince !== null } : {}
+  const computer = sandboxOf(raw, raw.key && owner ? new Map([[raw.key, { ...owner, ...activity }]]) : new Map(), detail.settings, now.getTime(), true)
   if (!computer) throw new Error("a computer kept for its detail was dropped")
   const provider: ComputerFleetEvent[] = (detail.events ?? []).map((event) => ({
     at: moment(event.at),

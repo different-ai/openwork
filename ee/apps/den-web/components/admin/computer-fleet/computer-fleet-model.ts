@@ -302,6 +302,8 @@ export function eventTitle(event: Pick<ComputerFleetEvent, "origin" | "type" | "
   return EVENT_TITLE[event.type] ?? event.type.replaceAll("_", " ");
 }
 
+const QUIET_MS = 2 * 60 * 60_000;
+
 export type Explanation = { tone: "neutral" | "good" | "warning" | "danger"; headline: string; points: string[] };
 
 /**
@@ -325,6 +327,9 @@ export function explainComputer(detail: AdminComputerDetail, now: number): Expla
     const idleMs = computer.lastActivityAt ? now - Date.parse(computer.lastActivityAt) : null;
     const turn = since(conversation?.activeTurnSince ?? null);
     const life = since(computer.createdAt);
+    // When the conversation last had a turn or an open view, as Den knows it.
+    const quietAt = Math.max(Date.parse(conversation?.lastActiveAt ?? "") || 0, Date.parse(detail.reported?.at ?? "") || 0);
+    const quietMs = conversation && quietAt > 0 ? now - quietAt : null;
     if (computer.attention === "long_running" && computer.runSeconds !== null) {
       tone = "warning";
       headline = `Running, and awake for ${formatDuration(computer.runSeconds * 1000)} of the ${life ?? "time"} since it was made.`;
@@ -334,6 +339,12 @@ export function explainComputer(detail: AdminComputerDetail, now: number): Expla
     } else if (turn !== null) {
       tone = "good";
       headline = `Running: its conversation has had a turn under way for ${turn}.`;
+    } else if (computer.attention === "idle_running" && quietMs !== null && quietMs > QUIET_MS) {
+      // Flagged from what Den knows of the conversation: the provider may well still see activity.
+      tone = "warning";
+      headline = `Running, but its conversation has been quiet for ${formatDuration(quietMs)}.`;
+      points.push(`The runner pauses a computer ${pause ?? "minutes"} after its last use. One still running hours after its conversation went quiet is either running a long background job, or the runner has lost track of it.`);
+      if (idle !== null) points.push(`Its provider last saw activity ${idle} ago. A desktop's browser keeps connections open, so that alone does not mean someone is using it.`);
     } else if (computer.attention === "idle_running") {
       tone = "warning";
       headline = `Running with nothing using it for ${idle ?? "a long time"}.`;

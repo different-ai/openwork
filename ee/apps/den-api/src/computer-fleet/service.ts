@@ -39,7 +39,8 @@ const DETAIL_EVENTS = 60
 const OWNERS_REFRESH_MS = 30_000
 
 type OrganizationId = (typeof OrganizationTable.$inferSelect)["id"]
-type Conversation = { organizationId: OrganizationId; sessionId: string }
+/** `activeAt`: the conversation's last turn or open view; `turnRunning`: one is under way. As of the index's read. */
+type Conversation = { organizationId: OrganizationId; sessionId: string; activeAt: number | null; turnRunning: boolean }
 let ownerIndex: { at: number; byKey: Promise<Map<string, Conversation>> } | null = null
 
 /** Every conversation that can have a computer, as its computer's key, with its organization. Workbot alone gives one. */
@@ -47,14 +48,21 @@ function conversationByKey(now: number, maxAgeMs = OWNERS_SHARE_MS): Promise<Map
   if (ownerIndex && now - ownerIndex.at < maxAgeMs) return ownerIndex.byKey
   const byKey = (async () => {
     const [sessions, devices] = await Promise.all([
-      db.select({ sessionId: HeadlessSessionIndexTable.sessionId, organizationId: HeadlessSessionIndexTable.organizationId }).from(HeadlessSessionIndexTable)
+      db.select({ sessionId: HeadlessSessionIndexTable.sessionId, organizationId: HeadlessSessionIndexTable.organizationId, updatedAt: HeadlessSessionIndexTable.updatedAt, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince }).from(HeadlessSessionIndexTable)
         .where(and(eq(HeadlessSessionIndexTable.kind, "workbot"), isNull(HeadlessSessionIndexTable.deletedAt))).limit(OWNER_ROWS_LIMIT),
       // A computer someone opened in Workbot is recorded here under its conversation's id.
-      db.select({ sessionId: RemoteDeviceTable.externalId, organizationId: RemoteDeviceTable.organizationId }).from(RemoteDeviceTable)
+      db.select({ sessionId: RemoteDeviceTable.externalId, organizationId: RemoteDeviceTable.organizationId, lastSeenAt: RemoteDeviceTable.lastSeenAt }).from(RemoteDeviceTable)
         .where(and(eq(RemoteDeviceTable.provider, "workbot"), isNull(RemoteDeviceTable.removedAt))).limit(OWNER_ROWS_LIMIT),
     ])
     const keys = new Map<string, Conversation>()
-    for (const row of [...sessions, ...devices]) keys.set(computerKey(row.sessionId), { organizationId: row.organizationId, sessionId: row.sessionId })
+    for (const row of sessions) keys.set(computerKey(row.sessionId), { organizationId: row.organizationId, sessionId: row.sessionId, activeAt: row.updatedAt.getTime(), turnRunning: row.activeTurnSince !== null })
+    // A view someone has open is use too, and a computer's row can exist before its conversation is indexed.
+    for (const row of devices) {
+      const key = computerKey(row.sessionId)
+      const known = keys.get(key)
+      const seen = row.lastSeenAt?.getTime() ?? null
+      keys.set(key, known ? { ...known, activeAt: Math.max(known.activeAt ?? 0, seen ?? 0) || null } : { organizationId: row.organizationId, sessionId: row.sessionId, activeAt: seen, turnRunning: false })
+    }
     return keys
   })()
   ownerIndex = { at: now, byKey }
@@ -66,18 +74,18 @@ async function loadComputerOwners(keys: readonly string[]): Promise<ReadonlyMap<
   const owners = new Map<string, ComputerOwner>()
   if (keys.length === 0) return owners
   const byKey = await conversationByKey(Date.now())
-  const wanted = new Map<string, OrganizationId>()
+  const wanted = new Map<string, Conversation>()
   for (const key of keys) {
-    const organizationId = byKey.get(key)?.organizationId
-    if (organizationId) wanted.set(key, organizationId)
+    const conversation = byKey.get(key)
+    if (conversation) wanted.set(key, conversation)
   }
-  const ids = [...new Set(wanted.values())]
+  const ids = [...new Set([...wanted.values()].map((conversation) => conversation.organizationId))]
   const names = new Map<OrganizationId, string>()
   for (let start = 0; start < ids.length; start += ORGANIZATION_CHUNK) {
     const rows = await db.select({ id: OrganizationTable.id, name: OrganizationTable.name }).from(OrganizationTable).where(inArray(OrganizationTable.id, ids.slice(start, start + ORGANIZATION_CHUNK)))
     for (const row of rows) names.set(row.id, row.name)
   }
-  for (const [key, organizationId] of wanted) owners.set(key, { id: organizationId, name: (names.get(organizationId) ?? "").slice(0, 200) })
+  for (const [key, conversation] of wanted) owners.set(key, { id: conversation.organizationId, name: (names.get(conversation.organizationId) ?? "").slice(0, 200), activeAt: conversation.activeAt, turnRunning: conversation.turnRunning })
   return owners
 }
 

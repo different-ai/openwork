@@ -324,7 +324,7 @@ export function ComputerFleetPage() {
           </section>
 
           <p className="text-[12px] leading-5 text-gray-600">
-            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, as running unused after 30 minutes with no use, as awake most of its life when it is two days old and has run for more than half of them, and a failure is shown for a day.
+            Read through the headless runner every 15 seconds while this page is open: the runner asks the sandbox gateway and its own provider with its keys, so Den holds none. A computer is flagged as stuck after 10 minutes starting or 15 minutes pausing or stopping, as running unused after 30 minutes with no use or two hours after its conversation went quiet, as awake most of its life when it is two days old and has run for more than half of them, and a failure is shown for a day.
           </p>
         </>
       ) : null}

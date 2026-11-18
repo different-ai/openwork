@@ -22,9 +22,16 @@ export const COMPUTER_FLEET_STUCK_MINUTES = { starting: 10, pausing: 15, stoppin
  */
 export const COMPUTER_FLEET_IDLE_RUNNING_MINUTES = 30
 /**
+ * A computer still running this long after its conversation was last active, with no turn under way, is flagged as
+ * running unused. The provider cannot tell: a desktop's browser keeps connections open, so a computer nobody uses
+ * still looks active to it. Den knows when the conversation last had a turn or an open view.
+ */
+export const COMPUTER_FLEET_QUIET_HOURS = 2
+/**
  * A computer at least this old that has spent more than this share of its life running is flagged. One normally
  * sleeps between uses; one awake most of the time is being kept awake, or the runner never paused it. Only where
- * the provider counts run time.
+ * the provider counts run time, and a provider's count can lag while the computer runs, so this catches fewer
+ * than the conversation rule above; it is what is left for a computer whose conversation Den does not know.
  */
 export const COMPUTER_FLEET_LONG_RUNNING = { minAgeHours: 48, share: 0.5 } as const
 /** Events shown for one computer, newest first. */
@@ -41,7 +48,8 @@ export type ComputerFleetState = z.infer<typeof computerFleetStateSchema>
 /**
  * Why a computer needs a look. `failed`: it failed in the last day. `stuck_starting`, `stuck_pausing`,
  * `stuck_stopping`: it has been in that step far longer than the step takes. `expired`: it outlived its expiry.
- * `idle_running`: it is running and nothing has used it for far longer than the runner waits before pausing one.
+ * `idle_running`: it is running and nothing has used it for far longer than the runner waits before pausing one,
+ * as its provider reports, or as Den knows from a conversation that has been quiet for hours.
  * `long_running`: it is running and has been for most of its life, though its provider sees it in use.
  */
 export const computerFleetAttentionSchema = z.enum(["failed", "stuck_starting", "stuck_pausing", "stuck_stopping", "expired", "idle_running", "long_running"])
