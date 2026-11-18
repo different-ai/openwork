@@ -88,6 +88,13 @@ export async function packagedSandboxWorld(options: Options) {
     }, [path, method, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true, timeoutMs: 35_000 });
   }
   async function screenshot(name: string) {
+    await evaluateOnSurface(surface(), async () => {
+      const control = document.querySelector('[data-testid="host-execution-switch"]');
+      if (control) await Promise.race([
+        Promise.allSettled(control.getAnimations({ subtree: true }).map(animation => animation.finished)),
+        new Promise(resolve => setTimeout(resolve, 500)),
+      ]);
+    }, { awaitPromise: true, timeoutMs: 2000 });
     const result: unknown = await surface().client.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
     if (!isRecord(result) || typeof result.data !== "string") throw new Error("Screenshot returned no PNG");
     await writeFile(join(evidenceDir, `${options.model}-${name}.png`), Buffer.from(result.data, "base64"));
@@ -137,7 +144,7 @@ export async function packagedSandboxWorld(options: Options) {
       const snapshot = await native().snapshot(sessionId);
       const phaseRequests = inference.records.filter(entry => entry.phase === state.phase);
       const rejected = phaseRequests.find(entry => entry.status >= 400);
-      if (rejected) throw new Error(`Real inference rejected ${rejected.requestedModel}: HTTP ${rejected.status} at ${rejected.path}`);
+      if (rejected) throw new Error(`Real inference rejected ${rejected.requestedModel}: HTTP ${rejected.status} at ${rejected.path}: ${rejected.responseError ?? "no response detail"}`);
       const currentMessages = turnMessages(snapshot);
       const hasAnswer = phaseRequests.length > 0 && phaseRequests.every(entry => entry.completed)
         && hasStoppedAssistantAnswer(snapshot.body, previousMessageIds);

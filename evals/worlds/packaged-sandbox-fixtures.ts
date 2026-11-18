@@ -133,7 +133,7 @@ export async function sandboxDenFixture() {
 export type InferenceRecord = {
   phase: string; path: string; requestedModel: string; offeredTools: string[];
   codeModeTools: string[]; responseModel: string | null; status: number;
-  completed: boolean; requestContainedHostSecret: boolean;
+  completed: boolean; requestContainedHostSecret: boolean; responseError?: string; tuning?: string;
 };
 export function offeredToolNames(body: Record<string, unknown>) {
   return (Array.isArray(body.tools) ? body.tools.filter(isRecord) : []).map(tool =>
@@ -175,6 +175,14 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
       codeModeTools: [...raw.replaceAll("\\n", "\n").matchAll(/^\s*- tools\.([A-Za-z0-9_.]+)\(/gm)].map(match => match[1] ?? ""),
       status: 0, responseModel: null, completed: false, requestContainedHostSecret: raw.includes(state.hostSecret) };
     records.push(entry); // Visible immediately, allowing an active-turn Settings interaction.
+    if (model === "sol") {
+      body.reasoning = { ...(isRecord(body.reasoning) ? body.reasoning : {}), effort: "low" };
+      body.service_tier = "priority";
+      entry.tuning = "reasoning.effort=low; service_tier=priority";
+    } else {
+      body.output_config = { ...(isRecord(body.output_config) ? body.output_config : {}), effort: "low" };
+      entry.tuning = "output_config.effort=low";
+    }
     try {
       const headers: Record<string, string> = {};
       for (const name of ["content-type", "accept", "anthropic-version", "anthropic-beta", "openai-beta", "openai-organization", "openai-project"]) {
@@ -183,7 +191,7 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
       }
       if (model === "fable") headers["x-api-key"] = realKey;
       else headers.authorization = `Bearer ${realKey}`;
-      const upstream = await fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: raw, signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
+      const upstream = await fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
       entry.status = upstream.status;
       response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
       let text = "";
@@ -201,6 +209,7 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
       }
       text += decoder.decode();
       entry.responseModel = responseModels(text);
+      if (!upstream.ok) entry.responseError = redact(text.slice(0, 2000), [realKey, token]);
       entry.completed = true;
       response.end();
     } catch {

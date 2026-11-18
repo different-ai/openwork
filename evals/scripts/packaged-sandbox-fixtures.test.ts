@@ -1,8 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, isolatedParentEnvironment, offeredToolNames, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
+import { bundleIdentity, GUEST_TOOLS, hasOnlyDirectGuestTools, hasStoppedAssistantAnswer, inferenceFixture, isolatedParentEnvironment, offeredToolNames, packagedBundle, rawMessages, redact, sandboxDenFixture, type InferenceRecord } from "../worlds/packaged-sandbox-fixtures.ts";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -110,6 +110,24 @@ describe("packaged sandbox proof prerequisites", () => {
       expect(den.reads).toEqual(["/v1/features"]);
       expect((await fetch(`${den.url}/v1/org`)).status).toBe(404);
     } finally { await den.close(); }
+  });
+  it("uses the supported low-effort Sol variant for chat and background title requests", async () => {
+    const original = globalThis.fetch;
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).startsWith("https://api.openai.com/")) throw new Error("Unexpected upstream in fixture");
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({ model: "gpt-6.1-sol", service_tier: "fast", output: [] });
+    });
+    const proxy = await inferenceFixture("sol", "fixture-key", { phase: "title", hostSecret: "host-witness" });
+    try {
+      const response = await original(`${proxy.url}/responses`, { method: "POST", headers: { authorization: `Bearer ${proxy.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-6.1-sol", reasoning: { effort: "none" }, input: "Synthetic title", tools: [] }) });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(bodies).toEqual([{ model: "gpt-6.1-sol", reasoning: { effort: "low" }, service_tier: "priority", input: "Synthetic title", tools: [] }]);
+      expect(proxy.records[0]).toMatchObject({ status: 200, completed: true, tuning: "reasoning.effort=low; service_tier=priority" });
+    } finally { await proxy.close(); vi.unstubAllGlobals(); }
   });
   it("redacts upstream and loopback credentials from exported evidence", () => {
     expect(redact("upstream-key scoped-token upstream-key", ["upstream-key", "scoped-token"])).toBe("[redacted] [redacted] [redacted]");

@@ -116,6 +116,8 @@ function record(value: unknown): value is Record<string, unknown> {
  * loopback fixtures. The gpt-* ID exercises Core 2.2.6's built-in patch hook. */
 async function assertModelIndependentGuestTools(engine: ManagedOpencodeV2Server, directory: string, root: string, guestCalls: string[]) {
   const offered: string[][] = [];
+  const bodies: Record<string, unknown>[] = [];
+  const retainedPolicy = "Fixture safety policy: preserve control-plane authorization and pending queue instructions.";
   let requests = 0;
   const target = join(root, "guest-write-never-host.txt");
   const editTarget = join(root, "host-edit-sentinel.txt");
@@ -123,6 +125,7 @@ async function assertModelIndependentGuestTools(engine: ManagedOpencodeV2Server,
   const inference = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const body: unknown = await request.json();
     if (!record(body)) return new Response(null, { status: 400 });
+    bodies.push(body);
     offered.push(Array.isArray(body.tools) ? body.tools.filter(record).flatMap(tool => record(tool.function) && typeof tool.function.name === "string" ? [tool.function.name] : []).sort() : []);
     const first = requests++ === 0;
     const delta = first ? { role: "assistant", tool_calls: [
@@ -149,6 +152,8 @@ async function assertModelIndependentGuestTools(engine: ManagedOpencodeV2Server,
       expect(created.status, JSON.stringify(created)).toBe(200);
       if (!record(created.json) || !record(created.json.data) || typeof created.json.data.id !== "string") throw new Error("Invalid native session");
       const sessionId = created.json.data.id;
+      const policy = await engine.fetchJson(`/api/experimental/session/${sessionId}/instructions/entries/fixture-policy`, { method: "PUT", directory, body: { value: retainedPolicy } });
+      expect(policy.status, JSON.stringify(policy)).toBe(204);
       const prompted = await engine.fetchJson(`/api/session/${sessionId}/prompt`, { method: "POST", directory, body: { text: "Exercise the guest tools." } });
       expect(prompted.status, JSON.stringify(prompted)).toBe(200);
       let completed = false;
@@ -166,5 +171,12 @@ async function assertModelIndependentGuestTools(engine: ManagedOpencodeV2Server,
     }
     expect(offered.length).toBeGreaterThanOrEqual(4);
     for (const tools of offered) expect(tools).toEqual(["edit", "glob", "grep", "read", "shell", "write"]);
+    for (const body of bodies) {
+      const serialized = JSON.stringify(body);
+      expect(serialized).toContain(retainedPolicy);
+      expect(serialized).not.toContain("tools.opencode.");
+      expect(serialized).not.toContain("tools.openwork_context");
+      expect(serialized).not.toContain("Code Mode tools (call only inside");
+    }
   } finally { await inference.stop(); }
 }
