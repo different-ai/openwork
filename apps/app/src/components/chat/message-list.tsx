@@ -116,7 +116,7 @@ import { codeModeCallsWithResults, remoteThreadStartsInParts } from "@/lib/remot
 import { dedupeRenderedTurnErrors, joinRecoveredReplies } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
-import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { SubagentRunLine, useRunningSubagentIds } from "@/components/chat/subagent-run-line"
 import { RemoteThreadRunLine } from "@/components/chat/remote-thread-run-line"
 import { isRemoteThreadStatusCheck, remoteThreadFromToolPart, type RemoteThreadStart } from "@/lib/remote-session-thread"
 import { useReviveRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
@@ -1950,8 +1950,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const newestAppCallIds = React.useMemo(() => newestBuiltAppCallIds(messages), [messages])
   const delegatedIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
     .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
-  const backgroundCount = useSessionActivityStore(state => delegatedIds.filter(id =>
-    state.recordsByWorkspaceId[workspaceId]?.[id]?.runActive).length)
+  const runningHelperIds = useRunningSubagentIds(workspaceId, delegatedIds)
+  const backgroundCount = runningHelperIds.length
   // The run is paused while it, or a helper it waits on, asks the person for
   // an approval or answer. Background helpers do not hold up the run.
   const foregroundHelperIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
@@ -2103,10 +2103,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
               disabled={stoppingBackground}
               className="cursor-pointer text-xs text-muted-foreground/70 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:cursor-default disabled:opacity-50"
               onClick={() => {
-                const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]
-                const running = delegatedIds.filter((id) => records?.[id]?.runActive)
                 setStoppingBackground(true)
-                void Promise.allSettled(running.map((id) => onStopSubagentSession(id)))
+                void Promise.allSettled(runningHelperIds.map((id) => onStopSubagentSession(id)))
                   .finally(() => setStoppingBackground(false))
               }}
             >

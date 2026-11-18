@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import {
   Collapsible,
@@ -16,7 +16,7 @@ import { t } from "@/i18n"
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 import { hasNoNewActivity } from "@/react-app/domains/session/status/session-progress"
 import { statusKey } from "@/react-app/domains/session/sync/session-sync"
-import { useQueryCacheState } from "@/react-app/infra/query-cache-state"
+import { useQueryCacheSelection, useQueryCacheState } from "@/react-app/infra/query-cache-state"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 
 type SubagentRunLineProps = {
@@ -64,6 +64,24 @@ export function isStoppedTaskError(errorText: string | undefined): boolean {
   return /abort|interrupt|cancel/i.test(errorText ?? "")
 }
 
+export function subagentChildRunning(runActive: boolean | undefined, status: SessionStatus | null | undefined): boolean {
+  return runActive === true || status?.type === "busy" || status?.type === "retry"
+}
+
+export function useRunningSubagentIds(workspaceId: string, childSessionIds: readonly string[]): string[] {
+  const runningByRecord = useSessionActivityStore((state) => {
+    const records = state.recordsByWorkspaceId[workspaceId]
+    return childSessionIds.filter((id) => records?.[id]?.runActive).join("\n")
+  })
+  const runningByEngineStatus = useQueryCacheSelection((queryClient) => childSessionIds
+    .filter((id) => subagentChildRunning(false, queryClient.getQueryData<SessionStatus>(statusKey(workspaceId, id))))
+    .join("\n"), "")
+  return useMemo(() => {
+    const running = new Set([...runningByRecord.split("\n"), ...runningByEngineStatus.split("\n")])
+    return childSessionIds.filter((id) => running.has(id))
+  }, [runningByRecord, runningByEngineStatus, childSessionIds])
+}
+
 /**
  * Live state of one sub-agent task, from its tool part plus the child
  * session's activity record and status. Shared by the transcript line and the
@@ -81,7 +99,7 @@ export function useSubagentRunState(part: TaskToolPart, parentActive: boolean, w
   )
   const permissionPending = (child?.waitingPermissionIds.length ?? 0) > 0
   const questionPending = (child?.waitingQuestionIds.length ?? 0) > 0
-  const childRunning = child?.runActive === true || childStatus?.type === "busy" || childStatus?.type === "retry"
+  const childRunning = subagentChildRunning(child?.runActive, childStatus)
   const inFlight = isToolPartInFlight(part) || childRunning
   const isFailed = part.state === "output-error"
   // Native start time survives reload; optimistic timing survives remounts.
