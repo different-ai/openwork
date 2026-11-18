@@ -1429,6 +1429,13 @@
       "when": 1794986184329,
       "tag": "0204_managed_deployment_configuration",
       "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "5",
+      "when": 1795029329721,
+      "tag": "0205_automation_share",
+      "breakpoints": true
     }
   ]
 }

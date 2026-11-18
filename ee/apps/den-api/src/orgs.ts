@@ -9,6 +9,8 @@ import {
   ConnectorInstanceAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
+  AutomationShareTable,
+  AutomationTable,
   InvitationTable,
   LlmProviderAccessTable,
   LlmProviderMemberCredentialTable,
@@ -2208,6 +2210,16 @@ export async function removeOrganizationMember(input: {
         eq(DesktopPolicyMemberTable.organizationId, input.organizationId),
         eq(DesktopPolicyMemberTable.orgMemberId, member.id),
       ))
+
+    await tx.delete(AutomationShareTable).where(and(
+      eq(AutomationShareTable.organization_id, input.organizationId),
+      or(
+        eq(AutomationShareTable.org_membership_id, member.id),
+        inArray(AutomationShareTable.automation_id, tx.select({ id: AutomationTable.id }).from(AutomationTable).where(and(
+          eq(AutomationTable.organization_id, input.organizationId), eq(AutomationTable.owner_member_id, member.id),
+        ))),
+      ),
+    ))
 
     await tx
       .delete(ExternalMcpConnectionAccessGrantTable)
