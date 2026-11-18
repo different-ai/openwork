@@ -88,6 +88,14 @@ export async function packagedSandboxWorld(options: Options) {
     }, [path, method, body === undefined ? null : JSON.stringify(body)]), { awaitPromise: true, timeoutMs: 35_000 });
   }
   async function screenshot(name: string) {
+    const jumpVisible = await evaluateOnSurface(surface(), () => Array.from(document.querySelectorAll("button"))
+      .some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0));
+    if (jumpVisible) {
+      await clickTarget(surface(), { role: "button", label: "Jump to latest" });
+      await waitFor(surface(), () => !Array.from(document.querySelectorAll("button"))
+        .some(button => button.textContent?.trim() === "Jump to latest" && button.getClientRects().length > 0),
+      { timeoutMs: 10_000, label: "the latest packaged reply is visible before its screenshot" });
+    }
     await evaluateOnSurface(surface(), async () => {
       const control = document.querySelector('[data-testid="host-execution-switch"]');
       if (control) await Promise.race([

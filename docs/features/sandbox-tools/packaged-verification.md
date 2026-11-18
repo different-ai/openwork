@@ -50,4 +50,4 @@ Its staging and unit tests had passed. This is a packaging failure, not a succes
 
 ## Verification status
 
-Implementation and artifact verification are in progress. The PR's commit-bound verification comment records final commands, artifact identity/signing status, screenshots, failures and passing receipts. Do not interpret this document's acceptance checklist as a test result.
+The PR's commit-bound verification comment records final commands, artifact identity/signing status, screenshots, failures and passing receipts. Do not interpret this document's acceptance checklist as a test result. Capture-only proof updates do not change the signed app: the receipt identifies the artifact's source commit, its full bundle hash, and the separate proof-runner commit.
