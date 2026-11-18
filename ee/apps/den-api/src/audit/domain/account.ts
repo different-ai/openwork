@@ -17,7 +17,8 @@ import { auditChanges, auditText, fieldOf, organizationParent, relatedResource, 
 // implicit linking at the social/SSO callback, unlink-account),
 // databaseHooks.user.delete.before (delete-user, memberships still active),
 // hooks.after for password changes and provider token reads, and the
-// PATCH /v1/me/profile handler (direct database update, no hooks).
+// PATCH /v1/me/profile handler (direct database update, no hooks), and the
+// SSO email sync in src/sso-email-sync.ts (direct database update, no hooks).
 
 export type AuditPasswordMethod = "change_password" | "reset_password" | "email_otp_reset" | "other"
 
@@ -97,6 +98,11 @@ export async function auditUserUpdateAfter(user: unknown, context: unknown): Pro
   if (pending.fields.has("email") && (!prior || prior.email?.toLowerCase() !== stringOf(user, "email")?.toLowerCase())) {
     await fanOutAccountChange({ userId, action: "account.email_changed", changes: auditChanges({}, {}, ["email"]) })
   }
+}
+
+/** SSO sign-in followed an identity-provider email rename (src/sso-email-sync.ts; direct update, no better-auth hook). */
+export async function recordEmailChangedByIdentityProvider(userId: string): Promise<void> {
+  await fanOutAccountChange({ userId, action: "account.email_changed", changes: auditChanges({}, {}, ["email"]) })
 }
 
 /** hooks.after on a successful change-password / reset-password / email-otp reset-password. */

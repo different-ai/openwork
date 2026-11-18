@@ -118,6 +118,7 @@ import {
   SSO_REQUIRED_MESSAGE,
 } from "./organization-sso-access.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
+import { syncSsoUserEmail } from "./sso-email-sync.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
 import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
@@ -2061,6 +2062,9 @@ export const auth = betterAuth({
         if (await isScimDeprovisionedIdentity({ organizationId, userId, email })) {
           throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
         }
+        // The provider matched this user by its account id; follow an IdP email
+        // rename so the member keeps one account (ENG-815).
+        await syncSsoUserEmail({ userId, currentEmail: user.email, idpEmail: maybeString(userInfo.email) ?? null, provider });
         const payload = {
           organizationId,
           userId,
