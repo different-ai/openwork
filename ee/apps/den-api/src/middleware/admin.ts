@@ -49,6 +49,30 @@ export async function isPlatformAdminUserId(value: string): Promise<boolean> {
 }
 
 /**
+ * Whether a Den user passes the same platform-admin check as the /v1/admin
+ * routes (`requireAdminMiddleware`): an allowlisted email that is verified
+ * where Den verifies emails. For work done in a user's name outside an /admin
+ * request, such as a config import turning organization features on.
+ */
+export async function isAdminRouteUserId(value: string): Promise<boolean> {
+  let userId: ReturnType<typeof normalizeDenTypeId<"user">>
+  try {
+    userId = normalizeDenTypeId("user", value)
+  } catch {
+    return false
+  }
+
+  const user = (await db
+    .select({ email: AuthUserTable.email, emailVerified: AuthUserTable.emailVerified })
+    .from(AuthUserTable)
+    .where(eq(AuthUserTable.id, userId))
+    .limit(1))[0]
+  if (!user) return false
+  if (env.requireEmailVerification && user.emailVerified !== true) return false
+  return isAdminEmailAllowed(user.email)
+}
+
+/**
  * Deployment diagnostics authority is the local operator allowlist, never an
  * organization role, ownership or permission. Setup writes this same allowlist
  * in completeInitialAdminBootstrapSignup; DEN_BOOTSTRAP_ADMIN_EMAILS is only an

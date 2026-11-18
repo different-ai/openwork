@@ -192,7 +192,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
           ))}
         </span>
         {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}
-        {failedCount > 0 ? <RailMeta className="text-red-11">{t("text_activity.failed_count", { count: failedCount })}</RailMeta> : null}
+        {failedCount > 0 ? <RailMeta>{t("text_activity.failed_count", { count: failedCount })}</RailMeta> : null}
         <TrailingChevron open={expanded} />
       </button>
 

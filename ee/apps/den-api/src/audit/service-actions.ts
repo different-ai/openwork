@@ -42,6 +42,28 @@ export const auditServiceActionDeclarations = [
     notes: `Same store write as POST /v1/config-objects/:configObjectId/versions (config_object.version.create), reached without the route. ${MCP_PRINCIPAL}`,
   },
   {
+    action: "native_mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_native_subscription", idFrom: null }, origin: "mcp",
+    external: "subscriber MCP webhook endpoint",
+    tools: ["events/subscribe"], callSites: ["src/native-mcp-events/mcp.ts:subscribe"], notes: "Creates or refreshes a finite owner-scoped event subscription. Callback credentials are never captured.",
+  },
+  {
+    action: "native_mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_native_subscription", idFrom: null }, origin: "mcp",
+    external: "subscriber MCP webhook endpoint",
+    tools: ["events/unsubscribe"], callSites: ["src/native-mcp-events/mcp.ts:unsubscribe"], notes: "Stops a native event watch belonging to the verified MCP caller.",
+  },
+  {
+    action: "mcp_event.subscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    external: "connected MCP server (events/subscribe)",
+    tools: ["subscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:subscribe"],
+    notes: `Thread-bound finite webhook subscription; callback secret and filters are never audit fields. ${MCP_PRINCIPAL}`,
+  },
+  {
+    action: "mcp_event.unsubscribe", kind: "mcp_event.subscription", class: "tenant_external", resource: { type: "mcp_event_subscription", idFrom: null }, origin: "mcp",
+    external: "connected MCP server (events/unsubscribe)",
+    tools: ["unsubscribe_mcp_event"], callSites: ["src/mcp-events/tools.ts:unsubscribe"],
+    notes: `Local cancellation precedes best-effort remote unsubscribe. ${MCP_PRINCIPAL}`,
+  },
+  {
     action: "mcp_app.create", kind: "app.management", class: "tenant_change", resource: { type: "mcp_app", idFrom: null }, origin: "mcp",
     tools: ["create_app"], callSites: ["src/mcp/agent.ts:registerAppBuilderTools.create → createMcpApp"],
     notes: `Plugin, App config object and Workflow memberships; archives the Plugin on failure. ${MCP_PRINCIPAL}`,
@@ -87,7 +109,7 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.create", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: null }, origin: "mcp",
     tools: ["execute_capability remote-session:create"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes). Cloud: not_recorded: the session runs on the member's OpenWork Web worker.",
-    notes: MCP_PRINCIPAL,
+    notes: `A desktop or registered target that takes nothing from other devices (its owner's choice, no choice yet under remoteTasksOptIn, or the organization's ceiling) is refused with remote_access_off: nothing is queued and the refusal is recorded as a failed outcome. ${MCP_PRINCIPAL}`,
   },
   {
     action: "remote_session.send", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
@@ -105,13 +127,24 @@ export const auditServiceActionDeclarations = [
     action: "remote_session.answer", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
     tools: ["execute_capability remote-session:answer"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
     jobOutcome: "Desktop: runner callbacks POST /v1/remote-session-requests/:id/{claim,complete} (declared routes). Cloud: not_recorded: the reply is synchronous on the member's OpenWork Web worker.",
-    notes: `The member's agent answers their own remote session's pending question or permission after asking them (mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
+    notes: `The member's agent answers their own remote session's open question or permission after asking them, or dismisses a question they want skipped (mcp:write, agent chats only). ${MCP_PRINCIPAL}`,
+  },
+  {
+    action: "remote_session.attach", kind: "remote_session.execution", class: "tenant_job", resource: { type: "remote_session", idFrom: "sessionId argument" }, origin: "mcp",
+    tools: ["execute_capability remote-session:attach"], callSites: ["src/mcp/capability-registry.ts:remoteSessionSource.execute → executeRemoteSessionCapability"],
+    jobOutcome: "Runner callbacks POST /v1/remote-session-commands/:id/{claim,complete,session} (declared routes).",
+    notes: `remoteSessionAccess: the member's agent attaches to a session that was started on one of the member's own computers, where the organization's ceiling and the computer's owner both allow every session (mcp:write, agent chats only). Refusals queue nothing and are recorded as failed outcomes. REST equivalent remote_session.session.attach. ${MCP_PRINCIPAL}`,
   },
   {
     action: "slack_assistant.bot_message.send", kind: "slack_assistant.execution", class: "tenant_external", resource: { type: "slack_message", idFrom: null }, origin: "mcp",
     tools: ["execute_capability slack_send_as_bot", "openwork-bot.slack_send_as_bot (full tool view)"], callSites: ["src/mcp/capability-registry.ts:slackSendAsBotSource.execute → executeSlackSendAsBot"],
     external: "Slack Web API with the OpenWork Slack app's bot token (conversations.open and chat.postMessage; chat.getPermalink) and, for a channel post, conversations.history with the member's own Slack token to confirm they can read the channel",
     notes: `A DM to the caller or a channel post credited to them, from the OpenWork Slack app's bot (mcp:write). Refusals (limits, targets, no Slack app, unlinked member) are recorded as failed outcomes. Not callable from Code Mode scripts. ${MCP_PRINCIPAL}`,
+  },
+  {
+    action: "agent.check_request.create", kind: "agent.member", class: "tenant_change", resource: { type: "agent_instance", idFrom: "the token's own member id" }, origin: "mcp",
+    tools: ["request_check"], callSites: ["src/mcp/agent-check-request.ts:registerAgentCheckRequestTool → requestAgentCheck"],
+    notes: `workbotAgentBrief: a member's background agent asks for one extra check of its own member's sources. Only the agent's read-scoped check token sees it; it changes only that member's agent schedule, capped per day and inside their hours. Refusals (limit, outside hours, unreadable time) are recorded as failed outcomes. ${MCP_PRINCIPAL}`,
   },
   {
     action: "organization.plan.set", kind: "platform.admin.organization", class: "tenant_change", resource: { type: "organization", idFrom: "organizationId argument (verified to exist)" }, origin: "platform_admin",

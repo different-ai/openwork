@@ -35,7 +35,8 @@ let approvalCacheGeneration = 0
 
 async function lookupWebOriginApprovalInDatabase(input: { origin: string; organizationId?: OrganizationId }) {
   const originMatch = eq(OrganizationWebOriginTable.origin, input.origin)
-  const rows = await db
+  // primary: runs right after an approval or removal clears the cache, and the result is cached.
+  const rows = await db.$primary
     .select({ id: OrganizationWebOriginTable.id })
     .from(OrganizationWebOriginTable)
     .where(input.organizationId ? and(eq(OrganizationWebOriginTable.organizationId, input.organizationId), originMatch) : originMatch)
@@ -55,7 +56,8 @@ export function setWebOriginApprovalLookupForTest(lookup: WebOriginApprovalLooku
 type MemberWebOriginLookup = (input: { userId: UserId; origin: string }) => Promise<OrganizationId[]>
 
 async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: UserId; origin: string }) {
-  const rows = await db
+  // primary: an uncached handoff check, so a removal takes effect immediately.
+  const rows = await db.$primary
     .select({ organizationId: OrganizationWebOriginTable.organizationId })
     .from(OrganizationWebOriginTable)
     .innerJoin(MemberTable, and(
@@ -90,10 +92,14 @@ function isCanonicalExactHttpsOrigin(origin: string) {
   return normalizeExactHttpsOrigin(origin) === origin
 }
 
+const DUPLICATE_ENTRY_MESSAGE = /\bDuplicate entry\b|\(errno 1062\)/
+
 function isDuplicateEntry(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "ER_DUP_ENTRY") return true
   if ("errno" in error && error.errno === 1062) return true
+  // PlanetScale/Vitess surface MySQL errors as message text only, e.g. "... code = AlreadyExists desc = Duplicate entry 'x' for key 'y' (errno 1062) (sqlstate 23000) ...".
+  if ("message" in error && typeof error.message === "string" && DUPLICATE_ENTRY_MESSAGE.test(error.message)) return true
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 
@@ -192,8 +198,10 @@ export async function approveOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   origin: string
   createdByOrgMemberId: MemberId
+  /** Reuse a known-free id (config-blob imports reuse source ids). Routes omit it. */
+  id?: OrganizationWebOriginId
 }, capture: AuditChangeCapture | null = null): Promise<ApproveOrganizationWebOriginResult> {
-  const id = createDenTypeId("organizationWebOrigin")
+  const id = input.id ?? createDenTypeId("organizationWebOrigin")
   const createdAt = new Date()
 
   let outcome: "created" | "already_approved" | "limit_reached"
@@ -225,6 +233,8 @@ export async function approveOrganizationWebOrigin(input: {
     })
   } catch (error) {
     if (!isDuplicateEntry(error)) throw error
+    // A reused id (config-blob import) taken in the meantime is not "already approved": try once more with a new id.
+    if (input.id) return approveOrganizationWebOrigin({ organizationId: input.organizationId, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId }, capture)
     outcome = "already_approved"
   }
 

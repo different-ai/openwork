@@ -9,8 +9,13 @@ export type AgentInstanceOverrides = {
   hours?: { startHour: number; endHour: number }
   /** A lower daily limit than the organization's (`workbotProactive`). */
   dailyCap?: number
-  /** Inside the working day, only messages the agent marks urgent go out (`workbotProactive`). */
+  /**
+   * Inside the working day, only messages the agent marks urgent go out (`workbotProactive`). With `workbotAgentBrief`
+   * these are quiet hours: no checks and nothing sent.
+   */
   quietWindow?: { startHour: number; endHour: number }
+  /** Check less often than the organization does, in hours (`workbotAgentBrief`); read clamped to the organization's. */
+  checkEveryHours?: number
 }
 
 /**

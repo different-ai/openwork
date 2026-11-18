@@ -17,7 +17,6 @@
     }
   },
   "scripts": {
-    "test": "bun test src",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

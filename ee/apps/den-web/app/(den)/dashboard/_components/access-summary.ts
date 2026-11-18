@@ -47,6 +47,17 @@ export function peopleLabel(count: number): string {
   return count === 1 ? "1 person" : `${count} people`;
 }
 
+/**
+ * "Everyone in the organization will find Notion in My Library.", or null when
+ * the draft reaches nobody but the owner. Everyone stays everyone even while
+ * the owner is the organization's only member, so people who join later are
+ * not described as left out.
+ */
+export function reachSentence(draft: AccessDraft, reached: number, subject: string): string | null {
+  if (draft.orgWide) return `Everyone in the organization will find ${subject} in My Library.`;
+  return reached > 0 ? `${peopleLabel(reached)} will find ${subject} in My Library.` : null;
+}
+
 /** Names of the people and teams in a draft, people first, without the owner. */
 export function accessNames(draft: AccessDraft, directory: Directory, ownerId: string | null): string[] {
   const people = draft.memberIds

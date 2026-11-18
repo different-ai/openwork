@@ -45,6 +45,7 @@ export class CodeModeFunction {
     readonly parameters: ReadonlyArray<AstNode>,
     readonly body: AstNode,
     readonly capturedScopes: ReadonlyArray<Map<string, Binding>>,
+    readonly async: boolean,
   ) {}
 }
 

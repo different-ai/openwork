@@ -1,0 +1,66 @@
+---
+title: "Automations"
+description: "Have OpenWork do a task for you on a schedule, on your computer or in the cloud, and see how each run went."
+keywords: ["automations", "scheduled tasks", "schedule", "recurring tasks", "cron", "My Automations", "Desktop Automations", "Cloud Automations", "every few hours", "around my meetings", "run history"]
+---
+
+An Automation is a task OpenWork runs for you on a schedule, such as triaging your inbox every morning or sending a sales digest every Monday. Each run is a normal OpenWork chat you can open afterwards.
+
+## Desktop and Cloud Automations
+
+Where you create an Automation decides where it runs, for as long as it exists:
+
+| | Created in | Runs on | Good for |
+| --- | --- | --- | --- |
+| **Desktop Automation** | The OpenWork desktop app | Your computer, in the app's current workspace, with your files and apps | Work that needs your local files |
+| **Cloud Automation** | [OpenWork Web](/cloud/run-in-the-cloud/open-cloud-in-browser) | Your OpenWork cloud computer, even when your computer is off | Work that only needs your connected apps |
+
+To move an Automation from one to the other, create a new one in the other place.
+
+<Note>
+A Desktop Automation only runs while the desktop app is open and signed in. If no desktop picks up a scheduled run in time, the run is marked **Missed — desktop runner unavailable**, and **Run now** says **No desktop runner is online**.
+</Note>
+
+## Create an Automation
+
+1. In the OpenWork desktop app or in OpenWork Web, open **Automations**.
+2. Click **New Automation**.
+3. Write what OpenWork should do, and choose the model.
+4. Choose the **Schedule**:
+   - **Once**, at a set date and time.
+   - **Daily**, at a set time.
+   - **Weekly**, on the days and at the time you pick.
+   - **Every few hours**, between a start and end time on the days you pick, for example every 3 hours from 9:00 to 18:00 on weekdays.
+   - **Around my meetings**, a set time before or after each meeting you accepted on your Google Calendar. You can limit it to **Only meetings with people outside my organization**. This one is for Cloud Automations only and needs Google Calendar connected.
+5. Save the Automation.
+
+From the Automation's page you can **Run now**, change it, **Deactivate** it (and **Activate** it again), or archive it.
+
+## See your Automations in OpenWork Cloud
+
+**My Automations** in [OpenWork Cloud](https://app.openworklabs.com/) shows every Automation OpenWork is running or has scheduled for you, Desktop and Cloud alike. Click **My Automations** in the sidebar, under **Work**.
+
+Automations are grouped by what needs your attention first: **Running now**, **Needs attention**, **Scheduled** and **Paused**. Open one to see:
+
+- its schedule and where it runs,
+- its **Run history**, and each run's **Run receipt** and result,
+- **Cancel run** for a run that's still going.
+
+My Automations is for keeping an eye on things. To create or change an Automation, use **Manage in OpenWork Web** for a Cloud Automation, or **Manage in OpenWork Desktop** for a Desktop one.
+
+## For admins: where Automations can run
+
+Owners, and others with **Edit organization settings**, choose which kinds of Automation the organization allows in **Settings › General**, under **Automations › Where Automations can run**:
+
+- **Desktop Automations**: members schedule work that runs on their own signed-in OpenWork desktop.
+- **Cloud Automations**: members and agents schedule work that runs in OpenWork Cloud, even when every computer is off. On a self-hosted deployment this needs the headless runner.
+
+Both are on unless you turn them off. Turning a kind off stops new ones from being created and skips their scheduled runs. Existing Automations and their history are kept, and they resume when you turn it back on.
+
+Cloud Automations that use the cloud default run on the model chosen in [Manage › Workbot](/workbot/overview#default-model).
+
+## Related
+
+- [Open OpenWork Web in your browser](/cloud/run-in-the-cloud/open-cloud-in-browser)
+- [Connect your services](/start-here/connect-your-stack/connect-services)
+- [What uses tokens](/start-here/do-work-with-it/what-uses-tokens)

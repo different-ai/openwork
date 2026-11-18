@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { CUT_OFF_CALL, ModelError, openAIResponsesModel, streamedDescription, toResponsesInput } from "../src/model.js"
+import { anthropicModel, CUT_OFF_CALL, ModelError, openAIModel, openAIResponsesModel, streamedDescription, streamedView, toResponsesInput } from "../src/model.js"
 import type { Message } from "../src/types.js"
 
 const tool = { name: "mail_search", description: "Search mail", inputSchema: { type: "object", properties: { query: { type: "string" } } } }
@@ -94,10 +94,50 @@ test("a streamed call says what it is doing once its description is written, bef
       { type: "function_call", call_id: "call_1", name: "desktop", arguments: "{\"view\":\"computer\",\"description\":\"Drawing the \\\"ground\\\" and trunk\",\"args\":{\"code\":\"bpy.ops\"}}" },
     ], usage: { input_tokens: 10, output_tokens: 5 } } },
   ]))
-  const tools: Array<[string, string | undefined]> = []
+  const tools: Array<[string, string | undefined, string | undefined]> = []
   await openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch })
-    .complete(request({ onText: () => undefined, onTool: (name, description) => tools.push([name, description]) }))
-  assert.deepEqual(tools, [["desktop", undefined], ["desktop", 'Drawing the "ground" and trunk']])
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => tools.push([name, description, view]) }))
+  // The view it works in as soon as that is written, then its description with the view still on it.
+  assert.deepEqual(tools, [["desktop", undefined, undefined], ["desktop", undefined, "computer"], ["desktop", 'Drawing the "ground" and trunk', "computer"]])
+})
+
+/** One browser call streamed in pieces, as Ben's "go on google.com" was. */
+const googleArgs = ['{"view":"bro', 'wser","description":"Opening goo', 'gle.com","operation":"open","args":{"url":"https://www.google.com/"}}']
+const googleSeen = [["desktop", undefined, undefined], ["desktop", undefined, "browser"], ["desktop", "Opening google.com", "browser"]]
+
+test("a streamed Anthropic call says it is the browser as soon as its view is written", async () => {
+  const { fetch } = recorder(() => sse([
+    { type: "message_start", message: { model: "claude", usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "desktop" } },
+    ...googleArgs.map((partial_json) => ({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json } })),
+    { type: "content_block_stop", index: 0 },
+    { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 5 } },
+    { type: "message_stop" },
+  ]))
+  const seen: unknown[] = []
+  const step = await anthropicModel({ baseUrl: "https://gateway.test", maxOutputTokens: 100, fetch })
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => seen.push([name, description, view]) }))
+  assert.deepEqual(seen, googleSeen)
+  assert.equal(step.toolCalls[0]?.input.view, "browser")
+})
+
+test("a streamed Chat Completions call says it is the browser as soon as its view is written", async () => {
+  const { fetch } = recorder(() => sse([
+    { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "desktop", arguments: "" } }] } }] },
+    ...googleArgs.map((args) => ({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: args } }] } }] })),
+    { choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } },
+  ]))
+  const seen: unknown[] = []
+  await openAIModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch })
+    .complete(request({ onText: () => undefined, onTool: (name, description, view) => seen.push([name, description, view]) }))
+  assert.deepEqual(seen, googleSeen)
+})
+
+test("only a call's own top-level view counts, and only a desktop view", () => {
+  assert.equal(streamedView('{"view":"browser"'), "browser")
+  assert.equal(streamedView('{"view":"brow'), null)
+  assert.equal(streamedView('{"args":{"view":"browser"},"operation":"open"'), null)
+  assert.equal(streamedView('{"view":"sidebar"}'), null)
 })
 
 test("only a call's own top-level description counts, once it is complete", () => {
@@ -109,12 +149,46 @@ test("only a call's own top-level description counts, once it is complete", () =
   assert.equal(streamedDescription(`{"args":{"code":"${"x".repeat(5_000)}"},"description":"Late"}`), null)
 })
 
-test("a failed response is a model error, not an empty answer", async () => {
-  const { fetch } = recorder(() => sse([{ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } }]))
+test("a failed response is a model error, not an empty answer, and a request the model refused is not sent again", async () => {
+  for (const event of [
+    { type: "response.failed", response: { status: "failed", error: { code: "invalid_prompt", message: "The prompt was refused" } } },
+    { type: "error", code: "insufficient_quota", message: "The prompt was refused" },
+    { type: "response.failed", response: { status: "failed", error: null } },
+  ]) {
+    const { calls, fetch } = recorder(() => sse([event]))
+    await assert.rejects(
+      openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined }).complete(request({ onText: () => undefined })),
+      (error: unknown) => error instanceof ModelError && error.code === "model_failed" && !error.retryable && /The prompt was refused|unknown error/.test(error.message),
+    )
+    assert.equal(calls.length, 1, JSON.stringify(event))
+  }
+})
+
+test("a response that failed because the provider was busy or broke is made again, as a stream that ended early is", async () => {
+  const completed = { type: "response.completed", response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "Found it." }] }], usage: { input_tokens: 10, output_tokens: 5 } } }
+  for (const failure of [
+    { type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } },
+    { type: "response.failed", response: { status: "failed", error: { code: "rate_limit_exceeded", message: "Too many requests" } } },
+    { type: "error", code: "server_is_overloaded", message: "Our servers are busy" },
+    { type: "error", error: { type: "overloaded_error", message: "Overloaded" } },
+  ]) {
+    // Fails once after writing part of an answer, then answers.
+    const { calls, fetch } = recorder(() => sse(calls.length === 1 ? [{ type: "response.output_text.delta", delta: "Fou" }, failure] : [{ type: "response.output_text.delta", delta: "Found it." }, completed]))
+    const written: string[] = []
+    const step = await openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined })
+      .complete(request({ onText: (delta) => written.push(delta), onReset: () => written.push("(reset)") }))
+    assert.equal(step.text, "Found it.", JSON.stringify(failure))
+    assert.equal(calls.length, 2)
+    assert.deepEqual(written, ["Fou", "(reset)", "Found it."], "the half-written answer is dropped")
+  }
+
+  // Still failing after the retries: the turn fails with the retryable code, and what the provider said.
+  const { calls, fetch } = recorder(() => sse([{ type: "response.failed", response: { status: "failed", error: { code: "server_error", message: "The model crashed" } } }]))
   await assert.rejects(
-    openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch }).complete(request({ onText: () => undefined })),
-    (error: unknown) => error instanceof ModelError && error.code === "model_failed" && /The model crashed/.test(error.message),
+    openAIResponsesModel({ baseUrl: "https://gateway.test/v1", maxOutputTokens: 100, fetch, sleep: async () => undefined }).complete(request({ onText: () => undefined })),
+    (error: unknown) => error instanceof ModelError && error.code === "model_stream_interrupted" && error.retryable && error.detail === "The model crashed",
   )
+  assert.equal(calls.length, 3)
 })
 
 test("a response stopped at the output cap is marked cut off, and the call it was writing is not run", async () => {

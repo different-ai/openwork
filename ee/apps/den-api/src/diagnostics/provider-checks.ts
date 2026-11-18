@@ -18,7 +18,9 @@ import { InferenceEgressError, isAwsRegion, validateInferenceUrl } from "@openwo
 import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { gatewayUpstreamDestination } from "../credential-prompt.js"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { detectVendor, probeEndpoint } from "../llm/endpoint-probe.js"
+import { readCustomProviderSettings } from "../llm/gateway-custom-provider.js"
 import { gatewayConfigurationError, readProviderConfigNpm } from "../llm/inference-provider-config.js"
 import { LiteLlmError, createLiteLlmClient, normalizeLiteLlmBaseUrl } from "../llm/litellm.js"
 import { readLiteLlmSettings } from "../llm/litellm-settings.js"
@@ -56,6 +58,8 @@ export type ProviderTarget = {
   configuredModels: string[]
   /** Compare configured with listed models (off for Azure deployments and per-person keys). */
   compareModels: boolean
+  /** Models the comparison may flag as missing, when narrower than configuredModels (custom providers: only ids their /models listed). */
+  comparableModels?: string[]
   /** State when the live check accepts the key and no model comparison applies (per-person LiteLLM keeps member_credentials). */
   accepted: Verdict | null
   /** How a refused egress destination reads: Gateway providers are misconfigured; desktop-reached endpoints are simply not checked. */
@@ -203,6 +207,13 @@ function orgCredentialVerdict(provider: GatewayProviderInput, credential: Gatewa
   }
   const apiKey = apiKeyFromSecret(secret, provider.provider_config)
   if (!apiKey) return CREDENTIAL_MISSING
+  if (isGatewayCustomProviderId(provider.provider_id)) {
+    // Custom OpenAI-compatible providers: one API key, the saved address and their own model list.
+    const custom = readCustomProviderSettings(provider.settings)
+    if (!custom || typeof provider.settings.upstreamBaseUrl !== "string" || secret.kind !== "api_key") return CONFIGURATION_ERROR
+    // The provider had no usable /models list when it was set up: a failed listing would say nothing about the key.
+    if (custom.discovery.status === "unavailable") return { probe: null, compareModels: false }
+  }
   const baseUrl = validBase(gatewayUpstreamDestination(provider.provider_id, provider.provider_config, provider.settings))
   if (!baseUrl) return CONFIGURATION_ERROR
   const azure = readProviderConfigNpm(provider.provider_config) === "@ai-sdk/azure" || detectVendor(baseUrl) === "azure"
@@ -269,11 +280,15 @@ export function buildGatewayProviderTargets(input: {
       continue
     }
     const configurationError = gatewayConfigurationError(provider.provider_config, provider.settings)
+    // A model added by hand to a custom provider was never in its /models list, so its absence there is not a failure.
+    const listed = isGatewayCustomProviderId(provider.provider_id) ? readCustomProviderSettings(provider.settings)?.discovery.listedModelIds : undefined
+    const comparableModels = listed ? configuredModels.filter((model) => listed.includes(model)) : undefined
     for (const set of sets) {
       const setCredentials = credentials.filter((credential) => credential.credential_set_id === set.id)
       const common = {
         id: `${provider.id}:${set.id}`, source: "gateway" as const, providerId: provider.provider_id, name: provider.name,
         credentialName: sets.length > 1 ? set.name : null, configuredModels, egressRefusal: CONFIGURATION_ERROR, accepted: null,
+        ...(comparableModels ? { comparableModels } : {}),
       }
       if (set.credential_mode === "member") {
         targets.push({ ...common, fallback: MEMBER_SIGN_IN, probe: null, version: `${provider.updated_at.getTime()}`, compareModels: false, members: memberCounts(setCredentials, input.now) })
@@ -556,7 +571,7 @@ export function providerCheckFromOutcome(target: ProviderTarget, outcome: ProbeO
     const served = outcome.served
     if (target.compareModels && served && served.length > 0) {
       const available = new Set(served)
-      missing = target.configuredModels.filter((model) => !available.has(model))
+      missing = (target.comparableModels ?? target.configuredModels).filter((model) => !available.has(model))
       if (missing.length) verdict = { state: "model_missing", reason: "models_listed" }
     } else if (target.accepted) {
       verdict = target.accepted

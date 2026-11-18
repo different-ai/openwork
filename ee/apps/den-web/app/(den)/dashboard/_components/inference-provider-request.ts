@@ -13,7 +13,8 @@ import type {
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
+import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayTrueFoundryStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
+import { gatewayCustomProviderStatusSchema, type GatewayCustomProviderStatus } from "@openwork/types/den/gateway-custom-providers";
 import { z } from "zod";
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
@@ -55,6 +56,10 @@ export type DenInferenceProvider = {
   authorizationRequests: GatewayAuthorizationRequest[];
   /** LiteLLM providers only (manage view). */
   litellm: GatewayLiteLlmStatus | null;
+  /** TrueFoundry providers only (manage view). */
+  truefoundry: GatewayTrueFoundryStatus | null;
+  /** Custom OpenAI-compatible providers only (manage view). */
+  custom: GatewayCustomProviderStatus | null;
 };
 
 export type DenInferenceProviderDetails = DenInferenceProvider & {
@@ -89,7 +94,7 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
 });
 const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   mode: z.enum(["org", "member"]),
-  keySource: z.enum(["personal", "issued"]).nullable().catch(null),
+  keySource: z.enum(["personal", "issued", "entra"]).nullable().catch(null),
   issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
   mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
   issuedMemberCount: z.number().catch(0),
@@ -98,6 +103,17 @@ const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
   modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
+  entraScope: z.string().optional().catch(undefined),
+});
+const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
+  controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
+  createMissingUsers: z.boolean().catch(false), trackUsageCosts: z.boolean().catch(false), hasAdminKey: z.boolean(),
+  lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
+  modelCount: z.number(),
+  availableModels: z.array(z.object({ id: z.string(), name: z.string() })).catch([]),
+  selectedModelIds: z.array(z.string()).nullable().catch(null),
+  activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
+  attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"]), message: z.string().nullable() })).catch([]),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
@@ -291,6 +307,13 @@ function asCredential(value: unknown): DenInferenceProviderCredential | null {
   };
 }
 
+/** A malformed custom block leaves the provider readable; the manage screen then says it can't load the settings. */
+function readCustomStatus(value: unknown): GatewayCustomProviderStatus | null {
+  if (value === undefined || value === null) return null;
+  const parsed = gatewayCustomProviderStatusSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export function asInferenceProvider(value: unknown): DenInferenceProvider | null {
   if (!isRecord(value)) return null;
   const id = asString(value.id);
@@ -351,6 +374,8 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     accessGrants: value.accessGrants === undefined ? null : z.array(accessGrantSchema).parse(value.accessGrants),
     authorizationRequests: value.authorizationRequests === undefined ? [] : z.array(authorizationRequestSchema).parse(value.authorizationRequests),
     litellm: value.litellm === undefined ? null : liteLlmStatusSchema.parse(value.litellm),
+    truefoundry: value.truefoundry === undefined ? null : trueFoundryStatusSchema.parse(value.truefoundry),
+    custom: readCustomStatus(value.custom),
   };
 }
 

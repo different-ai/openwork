@@ -47,3 +47,8 @@ export function libraryConnectorLink(connectionId: string) {
 export function libraryCatalogLink() {
   return new URL("/dashboard/library/connectors/new", env.betterAuthUrl).toString()
 }
+
+/** A saved workflow's page in the member's Library, where they run, schedule and share it. */
+export function libraryWorkflowLink(configObjectId: string) {
+  return new URL(`/dashboard/library/workflows/${encodeURIComponent(configObjectId)}`, env.betterAuthUrl).toString()
+}

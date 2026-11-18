@@ -44,7 +44,8 @@ export async function revokeMembershipSessionCredentials(input: {
   // after it sees the revocation when it re-checks and deletes its own token (exchangeHeadlessResumeGrant).
   const headlessResumeGrants = await revokeHeadlessResumeGrantsForMember({ organizationId: input.organizationId, userId: input.userId })
 
-  const sessions = await db
+  // primary throughout: revocation must find credentials minted moments ago.
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, input.userId))
@@ -65,7 +66,7 @@ export async function revokeMembershipSessionCredentials(input: {
     await recordOrganizationSessionsRevoked({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId, sessions, reasonCode: input.reason })
   }
 
-  const oauthAccessTokens = await db
+  const oauthAccessTokens = await db.$primary
     .select({ id: OAuthAccessTokenTable.id })
     .from(OAuthAccessTokenTable)
     .where(and(
@@ -79,7 +80,7 @@ export async function revokeMembershipSessionCredentials(input: {
       .where(inArray(OAuthAccessTokenTable.id, oauthAccessTokens.map((token) => token.id)))
   }
 
-  const oauthConsents = await db
+  const oauthConsents = await db.$primary
     .select({ id: OAuthConsentTable.id })
     .from(OAuthConsentTable)
     .where(and(
@@ -94,7 +95,7 @@ export async function revokeMembershipSessionCredentials(input: {
     await Promise.all(oauthConsents.map((consent) => cache.auth.revokeGrant(consent.id)))
   }
 
-  const oauthRefreshTokens = await db
+  const oauthRefreshTokens = await db.$primary
     .select({ id: OAuthRefreshTokenTable.id })
     .from(OAuthRefreshTokenTable)
     .where(and(

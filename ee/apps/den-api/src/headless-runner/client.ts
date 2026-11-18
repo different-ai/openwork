@@ -14,7 +14,7 @@ export * from "@openwork-ee/headless-protocol"
  */
 export function defaultHeadlessRunnerDeps(
   env: Record<string, string | undefined> = process.env,
-  options: { indexKind?: HeadlessIndexKind } = {},
+  options: { indexKind?: HeadlessIndexKind; memberId?: string } = {},
 ): HeadlessRunnerDeps | null {
   const config = headlessRunnerConfig(env)
   // Loaded lazily: the minter pulls in the auth and database modules. A resume grant comes back when
@@ -24,6 +24,7 @@ export function defaultHeadlessRunnerDeps(
     const { token, resumeGrant, modelAccess, indexCapability } = await (await import("./resume-grants.js")).mintHeadlessTurnCredentials({
       ...input,
       ...(options.indexKind ? { indexKind: options.indexKind } : {}),
+      ...(options.memberId ? { memberId: options.memberId } : {}),
     })
     return { token, ...(resumeGrant ? { resumeGrant } : {}), ...(modelAccess ? { modelAccess } : {}), ...(indexCapability ? { indexCapability } : {}) }
   }

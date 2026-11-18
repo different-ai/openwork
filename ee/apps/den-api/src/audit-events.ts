@@ -37,6 +37,7 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   permissionSetArchived: "organization.permission_set.archived",
   permissionSetRenamed: "organization.permission_set.renamed",
   permissionSetTeamsChanged: "organization.permission_set.teams_changed",
+  permissionSetMembersChanged: "organization.permission_set.members_changed",
 }
 
 export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]

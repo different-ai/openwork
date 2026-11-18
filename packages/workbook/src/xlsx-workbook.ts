@@ -184,11 +184,15 @@ function parseWorkbookSheets(workbookXml: string, relsXml: string | null): { she
   return { sheets, omittedSheets: declared.length - sheets.length };
 }
 
+// <rPh> runs hold the furigana reading Excel stores beside the text; the cell does not show it.
+const PHONETIC_RUN = /<(?:[A-Za-z_][\w.-]*:)?rPh\b(?:[^>]*\/>|[^>]*>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?rPh\s*>)/g;
+
 function sharedStringText(xml: string): string {
+  const visible = xml.replace(PHONETIC_RUN, "");
   // Keep interior line breaks (multi-line cells) and only trim the edges; the
   // table renderer flattens whitespace where a single line is needed.
-  const text = xmlBlocks(xml, "t").map((block) => parsedXmlText(block.inner, "")).join("").trim();
-  return text || xmlText(xml);
+  const text = xmlBlocks(visible, "t").map((block) => parsedXmlText(block.inner, "")).join("").trim();
+  return text || xmlText(visible);
 }
 
 function parseSharedStrings(xml: string | null): string[] {

@@ -1,15 +1,25 @@
 # Workbot: Your agent
 
+> **Generally available:** `workbotProactive` is retired; its enabled behavior is standard on Cloud and self-hosted. Actual settings, permissions, billing rules and consent remain enforced. Rollout/off-state instructions below are historical; see [the retirement guide](../globally-enabled-retirement/README.md).
+
 Feature `workbotProactive` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
 It also needs Workbot on the deployment (`DEN_WORKBOT_URL`), the headless runner (`DEN_HEADLESS_RUNNER_URL`) and, for
 the default destination, the Workbot Slack app (Slack assistant) installed for the organization.
 
 Every member gets one persistent background agent, "Your agent", running in the cloud on the standard headless runner.
 With no events at all it is still useful: a morning pass, then a check about every three hours inside working hours,
-reading the member's sources since its last look: their calendar, email and team chat (Google, Microsoft or Slack,
-whichever they connected) and any other connection they turned on. Calendar events only wake it sooner. It sends one
+reading the member's sources since its last look: their calendar (Google or Microsoft, whichever they connected)
+and any connection they turned on, such as Slack. Calendar events only wake it sooner. It sends one
 short message when something needs the member, and stays quiet otherwise. It only reads: it never sends, accepts or
 edits anything for them.
+
+> **With `workbotAgentBrief` on** (cloud and self-hosted, off by default), Your agent drops the four responsibilities,
+> their mutes, the meeting lead time and calendar wakes for one rhythm (a check every 2 hours in working hours, plus
+> extra checks it asks for with `request_check`), a plain-text brief (the organization's default plus each member's
+> own lines), and two steps per check (a read-only check that reports findings, then a short tool-less message turn
+> that knows the member's recent Workbot DM). Den keeps only hard limits. See
+> [Your agent's brief and check rhythm](../workbot-agent-brief/README.md). Everything below describes the agent with
+> that feature off, which is unchanged.
 
 ## Architecture
 
@@ -65,10 +75,13 @@ something that changed after it told them), which has no preset. Mutes apply to 
 
 | Source | Read through | Default policy |
 | --- | --- | --- |
-| Calendar | Google Calendar or Outlook calendar (Den's Google Workspace and Microsoft 365 connectors) | On for everyone |
-| Email | Gmail or Outlook mail | On for everyone |
-| Team chat | Slack (Slack's MCP: DMs to the member, mentions, threads they're in) or Teams chats | On for everyone |
-| Any other connection whose read tools are reviewed | Linear, Notion, GitHub and Granola today: only their reviewed read tools | Members choose (off until they turn it on) |
+| Calendar | Google Calendar or Outlook calendar (Den's Google Workspace and Microsoft 365 connectors). No admin picks the app: each member's agent reads the one they picked, else the one most members connected | On for everyone |
+| Any connection whose read tools are reviewed | Slack (DMs to the member, mentions, threads they're in), Linear, Notion, GitHub and Granola today: only their reviewed read tools | Members choose (off until they turn it on) |
+
+Email and team chat are not sources of their own (they were, each on for everyone). Chat is read through the Slack
+connector. Mail and Teams chats are read through the Google Workspace or Microsoft 365 connector, which is a source
+only with `workbotAgentBrief` on (any connector can be one there); without it, Den's own providers are read for the
+calendar only. An organization that had email or team chat on for everyone follows each connector's setting now.
 
 | Preset | What the member gets | Woken early by |
 | --- | --- | --- |
@@ -107,9 +120,9 @@ format and extends the frontmatter (`template.ts`):
 ```md
 ---
 name: your-agent
-description: Reads each member's calendar, email, team chat and the connections they turn on, on a schedule, and tells them only what needs them.
+description: Reads each member's calendar and the connections they turn on, on a schedule, and tells them only what needs them.
 mode: primary
-sources: calendar, email, chat, connections
+sources: calendar, connections
 responsibilities: morning_brief, meeting_prep, calendar_changes, waiting_on_you
 schedule: morning pass, then every 3 hours in working hours
 ---
@@ -128,18 +141,20 @@ member's agent is a small `agent_instance` row: the template version it last ran
 
 | Setting | Stored in | Default |
 | --- | --- | --- |
-| Agents for everyone | organization metadata `workbot.proactive.enabled` | off |
+| Proactive Mode | organization metadata `workbot.proactive.enabled` | off |
 | Send messages to | `workbot.proactive.destination`: a DM from Workbot, or nowhere yet (never a channel) | a DM from Workbot |
 | Morning brief, Meeting prep (+ how early), Calendar changes, Waiting on you | the template (meeting lead time in metadata) | all on, 15 min |
 | Instructions for every agent | the template | empty |
 | Working hours | `workingDays`, `startHour`, `endHour` | weekdays, 8–19 |
 | Daily limit | `dailyCap` | 3 per person |
 | Members start | `membersStart` | opted in |
-| What agents read | `sources`: `calendar`, `email`, `chat` and `connections` by id, each `everyone`, `members` or `off` | calendar, email, chat on for everyone; other connections members choose |
+| Calendar (with Workbot's own rows) | `sources.calendar`: `everyone`, `members` or `off` | on for everyone |
+| Connectors | `sources.connections` by id, each `everyone`, `members` or `off` | members choose |
 
-"What agents read" lists Calendar, Email and Team chat with the connections behind them, then "Other connections (n)"
-behind a disclosure, each with On for everyone, Members choose or Not allowed, and the footer "Read only. Agents never
-send, edit or delete through these." The server enforces it: a member can't turn on what isn't allowed or turn off
+"Calendar" is one row beside Workbot's own settings: On for everyone, Members choose or Not allowed, with the
+calendar apps in use named under it ("Uses Google Workspace"). "Connectors" lists the connections agents may read,
+each with On for everyone, Members choose or Not allowed, and the footer "Read only. Agents never send, edit or delete
+through these." The server enforces it: a member can't turn on what isn't allowed or turn off
 what is on for everyone, and the turn's token only carries what the policy and the member allow.
 
 The page previews each kind of message as plain text, as the DM from the Workbot app. The switch stays visible but
@@ -211,10 +226,10 @@ Not live-tested against a Slack workspace; the unit tests cover the calls Den ma
   `mcp:read` token never calls a connection's own tools; this one may, but only on those connections and only tools we
   reviewed as reads, per service (Slack, Linear, Notion, GitHub, Granola), and never one whose name writes. A provider's
   read-only hints and tool names are never enough, so a service without a reviewed list is not a source at all. Native
-  Google and Microsoft reads are GETs of calendar events, mail and Teams chats of sources that are on; files, drafts
-  and sites are refused. Search shows the agent only what it may call. A turn resumed from its grant gets the same
+  Google and Microsoft reads are GETs of calendar events while the calendar is on; mail, chats, files, drafts and
+  sites are refused. Search shows the agent only what it may call. A turn resumed from its grant gets the same
   allowlist (`headless_resume_grant.scopes`). Den delivers only after the delivery step, with text it cleaned.
-- **Who sees the organization's connections.** "What agents read" lists connection names and addresses only for
+- **Who sees the organization's connections.** "Connectors" lists connection names and addresses only for
   callers with View connections; others see the policy without them.
 - **Content is data.** Calendar wakes name events by id and time; the agent reads titles, emails, chat messages and
   notes as information from other people, never as instructions. Only the member's own words in the wake steer it.
@@ -253,7 +268,8 @@ The harness's own tests (`harness.test.ts`, a scripted model) run with the evals
 1. Replays against the headless runner itself (the evals call the model directly with the same tools' answers).
 2. Other services as sources (Plain, HubSpot…) once their read tools are reviewed, or an admin-approved list of read
    tools per connection.
-3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet.
+3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet. With `workbotAgentBrief`, the agent's own
+   check can ask for an extra check (`request_check`), capped and inside the member's hours.
 4. Copying delivered text into the member's Workbot conversation.
 5. Desktop notifications as a destination.
 6. Telling Slack from Workbot web in "Saved from chat".
@@ -271,7 +287,7 @@ source, prompt, reply parsing, delivery rules, sources and their failures, the t
 without a runner, Slack or Google. `test/api/workbot-agent-sources.api.test.ts` covers the admin's policy, a member's
 sources from chat and the page, and Connect's read allowlist against a fake MCP service.
 `evals/proofs/workbot-proactive-settings.proof.test.ts` drives the admin page; `workbot-agent-sources.proof.test.ts`
-drives "What agents read" and My bot's Uses.
+drives Calendar, "Connectors" and My bot's Uses.
 
 ## Screenshots
 

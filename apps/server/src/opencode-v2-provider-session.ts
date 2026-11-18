@@ -38,6 +38,7 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
   const inferenceKey = (identity: string) => `ow_local_${createHmac("sha256", inferenceSecret).update(identity).digest("hex")}`;
   const fetcher = options.fetch ?? externalFetch;
   const active = new Set<AbortController>();
+  const inventoryListeners = new Set<() => void>();
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const url = new URL(request.url);
     const session = current();
@@ -100,8 +101,15 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
         let buffer = "";
         let event = "";
         let data = false;
+        let invalidate = () => {};
         const body = new ReadableStream<Uint8Array>({
           start(output) {
+            invalidate = () => {
+              if (signal.aborted || !sameIdentity()) return;
+              try { output.enqueue(encoder.encode("event: inventory.changed\ndata: {}\n\n")); }
+              catch { inventoryListeners.delete(invalidate); }
+            };
+            inventoryListeners.add(invalidate);
             void (async () => {
               try {
                 while (!signal.aborted && sameIdentity()) {
@@ -132,10 +140,10 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
                   if (signal.aborted || !sameIdentity()) output.close();
                   else output.error(new Error("Inventory stream ended"));
                 } catch { /* The downstream may already have cancelled. */ }
-              } finally { void reader.cancel().catch(() => {}); release(); }
+              } finally { inventoryListeners.delete(invalidate); void reader.cancel().catch(() => {}); release(); }
             })();
           },
-          cancel() { void reader.cancel().catch(() => {}); release(); },
+          cancel() { inventoryListeners.delete(invalidate); void reader.cancel().catch(() => {}); release(); },
         });
         return new Response(body, { status: upstream.status, headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
       }
@@ -174,8 +182,14 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
       return json({ error: "provider_inventory_unavailable" }, 502);
     }
   } });
-  return { url: `http://127.0.0.1:${server.port}/session`, token, close: async () => {
-    for (const controller of active) controller.abort();
-    await server.stop();
-  } };
+  return {
+    url: `http://127.0.0.1:${server.port}/session`, token,
+    invalidateInventory: () => {
+      for (const invalidate of inventoryListeners) invalidate();
+    },
+    close: async () => {
+      for (const controller of active) controller.abort();
+      await server.stop();
+    },
+  };
 }

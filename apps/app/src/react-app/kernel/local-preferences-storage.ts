@@ -7,6 +7,13 @@ export function isLinkOpenDestination(value: unknown): value is LinkOpenDestinat
   return value === "openwork" || value === "external";
 }
 
+/** What Enter does with a message typed while the agent is working. */
+export type FollowUpDefault = "queue" | "steer";
+
+export function isFollowUpDefault(value: unknown): value is FollowUpDefault {
+  return value === "queue" || value === "steer";
+}
+
 /**
  * One-time reset (2026-10): Show model reasoning now asks providers for
  * readable reasoning, so it starts off for everyone. Saved preferences without

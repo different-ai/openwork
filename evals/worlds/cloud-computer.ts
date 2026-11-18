@@ -1,13 +1,13 @@
 import type { Seed } from "@openwork/env";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** The real Web app, with rollout changes made through the platform-admin API.
  * This world deliberately has no desktop image: it proves rollout and recovery
  * UI, while the provider check exercises the actual Daytona desktop separately. */
 export async function cloudComputerWorld(seed: Seed) {
   const { den, webPort } = await denForAppWeb(seed, { org: { name: "Cloud computer studio", admin: { name: "Workspace Owner" } } });
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { computerUse: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
   const { app } = await signedInAppWeb(seed, { name: "cloud-computer", den, webPort, workspacePath: seed.tmpPath("cloud-computer-workspace") });
   const session = await seed.session(app, { title: "Work in the cloud browser" });
   const setRemote = async (enabled: boolean) => {

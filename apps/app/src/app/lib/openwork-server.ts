@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { claudeCodeSignInSchema, parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
@@ -23,10 +24,16 @@ import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 import { claudeImportItemsSchema, claudeImportResultsSchema } from "./claude-import";
+import { opencodeConnectionImportResultsSchema, opencodeConnectionsPreviewSchema } from "./opencode-connections-import";
 
 const desktopFreePreferencesSchema = z.object({ enabled: z.boolean(), available: z.boolean(), canEnable: z.boolean(), refresh: z.enum(["reloaded", "deferred"]).optional() });
 export type DesktopFreePreferences = z.infer<typeof desktopFreePreferencesSchema>;
 const desktopFreeAnalyticsSchema = z.object({ enabled: z.boolean() });
+const fileSendGrantsSchema = z.object({
+  enabled: z.boolean(),
+  grants: z.array(z.object({ id: z.string(), kind: z.string(), account: z.string(), directory: z.string(), createdAt: z.string() })),
+});
+export type FileSendGrants = z.infer<typeof fileSendGrantsSchema>;
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -81,58 +88,7 @@ export type OpenworkCloudProviderSyncStatus = {
   skippedProviders: OpenworkCloudProviderSyncSkippedProvider[];
 };
 
-export interface EngineV2MigrationStatus {
-  state: "idle" | "running" | "completed" | "error";
-  /** Restoring counts messages separately from the chat-copy counts. */
-  phase?: "starting" | "converting" | "restoring" | "copying";
-  restored?: number;
-  restoreTotal?: number;
-  imported: number;
-  skipped: number;
-  total: number;
-  /** ISO time the current migration started. */
-  startedAt?: string;
-  error?: string;
-  /** Where the v2 chat database was copied before this migration wrote to it. */
-  backupPath?: string;
-  /** Chats left in v1 because they could not be copied; older servers omit it. */
-  notCopied?: Array<{ id: string; title: string }>;
-  /** Chats copied without their largest outputs and attachments; older servers omit it. */
-  trimmed?: Array<{ id: string; title: string }>;
-  /** This run picks up a migration OpenWork closed before it finished. */
-  resumed?: boolean;
-}
-
-function parseChats(value: unknown): Array<{ id: string; title: string }> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((chat: unknown) =>
-    chat && typeof chat === "object" && "id" in chat && typeof chat.id === "string"
-      ? [{ id: chat.id, title: "title" in chat && typeof chat.title === "string" ? chat.title : "" }]
-      : []);
-}
-
-function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undefined {
-  if (!value || typeof value !== "object" || !("state" in value)
-    || !["idle", "running", "completed", "error"].includes(String(value.state))) return undefined;
-  if (value.state !== "idle" && value.state !== "running" && value.state !== "completed" && value.state !== "error") return undefined;
-  if (!("imported" in value) || typeof value.imported !== "number"
-    || !("skipped" in value) || typeof value.skipped !== "number"
-    || !("total" in value) || typeof value.total !== "number") return undefined;
-  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "restoring" || value.phase === "copying")
-    ? value.phase : undefined;
-  return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
-    ...(phase ? { phase } : {}),
-    ...("restored" in value && typeof value.restored === "number" ? { restored: value.restored } : {}),
-    ...("restoreTotal" in value && typeof value.restoreTotal === "number" ? { restoreTotal: value.restoreTotal } : {}),
-    ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
-    ...("backupPath" in value && typeof value.backupPath === "string" ? { backupPath: value.backupPath } : {}),
-    ...("notCopied" in value ? { notCopied: parseChats(value.notCopied) } : {}),
-    ...("trimmed" in value ? { trimmed: parseChats(value.trimmed) } : {}),
-    ...("resumed" in value && value.resumed === true ? { resumed: true } : {}),
-    error: "error" in value && typeof value.error === "string" ? value.error : undefined };
-}
-
-/** Work an engine switch or migration would interrupt, as counts only. */
+/** Work an engine switch would interrupt, as counts only. */
 export interface EngineActivityCount {
   verdict: "idle" | "busy" | "unknown";
   busySessions: number;
@@ -173,14 +129,13 @@ export interface EngineV2PreviewStatus {
   engineOrigin?: "fresh" | "manual" | "forced" | "reverted";
   engineChangedAt?: string;
   engineForced?: boolean;
-  /** The host is preparing a forced upgrade; engine ownership has not moved yet. */
-  forceUpgradePending?: boolean;
   version?: string;
   pid?: number;
   binSource?: string;
-  migration?: EngineV2MigrationStatus;
-  /** Older servers omit it; treat that as unknown and do not prompt. */
-  v1HistoryAvailable?: boolean;
+  /** The organization runs every chat on OpenCode v2 (the opencodeV2Only rollout). Older servers omit it: off. */
+  v2Only?: boolean;
+  /** Shared history has been adopted by v2 and can no longer be opened safely by v1. */
+  v1UnavailableReason?: string;
   mirroredProviderIds: string[];
   skippedProviderIds: string[];
   /** Why each skipped provider is not on OpenCode v2. Older servers, and the rollout switched off, omit it. */
@@ -249,15 +204,13 @@ function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
   }
   const skippedProviders = parseEngineV2SkippedProviders("skippedProviders" in value ? value.skippedProviders : undefined);
   return {
-    migration: parseEngineV2Migration("migration" in value ? value.migration : undefined),
-    ...("v1HistoryAvailable" in value && typeof value.v1HistoryAvailable === "boolean"
-      ? { v1HistoryAvailable: value.v1HistoryAvailable } : {}),
     ...("engineOrigin" in value && (value.engineOrigin === "fresh" || value.engineOrigin === "manual"
       || value.engineOrigin === "forced" || value.engineOrigin === "reverted") ? { engineOrigin: value.engineOrigin } : {}),
     ...("engineChangedAt" in value && typeof value.engineChangedAt === "string" ? { engineChangedAt: value.engineChangedAt } : {}),
     ...("engineForced" in value && typeof value.engineForced === "boolean" ? { engineForced: value.engineForced } : {}),
-    ...("forceUpgradePending" in value && typeof value.forceUpgradePending === "boolean"
-      ? { forceUpgradePending: value.forceUpgradePending } : {}),
+    ...("v2Only" in value && typeof value.v2Only === "boolean" ? { v2Only: value.v2Only } : {}),
+    ...("v1UnavailableReason" in value && typeof value.v1UnavailableReason === "string"
+      ? { v1UnavailableReason: value.v1UnavailableReason } : {}),
     enabled: value.enabled,
     running: value.running,
     chatRouting: "chatRouting" in value && typeof value.chatRouting === "boolean" ? value.chatRouting : false,
@@ -389,6 +342,16 @@ export type OpenworkRuntimeServiceSnapshot = {
   upgradeAvailable: boolean;
 };
 
+/** Free space on the disk that holds the server's saved data; null when the system does not say. */
+export type OpenworkDiskSpace = {
+  freeBytes: number | null;
+  totalBytes: number | null;
+  level: "ok" | "low" | "critical";
+};
+
+/** Window event sent when a server reports that a write failed for lack of disk space. */
+export const openworkDiskFullEvent = "openwork-disk-full";
+
 export type OpenworkRuntimeSnapshot = {
   ok: boolean;
   worker?: {
@@ -506,6 +469,14 @@ export type OpenworkAuthorizedFoldersResponse = {
   folders: string[];
   hiddenCount: number;
   workspaceRoot: string;
+};
+
+export type OpenworkSandboxSettingsResponse = {
+  allowHostExecution: boolean;
+  effectiveAllowHostExecution: boolean;
+  pending?: boolean;
+  managed: boolean;
+  featureEnabled: boolean;
 };
 
 export type OpenworkPermissionAction = "allow" | "ask" | "deny";
@@ -1477,6 +1448,9 @@ const resolveFetch = (url?: string) => {
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 const ENGINE_RELOAD_TIMEOUT_MS = 60_000;
+// The upload deadline grows with the file, so a slow connection can finish a
+// large one while a stalled upload still fails.
+const UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -1546,6 +1520,9 @@ async function requestJson<T>(
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
     const message = typeof json?.message === "string" ? json.message : response.statusText;
+    if (code === "insufficient_storage" && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(openworkDiskFullEvent));
+    }
     throw new OpenworkServerError(response.status, code, message, json?.details);
   }
 
@@ -1593,10 +1570,10 @@ async function requestAgentContextDiagnosticsJson(
   return result.payload;
 }
 
-async function requestMultipartRaw(
+async function requestUploadRaw(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: FormData | File; contentType?: string; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1605,7 +1582,7 @@ async function requestMultipartRaw(
     url,
     {
       method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
+      headers: buildAuthHeaders(options.token, options.hostToken, options.contentType ? { "Content-Type": options.contentType } : undefined),
       body: options.body,
     },
     options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
@@ -1691,6 +1668,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
   return {
     baseUrl,
+    claudeAgentIntegration: async (workspaceId: string) => {
+      // Listing initializes the native built-in plugin catalog. An item GET can
+      // return IntegrationNotFoundError on a fresh engine before this read.
+      return parseClaudeAgentIntegrationList(await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration`, { token, timeoutMs: timeouts.config }));
+    },
+    connectClaudeAgent: (workspaceId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/integration/claude-agent/connect/external`, {
+      token, method: "POST", body: { methodID: "claude-login" }, timeoutMs: timeouts.config,
+    }),
+    removeClaudeAgentConnection: (workspaceId: string, credentialId: string) => requestJson<void>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/credential/${encodeURIComponent(credentialId)}`, {
+      token, method: "DELETE", timeoutMs: timeouts.config,
+    }),
+    /** Only the desktop app that started this server holds the host token its sign-in route asks for. */
+    canSignInToClaudeCode: Boolean(hostToken),
+    /**
+     * Starts, reads or cancels Claude Code's own sign-in on the server's computer. A Claude Code that is already
+     * signed in answers `signed_in` without opening the browser, unless `force` asks for a fresh sign-in.
+     */
+    claudeCodeSignIn: async (action: "start" | "status" | "cancel", options?: { force?: boolean }) => claudeCodeSignInSchema.parse(await requestJson<unknown>(baseUrl, "/claude-code/sign-in", {
+      hostToken, method: action === "start" ? "POST" : action === "cancel" ? "DELETE" : "GET", timeoutMs: timeouts.config,
+      ...(action === "start" ? { body: { force: options?.force === true } } : {}),
+    })),
     cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
     cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
@@ -1705,6 +1703,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     runtimeVersions: () =>
       requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
+    diskSpace: () => requestJson<OpenworkDiskSpace>(baseUrl, "/disk-space", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     getConnectState: (workspaceId?: string | null) => {
       const query = new URLSearchParams();
@@ -1712,6 +1711,13 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       const suffix = query.size ? `?${query.toString()}` : "";
       return requestJson<OpenworkConnectState>(baseUrl, `/experimental/connect/state${suffix}`, { token, hostToken, timeoutMs: timeouts.config });
     },
+    /** "Always allow" on an open file-send approval; answer the approval with "always" right after. */
+    rememberFileSend: async (requestId: string) => {
+      await requestJson<unknown>(baseUrl, "/experimental/file-send/remember", { token, hostToken, method: "POST", body: { requestId }, timeoutMs: timeouts.config });
+    },
+    /** File sends this member always allows on this computer. */
+    listFileSendGrants: async () => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, "/experimental/file-send/grants", { token, hostToken, timeoutMs: timeouts.config })),
+    removeFileSendGrant: async (id: string) => fileSendGrantsSchema.parse(await requestJson<unknown>(baseUrl, `/experimental/file-send/grants/${encodeURIComponent(id)}`, { token, hostToken, method: "DELETE", timeoutMs: timeouts.config })),
     /** Has the server read the member's organization policy from Den again, as it does at sign-in. */
     refreshManagedPolicy: async () => {
       await requestJson<unknown>(baseUrl, "/managed-policy", { token, hostToken, timeoutMs: timeouts.config });
@@ -1729,6 +1735,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<GatewayDesktopOauthStartResponse>(baseUrl, `/cloud-provider-sync/providers/${encodeURIComponent(providerId)}/oauth/start`, {
         hostToken, signal, method: "POST", body: { orgId, ...(credentialSetId !== undefined ? { credentialSetId } : {}) } satisfies GatewayDesktopOauthStartRequest, timeoutMs: timeouts.config,
       }),
+    /**
+     * Device provider sharing: after the person confirms, this server sends
+     * the key it holds for `providerId` to their organization. The key is never
+     * read by or returned to the app. `token` is a freshly verified sign-in, when
+     * Den asked for one.
+     */
+    shareDeviceProvider: async (providerId: string, orgId: string, token?: string): Promise<{ inferenceProviderId: string; name: string }> => {
+      const payload = await requestJson<unknown>(baseUrl, `/cloud-provider-sync/device-providers/${encodeURIComponent(providerId)}/share`, {
+        hostToken, method: "POST", body: { orgId, ...(token ? { token } : {}) }, timeoutMs: timeouts.cloudMcpReconcile,
+      });
+      const shared = z.object({ inferenceProviderId: z.string().min(1), name: z.string() }).safeParse(payload);
+      if (!shared.success) throw new OpenworkServerError(502, "share_unconfirmed", "OpenWork did not confirm the share. Check AI Providers before trying again.");
+      return shared.data;
+    },
+    refreshGatewayProviderCatalog: async (signal?: AbortSignal): Promise<void> => {
+      await requestJson<unknown>(baseUrl, "/cloud-provider-sync/gateway/refresh", {
+        hostToken, method: "POST", body: {}, signal, timeoutMs: timeouts.config,
+      });
+    },
     runCloudProviderSyncNow: async (reason?: string, signal?: AbortSignal) =>
       parseCloudProviderSyncRun(await requestJson<unknown>(baseUrl, "/cloud-provider-sync/run", {
         hostToken,
@@ -1772,12 +1797,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       parseEngineActivity(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/activity", {
         token,
         timeoutMs: timeouts.config,
-      })),
-    /** Rejects with `engine_migration_active_sessions` (409) while v1 tasks run, unless allowed. */
-    migrateOpencodeHistory: async (options: { allowActiveSessions?: boolean } = {}): Promise<EngineV2PreviewStatus> =>
-      parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
-        token, hostToken, method: "POST", timeoutMs: timeouts.config,
-        body: { confirm: true, ...(options.allowActiveSessions ? { allowActiveSessions: true } : {}) },
       })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
@@ -1933,6 +1952,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "PUT",
           body: { folders },
+          timeoutMs: timeouts.config,
+        },
+      ),
+    getSandboxSettings: (workspaceId: string) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setSandboxSettings: (workspaceId: string, allowHostExecution: boolean) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { allowHostExecution },
           timeoutMs: timeouts.config,
         },
       ),
@@ -2102,6 +2139,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     getMcpStatus: (workspaceId: string) =>
       requestJson<McpStatusMap>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode/mcp`, { token, hostToken }),
+    /** The connection catalog of the engine that runs chats on a v2 desktop, as that engine reports it. */
+    getChatEngineMcpCatalog: (workspaceId: string) =>
+      requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/mcp`, { token, hostToken }),
     listMcpApps: (workspaceId: string) =>
       requestJson<{ servers: OpenworkMcpAppCatalogServer[] }>(
         baseUrl,
@@ -2113,6 +2153,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       projectedToolName: string,
       launch?: OpenworkMcpAppLaunchReference,
       context?: { sessionId: string | null; readOnly: boolean; engine?: "v1" | "v2" },
+      options?: { signal?: AbortSignal },
     ) =>
       requestJson<{ app: OpenworkMcpAppResource | null }>(
         baseUrl,
@@ -2123,6 +2164,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "POST",
           body: { projectedToolName, ...(launch ? { launch } : {}), ...(context ? { context: { sessionId: context.sessionId, readOnly: context.readOnly, engine: context.engine } } : {}) },
           timeoutMs: timeouts.binary,
+          signal: options?.signal,
         },
       ),
     mcpAppSandbox: (app: OpenworkMcpAppResource, hostOrigin: string): OpenworkMcpAppSandbox => {
@@ -2159,6 +2201,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         approved?: boolean;
         checkOnly?: boolean;
       },
+      options?: { signal?: AbortSignal },
     ) => requestJson<OpenworkMcpAppToolResult>(
       baseUrl,
       `/workspace/${encodeURIComponent(workspaceId)}/mcp-apps/call`,
@@ -2168,6 +2211,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "POST",
         body: payload,
         timeoutMs: timeouts.binary,
+        signal: options?.signal,
       },
     ),
     releaseMcpApp: (workspaceId: string, launchId: string) => requestJson<{ released: boolean }>(
@@ -2336,6 +2380,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    previewOpencodeConnections: async (workspaceId: string) =>
+      opencodeConnectionsPreviewSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, { token, hostToken }),
+      ),
+    importOpencodeConnections: async (workspaceId: string, names: string[]) =>
+      opencodeConnectionImportResultsSchema.parse(
+        await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/opencode-import/connections`, {
+          token,
+          hostToken,
+          method: "POST",
+          body: { names },
+          timeoutMs: 2 * 60_000,
+        }),
+      ).results,
     listClaudeCodeSessions: async (workspaceId: string) =>
       claudeImportItemsSchema.parse(
         await requestJson<unknown>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/code`, { token, hostToken, timeoutMs: 60_000 }),
@@ -2355,7 +2413,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       form.append("file", file);
       form.append("mode", selection ? "import" : "preview");
       if (selection) form.append("ids", JSON.stringify(selection.importIds));
-      const result = await requestMultipartRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
+      const result = await requestUploadRaw(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-import/export`, {
         token,
         hostToken,
         method: "POST",
@@ -2379,16 +2437,25 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       if (!id) throw new Error("workspaceId is required");
       if (!file) throw new Error("file is required");
       const uploadPath = `/workspace/${encodeURIComponent(id)}/inbox`;
-      const form = new FormData();
-      form.append("file", file);
-      if (options?.path?.trim()) form.append("path", options.path.trim());
-      const result = await requestMultipartRaw(baseUrl, uploadPath, {
+      const targetPath = options?.path?.trim() || file.name;
+      const request = {
         token,
         hostToken,
         method: "POST",
-        body: form,
-        timeoutMs: timeouts.binary,
+        timeoutMs: Math.max(timeouts.binary, (file.size / UPLOAD_MIN_BYTES_PER_SECOND) * 1000),
+      };
+      let result = await requestUploadRaw(baseUrl, `${uploadPath}?path=${encodeURIComponent(targetPath)}`, {
+        ...request,
+        contentType: "application/octet-stream",
+        body: file,
       });
+      // Workers that have not updated yet accept only multipart.
+      if (result.status === 400 && result.text.includes("Expected multipart/form-data")) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("path", targetPath);
+        result = await requestUploadRaw(baseUrl, uploadPath, { ...request, body: form });
+      }
 
       if (!result.ok) {
         let message = result.text.trim();

@@ -1,6 +1,6 @@
 import { and, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
-import { readFeatureRollouts, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readLatestFeatureChanges, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { availableFeatureKeys, featureAvailableOn, featureKeySchema, resolveFeature, type FeatureKey } from "@openwork/features"
 import type { Hono } from "hono"
@@ -11,6 +11,7 @@ import { env } from "../../env.js"
 import type { FeatureHealth, FeatureOutcomeSummary, FeatureOutcomeTotals } from "../../feature-outcomes/outcomes.js"
 import { readFeatureReport, readFeatureReports, type FeatureReport } from "../../feature-outcomes/report.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
 import { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } from "../../feature-outcomes/outcomes.js"
 import { readSlackSendAsBotOutcomes } from "../../feature-outcomes/slack-send-as-bot.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -36,6 +37,8 @@ const featureUsageSchema = z.object({
   /** Members who used it in the last 7 and 30 days. */
   usedLast7Days: z.number().int(),
   usedLast30Days: z.number().int(),
+  /** Latest change that could affect this organization (its override or the deployment-wide state), or null when it was never changed in /admin. */
+  lastChange: adminFeatureChangeSchema.nullable(),
   /** Everyone who ever used it, most recent first. */
   members: z.array(featureUsageMemberSchema),
 })
@@ -282,7 +285,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
     describeRoute({
       tags: ["Admin"],
       summary: "Who has and uses each feature in an organization",
-      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
+      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, the latest change that could affect the organization (who turned it on or off and when), and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
       responses: {
         200: jsonResponse("Feature usage returned.", responseSchema),
         400: jsonResponse("Invalid organization id.", invalidRequestSchema),
@@ -298,7 +301,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
       const [organization] = await db.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
       if (!organization) return c.json({ error: "not_found", message: "Organization not found." }, 404)
 
-      const [members, rollouts, overrides, memberOverrides, usage] = await Promise.all([
+      const [members, rollouts, overrides, memberOverrides, usage, changes] = await Promise.all([
         db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
           .from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
           .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false), isNotNull(MemberTable.userId))),
@@ -306,6 +309,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
         readOrganizationFeatureOverrides(db, organizationId),
         readOrganizationMemberFeatureOverrides(db, organizationId),
         readOrganizationFeatureUsage(db, organizationId),
+        readLatestFeatureChanges(db, { organizationId }),
       ])
 
       const context = { ...env.features, rollouts, overrides }
@@ -323,6 +327,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
           enabledMembers: members.filter((member) => enabledFor(key, member.id)).length,
           usedLast7Days: usedWithin(7),
           usedLast30Days: usedWithin(30),
+          lastChange: serializeFeatureChange(changes[key]),
           members: used.map((row) => {
             const person = people.get(row.memberId)
             return {

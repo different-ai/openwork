@@ -1,9 +1,42 @@
 import { create } from "zustand"
 
+type Chats = Readonly<Record<string, true>>
+
+function mark(chats: Chats, sessionId: string, value: boolean): Chats {
+  if (Boolean(chats[sessionId]) === value) return chats
+  const next = { ...chats }
+  if (value) next[sessionId] = true
+  else delete next[sessionId]
+  return next
+}
+
 export const useComputerSessionHistoryStore = create<{
-  enabled: boolean
-  setEnabled: (enabled: boolean) => void
+  /** Per chat: the subagent whose live view the person opened from the crew; none shows the chat's. */
+  agents: Readonly<Record<string, string>>
+  setAgent: (sessionId: string, agentSessionId: string | null) => void
+  /** Chats whose computer is working now: their card offers the live view. */
+  working: Chats
+  /** Chats where the person opened the live view from the card. */
+  watching: Chats
+  setWorking: (sessionId: string, working: boolean) => void
+  setWatching: (sessionId: string, watching: boolean) => void
 }>((set) => ({
-  enabled: false,
-  setEnabled: enabled => set(state => state.enabled === enabled ? state : { enabled }),
+  agents: {},
+  setAgent: (sessionId, agentSessionId) => set(state => {
+    if ((state.agents[sessionId] ?? null) === agentSessionId) return state
+    const agents = { ...state.agents }
+    if (agentSessionId) agents[sessionId] = agentSessionId
+    else delete agents[sessionId]
+    return { agents }
+  }),
+  working: {},
+  watching: {},
+  setWorking: (sessionId, working) => set(state => {
+    const next = mark(state.working, sessionId, working)
+    return next === state.working ? state : { working: next }
+  }),
+  setWatching: (sessionId, watching) => set(state => {
+    const next = mark(state.watching, sessionId, watching)
+    return next === state.watching ? state : { watching: next }
+  }),
 }))

@@ -5,7 +5,7 @@ export const browserOperationLabels: Record<string, string> = {
   navigate: "Opening a page", click: "Clicking a control", fill: "Entering text", key: "Using the keyboard", scroll: "Scrolling",
   website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
   stale_observation: "A fresh page view is needed", stale_tool: "Website tools have changed", user_denied: "The action was declined",
-  needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser", timeout: "Check the page before continuing",
+  needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser", payment_required: "Enter payment details in this browser", timeout: "Check the page before continuing",
   result_withheld: "Website result was kept private",
 };
 
@@ -14,16 +14,7 @@ export function browserNeedsPerson(tab: BrowserPanelTab | null | undefined): boo
   return tab?.browserTask?.status === "needs_attention";
 }
 
-export function browserSiteHost(url: string): string {
-  if (!url || url === "about:blank") return "New tab";
-  try {
-    return new URL(url).host || url;
-  } catch {
-    return url;
-  }
-}
-
-/** One short state line for the browser's header button and floating card. */
+/** One short state line for the browser's header button. */
 export function browserStatusLabel(tab: BrowserPanelTab | null | undefined): string {
   if (!tab) return "No page open";
   if (browserNeedsPerson(tab)) return "Needs you";

@@ -17,7 +17,12 @@ private field is used for every key typed in OpenWork and OpenWork Cloud.
    den-web `DenSecretInput` both build on it.
 3. **Human-only writes in Den**: agents (`mcp_internal`) are always refused
    when they send a key, and so are API keys (`secure_entry_required`,
-   `middleware/refuse-machine-secrets.ts`).
+   `middleware/refuse-machine-secrets.ts`). One exception for API keys, never
+   for the agent: the admin per-member LLM credential write
+   (`PUT /v1/llm-providers/:id/member-credentials/:orgMembershipId`) is the
+   provisioning route a script uses to push keys it minted upstream (LiteLLM,
+   TrueFoundry), so an API key whose owner has Manage people's provider keys
+   may call it. The write is audited and the key is never read back.
 
 ## Keys the agent can ask for in chat
 

@@ -1,5 +1,7 @@
 # Background tasks on the composer (`composerBackgroundTasks`)
 
+> **Generally available:** `composerBackgroundTasks` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - **Feature key:** `composerBackgroundTasks`
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @benjaminshafii
@@ -14,8 +16,13 @@ composer, under the **Agents** list, until it exits:
   Up to three commands start expanded; more start collapsed.
 - One row per command, in the Agents rows' shape and height, set apart as a
   command: the command itself in monospace (full command on hover) and how
-  long it has run, shimmering while it runs. An empty action lane keeps the
-  times in line with the agent rows above; commands have no Stop or Open yet.
+  long it has run, shimmering while it runs. On V2, **Stop** appears in the
+  same action lane as agent rows (hover, keyboard focus, or touch). It stops
+  only that command, not the chat or other commands. V2's `shell.remove`
+  also deletes the engine's saved output; the button's tooltip says so.
+  While the request is pending it says **Stopping**; failures keep the row
+  and offer **Retry stop**. The row is removed only after the engine confirms.
+  The engine's session ownership is checked before deleting the command.
 - While the connection cannot confirm the commands, rows stay and say
   **Reconnecting**, without shimmer or ticking time.
 

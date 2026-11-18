@@ -1,12 +1,15 @@
 import { env } from "../env.js"
 import { SLACK_ASSISTANT_INSTRUCTIONS } from "../slack-assistant/protocol.js"
-import { BUILD_AN_APP_SKILL_SOURCE, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import { buildAnAppSkillSource, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
+import { newWorkflowLanguage } from "./workflow-service.js"
 
 export type BuiltinSkillDefinition = {
   descriptor: RemoteSkillDescriptor
-  source: string
+  /** A function when the text depends on the organization's Workflow language. */
+  source: string | ((language: CodemodeLanguage) => string)
   searchExtraTokens: string
   /** Listed only while the tools it teaches exist on this deployment. */
   available?: () => boolean
@@ -244,7 +247,7 @@ Work on a local copy with shell tools; never paste file bytes or base64 into a t
 
 ## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
 
-1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Desktop confirms the file's Drive identity and download before transferring bytes. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Leave out \`path\` to save under drive/; Desktop asks the person first for any other folder. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
 2. Inspect and edit the file with bash (recipes below). Load only the part you need.
 3. \`drive_file_status\` shows what changed locally and in Drive.
 4. Only when the user asked to save it: \`drive_push_file\`, which the person approves. A stored file, including Office files in OneDrive and SharePoint, is replaced in place: same link and sharing, with the previous version in the version history. A Google Docs, Sheets or Slides file (or a PDF converted from an Office file) is saved as a new file next to the original unless the user asked for something else.
@@ -328,12 +331,12 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
   {
     descriptor: {
       name: "build-an-app",
-      title: "Build an App",
-      description: "Build or change an App, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
+      title: "Build an artifact",
+      description: "Build or change an artifact, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
       capability: BUILTIN_BUILD_AN_APP_CAPABILITY,
       location: "skill://build-an-app/SKILL.md",
     },
-    source: BUILD_AN_APP_SKILL_SOURCE,
+    source: buildAnAppSkillSource,
     searchExtraTokens: "app apps build make create edit update dashboard tracker calculator form lookup interactive view mcp artifact",
     available: () => env.appMcpServersEnabled,
   },
@@ -405,7 +408,8 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit) || 5)))
 }
 
-export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecutePayload | null {
+/** The organization's Workflow language is read only for a skill whose text depends on it. */
+export async function executeBuiltinSkillCapability(name: string, organizationId: string): Promise<BuiltinSkillExecutePayload | null> {
   const skill = findBuiltinSkill(name)
   if (!skill) return null
   return {
@@ -413,6 +417,6 @@ export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecute
     name: skill.descriptor.title,
     description: skill.descriptor.description,
     provenance: "Built into OpenWork Cloud.",
-    content: skill.source,
+    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage()),
   }
 }

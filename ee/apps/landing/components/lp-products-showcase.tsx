@@ -21,7 +21,14 @@ const STAGES: Record<LpProductKey, Stage> = {
     content: <LpDemoDesktop />,
     tall: true,
     note: "Chat, Library and Automations, on your own files. No account needed.",
-    action: <DownloadLink className="lp-pill-primary lp-pill-sm">Download OpenWork</DownloadLink>
+    action: (
+      <StageActions>
+        <a href="/desktop" className="lp-pill-secondary lp-pill-sm">
+          Explore Desktop App
+        </a>
+        <DownloadLink className="lp-pill-primary lp-pill-sm">Download OpenWork</DownloadLink>
+      </StageActions>
+    )
   },
   "mcp-gateway": {
     content: <LpDemoMcp />,
@@ -38,8 +45,8 @@ const STAGES: Record<LpProductKey, Stage> = {
     tall: false,
     note: "OpenAI, Anthropic, Vertex, Bedrock, Azure, Mistral, OpenRouter and more.",
     action: (
-      <a href="/docs/ai-gateway/overview" className="lp-pill-secondary lp-pill-sm">
-        Set up AI Gateway
+      <a href="/ai-gateway" className="lp-pill-secondary lp-pill-sm">
+        Explore AI Gateway
       </a>
     )
   },
@@ -48,12 +55,21 @@ const STAGES: Record<LpProductKey, Stage> = {
     tall: true,
     note: "Nothing to install. Admins set models, skills and access for everyone.",
     action: (
-      <a href="https://app.openworklabs.com" className="lp-pill-primary lp-pill-sm">
-        Open OpenWork Web
-      </a>
+      <StageActions>
+        <a href="/cloud" className="lp-pill-secondary lp-pill-sm">
+          Explore Cloud App
+        </a>
+        <a href="https://app.openworklabs.com" className="lp-pill-primary lp-pill-sm">
+          Open OpenWork Web
+        </a>
+      </StageActions>
     )
   }
 };
+
+function StageActions({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-2">{children}</div>;
+}
 
 function isProductKey(value: string): value is LpProductKey {
   return LP_PRODUCT_TAB_ORDER.some((key) => key === value);

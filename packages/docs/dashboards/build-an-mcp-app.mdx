@@ -6,7 +6,7 @@ keywords: ["MCP Apps", "widgets", "ui://", "host protocol", "ext-apps", "dashboa
 
 [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) are a standard extension of MCP (`io.modelcontextprotocol/ui`). An app is an ordinary MCP server with a tool that points to a UI resource and that resource served as HTML. OpenWork renders it as real, interactive UI in chat and on your dashboard; what you do inside it is not sent to the model. OpenWork supports the subset below, not every optional feature of the specification. Apps must check the host's advertised capabilities. The [`ext-apps` repository](https://github.com/modelcontextprotocol/ext-apps) provides the SDK and examples.
 
-To build an App without writing an MCP server, ask the agent for one: see [Apps you build are their own MCP servers](/cloud/run-in-the-cloud/cloud-mcp).
+To build an artifact, ask the agent for the interactive view you need. OpenWork serves [each artifact as its own MCP server](/cloud/run-in-the-cloud/cloud-mcp).
 
 ## How OpenWork runs tools inside an App
 

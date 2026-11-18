@@ -1,4 +1,6 @@
 import { AUTO_ROUTER_PROVIDER_ID, autoRouterIdFromModel } from "@openwork/types/den/auto-router";
+import { FAST_DEFAULT_VARIANT } from "@openwork/types/cloud-model-fast";
+import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "../session/models/model-collections-store";
@@ -27,19 +29,46 @@ export function nonDefaultModelSummary(model: ModelRef, value: string | null, la
   return !managesOwnBehavior(model) && value !== null ? label : null;
 }
 
+/**
+ * What a picker's trigger says after the model's name: its non-default setting, and whether Fast is on
+ * (shown on its own, so the setting beside it is the base level: "High", not "High + Fast").
+ * A saved setting the model does not list is only called out once the list is verified. While the list is
+ * still loading, or the model has no name here, the trigger says nothing rather than a raw setting id.
+ */
+export function modelTriggerSettings(input: {
+  model: ModelRef;
+  /** The trigger shows this model's name, not "Select model". */
+  named: boolean;
+  /** The model list is the engine's own answer for a verified sign-in, not a saved or partial one. */
+  verified: boolean;
+  options: readonly { value: string | null; label: string; description?: string }[];
+  value: string | null;
+}): { summary: string | null; fast: boolean } {
+  if (!input.named || managesOwnBehavior(input.model)) return { summary: null, fast: false };
+  const selection = getModelBehaviorSelection(input.options, input.value);
+  const controls = getModelBehaviorControls(selection.options, selection.value);
+  if (controls.fast) {
+    return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
+  }
+  const listed = selection.options.some((option) => option.value === input.value);
+  return { fast: false, summary: listed || input.verified ? nonDefaultModelSummary(input.model, input.value, selection.label) : null };
+}
+
 // "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`
 // names of these helpers) predate the organization's Smart Routers and stay so
 // saved selections keep working; people only ever read "OpenWork Free".
 export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const FREE_MODEL_NAME = "OpenWork Free";
+/** The free model's engine name, also used when no title has been loaded. */
+export const FREE_MODEL_ENGINE_TITLE = "GPT-6 Luna";
 /** The picker group that holds only Smart Router models, above everything else, without a label. */
 export const AUTO_ROUTER_GROUP = "Smart";
 /** What a Smart Router model is called when the engine reports no name for it. */
 export const SMART_MODEL_FALLBACK_NAME = "Smart";
 
 /**
- * One of the organization's Smart Routers (feature `autoRouter`): the Gateway
+ * One of the organization's Smart Routers: the Gateway
  * picks the real model for every prompt. Every router is a model of the one
  * `openwork-auto` provider, named "Smart: <router name>". Not OpenWork Free.
  */
@@ -103,7 +132,7 @@ export function isAutoModel(model: ModelRef | null | undefined) {
  * otherwise.
  */
 export function fixedModelTitle(model: ModelRef & { title?: string }): string | undefined {
-  if (isAutoModel(model)) return FREE_MODEL_NAME;
+  if (isAutoModel(model)) return model.title?.trim() && model.title.trim() !== model.modelID ? undefined : FREE_MODEL_ENGINE_TITLE;
   if (isAutoRouterModel(model)) {
     const title = model.title?.trim();
     return title && title !== model.modelID && autoRouterIdFromModel(title) === null ? title : undefined;
@@ -171,8 +200,7 @@ export function modelStateLabel(model: ModelOption): string | null {
   return null;
 }
 
-export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Limit used up" : "Free with a usage limit";
+export function modelSubtitle(model: ModelOption) {
   if (isAutoRouterModel(model)) return "Picks the best model for each task";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");

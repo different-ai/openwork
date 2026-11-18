@@ -25,7 +25,6 @@ the page and says what permission it needs (DESIGN.md P4).
 | AI providers | `gateway_providers.view` (or `llm_providers.view` for legacy providers when the AI Gateway is off) |
 | Connectors | `connections.view` |
 | Installation | Self-hosted: installation administrators only. Cloud: shows "Managed by OpenWork". |
-| Advanced › Network check | `egress_diagnostics.view` (running it needs `egress_diagnostics.manage`) |
 
 **Installation administrators** are the people on the installation's local
 administrator allowlist. Successful signed `/setup` bootstrap enrolls the first

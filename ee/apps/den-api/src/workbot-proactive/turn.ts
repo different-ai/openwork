@@ -23,6 +23,12 @@ import {
 
 export type AgentTurnResult = AgentReply | { kind: "unavailable"; code: string }
 
+/** Tokens one turn used, as the runner reports them; null from runners that don't. */
+export type AgentTurnUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null
+
+/** A turn's final answer as written, for callers that read it themselves (`workbotAgentBrief`). */
+export type AgentRawTurnResult = { kind: "answered"; text: string; usage: AgentTurnUsage } | { kind: "unavailable"; code: string }
+
 export type AgentTurnDeps = {
   client: HeadlessRunnerClient | null
   sleep: (ms: number) => Promise<void>
@@ -55,20 +61,46 @@ export function agentMessageId(memberId: string, wakeAt: number) {
   return `wa_${createHash("sha256").update(`agent:${memberId}:${wakeAt}`).digest("hex").slice(0, 32)}`
 }
 
+/** The messenger's session for one check (`workbotAgentBrief`): fresh each time, deleted after, never shared. */
+export function agentMessageSessionId(organizationId: string, memberId: string, wakeAt: number) {
+  return `hs_agentmsg_${createHash("sha256").update(`agent-message:${organizationId}:${memberId}:${wakeAt}`).digest("hex").slice(0, 36)}`
+}
+
 export async function runAgentTurn(
   input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
   deps: AgentTurnDeps,
 ): Promise<AgentTurnResult> {
+  const answered = await runAgentSessionTurn(input, deps)
+  return answered.kind === "answered" ? parseAgentReply(answered.text) : answered
+}
+
+/**
+ * One turn of a member's agent, answered as written. `readOnly` (the messenger) also takes away its file tools; with
+ * an empty read allowlist in `scopes` its token reads nothing, so it can only write the answer it is asked for.
+ */
+export async function runAgentSessionTurn(
+  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[]; title?: string; readOnly?: boolean },
+  deps: AgentTurnDeps,
+): Promise<AgentRawTurnResult> {
   const client = deps.client
   if (!client) return { kind: "unavailable", code: "runner_not_configured" }
   // Same id every pass: creates the session the first time, keeps its transcript and notes after that, and picks
   // up a new template version's instructions.
   const session = await client
-    .putSession(input.sessionId, { title: "Your agent", instructions: input.instructions, repeats: { maxWaitingMs: 60_000, maxIdenticalFailures: 2 } })
+    .putSession(input.sessionId, { title: input.title ?? "Your agent", instructions: input.instructions, repeats: { maxWaitingMs: 60_000, maxIdenticalFailures: 2 } })
     .catch(() => null)
   if (!session?.ok) return { kind: "unavailable", code: session?.error ?? "runner_unreachable" }
   const send = () => client
-    .sendTurn(input.actor, { sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model, mcpReadOnly: true, ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}), ttlMs: TOKEN_TTL_MS, execution: "steps" })
+    .sendTurn(input.actor, {
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      prompt: input.prompt,
+      model: input.model,
+      ...(input.readOnly ? { readOnly: true } : { mcpReadOnly: true }),
+      ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}),
+      ttlMs: TOKEN_TTL_MS,
+      execution: "steps",
+    })
     .catch(() => null)
   const sent = await send()
   if (!sent?.ok) return { kind: "unavailable", code: sent?.error ?? "runner_unreachable" }
@@ -93,8 +125,13 @@ export async function runAgentTurn(
     }
     if (turn.status !== "completed") return { kind: "unavailable", code: turn.error ?? `turn_${turn.status}` }
     const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
-    return parseAgentReply(answer?.role === "assistant" ? answer.text : read.value.finalAssistantText)
+    return { kind: "answered", text: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage: turn.usage ?? null }
   }
   await client.abort(input.sessionId, input.messageId).catch(() => null)
   return { kind: "unavailable", code: "timed_out" }
+}
+
+/** Deletes the messenger's session once its answer is read; best effort (an orphan holds one short exchange). */
+export async function endAgentMessageSession(sessionId: string, deps: Pick<AgentTurnDeps, "client">): Promise<void> {
+  await deps.client?.deleteSession(sessionId).catch(() => null)
 }

@@ -6,12 +6,11 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
 import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
-import { decodeFileContent, decodeTruncatedText, readBoundedBytes } from "../../capability-sources/binary-content.js"
+import { decodeFileContent, decodeTruncatedText, readBoundedBytes, readBytesWithin } from "../../capability-sources/binary-content.js"
+import { extractPdfText } from "../../capability-sources/pdf-text.js"
 import { buildGmailDraftRaw, gmailDraftUrl, gmailThreadUrl, normalizeGmailHeaderValue, readGmailDraftIds } from "../../capability-sources/gmail.js"
 import type { GmailDraftAttachment, GmailDraftQuote } from "../../capability-sources/gmail.js"
 import { gmailFileInputPreflight, gmailFileInputPreflightSchema } from "../../capability-sources/gmail-file-input.js"
@@ -23,6 +22,7 @@ import {
   buildGmailQuote,
   extractCalendarEvents,
   extractDriveFiles,
+  type GoogleWorkspaceDriveFile,
   extractDrivePermission,
   extractGmailAttachmentData,
   extractGmailMessage,
@@ -56,6 +56,46 @@ const DRIVE_FULL_SCOPE = "https://www.googleapis.com/auth/drive"
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
+const PDF_MIME_TYPE = "application/pdf"
+// Largest PDF downloaded to extract its text; only the text, never the bytes, reaches the model.
+// The whole file is held while pdf.js reads it (the cross-reference table is at the end), and parsing
+// needs up to ~5x the file size in the worst case measured, in a worker with its own heap limit.
+const DRIVE_PDF_MAX_BYTES = 50 * 1024 * 1024
+const DRIVE_PDF_TEXT_TIMEOUT_MS = 15_000
+
+type DrivePdfTextUnavailableReason = "file_too_large" | "no_extractable_text" | "extraction_timed_out"
+const DRIVE_PDF_TEXT_HINTS: Record<DrivePdfTextUnavailableReason, string> = {
+  file_too_large: "This PDF is over the 50 MB limit for reading its text here.",
+  no_extractable_text: "This PDF has no text layer; it is probably scanned.",
+  extraction_timed_out: "Reading this PDF's text took too long.",
+}
+
+type DrivePdfTextUnavailable = {
+  ok: true
+  file: GoogleWorkspaceDriveFile & {
+    content: null
+    contentBase64: null
+    encoding: "none"
+    truncated: false
+    contentUnavailableReason: DrivePdfTextUnavailableReason
+    contentUnavailableHint: string
+  }
+}
+
+function pdfTextUnavailable(file: GoogleWorkspaceDriveFile, reason: DrivePdfTextUnavailableReason): DrivePdfTextUnavailable {
+  return {
+    ok: true,
+    file: {
+      ...file,
+      content: null,
+      contentBase64: null,
+      encoding: "none",
+      truncated: false,
+      contentUnavailableReason: reason,
+      contentUnavailableHint: `${DRIVE_PDF_TEXT_HINTS[reason]} If you have a shell, call createGoogleDriveDownloadLink with this fileId, download the file and read it locally (for example with pdftotext). Otherwise tell the person and ask them to share the part you need.`,
+    },
+  }
+}
 const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
 // UTF-8 needs at most four bytes per character.
 const DRIVE_TEXT_BYTE_LIMIT = DRIVE_TEXT_CHARACTER_LIMIT * 4
@@ -299,7 +339,8 @@ const driveFileResponseSchema = z.object({
     contentBase64: z.string().nullable().describe("Standard base64-encoded file bytes for binary files; decode to a workspace file. To upload, use the host's Google Workspace upload action with the workspace file path, if that action is available in the current client. There is no dataBase64 Drive upload capability."),
     encoding: z.enum(["text", "base64", "none"]),
     truncated: z.boolean(),
-    contentUnavailableReason: z.enum(["file_too_large"]).nullable(),
+    contentUnavailableReason: z.enum(["file_too_large", "no_extractable_text", "extraction_timed_out"]).nullable().describe("file_too_large: over the inline limit, pull the file into the workspace instead. no_extractable_text: a PDF with no text layer, such as a scan. extraction_timed_out: reading a PDF's text took too long."),
+    contentUnavailableHint: z.string().optional().describe("What to do instead when content is unavailable."),
   }),
 }).meta({ ref: "GoogleWorkspaceDriveFileResponse" })
 
@@ -465,6 +506,45 @@ export async function readMemberGoogleCalendar(input: {
   const response = await googleWorkspaceApiFetch(url, { headers: { authorization: `Bearer ${token.accessToken}` } })
   if (!response.ok) return { kind: "google_api_error" }
   return { kind: "ok", json: await readJson(response) }
+}
+
+export type MemberMailArrivals =
+  | { kind: "ok"; messages: { from: string; subject: string; snippet: string; labels: string[] }[]; more: boolean }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+/**
+ * What reached a member's Gmail since `since`, for their agent's check gate (is this check worth running?), outside
+ * any request: one read-only list, then each message's headers, first words and labels. Never a body, and never the
+ * member's own sent mail, drafts, chats, spam or trash. Through exactly `connectionId`, as the calendar read above.
+ * `more` says there were more than `limit`.
+ */
+export async function readMemberGmailArrivals(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  connectionId: string
+  since: number
+  limit: number
+}): Promise<MemberMailArrivals> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [GMAIL_READ_SCOPE])) return { kind: "missing_scope" }
+  const listUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages`)
+  listUrl.searchParams.set("q", `after:${Math.floor(input.since / 1000)} -in:sent -in:drafts -in:chats -in:spam -in:trash`)
+  listUrl.searchParams.set("maxResults", String(input.limit + 1))
+  const listed = await googleWorkspaceApiFetch(listUrl, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!listed.ok) return { kind: "google_api_error" }
+  const ids = extractGmailMessageIds(await readJson(listed), input.limit + 1)
+  const metadata = await fetchGmailMetadata(ids.slice(0, input.limit), token.accessToken, AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS))
+  if (!metadata.ok) return { kind: "google_api_error" }
+  return {
+    kind: "ok",
+    more: ids.length > input.limit,
+    messages: metadata.json.map((json) => {
+      const message = extractGmailMessage(json)
+      const labels: unknown = isRecordValue(json) ? json.labelIds : null
+      return { from: message.from, subject: message.subject, snippet: message.snippet, labels: Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string") : [] }
+    }),
+  }
 }
 
 async function googleApiError(operation: string, response: Response) {
@@ -1114,7 +1194,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create a Google Calendar event (one-time or recurring series) as the calling member",
-      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. Recurrence writes require the googleCalendarRecurrence feature; pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
+      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. For recurrence writes, pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
       responses: {
         200: jsonResponse("Google Calendar event created.", createCalendarEventResponseSchema),
         400: jsonResponse("Invalid recurrence, missing IANA timeZone, or recurring meetings disabled.", invalidRequestSchema),
@@ -1128,10 +1208,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      if ((input.recurrence !== undefined || input.rrule !== undefined)
-        && !await organizationFeatureEnabled(payload.organization.id, "googleCalendarRecurrence", { userId: payload.currentMember.userId })) {
-        return c.json({ error: "invalid_request", message: "Recurring meetings are disabled (googleCalendarRecurrence); omit recurrence/rrule to create a one-time event." }, 400)
-      }
       const token = await googleWorkspaceToken({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
@@ -1148,7 +1224,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
       const eventPayload = buildCalendarEventPayload(input)
-      if (eventPayload.recurrence) markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: ["googleCalendarRecurrence"] })
       if (input.createMeetLink) {
         url.searchParams.set("conferenceDataVersion", "1")
         eventPayload.conferenceData = buildCalendarConferenceData()
@@ -1323,7 +1398,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Read a Google Drive file's text or binary content as the calling member",
-      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead, or with createGoogleDriveDownloadLink from a shell.",
+      description: "Reads a Drive file. Docs and Slides export as plain text; Sheets exports the first tab as CSV; PDFs up to 50 MB return their extracted text when that is enabled for the organization. For every spreadsheet tab or edits use the spreadsheet metadata and values capabilities. Downloaded content is bounded; binary files use standard base64 within the model-safety limit. To analyze or edit a whole file (Office, PDF, large CSV), pull it into the workspace with the drive_pull_file tool instead, or with createGoogleDriveDownloadLink from a shell.",
       responses: {
         200: jsonResponse("Google Drive file returned.", driveFileResponseSchema),
         400: jsonResponse("The Drive item is not a readable file.", invalidRequestSchema),
@@ -1376,12 +1451,15 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
+      // A PDF is read as its text, so the binary model-safety limit does not apply to it.
+      const readPdfText = file.mimeType === PDF_MIME_TYPE
       if (
         !isGoogleAppsFile
         && !isDeclaredTextFile(file.mimeType)
         && file.size !== null
-        && Number(file.size) > MAX_DRIVE_FILE_CONTENT_BYTES
+        && Number(file.size) > (readPdfText ? DRIVE_PDF_MAX_BYTES : MAX_DRIVE_FILE_CONTENT_BYTES)
       ) {
+        if (readPdfText) return c.json(pdfTextUnavailable(file, "file_too_large"))
         return c.json({
           ok: true,
           file: {
@@ -1411,6 +1489,43 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (!contentResponse.ok) {
         const error = await googleDriveApiError("Google Drive file content", contentResponse, { generalRead: true })
         return error.status === 409 ? c.json(error.body, 409) : c.json(error.body, 502)
+      }
+
+      if (readPdfText) {
+        const pdf = await readBytesWithin(contentResponse, DRIVE_PDF_MAX_BYTES)
+        if (!pdf) return c.json(pdfTextUnavailable(file, "file_too_large"))
+        // Extraction takes ownership of the bytes, so keep what a small PDF's fallback needs first.
+        const smallPdfBase64 = pdf.byteLength <= MAX_DRIVE_FILE_CONTENT_BYTES ? Buffer.from(pdf).toString("base64") : null
+        const extracted = await extractPdfText(pdf, { maxCharacters: DRIVE_TEXT_CHARACTER_LIMIT, timeoutMs: DRIVE_PDF_TEXT_TIMEOUT_MS })
+        if (extracted.kind === "text") {
+          return c.json({
+            ok: true,
+            file: {
+              ...file,
+              content: extracted.text,
+              contentBase64: null,
+              encoding: "text",
+              truncated: extracted.truncated,
+              contentUnavailableReason: null,
+            },
+          })
+        }
+        if (extracted.kind === "timed_out") return c.json(pdfTextUnavailable(file, "extraction_timed_out"))
+        // A small PDF without readable text still comes back as base64 for the client to handle, as before.
+        if (smallPdfBase64 !== null) {
+          return c.json({
+            ok: true,
+            file: {
+              ...file,
+              content: null,
+              contentBase64: smallPdfBase64,
+              encoding: "base64",
+              truncated: false,
+              contentUnavailableReason: null,
+            },
+          })
+        }
+        return c.json(pdfTextUnavailable(file, extracted.kind === "no_text" ? "no_extractable_text" : "file_too_large"))
       }
 
       // Never hold more than the text limit could need: a large text file is cut, not buffered whole.

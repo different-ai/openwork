@@ -36,12 +36,13 @@ import { recordSkillUse } from "../capability-usage.js"
 import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
-import { type BuiltCodemodeTools } from "./codemode-tools.js"
+import { type BuildCodemodeTools } from "./codemode-tools.js"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError } from "../audit/mcp-service-audit.js"
 import { executeWorkflow, type WorkflowExecutionResult } from "./workflow-service.js"
 import { artifactRunInputSchema, artifactRuntime } from "../artifact-runtime.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
-import { scoreText, tokenize } from "./search.js"
+import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
+import { workflowRunNeedsLiveRuntime } from "./workflow-live-inference.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
 
@@ -370,13 +371,20 @@ function summaryFor(row: MarketplaceCapabilityRow): string {
   return description ? `${prefix}: ${description}` : prefix
 }
 
-function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[]): number {
+function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[], callerMemberId?: string): number {
   const score = scoreText(
     tokenize(row.configObject.title),
     tokenize(row.configObject.description ?? ""),
     queryTokens,
     tokenize(row.configObject.searchText ?? ""),
   )
+  if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
+    return score + workflowSearchBoost({
+      isWorkflow: true,
+      ownedByCaller: callerMemberId !== undefined && row.configObject.createdByOrgMembershipId === callerMemberId,
+      queryTokens,
+    })
+  }
   if (row.configObject.objectType !== "skill") return score
   return queryTokens.some((queryToken) => queryToken === "skill" || queryToken === "skills")
     ? score + 1
@@ -1617,7 +1625,7 @@ export async function searchMarketplaceCapabilities(input: {
   for (const row of rows) {
     const objectType = canonicalConfigObjectType(row.configObject.objectType)
     if (input.objectTypes && !input.objectTypes.includes(objectType)) continue
-    const score = scoreMarketplaceRow(row, queryTokens)
+    const score = scoreMarketplaceRow(row, queryTokens, input.member.orgMembershipId)
     if (score <= 0) continue
     // Authored Apps are exposed only by the rollout-gated App search, never
     // as generic Plugin capabilities (including after the rollout is disabled).
@@ -1703,7 +1711,7 @@ export async function listAccessibleWorkflows(input: {
 }
 
 export async function executeMarketplaceCapability(input: {
-  buildTools?: () => Promise<BuiltCodemodeTools>
+  buildTools?: BuildCodemodeTools
   body?: unknown
   configObjectId: string
   configObjectVersionId?: string
@@ -1777,14 +1785,17 @@ export async function executeMarketplaceCapability(input: {
         ...basePayload(row),
         status: "unsupported",
         hint: env.appMcpServersEnabled
-          ? `This App is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open Apps or return their source. Editors can use read_app to edit it. No App was opened.`
-          : "Apps built in OpenWork are turned off on this server, so this App cannot be opened or edited here. No App was opened.",
+          ? `This artifact is its own MCP server at ${mcpAppServerPath(row.configObject.id)}; its ${MCP_APP_LAUNCH_TOOL_NAME} tool opens it. Code Mode and generic Plugin execution do not open artifacts or return their source. Editors can use read_app to edit it. No App was opened.`
+          : "Building artifacts is turned off on this server, so this artifact cannot be opened or edited here.",
       },
     }
   }
 
   if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
     const orgMembershipId = input.member.orgMembershipId
+    const live = liveRuntime?.success === true
+      || (liveRuntime === undefined && workflowRunNeedsLiveRuntime(version.rawSourceText ?? "", input.body))
+    const runtimeTimeZone = liveRuntime?.success ? liveRuntime.data.timeZone : undefined
     const runWorkflow = () => executeWorkflow({
       database: db,
       organizationId,
@@ -1795,9 +1806,9 @@ export async function executeMarketplaceCapability(input: {
       automationRunId: input.automationRunId,
       normalizedPayloadJson: version.normalizedPayloadJson,
       code: version.rawSourceText ?? "",
-      scriptInput: liveRuntime?.success ? { runtime: artifactRuntime(liveRuntime.data.timeZone) } : input.body,
-      readOnly: liveRuntime?.success === true,
-      validateOutput: liveRuntime?.success === true || input.validateScriptOutput === true,
+      scriptInput: live ? { runtime: artifactRuntime(runtimeTimeZone) } : input.body,
+      readOnly: live,
+      validateOutput: live || input.validateScriptOutput === true,
       buildTools: input.buildTools ?? (async () => ({ tools: {}, manifest: [] })),
     })
     let execution: WorkflowExecutionResult

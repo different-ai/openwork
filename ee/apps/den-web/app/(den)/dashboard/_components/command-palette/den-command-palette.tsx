@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../../_lib/workbot-settings-rollout";
 
 import { Command } from "cmdk";
 import {
@@ -55,7 +56,7 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
+  /** Returns true when it handled the navigation itself (the Workbot entry while it is blocked). */
   interceptNavigation?: (href: string) => boolean;
 };
 
@@ -155,12 +156,14 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
   const pageEntries = useMemo<PaletteEntry[]>(() => {
     const sections = buildDashboardNavSections({
       orgSlug: activeOrg?.slug ?? null,
+      organizationId: activeOrg?.id ?? null,
       access,
       capabilities,
       orgMode: runtimeConfig.orgMode,
       runtimeConfigLoaded,
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
     });

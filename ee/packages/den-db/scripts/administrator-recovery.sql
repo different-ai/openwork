@@ -1,6 +1,7 @@
--- The 14-key grant body from the administrator-recovery migration, without
--- historical recipient selection. Bootstrap creates the set for an explicitly
--- selected designated Admin team before executing this statement.
+-- The grant body from the administrator-recovery migration, without
+-- historical recipient selection or its retired network diagnostics key
+-- (13 keys). Bootstrap creates the set for an explicitly selected
+-- designated Admin team before executing this statement.
 -- Existing user decisions in the Admin default set are not overridden.
 INSERT INTO `permission_set_permission` (`id`, `organization_id`, `permission_set_id`, `permission_key`, `status`, `source`)
 -- IDs and catalog keys are ASCII tokens. Hash their bytes so CONCAT does not
@@ -18,7 +19,7 @@ CROSS JOIN (
   UNION ALL SELECT 'web_origins.manage' UNION ALL SELECT 'members.update'
   UNION ALL SELECT 'teams.manage_admin' UNION ALL SELECT 'sso.manage'
   UNION ALL SELECT 'scim.manage' UNION ALL SELECT 'api_keys.manage'
-  UNION ALL SELECT 'desktop_policies.manage' UNION ALL SELECT 'egress_diagnostics.manage'
+  UNION ALL SELECT 'desktop_policies.manage'
   UNION ALL SELECT 'billing_portal.use' UNION ALL SELECT 'connections.update'
   UNION ALL SELECT 'connections.delete' UNION ALL SELECT 'permissions.manage'
 ) k

@@ -19,6 +19,7 @@ import {
   type PluginImportCredentialMode,
   type PluginImportPreview,
 } from "./plugin-import-draft";
+import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 type PreviewItem = {
   detail: string;
@@ -140,6 +141,7 @@ export function PluginImportScreen() {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 py-10">
+      <PluginsSetupIntro introKey="plugins.import" />
       <Link
         href={getNewPluginRoute(orgSlug)}
         className="mb-6 inline-flex items-center gap-2 text-[14px] text-gray-500 hover:text-gray-900"

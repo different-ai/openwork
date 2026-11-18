@@ -1,3 +1,4 @@
+import { registerAdminManagedReleaseRoutes } from "./managed-releases.js"
 import { registerAdminMcpRegistrationRoutes } from "./mcp-registration.js"
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -15,6 +16,8 @@ import {
   HeadlessResumeGrantTable,
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
+  SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUsageBucketTable,
@@ -52,6 +55,8 @@ import { registerAdminDashboardRoute } from "./dashboard.js"
 import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
+import { registerAdminComputerFleetRoutes } from "./computer-fleet.js"
+import { registerAdminRunnerFleetRoutes } from "./runner-fleet.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -102,6 +107,7 @@ import { isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkW
 import { FREE_ORG_SEAT_COUNT } from "../../billing-quantities.js"
 import { getBillingQuantitiesForOrganizations, getOrganizationBillingQuantities } from "../../billing-users.js"
 import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
+import { removeMemberWorkbotComputersInBackground } from "../../workbot/member-computers.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -1395,6 +1401,7 @@ const adminRouteErrors = {
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerAdminManagedReleaseRoutes(app)
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)
@@ -1406,6 +1413,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
+  registerAdminRunnerFleetRoutes(app)
+  registerAdminComputerFleetRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)
   app.post(
     "/v1/admin/admins",
@@ -1767,6 +1776,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+        await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
+        await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {
           await tx.delete(ConnectedAccountTable).where(inArray(
@@ -1809,6 +1820,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       await Promise.all(organizationIds.map((organizationId) => cache.org.deleteMembers(organizationId)))
       for (const organizationId of organizationIds) {
         await syncOrganizationBillingQuantities({ organizationId })
+      }
+      for (const membership of activeMembershipRows) {
+        removeMemberWorkbotComputersInBackground({ organizationId: membership.organizationId, memberId: membership.id })
       }
 
       return c.json({ ok: true, user: { id: targetUser.id, email: targetUser.email } })

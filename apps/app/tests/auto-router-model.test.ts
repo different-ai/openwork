@@ -50,8 +50,8 @@ test("Smart and OpenWork Free are told apart", () => {
   expect(modelTitle(router)).toBe("Smart: Engineering");
   expect(publicModelTitle(design)).toBe("Smart: Design");
   expect(fixedModelTitle(router)).toBe("Smart: Engineering");
-  expect(modelTitle(free)).toBe("OpenWork Free");
-  expect(publicModelTitle(free)).toBe("OpenWork Free");
+  expect(modelTitle(free)).toBe("GPT-6 Luna");
+  expect(publicModelTitle(free)).toBe("GPT-6 Luna");
   expect(modelSubtitle(router)).toBe("Picks the best model for each task");
 });
 

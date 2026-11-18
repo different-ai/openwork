@@ -9,6 +9,7 @@ import {
   Loader2,
   MessagesSquare,
   Maximize2,
+  PanelRight,
   PictureInPicture2,
   ShieldOff,
   Plus,
@@ -46,6 +47,7 @@ import type { OpenTarget } from "../artifacts/open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
+import type { EmptyPanelView } from "./files-rail";
 import {
   getElectronBrowser,
   getNativeMenuPoint,
@@ -70,10 +72,14 @@ type SidePanelProps = {
   isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
+  emptyView: EmptyPanelView;
+  onShowEmptyChooser: () => void;
+  onOpenFiles: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
   browserPresentation?: BrowserPresentationControls;
   /** The browser is shown full screen: keep its tab but not a second native view here. */
   browserShownElsewhere?: boolean;
+  sideChat?: { content: React.ReactNode; onOpen: () => void };
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -141,6 +147,12 @@ type SidePanelTabProps = {
   onClose: (tab: PanelTabEntry) => void;
 };
 
+/** A browser tab's site icon, a spinner while it loads, or a globe. */
+export function BrowserTabIcon({ tab }: { tab: BrowserPanelTab }) {
+  if (tab.favicon) return <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />;
+  return tab.status === "loading" ? <Loader2 className="animate-spin" /> : <Globe />;
+}
+
 function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
   const dragControls = useDragControls();
   const tabRef = React.useRef<HTMLDivElement>(null);
@@ -200,15 +212,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
           title={tab.label}
           aria-label={`Select tab: ${tab.label}`}
         >
-          {tab.type === "browser" ? (
-            tab.favicon ? (
-              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
-            ) : tab.status === "loading" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Globe />
-            )
-          ) : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : tab.type === "remote-thread" ? <MessagesSquare /> : (
+          {tab.type === "browser" ? <BrowserTabIcon tab={tab} /> : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : (tab.type === "remote-thread" || tab.type === "side-chat") ? <MessagesSquare /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -228,7 +232,7 @@ type BrowserPanelContentProps = {
   tab: BrowserPanelTab;
   onClose: () => void;
   /** Where this content is shown and how to move it, with the floating browser feature on. */
-  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" };
+  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" | "window" };
 };
 
 export function BrowserPanelContent({
@@ -301,16 +305,18 @@ export function BrowserPanelContent({
       return;
     }
 
+    // Drawn into the popped-out window, this content measures and repaints with that window.
+    const view = content.ownerDocument.defaultView ?? window;
     let disposed = false;
     let ready = false;
     let boundsFrame: number | null = null;
     const boundsSync = createBrowserBoundsSync(browser, sessionId, (error) => {
       reportFailure("Could not show the browser. Try reopening this tab.", error);
-    });
+    }, view === window ? undefined : "window");
 
     const scheduleBounds = () => {
       if (!disposed && ready && boundsFrame === null) {
-        boundsFrame = window.requestAnimationFrame(watchBounds);
+        boundsFrame = view.requestAnimationFrame(watchBounds);
       }
     };
 
@@ -330,9 +336,9 @@ export function BrowserPanelContent({
       if (!ready || disposed) return;
       const bounds = computeBrowserBounds(content);
       const occluded = extendedOccluders
-        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]") })
+        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]"), doc: content.ownerDocument })
         : hasNativeBrowserOccluder();
-      boundsSync.sync(bounds, window.devicePixelRatio, occluded);
+      boundsSync.sync(bounds, view.devicePixelRatio, occluded);
     };
 
     const invalidateBounds = () => {
@@ -352,17 +358,18 @@ export function BrowserPanelContent({
     // Panel constraints can settle in ResizeObserver after this frame's RAF.
     const observer = new ResizeObserver(syncBounds);
     observer.observe(content);
-    window.addEventListener("resize", invalidateBounds);
+    view.addEventListener("resize", invalidateBounds);
+    // The bridge lives in the app window, so this event always arrives there.
     window.addEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", invalidateBounds);
+      view.removeEventListener("resize", invalidateBounds);
       window.removeEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
       if (boundsFrame !== null) {
-        window.cancelAnimationFrame(boundsFrame);
+        view.cancelAnimationFrame(boundsFrame);
       }
 
       boundsSync.dispose();
@@ -544,7 +551,19 @@ export function BrowserPanelContent({
             </Tooltip>
           </>
         ) : null}
-        {presentation?.mode === "fullscreen" ? null : (
+        {isAvailable && presentation?.mode === "window" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button variant="ghost" size="icon-sm" aria-label="Open beside chat" data-testid="browser-mode-side" onClick={() => presentation.onPresent("side")}>
+                  <PanelRight />
+                </Button>
+              )}
+            />
+            <TooltipContent>Open beside chat</TooltipContent>
+          </Tooltip>
+        ) : null}
+        {presentation?.mode === "fullscreen" || presentation?.mode === "window" ? null : (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -600,8 +619,12 @@ export function SidePanel({
   isLocalWorkspace,
   onClose,
   onOpenExtensions,
+  emptyView,
+  onShowEmptyChooser,
+  onOpenFiles,
   browserPresentation,
   browserShownElsewhere = false,
+  sideChat,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -845,8 +868,12 @@ export function SidePanel({
         </div> : null}
         {!activeTab ? (
           <PanelEmpty
+            view={emptyView}
+            onShowChooser={onShowEmptyChooser}
+            onOpenFiles={onOpenFiles}
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
+            onOpenSideChat={sideChat?.onOpen}
           />
         ) : null}
         {activeTab?.type === "browser" ? (
@@ -860,6 +887,8 @@ export function SidePanel({
           )
         ) : activeTab?.type === "mcp-app" ? (
           <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "side-chat" ? (
+          <div className="min-h-0 flex-1 overflow-hidden">{sideChat?.content}</div>
         ) : activeTab?.type === "remote-thread" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><RemoteThreadPanel key={activeTab.id} tab={activeTab} /></div>
         ) : activeTab?.type === "app" ? (

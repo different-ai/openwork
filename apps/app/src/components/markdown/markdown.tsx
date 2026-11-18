@@ -7,13 +7,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { desktopBridge } from "@/app/lib/desktop";
+import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useSessionReferencesMaybe } from "@/components/chat/session-reference-context";
 import { useUntrustedMarkdown } from "./untrusted-markdown";
-import { useOpenArtifactPath } from "@/lib/artifacts";
+import { contextualizeFileTarget, precedingDirectory } from "@/react-app/domains/session/artifacts/path-reference-context";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
-import { openTargetForHref } from "@/react-app/domains/session/artifacts/resolve-open-target";
-import { parseLocalPathReference, workspaceLookupValue } from "@/react-app/domains/session/artifacts/local-path";
+import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -71,13 +72,23 @@ function MarkdownBlockInner({
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
+  const localImageUrls = useRef(new Map<string, Promise<string | null>>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
-  const openArtifactPath = useOpenArtifactPath();
+  const { openTargets, sessionFileEvidence, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
+  const targetAt = useCallback((value: string, node: Element, decode = true) => {
+    const literal = openTargetFromLocalPath(value, { decode });
+    const root = rootRef.current;
+    const contextual = literal && root ? contextualizeFileTarget(literal, precedingDirectory(root, node)) : literal;
+    // Context belongs to this occurrence, not another same-named link or artifact.
+    if (contextual?.pathHints?.length || !decode) return contextual;
+    return openTargetForHref(value, openTargets, workspaceRoot);
+  }, [openTargets, workspaceRoot]);
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
+    for (const pending of localImageUrls.current.values()) void pending.then((url) => { if (url) URL.revokeObjectURL(url); });
+    localImageUrls.current.clear();
   }, [client, workspaceId, workspaceRoot, sessionId]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
@@ -243,20 +254,22 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      // Only the workspace can stream a video; a home or outside path falls back
-      // to its clickable reference, which reveals it on this computer.
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
-      const reference = parseLocalPathReference(href, { decode: true });
-      const path = target?.exists === true
-        ? target.value
-        : reference && reference.anchor !== "home"
-          ? workspaceLookupValue(reference, { workspaceRoot }).replace(/\\/g, "/")
-          : "";
-      if (!client || !workspaceId || !path || /^(?:\/|[A-Za-z]:\/)/.test(path)) {
+      // Streaming and clicking use the same candidate resolution. Streaming
+      // never probes the desktop or downloads outside the owning workspace.
+      const target = targetAt(href, video, video.dataset.openworkPathDecode === "true");
+      if (!client || !workspaceId || !target) {
         showError();
         continue;
       }
-      void client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: target?.fileScope }).then((result) => {
+      void (async () => {
+        const plan = await planFileOpen(target, {
+          origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+          findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+        });
+        if (cancelled) return;
+        if (plan.kind !== "workspace") { showError(); return; }
+        const path = plan.target.value;
+        const result = await client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: plan.target.fileScope });
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -264,9 +277,58 @@ function MarkdownBlockInner({
         const url = URL.createObjectURL(new Blob([result.data], { type: contentType }));
         objectUrl = url;
         video.src = url;
-      }).catch(() => { if (!cancelled) showError(); });
+      })().catch(() => { if (!cancelled) showError(); });
     }
-  }, [client, workspaceId, workspaceRoot, sessionId, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt, rendered]);
+
+  // A local image in a reply: one this chat's computer use saved on this Mac, or a
+  // workspace file. Until it loads (or when it cannot) the reply shows its file reference.
+  const loadLocalImage = useCallback(async (href: string, node: Element, decode: boolean) => {
+    const literal = openTargetFromLocalPath(href, { decode })?.value;
+    if (literal && sessionId && isElectronRuntime()) {
+      const saved = await desktopBridge.computerChatImage({ sessionId, path: literal }).catch(() => null);
+      if (saved) return URL.createObjectURL(new Blob([saved.data], { type: saved.contentType }));
+    }
+    const target = targetAt(href, node, decode);
+    if (!client || !workspaceId || !target) return null;
+    const plan = await planFileOpen(target, {
+      origin: "remote", workspaceRoot, canOpenLocally: false, sessionTargets: sessionFileEvidence,
+      findInWorkspace: (lookup, options) => resolveCollectibleOpenTarget(client, workspaceId, lookup, sessionId, options),
+    });
+    if (plan.kind !== "workspace") return null;
+    const result = await client.downloadWorkspaceFile(workspaceId, plan.target.value, { sessionId, fileScope: plan.target.fileScope });
+    const type = result.contentType && result.contentType !== "application/octet-stream" ? result.contentType : "";
+    return URL.createObjectURL(new Blob([result.data], { type }));
+  }, [client, workspaceId, workspaceRoot, sessionId, sessionFileEvidence, targetAt]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    for (const image of root.querySelectorAll("img[data-openwork-image-path]")) {
+      if (!(image instanceof HTMLImageElement) || image.dataset.openworkImageState) continue;
+      image.dataset.openworkImageState = "loading";
+      const href = image.dataset.openworkImagePath ?? "";
+      const decode = image.dataset.openworkPathDecode === "true";
+      const key = `${decode}:${href}`;
+      let pending = localImageUrls.current.get(key);
+      if (!pending) {
+        pending = loadLocalImage(href, image, decode).catch(() => null);
+        localImageUrls.current.set(key, pending);
+      }
+      const cache = localImageUrls.current;
+      void pending.then((url) => {
+        // A file that is not there yet (still saving) is tried again on the next render.
+        if (!url) { if (cache.get(key) === pending) cache.delete(key); return; }
+        if (!image.isConnected) return;
+        image.addEventListener("load", () => {
+          const box = image.closest("[data-openwork-image]");
+          const preview = image.closest("[data-openwork-image-preview]");
+          if (box && preview) box.replaceWith(preview);
+        }, { once: true });
+        image.src = url;
+      });
+    }
+  }, [loadLocalImage, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -278,6 +340,18 @@ function MarkdownBlockInner({
 
     const handleLoad = (event: Event) => {
       if (event.target instanceof HTMLImageElement) sync();
+    };
+
+    // A chat image that cannot load (a page URL, a dead link) reads as its
+    // plain link. Only the picture itself counts: the fallback link's favicon
+    // failing must not replace an image that loaded.
+    const handleImageError = (event: Event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.parentElement?.hasAttribute("data-openwork-image-preview")) return;
+      const box = image.closest("[data-openwork-image]");
+      const fallback = box?.querySelector(":scope > [data-openwork-image-fallback]");
+      if (!box || !root.contains(box) || !(fallback instanceof HTMLElement)) return;
+      box.replaceWith(...Array.from(fallback.childNodes));
     };
 
     const handleSessionReference = (event: MouseEvent) => {
@@ -323,7 +397,8 @@ function MarkdownBlockInner({
       if (inlineCodePath instanceof HTMLElement) {
         event.preventDefault();
         event.stopPropagation();
-        openArtifactPath(inlineCodePath.dataset.openworkInlineCodePath ?? "");
+        const target = targetAt(inlineCodePath.dataset.openworkInlineCodePath ?? "", inlineCodePath, inlineCodePath.dataset.openworkPathDecode === "true");
+        if (target) onOpenTarget?.(target);
         return;
       }
 
@@ -348,7 +423,7 @@ function MarkdownBlockInner({
         event.preventDefault();
         event.stopPropagation();
         const href = chevron.dataset.openworkLinkChevron ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, chevron);
         if (target) {
           setLinkMenu({ target, anchor: chevron });
         }
@@ -358,7 +433,7 @@ function MarkdownBlockInner({
       const link = event.target.closest("a[data-openwork-link-href]");
       if (link instanceof HTMLAnchorElement) {
         const href = link.dataset.openworkLinkHref ?? link.getAttribute("href") ?? "";
-        const target = openTargetForHref(href, openTargets, workspaceRoot);
+        const target = targetAt(href, link);
 
         if (target && onOpenTarget) {
           event.preventDefault();
@@ -379,10 +454,11 @@ function MarkdownBlockInner({
 
     const handleContextMenu = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || !onOpenTarget) return;
-      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
+      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron], [data-openwork-inline-code-path]");
       if (!(link instanceof HTMLElement)) return;
-      const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
-      const target = openTargetForHref(href, openTargets, workspaceRoot);
+      const codePath = link.dataset.openworkInlineCodePath;
+      const href = codePath ?? link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
+      const target = targetAt(href, link, codePath === undefined || link.dataset.openworkPathDecode === "true");
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
@@ -395,10 +471,12 @@ function MarkdownBlockInner({
 
       event.preventDefault();
       event.stopPropagation();
-      openArtifactPath(event.target.dataset.openworkInlineCodePath ?? "");
+      const target = targetAt(event.target.dataset.openworkInlineCodePath ?? "", event.target, event.target.dataset.openworkPathDecode === "true");
+      if (target) onOpenTarget?.(target);
     };
 
     root.addEventListener("load", handleLoad, true);
+    root.addEventListener("error", handleImageError, true);
     root.addEventListener("click", handleClick);
     root.addEventListener("auxclick", handleAuxClick);
     root.addEventListener("mousedown", handleMouseDown);
@@ -408,6 +486,7 @@ function MarkdownBlockInner({
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
+        root.removeEventListener("error", handleImageError, true);
         root.removeEventListener("click", handleClick);
         root.removeEventListener("auxclick", handleAuxClick);
         root.removeEventListener("mousedown", handleMouseDown);
@@ -422,13 +501,14 @@ function MarkdownBlockInner({
     return () => {
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
+      root.removeEventListener("error", handleImageError, true);
       root.removeEventListener("click", handleClick);
       root.removeEventListener("auxclick", handleAuxClick);
       root.removeEventListener("mousedown", handleMouseDown);
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, openArtifactPath, openTargets, workspaceRoot, rendered, references, resolveReference, sessionReferences]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences]);
 
   if (isEmpty) {
     return null;

@@ -1,13 +1,15 @@
 // Member credential renewal for the Gateway: Google (Vertex), Microsoft Entra ID
-// (Foundry) and AWS IAM Identity Center (Bedrock) access tokens are renewed with
-// the member's stored refresh token, near expiry, by exactly one Gateway replica
-// at a time. What differs per upstream (the token request and its response) is
-// a RefreshProtocol; locking, re-authorization and compare-and-set are shared.
+// (Foundry, and LiteLLM proxies that accept sign-in tokens) and AWS IAM Identity
+// Center (Bedrock) access tokens are renewed with the member's stored refresh
+// token, near expiry, by exactly one Gateway replica at a time. What differs per
+// upstream (the token request and its response) is a RefreshProtocol; locking,
+// re-authorization and compare-and-set are shared.
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db"
 import { AwsSsoError, refreshAwsSsoToken, type FetchLike } from "@openwork-ee/utils/aws-identity-center"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { classifyMicrosoftTokenError, MICROSOFT_REFRESH_SCOPES, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
+import { classifyMicrosoftTokenError, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
 import { parseGatewayProviderSecret, type GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
 import { loadGatewayAccess, sameGatewaySelection, selectGatewayGrant } from "../provider-access.js"
 import type { GatewayCredentialLookup } from "../provider-credentials.js"
@@ -29,8 +31,12 @@ type CredentialRow = typeof GatewayProviderCredentialTable.$inferSelect
 type CredentialSnapshot = Pick<CredentialRow, "id" | "secret" | "expires_at" | "status"> & Partial<Pick<CredentialRow, "last_error">> & { kind: RefreshableCredentialKind }
 export type OauthCredentialRow = CredentialSnapshot & Pick<CredentialRow,
   "gateway_provider_id" | "credential_set_id" | "organization_id" | "subject" | "org_membership_id" | "updated_at" | "last_refreshed_at" | "refreshing_until"> & { secret_revision: string }
-/** The member credential set as the request selected it. Its sign-in configuration must not have changed. */
-export type OauthClient = { id: string; oauth_client_id: string | null; oauth_client_secret: string | null; oauth_tenant_id?: string | null }
+/**
+ * The member credential set as the request selected it. Its sign-in configuration must not have changed.
+ * `api_scope` is the API scope the provider configures for members' Microsoft access tokens (a LiteLLM
+ * provider with member Entra sign-in); null or absent is Azure Cognitive Services (Microsoft Foundry).
+ */
+export type OauthClient = { id: string; oauth_client_id: string | null; oauth_client_secret: string | null; oauth_tenant_id?: string | null; api_scope?: string | null }
 export type RefreshScope = { credentialId: CredentialRow["id"]; provider: OauthClient; subject: string; authorization: GatewayCredentialLookup }
 export type RefreshLock = { scope: RefreshScope; credential: OauthCredentialRow }
 
@@ -61,6 +67,11 @@ const providerIdsByKind: Record<RefreshableCredentialKind, readonly string[]> = 
   oauth_google: ["google-vertex", "google-vertex-anthropic"],
   oauth_azure: ["microsoft-foundry"],
   aws_sso: ["amazon-bedrock", "amazon-bedrock-mantle"],
+}
+
+/** A LiteLLM provider holds members' Entra ID tokens only in its member Microsoft Entra sign-in mode. */
+export function providerHoldsRefreshableKind(provider: { provider_id: string; settings: unknown }, kind: RefreshableCredentialKind) {
+  return providerIdsByKind[kind].includes(provider.provider_id) || (kind === "oauth_azure" && liteLlmEntraScope(provider) !== null)
 }
 
 /** An invalid_client from Google or Entra ID is an administrator's app registration to repair; AWS clients are per sign-in. */
@@ -126,8 +137,10 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
   const refreshToken = parsed.kind === "oauth_azure" ? parsed.token.refreshToken : undefined
   if (parsed.kind !== "oauth_azure" || !refreshToken || refreshToken.length > 32_768 || !/^[\x21-\x7e]+$/.test(refreshToken)) return { kind: "failed", error: "invalid_token_secret", permanent: true }
   const identity = parsed.token.microsoftIdentity
-  // The token belongs to the tenant and app it was issued to; a changed set is reconfigured, not refreshed.
-  if (!identity || identity.tenantId.toLowerCase() !== client.oauth_tenant_id?.toLowerCase() || identity.clientId !== client.oauth_client_id) {
+  const apiScope = client.api_scope ?? null
+  // The token belongs to the tenant, app and API scope it was issued for; a changed configuration is signed in to again, not refreshed.
+  if (!identity || identity.tenantId.toLowerCase() !== client.oauth_tenant_id?.toLowerCase() || identity.clientId !== client.oauth_client_id
+    || (identity.scope ?? null) !== apiScope) {
     return { kind: "failed", error: "invalid_token_secret", permanent: true }
   }
   let response: Response
@@ -136,7 +149,7 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
     response = await fetchToken(microsoftTokenUrl(identity.tenantId), {
       method: "POST", redirect: "error",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client.oauth_client_id ?? "", client_secret: client.oauth_client_secret ?? "", scope: MICROSOFT_REFRESH_SCOPES }),
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: client.oauth_client_id ?? "", client_secret: client.oauth_client_secret ?? "", scope: microsoftRefreshScopes(apiScope) }),
       signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
     })
     body = await response.json()
@@ -145,7 +158,7 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
     const error = classifyMicrosoftTokenError(response.status, body)
     return { kind: "failed", error: error === "token_exchange_failed" ? "token_endpoint_unavailable" : error, permanent: error === "invalid_grant" }
   }
-  const tokens = readMicrosoftTokens(body)
+  const tokens = readMicrosoftTokens(body, apiScope)
   if (!tokens) return { kind: "failed", error: "invalid_token_response", permanent: false }
   // Entra ID rotates refresh tokens: always keep the newest.
   return { kind: "refreshed", expiresIn: tokens.expiresIn, secret: JSON.stringify({
@@ -339,13 +352,14 @@ export function createDbOauthRefreshStore(db: Db): OauthRefreshStore {
     const set = access.selection.row.credentialSet
     if (set.credential_mode !== "member" || set.id !== scope.provider.id
       || set.oauth_client_id !== scope.provider.oauth_client_id || set.oauth_client_secret !== scope.provider.oauth_client_secret
-      || (set.oauth_tenant_id ?? null) !== (scope.provider.oauth_tenant_id ?? null)) return null
+      || (set.oauth_tenant_id ?? null) !== (scope.provider.oauth_tenant_id ?? null)
+      || liteLlmEntraScope(provider) !== (scope.provider.api_scope ?? null)) return null
     // Hash stored ciphertext, not a re-encrypted SQL parameter. Replacing even
     // identical plaintext in the same millisecond gets a different revision.
     const [result] = await db.select({ credential: table, secret_revision: sql<string>`sha2(${table.secret}, 256)` })
       .from(table).where(where(scope))
     const row = result?.credential
-    if (!row || !isRefreshableCredentialKind(row.kind) || !providerIdsByKind[row.kind].includes(provider.provider_id) || row.organization_id !== provider.organization_id) return null
+    if (!row || !isRefreshableCredentialKind(row.kind) || !providerHoldsRefreshableKind(provider, row.kind) || row.organization_id !== provider.organization_id) return null
     return { ...row, kind: row.kind, secret_revision: result.secret_revision }
   }
 

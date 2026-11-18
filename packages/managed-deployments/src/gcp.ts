@@ -100,8 +100,12 @@ with tarfile.open(archive, "r:gz") as tar:
     files = manifest.get("files")
     if not isinstance(files, dict) or set(files) != set(regular) - {"release.json"}:
         raise ValueError("release file inventory mismatch")
+    shared_module = "infra/terraform/modules/openwork-gcp-cloud-run/"
     for name, digest in files.items():
-        if not name.startswith(("infra/managed-deployments/gcp/", "infra/managed-deployments/contract/")) or not name.endswith((".py", ".tf", "/.terraform.lock.hcl")):
+        if (not name.startswith(("infra/managed-deployments/gcp/", "infra/managed-deployments/contract/", shared_module))
+                or "/tests/" in name or "/examples/" in name
+                or not name.endswith((".py", ".tf", "/.terraform.lock.hcl"))
+                or (name.startswith(shared_module) and (len(Path(name).parts) != 5 or not name.endswith(".tf")))):
             raise ValueError("unexpected executable in bundle")
         with tar.extractfile(regular[name]) as source:
             if hashlib.sha256(source.read()).hexdigest() != digest:
@@ -109,6 +113,12 @@ with tarfile.open(archive, "r:gz") as tar:
     required = ["runner/install.py", "runner/runner.py", "health/health_agent.py", "terraform/main.tf", "terraform/.terraform.lock.hcl"]
     if any("infra/managed-deployments/gcp/" + name not in files for name in required):
         raise ValueError("incomplete release bundle")
+    # Keep accepting published legacy bundles with no shared module. Once a
+    # module is present, require its complete operational file set.
+    if any(name.startswith(shared_module) for name in files):
+        required_module = ("main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf")
+        if any(shared_module + name not in files for name in required_module):
+            raise ValueError("incomplete shared GCP module")
     destination.mkdir(mode=0o700, exist_ok=True)
     for member in members:
         target = destination / member.name

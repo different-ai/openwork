@@ -47,15 +47,16 @@ function ScriptCode({ code, label }: { code: string; label: string }) {
 }
 
 /**
- * The agent wants to run an app script. Nothing runs until the person approves this
- * exact code here; the broker checks the answer against this request.
+ * The agent wants to run an app script and the person's organization asks before each one.
+ * Nothing runs until the person approves this exact code here; the broker checks the
+ * answer against this request, and nothing is remembered.
  */
 function ScriptRequest({ sessionId, request, script }: { sessionId: string; request: ComputerRequest; script: NonNullable<ComputerRequest["script"]> }) {
   const name = SCRIPT_APPS[script.app]
-  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
+  const [busy, setBusy] = useState<"allow" | "dismiss" | null>(null)
   const [error, setError] = useState("")
 
-  async function answer(next: "allow" | "always" | "dismiss") {
+  async function answer(next: "allow" | "dismiss") {
     if (busy) return
     setBusy(next)
     setError("")
@@ -84,7 +85,6 @@ function ScriptRequest({ sessionId, request, script }: { sessionId: string; requ
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-script-dismiss" onClick={() => void answer("dismiss")}>Don't run</Button>
-          <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-script-always" onClick={() => void answer("always")}>Always run {name} in this chat</Button>
           <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-script-run" onClick={() => void answer("allow")}>Run</Button>
         </div>
       </div>
@@ -97,6 +97,68 @@ function ScriptRequest({ sessionId, request, script }: { sessionId: string; requ
  * handed over until the person approves this list; the broker checks the answer.
  */
 function FilesRequest({ sessionId, request, files }: { sessionId: string; request: ComputerRequest; files: NonNullable<ComputerRequest["files"]> }) {
+  const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | "remember" | null>(null)
+  const [error, setError] = useState("")
+
+  async function answer(next: "allow" | "always" | "dismiss" | "remember") {
+    if (busy) return
+    setBusy(next)
+    setError("")
+    try {
+      await desktopBridge.computerAnswerRequest({ sessionId, answer: next, id: request.id })
+    } catch (cause) {
+      setError(`That wasn't saved. ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const count = files.names.length
+  // A save names where the app will write a file: its name and folder, with the full path on hover.
+  const saving = files.save === true && count === 1 ? files.names[0]! : null
+  const savingName = saving?.slice(saving.lastIndexOf("/") + 1)
+  const savingFolder = saving ? saving.slice(0, saving.lastIndexOf("/")).split("/").pop() || "/" : null
+  // Each name exactly as stored: hidden characters shown, no right-to-left reordering.
+  const shown = files.names.map(revealHidden)
+  const hidden = shown.reduce((sum, name) => sum + name.hidden, 0)
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="files">
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+            <Monitor size={16} strokeWidth={1.9} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium leading-5 text-dls-text" title={saving ?? undefined}>{saving ? `Save ${savingName} to ${savingFolder} from ${files.app}?` : count ? `Give ${count === 1 ? "this file" : `these ${count} files`} to ${files.app}?` : `Let the agent look through your files for ${files.app}?`}</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{saving
+              ? `The agent chose where ${files.app} saves on ${request.computer}.`
+              : count
+              ? `The agent chose ${count === 1 ? "it" : "them"} on ${request.computer}. ${files.app} can upload what it receives.`
+              : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div>
+            {files.canRemember && files.site ? <div className="mt-1 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-files-remember-scope">Choosing a folder remembers file sharing with {files.site} from that folder across chats and Slack tasks on this computer. A system folder picker opens next. Remove permission in Settings → Computer use.</div> : null}
+            {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-files-hidden">These names have {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't give them unless you expected that.</div> : null}
+            {count ? <ul dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="mt-2 max-h-32 overflow-auto rounded-lg border border-dls-border bg-dls-hover p-2 font-mono text-[12px] leading-5 text-dls-text" data-testid="session-computer-files">
+              {shown.map((name, index) => <li key={index} className="break-all">{name.parts}</li>)}
+            </ul> : null}
+            {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-files-dismiss" onClick={() => void answer("dismiss")}>{saving ? "Don't save" : count ? "Don't give" : "Don't allow"}</Button>
+          {count && !saving && request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
+          {files.canRemember ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "remember"} data-testid="session-computer-files-remember" onClick={() => void answer("remember")}>Choose folder and remember</Button> : null}
+          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-files-allow" onClick={() => void answer("allow")}>{saving ? "Save" : count ? `Give ${count === 1 ? "file" : "files"}` : "Allow"}</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A password or one-time code is about to be typed on this exact site, or into this
+ * app. Nothing is typed until the person confirms it; any other recipient asks again.
+ */
+function CredentialRequest({ sessionId, request, credential }: { sessionId: string; request: ComputerRequest; credential: NonNullable<ComputerRequest["credential"]> }) {
   const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
   const [error, setError] = useState("")
 
@@ -113,33 +175,32 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
     }
   }
 
-  const count = files.names.length
-  // Each name exactly as stored: hidden characters shown, no right-to-left reordering.
-  const shown = files.names.map(revealHidden)
-  const hidden = shown.reduce((sum, name) => sum + name.hidden, 0)
+  const site = credential.site?.replace(/^https:\/\//, "")
+  // A name can be copied by another app; the id cannot, so it is always shown. Both are
+  // shown exactly as stored: hidden characters visible, no right-to-left reordering.
+  const name = !site && credential.app && credential.app !== credential.appId ? revealHidden(credential.app) : null
+  const id = revealHidden(site ?? credential.appId ?? credential.app ?? "this app")
+  const hidden = id.hidden + (name?.hidden ?? 0)
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="files">
+    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential">
       <div className="flex flex-col gap-3 px-4 py-3">
         <div className="flex min-w-0 items-start gap-3">
           <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
             <Monitor size={16} strokeWidth={1.9} />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium leading-5 text-dls-text">{count ? `Give ${count === 1 ? "this file" : `these ${count} files`} to ${files.app}?` : `Let the agent look through your files for ${files.app}?`}</div>
-            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{count
-              ? `The agent chose ${count === 1 ? "it" : "them"} on ${request.computer}. ${files.app} can upload what it receives.`
-              : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div>
-            {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-files-hidden">These names have {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't give them unless you expected that.</div> : null}
-            {count ? <ul dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="mt-2 max-h-32 overflow-auto rounded-lg border border-dls-border bg-dls-hover p-2 font-mono text-[12px] leading-5 text-dls-text" data-testid="session-computer-files">
-              {shown.map((name, index) => <li key={index} className="break-all">{name.parts}</li>)}
-            </ul> : null}
+            <div className="text-[13px] font-medium leading-5 text-dls-text">Enter your password or code {site ? "on" : "in"} <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-credential-site">{name ? <>{name.parts} (</> : null}{id.parts}{name ? ")" : null}</span>?</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{site
+              ? "The agent types what you gave it into this site's sign-in field. Check the address is the site you meant; any other site asks again."
+              : `The agent types what you gave it into this app on ${request.computer}. It asks again each time.`}</div>
+            {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-credential-hidden">This name has {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't enter anything unless you expected that.</div> : null}
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-files-dismiss" onClick={() => void answer("dismiss")}>{count ? "Don't give" : "Don't allow"}</Button>
-          {count ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-files-always" onClick={() => void answer("always")}>Always give files to {files.app} in this chat</Button> : null}
-          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-files-allow" onClick={() => void answer("allow")}>{count ? `Give ${count === 1 ? "file" : "files"}` : "Allow"}</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>Don't enter</Button>
+          {request.standing !== false ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>Always for this site in this chat</Button> : null}
+          <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>Enter</Button>
         </div>
       </div>
     </div>
@@ -154,6 +215,7 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
 export function ComputerRequestPanel({ sessionId, request }: { sessionId: string; request: ComputerRequest }) {
   if (request.reason === "script" && request.script) return <ScriptRequest sessionId={sessionId} request={request} script={request.script} />
   if (request.reason === "files" && request.files) return <FilesRequest sessionId={sessionId} request={request} files={request.files} />
+  if (request.reason === "credential" && request.credential) return <CredentialRequest sessionId={sessionId} request={request} credential={request.credential} />
   return <SetupRequest sessionId={sessionId} request={request} />
 }
 

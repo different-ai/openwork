@@ -87,6 +87,39 @@ test("a runner without document navigation keeps a strict side chat's other sett
   assert.deepEqual(requests[1], { files: true, desktop: true, owner: "example", ref: "sidechat_example", memoryScope: "owner" })
 })
 
+test("only an accepted request to open the teaching window in the person's own message becomes a receipt", () => {
+  const messages = [
+    { messageId: "wb_teach_message", role: "user", text: "Let me show you how I look up a plan" },
+    { messageId: "wb_teach_message", role: "assistant", text: "Opening the teaching window", toolCalls: [{ id: "refused", name: "open_teaching", input: {} }, { id: "teach1", name: "open_teaching", input: {} }] },
+    { messageId: "wb_teach_message", role: "tool", callId: "refused", name: "open_teaching", output: "unavailable", isError: true },
+    { messageId: "wb_teach_message", role: "tool", callId: "teach1", name: "open_teaching", output: "requested", isError: false },
+  ] satisfies RunnerSnapshot["messages"]
+  const snapshot = { status: "idle", finalAssistantText: "Opening the teaching window", hasEarlier: false, turns: [{ messageId: "wb_teach_message", status: "completed", createdAt: 100, updatedAt: 200, error: null }], messages } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  assert.deepEqual(turn?.teaching, { id: "teach1" })
+  // The receipt is not shown as a step or text.
+  assert.deepEqual(turn?.parts, [{ kind: "text", text: "Opening the teaching window", step: 0 }])
+  // A report or an automation's turn never opens anything on the person's page.
+  const [report] = buildWorkbotTurns({ ...snapshot, turns: [{ ...snapshot.turns[0]!, kind: "report" }] })
+  assert.equal(report?.teaching, undefined)
+  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
+  assert.ok(!workbotInstructions(base).includes("open_teaching"))
+  assert.ok(workbotInstructions({ ...base, teachingNavigation: true }).includes("use open_teaching"))
+})
+
+test("a runner without teaching navigation keeps every other setting", async () => {
+  const requests: Record<string, unknown>[] = []
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    requests.push(body)
+    return "teachingNavigation" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_main_example" })
+  } })
+  const saved = await client.putSession("hs_main_example", { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, teachingNavigation: true, sandboxGateway: true, browserRecovery: true })
+  assert.ok(saved.ok)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests[1], { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, sandboxGateway: true, browserRecovery: true })
+})
+
 test("a runner without a sandbox gateway keeps the conversation, on its own computer provider", async () => {
   const requests: Record<string, unknown>[] = []
   const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
@@ -97,6 +130,42 @@ test("a runner without a sandbox gateway keeps the conversation, on its own comp
   const saved = await client.putSession("hs_sidechat_example", { computer: true, owner: "example", ref: "sidechat_example", sandboxGateway: true, strict: true })
   assert.ok(saved.ok)
   assert.deepEqual(requests, [{ computer: true, sandboxGateway: true, owner: "example", ref: "sidechat_example" }, { computer: true, owner: "example", ref: "sidechat_example" }])
+})
+
+test("browser recovery session policy preserves explicit on and off on current runners", async () => {
+  const requests: Record<string, unknown>[] = []
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    return Response.json({ id: "hs_recovery" })
+  } })
+  for (const browserRecovery of [undefined, true, false]) assert.ok((await client.putSession("hs_recovery", { computer: true, browserRecovery })).ok)
+  assert.deepEqual(requests, [{ computer: true }, { computer: true, browserRecovery: true }, { computer: true, browserRecovery: false }])
+})
+
+test("an older runner drops only browser recovery before other compatibility fallbacks", async () => {
+  for (const browserRecovery of [true, false]) {
+    const requests: Record<string, unknown>[] = []
+    const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+      requests.push(body)
+      return "browserRecovery" in body || "sandboxGateway" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_recovery" })
+    } })
+    const settings = { computer: true, desktop: true, desktopViews: ["browser"] as Array<"browser">, owner: "example", ref: "sidechat_example", memoryScope: "owner" as const }
+    assert.ok((await client.putSession("hs_recovery", { ...settings, browserRecovery, sandboxGateway: true, strict: true })).ok)
+    assert.deepEqual(requests, [{ ...settings, browserRecovery, sandboxGateway: true }, { ...settings, sandboxGateway: true }, settings])
+  }
+})
+
+test("browser recovery compatibility never retries non-setting failures", async () => {
+  for (const status of [401, 403, 409, 500]) {
+    let calls = 0
+    const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async () => {
+      calls++
+      return Response.json({ error: "unavailable" }, { status })
+    } })
+    assert.equal((await client.putSession("hs_recovery", { browserRecovery: true })).ok, false)
+    assert.equal(calls, 1)
+  }
 })
 
 test("correction references quote hostile-looking text as data and round-trip without exposing routing metadata", () => {
@@ -162,7 +231,9 @@ test("message and edit routes fail closed before runner access; normal chat stil
     assert.deepEqual(values[0], { text: "Summarize this", context: workbotContextForModel(context) })
     assert.deepEqual(values[1], { text: "My week?", context: calendar })
     assert.deepEqual(values[2], { text: "Hello" })
-    assert.notEqual(sessions[0], sessions[2], "different members keep distinct runner sessions")
+    // The second message found member_a's chat as the first left it, so it wasn't written again.
+    assert.equal(sessions.length, 2)
+    assert.notEqual(sessions[0], sessions[1], "different members keep distinct runner sessions")
     const reference = { messageId: "wb_message_001", quote: "Summarize this", sentAt: 100 }
     const overhead = workbotContextPrompt(workbotCorrectionPrompt("", reference), context).length
     const boundary = "x".repeat(WORKBOT_MAX_MESSAGE_CHARS - overhead)
@@ -171,7 +242,7 @@ test("message and edit routes fail closed before runner access; normal chat stil
     assert.equal(refused.status, 400)
     assert.deepEqual(await refused.json(), { error: "message_too_long", message: "That's too long for one message. Send it as a file instead." })
     assert.equal(turns.length, 3, "a final-envelope overflow never reaches the runner")
-    assert.equal(sessions.length, 3, "a final-envelope overflow never changes session settings")
+    assert.equal(sessions.length, 2, "a final-envelope overflow never changes session settings")
     assert.equal((await send({ newId: "message_004", text: boundary, context }, {}, path)).status, 202)
     const correction = turns[3]
     assert.ok(typeof correction === "object" && correction !== null && "prompt" in correction && typeof correction.prompt === "string")

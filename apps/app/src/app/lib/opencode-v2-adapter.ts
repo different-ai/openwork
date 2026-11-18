@@ -1,3 +1,4 @@
+import { readAgentForm, type AgentForm } from "@openwork/types/agent-form";
 import type {
   Agent,
   ApiError,
@@ -19,13 +20,23 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
+import { featureAnalytics } from "./analytics";
+import { nativeSkillAnalyticsIdentity } from "@openwork/product-analytics";
 import { AUTO_ROUTER_SESSION_ROUTES_KEY, autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
+import { SESSION_LINK_METADATA_KEY, SESSION_PROMPT_SENDER_KEY, readSessionLink, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
 import { attachmentMarker, attachmentNoteFilenames, composeV2Prompt, splitV2Prompt, wrapPastedText, type PromptAttachment } from "./v2-prompt-context";
+import { composerPillText, composerPillTextMetadata } from "../../react-app/domains/session/surface/composer/composer-pills";
+import {
+  agentMentionInstruction,
+  decodeSentWords,
+  fileMentionInstruction,
+  mentionText,
+} from "../../react-app/domains/session/surface/composer/sent-message-tokens";
 import { readShowThinkingPreference } from "../../react-app/kernel/local-preferences-storage";
 import {
   BACKGROUND_SHELL_FINISHED_EVENT,
@@ -69,6 +80,8 @@ type PromptPart = {
   synthetic?: unknown;
   metadata?: unknown;
   filename?: unknown;
+  name?: unknown;
+  source?: unknown;
 };
 
 function selectedSkill(part: PromptPart): Record<string, unknown> | null {
@@ -113,6 +126,22 @@ function partText(part: PromptPart): string | null {
 }
 
 /**
+ * An `@agent` or `@file` mention. v1 sends them as agent and file parts; the
+ * native prompt is one string, so they become their visible `@` text plus a
+ * hidden instruction the transcript decodes back into the same chip.
+ */
+function promptMention(part: PromptPart): { text: string; instruction: string } | null {
+  if (part.type === "agent" && typeof part.name === "string" && part.name) {
+    return { text: mentionText(part.name), instruction: agentMentionInstruction(part.name) };
+  }
+  if (part.type !== "file" || readString(part.source, "type") !== "file") return null;
+  const path = readString(part.source, "path");
+  const label = readString(readRecord(part.source, "text"), "value");
+  if (!path || !label?.startsWith("@")) return null;
+  return { text: mentionText(path), instruction: fileMentionInstruction(path) };
+}
+
+/**
  * The exact native prompt body. The person's words keep their order, pasted
  * text stays marked, and hidden parts follow in one context block so the
  * transcript can show the words without them (see v2-prompt-context).
@@ -124,11 +153,15 @@ export function v2PromptText(parts: readonly PromptPart[]): string {
   }));
   const words = parts.flatMap((part) => {
     if (part.type === "file" && typeof part.filename === "string" && attached.has(part.filename)) return [attachmentMarker(part.filename)];
+    const mention = promptMention(part);
+    if (mention) return [mention.text];
     const text = partText(part);
     if (text === null || part.synthetic === true) return [];
     return [isPastedText(part) ? wrapPastedText(text) : text];
   }).join("");
   const context = parts.flatMap((part) => {
+    const mention = promptMention(part);
+    if (mention) return [mention.instruction];
     const text = partText(part);
     return text !== null && part.synthetic === true && !selectedSkill(part) ? [text] : [];
   });
@@ -151,10 +184,13 @@ function attachmentNames(metadata: unknown): string[] {
  */
 export function v2AcknowledgementText(parts: readonly PromptPart[]): string {
   const words = parts.flatMap((part) => {
+    const mention = promptMention(part);
+    if (mention) return [mention.text];
     const text = partText(part);
     return text !== null && part.synthetic !== true ? [text] : [];
   }).join("");
   const files = new Set(parts.flatMap((part) => {
+    if (promptMention(part)) return [];
     if (part.type === "file") return typeof part.filename === "string" && part.filename ? [part.filename] : [];
     return part.type === "text" && part.synthetic === true ? attachmentNames(part.metadata) : [];
   }));
@@ -176,6 +212,47 @@ type PromptParameters = SessionParameters & {
 type SessionCreateParameters = DirectoryParameters & {
   model?: ModelBinding;
   title?: string;
+  /** The session this one is started from; recorded in the new session's metadata. */
+  link?: SessionLink;
+};
+
+/** How a session's latest run ended, as the engine recorded it. */
+export type V2SessionRunEnd = {
+  /** When the latest run ended, in milliseconds. */
+  idleAt: number;
+  outcome: "succeeded" | "failed" | "interrupted";
+};
+
+/** A session's latest turn: what was answered, and which session's agent asked for it (null: the person). */
+export type V2SessionLastTurn = { reply: string; sentBy: string | null };
+
+/** Read the latest turn from one page of engine messages, newest first. */
+export function readV2LastTurn(messages: readonly unknown[]): V2SessionLastTurn {
+  let reply: string | undefined;
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const type = readString(message, "type") ?? readString(message, "role");
+    if (type === "user") {
+      const sender = readRecord(message, "metadata")?.[SESSION_PROMPT_SENDER_KEY];
+      return { reply: reply ?? "", sentBy: typeof sender === "string" && sender ? sender : null };
+    }
+    if (type !== "assistant" || reply !== undefined) continue;
+    const content = message.content;
+    reply = (Array.isArray(content) ? content : [])
+      .flatMap((part) => isRecord(part) && part.type === "text" && typeof part.text === "string" && part.text ? [part.text] : [])
+      .join("\n\n");
+  }
+  return { reply: reply ?? "", sentBy: null };
+}
+
+type SessionNoteParameters = SessionParameters & {
+  /** Repeating an id the engine already admitted adds nothing. */
+  id: string;
+  text: string;
+  description: string;
+  metadata: Record<string, string>;
+  /** False leaves the note for the session's next run instead of starting one. */
+  resume: boolean;
 };
 
 type SessionUpdateParameters = SessionParameters & {
@@ -215,7 +292,7 @@ type V2QuestionField = {
   options: { value: string; label: string; description: string }[];
 };
 
-function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
+function mapV2Question(value: unknown): { request: QuestionRequest & { form?: AgentForm }; fields: V2QuestionField[] } | null {
   if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
   const id = readString(value, "id");
   const sessionID = readString(value, "sessionID");
@@ -244,7 +321,8 @@ function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2Qu
   const source = readRecord(value.metadata, "tool");
   const messageID = readString(source, "messageID");
   const callID = readString(source, "id");
-  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+  const form = readAgentForm(value.metadata, fields.length);
+  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}), ...(form ? { form } : {}) }, fields };
 }
 
 type V2MessageRole = "user" | "assistant" | "system";
@@ -515,9 +593,13 @@ function mapV2Session(value: unknown, directory: string | undefined, eventCreate
     } : {}),
     ...(revertMessageID ? { revert: { messageID: revertMessageID } } : {}),
   };
+  const metadata = readRecord(source, "metadata");
+  // The engine copies metadata to sub-agent sessions and forks, so a link
+  // counts only on a session the engine lists as top level.
+  const link = parentID || readRecord(source, "fork") ? null : readSessionLink(metadata?.[SESSION_LINK_METADATA_KEY]);
   // Smart replies' routing decisions ride along for the chat's "answered by" label.
-  const autoRoutes = autoRouterReplyRoutes(readRecord(source, "metadata")?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
-  return autoRoutes.length ? Object.assign(mapped, { [AUTO_ROUTER_SESSION_ROUTES_KEY]: autoRoutes }) : mapped;
+  const autoRoutes = autoRouterReplyRoutes(metadata?.[AUTO_ROUTER_SESSION_ROUTES_KEY]);
+  return Object.assign(mapped, link ? { [SESSION_LINK_METADATA_KEY]: link } : {}, autoRoutes.length ? { [AUTO_ROUTER_SESSION_ROUTES_KEY]: autoRoutes } : {});
 }
 
 function messageRole(value: Record<string, unknown>): V2MessageRole {
@@ -881,20 +963,31 @@ function mapV2ReplyUsage(value: Record<string, unknown>) {
  * for the same send: the words, pasted text marked as pasted, and hidden
  * context as a synthetic part whose attachments the transcript shows as files.
  */
-function mapV2UserPart(part: Part): Part[] {
+export function mapV2UserPart(part: Part): Part[] {
   if (part.type !== "text") return [part];
   const { segments, context, attachments } = splitV2Prompt(part.text);
   if (!context && !segments.some((segment) => segment.kind !== "text")) return [part];
   // A marked attachment shows where it was attached; the rest follow the words.
   const unplaced: PromptAttachment[] = [...attachments];
-  const words = segments.map((segment, index): Part => {
-    const id = index === 0 ? part.id : `${part.id}:${index}`;
-    if (segment.kind !== "attachment") {
-      return { ...part, id, text: segment.text, ...(segment.kind === "pasted" ? { metadata: { openworkPastedText: true } } : {}) };
+  let count = 0;
+  const nextId = () => (count++ === 0 ? part.id : `${part.id}:${count - 1}`);
+  const words = segments.flatMap((segment): Part[] => {
+    if (segment.kind === "pasted") return [{ ...part, id: nextId(), text: segment.text, metadata: { openworkPastedText: true } }];
+    if (segment.kind === "text") {
+      // Chips whose instructions travelled in the context come back as the
+      // same tagged parts v1 stores (see sent-message-tokens).
+      return decodeSentWords(segment.text, context).map((piece): Part => {
+        if (typeof piece === "string") return { ...part, id: nextId(), text: piece };
+        if (piece.kind === "agent") {
+          return { id: nextId(), sessionID: part.sessionID, messageID: part.messageID, type: "agent", name: piece.name };
+        }
+        if (piece.kind === "file") return { ...part, id: nextId(), text: mentionText(piece.path), metadata: { openworkFileMention: piece.path } };
+        return { ...part, id: nextId(), text: composerPillText(piece.pill), metadata: composerPillTextMetadata(piece.pill) };
+      });
     }
     const at = unplaced.findIndex((item) => item.filename === segment.filename);
     const placed = at < 0 ? [] : unplaced.splice(at, 1);
-    return { ...part, id, text: "", synthetic: true, ...(placed.length ? { metadata: { openworkAttachments: placed } } : {}) };
+    return [{ ...part, id: nextId(), text: "", synthetic: true, ...(placed.length ? { metadata: { openworkAttachments: placed } } : {}) }];
   });
   return context === null ? words : [...words, {
     ...part,
@@ -2260,6 +2353,32 @@ function unsupportedResult<T>(baseUrl: string, operation: string, message?: stri
   };
 }
 
+/** Model families the engine writes chat titles with, in its order (OpenCode `Model.small`). */
+const SMALL_MODEL_FAMILIES = ["gpt-luna", "gemini-flash-lite", "gemini-flash", "claude-haiku"];
+const LOW_EFFORT_VARIANTS = ["none", "minimal", "low"];
+
+/**
+ * The model the engine would title a chat on `chat` with, from native
+ * `/api/model` rows: the provider's small model, else the chat's own model.
+ * Either one runs at its lowest effort when it has one.
+ */
+export function smallModelRef(
+  models: readonly unknown[],
+  chat: { providerID: string; modelID: string },
+): { providerID: string; id: string; variant?: string } {
+  const provider = models.filter((model): model is Record<string, unknown> =>
+    isRecord(model) && readString(model, "providerID") === chat.providerID);
+  const text = (model: Record<string, unknown>, direction: "input" | "output") =>
+    stringArray(readRecord(model, "capabilities")?.[direction]).some((kind) => kind.startsWith("text"));
+  const usable = provider.filter((model) =>
+    readString(model, "status") === "active" && text(model, "input") && text(model, "output"));
+  const picked = SMALL_MODEL_FAMILIES.map((family) => usable.find((model) => readString(model, "family") === family)).find(Boolean)
+    ?? provider.find((model) => readString(model, "id") === chat.modelID);
+  const variants = (Array.isArray(picked?.variants) ? picked.variants : []).flatMap((variant) => readString(variant, "id") ?? []);
+  const variant = LOW_EFFORT_VARIANTS.find((candidate) => variants.includes(candidate));
+  return { providerID: chat.providerID, id: readString(picked, "id") ?? chat.modelID, ...(variant ? { variant } : {}) };
+}
+
 export function isOpencodeV2BaseUrl(baseUrl: string): boolean {
   try {
     return new URL(baseUrl).pathname.replace(/\/+$/, "").endsWith("/opencode2");
@@ -2569,11 +2688,64 @@ export function createClientV2(
       ...(model ? { model } : {}),
       ...(parameters.title === undefined ? {} : { title: parameters.title }),
       ...(location ? { location: { directory: location } } : {}),
+      ...(parameters.link ? { metadata: sessionLinkMetadata(parameters.link) } : {}),
     }, options?.signal);
     if (!result.response.ok) return failedResult(result);
     const session = mapV2Session(result.payload, directory);
     if (session) return successfulResult(result, session);
     return failedResult({ ...result, payload: { name: "InvalidV2SessionResponse" } });
+  };
+
+  /** How the session's latest run ended; null while it has never finished one. */
+  const sessionRunEnd = async (
+    parameters: SessionParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<V2SessionRunEnd | null>> => {
+    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}`, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const data = responseData(result.payload);
+    const source = readRecord(data, "info") ?? data;
+    const idleAt = readNumber(readRecord(source, "time"), "idle");
+    const outcome = readString(source, "outcome");
+    return successfulResult(result, idleAt !== undefined && (outcome === "succeeded" || outcome === "failed" || outcome === "interrupted")
+      ? { idleAt, outcome }
+      : null);
+  };
+
+  /** The session's latest turn, from its newest messages. */
+  const sessionLastTurn = async (
+    parameters: SessionParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<V2SessionLastTurn>> => {
+    const result = await request("GET", `/api/session/${encodeURIComponent(parameters.sessionID)}/message?limit=30`, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const items = responseData(result.payload);
+    if (!Array.isArray(items)) return failedResult({ ...result, payload: { name: "InvalidV2MessagePageResponse" } });
+    // A page with a cursor is newest first; one without is oldest first.
+    const hasCursor = isRecord(result.payload) && "cursor" in result.payload;
+    return successfulResult(result, readV2LastTurn(hasCursor ? items : items.toReversed()));
+  };
+
+  /**
+   * Add a note for the agent to a session, the way the engine reports a
+   * finished background sub-agent. True when this call added it; false when
+   * the engine already had a note with this id.
+   */
+  const addSessionNote = async (
+    parameters: SessionNoteParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/synthetic`, {
+      id: parameters.id,
+      text: parameters.text,
+      description: parameters.description,
+      metadata: parameters.metadata,
+      // The engine's default delivery, as for its own sub-agent notes: a
+      // running session reads the note at its next step.
+      ...(parameters.resume ? {} : { resume: false }),
+    }, options?.signal);
+    if (result.response.status === 409) return successfulResult(result, false);
+    return result.response.ok ? successfulResult(result, true) : failedResult(result);
   };
 
   const session = {
@@ -2804,6 +2976,9 @@ export function createClientV2(
         },
         options?.signal,
       );
+      if (promptResult.response.ok) {
+        for (const skill of skills) featureAnalytics.skillInvoked(nativeSkillAnalyticsIdentity(skill.id));
+      }
       return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (
@@ -2986,6 +3161,9 @@ export function createClientV2(
     ));
   };
 
+  // The engine calls its Claude Code provider "Claude Agent"; people connect and pick it as Claude Code.
+  const OPENWORK_PROVIDER_NAMES: Record<string, string> = { "claude-agent": "Claude Code" };
+
   const listProviders = async (
     _parameters: DirectoryParameters = {},
     options?: RequestOptions,
@@ -3018,7 +3196,7 @@ export function createClientV2(
       }
       providersByID.set(model.providerID, {
         id: model.providerID,
-        name: providerNames.get(model.providerID) ?? model.providerID,
+        name: OPENWORK_PROVIDER_NAMES[model.providerID] ?? providerNames.get(model.providerID) ?? model.providerID,
         source: "config",
         env: [],
         options: {},
@@ -3031,6 +3209,41 @@ export function createClientV2(
       connected: all.map((provider) => provider.id),
       default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
     });
+  };
+
+  /**
+   * One stateless generation outside any chat, on the small model the engine
+   * would title a chat on `model` with (see smallModelRef). Nothing is added
+   * to a chat's history.
+   */
+  const generateWithSmallModel = async (
+    parameters: { prompt: string; model: { providerID: string; modelID: string } },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const models = await request("GET", "/api/model", undefined, options?.signal);
+    if (!models.response.ok) return failedResult(models);
+    const result = await request(
+      "POST",
+      "/api/experimental/generate",
+      { prompt: parameters.prompt, model: smallModelRef(responseItems(models.payload), parameters.model) },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
+  };
+
+  const generateFromSession = async (
+    parameters: { sessionID: string; prompt: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ text: string }>> => {
+    const result = await request(
+      "POST",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/generate`,
+      { prompt: parameters.prompt },
+      options?.signal,
+    );
+    const text = result.response.ok ? readString(responseData(result.payload), "text") : undefined;
+    return text === undefined ? failedResult(result) : successfulResult(result, { text });
   };
 
   const adapter = {
@@ -3166,11 +3379,38 @@ export function createClientV2(
     }));
   };
 
+  /** Terminate one command in this session, including its retained output (V2 shell.remove). */
+  const removeBackgroundShell = async (
+    parameters: { shellID: string; sessionID: string },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<void>> => {
+    const query = directory ? `?${new URLSearchParams({ "location[directory]": directory }).toString()}` : "";
+    const path = `/api/shell/${encodeURIComponent(parameters.shellID)}${query}`;
+    // Validate against the engine, not just a stale UI row: never stop another chat's command.
+    const current = await request("GET", path, undefined, options?.signal);
+    if (!current.response.ok) return failedResult(current);
+    const shell = readEngineShell(responseData(current.payload));
+    if (!shell || shell.sessionID !== parameters.sessionID) {
+      throw new Error("The background task does not belong to this conversation.");
+    }
+    const result = await request("DELETE", path, undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    return successfulResult(result, undefined);
+  };
+
   const client = Object.assign(compatibilityClient, {
     listRunningShells,
+    removeBackgroundShell,
+    generateWithSmallModel,
+    generateFromSession,
+    sessionRunEnd,
+    sessionLastTurn,
+    addSessionNote,
     listSessionsPage: session.list, listMessagesPage: session.messages,
     listSessionQuestions: (parameters: SessionParameters, options?: RequestOptions) => listQuestions(parameters, options),
     replySessionQuestion: (parameters: SessionParameters & { requestID: string; answers: string[][] }, options?: RequestOptions) =>
+      settleQuestion(parameters, options),
+    rejectSessionQuestion: (parameters: SessionParameters & { requestID: string }, options?: RequestOptions) =>
       settleQuestion(parameters, options),
   });
   // The SDK exposes session through a getter; its object is augmented above,

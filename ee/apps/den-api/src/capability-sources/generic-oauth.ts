@@ -372,7 +372,12 @@ export function resolveOAuthEndpointUrl(input: {
   client: OrgOAuthClientRow
   endpoint: "authorize" | "token"
 }): string {
-  const template = input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
+  // A sandbox's sample Microsoft 365 signs in at its own workplace, or not at all: never at Microsoft.
+  const sandbox = input.client.sandboxEndpoints
+  if (sandbox?.status === "unavailable") throw new OAuthClientConfigurationError(sandbox.message)
+  const template = sandbox
+    ? input.endpoint === "authorize" ? sandbox.authorizeUrl : sandbox.tokenUrl
+    : input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
   const tenantIdExtraKey = input.provider.tenantIdExtraKey
   if (!tenantIdExtraKey) return template
 

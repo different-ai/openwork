@@ -6,7 +6,8 @@ import { CLIENT_INFO_META_KEY } from "@modelcontextprotocol/server"
  * `search` is today's surface: search_capabilities, execute_capability and the
  * direct tools. `full` lists every capability the member may use as its own
  * standard MCP tool, for clients that search large tool lists themselves and
- * load definitions on demand.
+ * load definitions on demand; search_capabilities and execute_capability stay
+ * for what has no tool of its own, OpenWork's operations and skills.
  *
  * The choice depends only on the request: its `?tools=` override, the
  * `io.modelcontextprotocol/clientInfo` it carries in `_meta`, and whether its

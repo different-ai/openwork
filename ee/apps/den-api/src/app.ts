@@ -1,3 +1,4 @@
+import { registerMcpEventRoutes } from "./mcp-events/routes.js"
 import "./load-env.js"
 import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
 import { registerWorkbotRoutes } from "./workbot/routes.js"
@@ -6,6 +7,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
+import { AGENT_SANDBOX_ONLY_CAPABILITY_HEADER } from "@openwork/types/den/agent-permissions"
 import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -20,6 +22,7 @@ import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerConnectionServerRoutes } from "./mcp/connection-server.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
+import { registerPublicMcpAppRoutes } from "./mcp/public-app-server.js"
 import { registerMcpRoutes } from "./mcp/index.js"
 import type { MemberTeamsContext, OrganizationContextVariables, UserOrganizationsContext } from "./middleware/index.js"
 import { buildOperationId, htmlResponse, jsonResponse } from "./openapi.js"
@@ -60,8 +63,9 @@ import { sessionMiddleware } from "./session.js"
 import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
+import { confineConfigTokens } from "./config-blobs/token.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
-import { sanitizePublicResponseHeaders } from "./public-response-headers.js"
+import { noIndex, sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
 import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
 
@@ -132,6 +136,7 @@ app.use("*", async (c, next) => {
   c.header("X-Content-Type-Options", "nosniff")
   c.header("Strict-Transport-Security", strictTransportSecurityHeader)
 })
+app.use("*", noIndex)
 app.use("*", createTelemetryErrorSanitizerMiddleware())
 app.use("*", async (c, next) => {
   await next()
@@ -199,7 +204,7 @@ if (!env.corsHandledByEdge) {
       credentials: true,
       // Browser clients (app-web) send the Automation model-attention capability header on create/update/run;
       // without it here the preflight fails and the request never reaches Den ("Failed to fetch").
-      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
+      allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", "X-OpenWork-Browser-Upload-Permissions", "X-OpenWork-File-Send-Permissions", AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
       maxAge: 600,
@@ -213,6 +218,8 @@ app.use("*", sessionMiddleware)
 // Registered before preclaimScopeMiddleware so its 403 denials are recorded
 // (platform store) against the endpoint they refused.
 app.use("*", auditRequestMiddleware)
+// Config tokens (API keys of type `config`) only reach /v1/config-blobs/*.
+app.use("*", confineConfigTokens)
 app.use("/v1/*", preclaimScopeMiddleware)
 
 app.get(
@@ -305,6 +312,7 @@ registerRemoteSessionRoutes(app)
 registerOrgRoutes(app)
 registerSlackAssistantRoutes(app)
 registerWorkbotRoutes(app)
+registerMcpEventRoutes(app)
 registerHeadlessRunnerRoutes(app)
 registerVersionRoutes(app)
 registerFeatureRoutes(app)
@@ -315,6 +323,7 @@ registerMcpTokenRoutes(app)
 registerMcpRoutes(app)
 registerAgentMcpRoutes(app)
 registerExternalConnectionProxyRoutes(app)
+registerPublicMcpAppRoutes(app)
 registerConnectionServerRoutes(app)
 registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
@@ -358,7 +367,7 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     automationRunId: normalizeDenTypeId("automationRun", automationRunId),
     body: action.input,
     validateScriptOutput: true,
-    buildTools: () => buildCapabilityToolTree(capabilityContext),
+    buildTools: (required) => buildCapabilityToolTree(capabilityContext, required),
   })
   if (!result.ok) return {
     ok: false,
@@ -433,6 +442,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Permissions", description: "Organization permissions: the permission catalog, Member, Admin and team permission sets, their history, and each member's effective permissions." },
       { name: "API Keys", description: "Organization API key management routes." },
       { name: "Desktop Policies", description: "Desktop app policies applied to the organization, members, or teams." },
+      { name: "Config blobs", description: "Export the organization's configuration as JSON and import it through reviewed change requests: plan, decisions, secret inputs, approval, apply and revert." },
       { name: "Agent Permissions", description: "What agents may do on members' computers, set for everyone and per team." },
       { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
       { name: "Inference", description: "Organization inference settings." },
@@ -443,12 +453,13 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Managed deployments", description: "OpenWork installations in an organization's own cloud account: launch approval, installer milestones and health reports." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Devices", description: "Personal and shared computers, plus permission-gated team computer inventory for the current organization, including registered OpenWork instances. Inventory grants no control or access to private content." },
       { name: "Documents", description: "Connected Drive documents, inline editing and file-bound temporary Office sessions." },
       { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
-      { name: "Apps", description: "Saved reusable apps built from Workflows and Artifact views, and their sharing." },
+      { name: "Artifacts", description: "Reusable interactive views, including saved Workflow views, and their sharing." },
       { name: "Config Objects", description: "Versioned configuration objects (skills, workflows, and other plugin content)." },
       { name: "Plugins", description: "Plugin packages, access grants, and imports." },
       { name: "Marketplaces", description: "Marketplaces that distribute plugins to members and teams." },
@@ -457,7 +468,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Direct uploads", description: "Multipart uploads that stream workspace files straight to a provider." },
       { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
       { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
-      { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
+      { name: "Diagnostics", description: "Settings › Diagnostics: desktop app startups, model providers, connectors and installation services." },
       { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
       { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
       { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },

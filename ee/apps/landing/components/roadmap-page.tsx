@@ -1,16 +1,17 @@
-import { Check, Clock3, LoaderCircle } from "lucide-react";
+import { ArrowRight, Check, ChevronDown, Clock3, LoaderCircle, Mail } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { AutomationsView } from "./lp-demo-automations";
 import { LpDemoDesktop } from "./lp-demo-desktop";
 import { LpDemoAiGateway, LpDemoCloud, LpDemoMcp } from "./lp-demo-panels";
+import { RoadmapExplorer, type RoadmapAudience } from "./roadmap-explorer";
 import {
   RoadmapActivityPreview,
   RoadmapDashboardPreview,
   RoadmapInsightsPreview,
   RoadmapPhonePreview,
   RoadmapSlackPreview,
-  RoadmapStreamlinedChatPreview,
+  RoadmapWorkbotPreview,
   RoadmapWorkflowPreview
 } from "./roadmap-previews";
 
@@ -22,6 +23,10 @@ export type RoadmapProduct = {
   heading: [string, string];
   intro: string;
   items: Record<RoadmapStatus, string[]>;
+  /** The Ready items most people ask about, in order. The rest sit behind "Show more". */
+  top?: string[];
+  /** Ready items in preview: the row links to an email asking for access. */
+  preview?: string[];
 };
 
 /* One entry per product. The status is the column an item sits in, so a
@@ -32,23 +37,95 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     id: "desktop",
     label: "Desktop",
     heading: ["The desktop app", "is home."],
-    intro: "Work on your own files with any model. Skills, connections, and a built-in browser, on macOS, Windows, and Linux.",
+    intro: "Work on your own files with any model. Skills, connections, a built-in browser, and computer use, on macOS, Windows, and Linux.",
+    top: [
+      "macOS, Windows, and Linux",
+      "Files, artifacts, and any model",
+      "Skills, plugins, and connections",
+      "Built-in browser",
+      "Computer use on Mac and Windows",
+      "Import Claude chats and Claude Code sessions"
+    ],
     items: {
-      ready: ["macOS, Windows, and Linux", "Skills, plugins, and connections", "Built-in browser", "Files, artifacts, and any model", "MCP Apps", "Live artifacts"],
-      building: ["Sandboxed workspaces"],
-      soon: ["Pick up work on any device"]
-    }
+      ready: [
+        "macOS, Windows, and Linux",
+        "Skills, plugins, and connections",
+        "Built-in browser",
+        "Files, artifacts, and any model",
+        "MCP Apps",
+        "Live artifacts",
+        "Computer use on Mac and Windows",
+        "Import Claude chats and Claude Code sessions",
+        "Add your own MCP from the Library",
+        "Agents use a website’s own tools",
+        "Several agents in their own Mac apps at once",
+        "Agents ask a question and keep working",
+        "A feed of your sessions across workspaces",
+        "Send a follow-up now or queue it",
+        "Outlook attachments and drafts",
+        "Recurring Google Calendar meetings",
+        "Run tasks on your other computers as sub-agents",
+        "Background tasks you can follow in the chat",
+        "Floating and full-screen browser",
+        "History of each computer use session",
+        "Focused reading and edits in Google Docs",
+        "Zoom into diagrams"
+      ],
+      building: [
+        "Pick up work on any device",
+        "Dictation",
+        "Teach a browser task by showing it once",
+        "Suggested next message",
+        "Use Claude through your Claude Code login"
+      ],
+      soon: ["Sandboxed workspaces"]
+    },
   },
   {
     id: "admin",
     label: "Admin",
     heading: ["You set the rules.", "Every surface follows."],
     intro: "OpenWork Cloud is where admins manage models, spend, policies, and access for every team.",
+    top: [
+      "AI Gateway for every provider",
+      "Usage, spend, and hard limits by team",
+      "SSO, teams, and roles",
+      "Allow, ask first, or block what agents can do",
+      "Audit logs",
+      "Managed install in your own AWS or Google Cloud"
+    ],
     items: {
-      ready: ["AI Gateway for every provider", "Usage, spend, and hard limits by team", "Desktop policies by team or member", "SSO, teams, and roles", "Audit logs"],
-      building: ["Fully managed desktop"],
-      soon: ["Admin roles for security and IT", "Use the AI Gateway from Codex and Cursor"]
-    }
+      ready: [
+        "AI Gateway for every provider",
+        "Usage, spend, and hard limits by team",
+        "Desktop policies by team or member",
+        "SSO, teams, and roles",
+        "Audit logs",
+        "AI Gateway in Cursor, Claude Code, and Codex",
+        "Smart Model Router",
+        "Custom OpenAI-compatible providers",
+        "Several SSO connections per organization",
+        "Export and import organization config",
+        "Admin roles for security and IT",
+        "Custom roles for a person or a team",
+        "Allow, ask first, or block what agents can do",
+        "OpenTelemetry-compatible server logs",
+        "Deterministic configs",
+        "SCIM provisioning",
+        "Session length and admin re-sign-in rules",
+        "Usage limits for each provider",
+        "Test a provider before adding it",
+        "AWS and Microsoft sign-in for model providers",
+        "LiteLLM as a provider",
+        "A default model for the organization",
+        "Organization API keys",
+        "Install links and a setup checklist for new members",
+        "Managed install in your own AWS or Google Cloud"
+      ],
+      building: ["Fully managed desktop", "Share a provider key from your device", "Turn local models on or off"],
+      soon: []
+    },
+    preview: ["Managed install in your own AWS or Google Cloud"],
   },
   {
     id: "visibility",
@@ -56,21 +133,50 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["See what works,", "and what doesn’t."],
     intro: "Know which skills, connections, and teams are getting real work done, and which aren’t, so you can show the return on your AI spend.",
     items: {
-      ready: ["Usage and adoption by person", "Spend by team and model"],
-      building: ["Organization activity: who shared and changed what"],
-      soon: ["What’s used, and what isn’t", "Failures by skill and connection", "Results and spend by team"]
-    }
+      ready: [
+        "Usage and adoption by person",
+        "Spend by team and model",
+        "Daily usage trends",
+        "Organization activity: who shared and changed what",
+        "What’s used, and what isn’t",
+        "Workflow runs across the organization"
+      ],
+      building: ["What cloud agents spend on models"],
+      soon: ["Failures by skill and connection", "Results and spend by team"]
+    },
   },
   {
     id: "mcp-gateway",
     label: "MCP Gateway",
     heading: ["Set up your MCPs once.", "Your whole team has them."],
     intro: "One MCP URL brings your team’s skills, plugins, and connections into Claude Code, Codex, Cursor, and any MCP client.",
+    top: [
+      "One MCP URL for your whole team",
+      "Claude Code, Codex, Cursor, and ChatGPT",
+      "Skills, plugins, and connections by team",
+      "Shared or per-person sign-in",
+      "OneDrive and SharePoint files"
+    ],
     items: {
-      ready: ["One MCP URL for your whole team", "Claude Code, Codex, Cursor, and ChatGPT", "Skills, plugins, and connections by team", "Shared or per-person sign-in"],
-      building: ["Sync plugins from Git", "One app identity enterprises allowlist once"],
-      soon: ["Stricter sign-in checks for enterprise gateways"]
-    }
+      ready: [
+        "One MCP URL for your whole team",
+        "Claude Code, Codex, Cursor, and ChatGPT",
+        "Skills, plugins, and connections by team",
+        "Shared or per-person sign-in",
+        "OneDrive and SharePoint files",
+        "Guided Slack setup",
+        "More ready-made MCP servers",
+        "Sign-in detected for custom MCPs",
+        "Slack messages from the OpenWork bot"
+      ],
+      building: [
+        "Sync plugins from Git",
+        "One app identity enterprises allowlist once",
+        "An MCP server for each connection",
+        "Each connected action as its own tool"
+      ],
+      soon: []
+    },
   },
   {
     id: "activity",
@@ -79,10 +185,16 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     intro:
       "Make sure your organization uses its latest advances to push further. When someone shares a skill, publishes a new version, or connects an app, the people who can use it hear about it and can try it right away.",
     items: {
-      ready: ["Share skills and plugins with a team", "Company marketplaces", "See who can use each plugin"],
-      building: ["Activity: what’s new for you", "Try a new skill from its update", "Compare a new version with the last one"],
+      ready: [
+        "Share skills and plugins with a team",
+        "Company marketplaces",
+        "See who can use each plugin",
+        "Organization prompts for every agent",
+        "Activity: what’s new for you"
+      ],
+      building: [],
       soon: []
-    }
+    },
   },
   {
     id: "web",
@@ -90,21 +202,67 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["The same workspace,", "in your browser."],
     intro: "Everything from the desktop app, running in the cloud. Nothing to install, and work keeps going when you close the tab.",
     items: {
-      ready: ["The full workspace in your browser", "Your team’s skills and connections", "Remote workspaces from the desktop"],
-      building: ["Instant start", "Always-on cloud workspace", "Background tasks"],
-      soon: ["Session sharing"]
-    }
+      ready: ["The full workspace in your browser", "Your team’s skills and connections", "Self-hosted OpenWork Web"],
+      building: [],
+      soon: []
+    },
+  },
+  {
+    id: "workbot",
+    label: "Workbot",
+    heading: ["An assistant", "for every member."],
+    intro: "Workbot works from a chat in your browser. It has its own cloud computer that stays on, your team’s skills, and your connected apps.",
+    top: [
+      "Workbot, an assistant for every member",
+      "Always-on cloud workspace",
+      "Live browser work in the chat",
+      "A background agent for each member",
+      "Workbot reads PDFs and Office files from Drive"
+    ],
+    items: {
+      ready: [
+        "Workbot, an assistant for every member",
+        "Always-on cloud workspace",
+        "Live browser work in the chat",
+        "Watch and take over Workbot’s browser",
+        "Workbot reads PDFs and Office files from Drive",
+        "Workbot starts tasks on your computers",
+        "Working status and a list of what it’s doing",
+        "Calendar of Workbot’s scheduled work",
+        "Side chats",
+        "A background agent for each member",
+        "Workbot settings for each team"
+      ],
+      building: ["Your Microsoft 365 and Google Drive documents, right in Workbot", "Workbot on your phone"],
+      soon: ["Full virtual computers"]
+    },
   },
   {
     id: "automations",
     label: "Automations",
     heading: ["Set it once.", "It runs on its own."],
     intro: "Schedule any task on the web or the desktop, with the same skills and connections as a normal chat.",
+    top: [
+      "Schedules on web and desktop",
+      "Daily and weekly runs",
+      "Every-few-hours schedules",
+      "Runs before or after a meeting",
+      "Cloud runs while your computer is off"
+    ],
     items: {
-      ready: ["Schedules on web and desktop", "Daily and weekly runs", "Missed and interrupted runs are shown"],
-      building: ["Saved workflows from a chat that worked"],
-      soon: ["Custom schedules", "Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
-    }
+      ready: [
+        "Schedules on web and desktop",
+        "Daily and weekly runs",
+        "Missed and interrupted runs are shown",
+        "Every-few-hours schedules",
+        "Runs before or after a meeting",
+        "Cloud runs while your computer is off",
+        "Cloud tasks survive restarts and updates",
+        "Organization settings for automations"
+      ],
+      building: [],
+      soon: ["Share an automation with your team", "Run in the cloud from GitHub events", "Team plan, no OpenWork Web needed", "Fine-grained automation control", "Approvals in the middle of a run"]
+    },
   },
   {
     id: "workflows",
@@ -112,51 +270,89 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     heading: ["Every step,", "out in the open."],
     intro: "Save a task that worked as a workflow. Each step, decision, and result is laid out like a flow, without building it by hand.",
     items: {
-      ready: ["Live workflows across your connected apps", "A step-by-step flow for every workflow", "Run history with each step’s result"],
+      ready: [
+        "Live workflows across your connected apps",
+        "A step-by-step flow for every workflow",
+        "Run history with each step’s result",
+        "Save a workflow with a name, find it in My Library",
+        "Workflows written as standard JavaScript"
+      ],
       building: ["Share workflows with your team"],
       soon: ["Live edit"]
-    }
+    },
   },
   {
     id: "dashboards",
     label: "Dashboards",
     heading: ["What matters today,", "at a glance."],
     intro: "Your people build their own quick views, like today’s meetings or open issues, from the apps they already use. Built on the MCP Apps standard.",
+    top: [
+      "Quick-glance views your people create",
+      "Build Apps from a chat on the desktop",
+      "Open an App as a site, public or signed-in",
+      "Works with MCP Apps"
+    ],
     items: {
-      ready: ["Quick-glance views your people create", "Works with MCP Apps"],
-      building: ["Build dashboards from the desktop app"],
+      ready: [
+        "Quick-glance views your people create", "Works with MCP Apps", "Build Apps from a chat on the desktop", "Open an App as a site, public or signed-in",
+        "Public Apps anyone can add, no sign-in",
+        "Fix an App with your agent when a tool changes",
+        "See an App’s progress while it builds",
+        "Built-in libraries for Apps"
+      ],
+      building: [
+        "A home screen with your live artifacts at a glance",
+        "Your last activity, easy to see",
+        "Open Apps from the Workbot chat"
+      ],
       soon: []
-    }
+    },
   },
   {
-    id: "new-apps",
-    label: "New apps",
-    heading: ["For people who just", "want it to work."],
-    intro: "New ways to use OpenWork, set up by your team. OpenWork in Slack is ready today; the rest is what we’re designing.",
+    id: "across-apps",
+    label: "Across apps",
+    heading: ["One OpenWork,", "wherever you work."],
+    intro: "What reaches across the desktop app, the web, and Workbot: your other computers, the chat tools your team already uses, and your colleagues.",
     items: {
-      ready: ["OpenWork in Slack"],
-      building: [],
-      soon: ["A single, streamlined chat", "Phone app, starting with MCP Apps"]
+      ready: ["Use your remote computers", "OpenWork in Slack", "Slack answers arrive as their own reply"],
+      building: ["OpenWork in Microsoft Teams"],
+      soon: ["Share sessions with colleagues", "Phone app, starting with MCP Apps"]
     }
   }
 ];
 
-const STATUS: Record<RoadmapStatus, { label: string; hint: string; className: string; icon: ReactNode }> = {
+/* Who a product is for. Every product sits under exactly one. */
+const ROADMAP_AUDIENCES: RoadmapAudience[] = [
+  {
+    id: "work",
+    label: "For you",
+    productIds: ["desktop", "workbot", "web", "automations", "workflows", "dashboards", "across-apps"]
+  },
+  {
+    id: "team",
+    label: "For your team",
+    productIds: ["activity", "mcp-gateway"]
+  },
+  {
+    id: "company",
+    label: "For your company",
+    productIds: ["admin", "visibility"]
+  }
+];
+
+const STATUS: Record<RoadmapStatus, { label: string; className: string; icon: ReactNode }> = {
   ready: {
     label: "Ready",
-    hint: "You can use it today",
     className: "bg-[#E7F6EE] text-[#047857]",
     icon: <Check size={12} strokeWidth={2.6} aria-hidden="true" />
   },
   building: {
     label: "Building",
-    hint: "In progress",
     className: "bg-[#E8EFFD] text-[#1D4ED8]",
-    icon: <LoaderCircle size={12} strokeWidth={2.4} aria-hidden="true" />
+    icon: <LoaderCircle size={12} strokeWidth={2.4} aria-hidden="true" className="motion-safe:animate-[spin_1.8s_linear_infinite]" />
   },
   soon: {
     label: "Coming soon",
-    hint: "Planned next",
     className: "text-[#5E6877] shadow-[inset_0_0_0_1px_#D3DAE4]",
     icon: <Clock3 size={12} strokeWidth={2.2} aria-hidden="true" />
   }
@@ -212,67 +408,89 @@ function Preview({ id }: { id: string }) {
   if (id === "mcp-gateway") return <Frame><LpDemoMcp /></Frame>;
   if (id === "activity") return <Frame><RoadmapActivityPreview /></Frame>;
   if (id === "web") return <Frame tall><LpDemoCloud /></Frame>;
+  if (id === "workbot") return <Frame><RoadmapWorkbotPreview /></Frame>;
   if (id === "automations") return <Frame tall><AutomationsView /></Frame>;
   if (id === "workflows") return <Frame><RoadmapWorkflowPreview /></Frame>;
   if (id === "dashboards") return <Frame><RoadmapDashboardPreview /></Frame>;
-  if (id === "new-apps") {
+  if (id === "across-apps") {
     return (
-      <>
       <div className="mt-10 flex flex-col gap-6 md:mt-12 lg:flex-row">
-        <ComingSoonTile
-          title="A single, streamlined chat"
-          text="One conversation that already knows your apps, your calendar, and what’s waiting on you. Nothing to configure."
-        >
-          <RoadmapStreamlinedChatPreview />
-        </ComingSoonTile>
         <ComingSoonTile title="OpenWork in Slack" status="ready" text="Ask from any channel or DM and get the result back in the thread, with the same skills and connections.">
           <RoadmapSlackPreview />
         </ComingSoonTile>
-      </div>
-      <div className="mt-6 flex flex-col items-center gap-8 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:flex-row md:gap-12 md:p-8">
-        <RoadmapPhonePreview />
-        <div className="flex max-w-[460px] flex-col gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--lp-ink)]">Phone app</h3>
-            <RoadmapStatusPill status="soon" />
+        <ComingSoonTile
+          title="Phone app"
+          text="Starts with your MCP Apps: the quick views your team already built, like today’s meetings, open issues, and pipeline, in your pocket. Chat and approvals come next."
+        >
+          <div className="flex flex-1 items-center justify-center">
+            <RoadmapPhonePreview />
           </div>
-          <p className="text-[15px] leading-[23px] text-[var(--lp-body)]">
-            Starts with your MCP Apps: the quick views your team already built, like today’s meetings, open issues, and pipeline, in your pocket. Chat and approvals come next.
-          </p>
-        </div>
+        </ComingSoonTile>
       </div>
-      </>
     );
   }
   return null;
 }
 
+function previewMailto(item: string) {
+  return `mailto:team@openworklabs.com?subject=${encodeURIComponent(`Preview access: ${item}`)}`;
+}
+
+function StatusItem({ product, status, item }: { product: RoadmapProduct; status: RoadmapStatus; item: string }) {
+  return (
+    <li
+      className={`flex min-h-[46px] items-center justify-between gap-3 border-b border-[var(--lp-border)] py-2 text-[14.5px] ${
+        status === "soon" ? "text-[var(--lp-body)]" : "text-[var(--lp-ink)]"
+      }`}
+    >
+      {item}
+      {product.preview?.includes(item) ? (
+        <a
+          data-preview
+          href={previewMailto(item)}
+          title="Email us for access"
+          className="inline-flex h-[22px] shrink-0 items-center gap-[5px] rounded-full bg-[#FEF3C7] pl-[7px] pr-[9px] text-xs font-semibold text-[#92400E] transition-colors hover:bg-[#FDE68A]"
+        >
+          <Mail size={12} strokeWidth={2.2} aria-hidden="true" />
+          Preview
+        </a>
+      ) : null}
+    </li>
+  );
+}
+
 function StatusColumns({ product }: { product: RoadmapProduct }) {
   return (
     <div className="mt-10 grid gap-8 md:grid-cols-3 md:gap-10">
-      {STATUS_ORDER.map((status) => {
+      {STATUS_ORDER.filter((status) => product.items[status].length > 0).map((status) => {
         const items = product.items[status];
+        const top = status === "ready" ? product.top : undefined;
+        const shown = top ?? items;
+        const more = top ? items.filter((item) => !top.includes(item)) : [];
         return (
           <div key={status} data-column={status} className="flex flex-col">
             <div className="flex h-10 items-center border-b border-[var(--lp-ink)]">
               <RoadmapStatusPill status={status} />
             </div>
             <ul>
-              {items.length === 0 ? (
-                <li className="flex min-h-[46px] items-center border-b border-[var(--lp-border)] text-[14.5px] text-[#9AA5BA]">Nothing yet</li>
-              ) : (
-                items.map((item) => (
-                  <li
-                    key={item}
-                    className={`flex min-h-[46px] items-center border-b border-[var(--lp-border)] py-2 text-[14.5px] ${
-                      status === "soon" ? "text-[var(--lp-body)]" : "text-[var(--lp-ink)]"
-                    }`}
-                  >
-                    {item}
-                  </li>
-                ))
-              )}
+              {shown.map((item) => (
+                <StatusItem key={item} product={product} status={status} item={item} />
+              ))}
             </ul>
+            {more.length > 0 ? (
+              <details className="group">
+                <summary className="flex min-h-[46px] cursor-pointer list-none items-center gap-1.5 text-[14px] font-medium text-[var(--lp-ink)] underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
+                  <span className="group-open:hidden">Show {more.length} more</span>
+                  <span className="hidden group-open:inline">Show fewer</span>
+                  <ChevronDown size={14} strokeWidth={2.2} aria-hidden="true" className="transition-transform group-open:rotate-180" />
+                </summary>
+                <ul className="border-t border-[var(--lp-border)]">
+                  {more.map((item) => (
+                    <StatusItem key={item} product={product} status={status} item={item} />
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </div>
         );
       })}
@@ -280,66 +498,118 @@ function StatusColumns({ product }: { product: RoadmapProduct }) {
   );
 }
 
-const SHIPPED = [
-  { name: "AI Gateway", detail: "Spend, limits, and usage by team" },
-  { name: "Desktop policies", detail: "By org, team, or member" },
-  { name: "OpenWork Web", detail: "The full workspace in your browser" },
-  { name: "Automations", detail: "On web and desktop" },
-  { name: "Audit logs", detail: "With API and CSV export" },
-  { name: "OpenWork in Slack", detail: "Ask from any channel or DM" }
+type ShippedEntry = { date: string; name: string };
+
+/* Newest first. Each date is the release or rollout day in
+ * packages/docs/changelog.mdx; entries older than 30 days come off the list. */
+export const ROADMAP_SHIPPED: ShippedEntry[] = [
+  { date: "Nov 12", name: "AI Gateway in Cursor, Claude Code, and Codex" },
+  { date: "Nov 12", name: "Smart Model Router" },
+  { date: "Nov 12", name: "Organization config export and import" },
+  { date: "Nov 10", name: "Roles for any person or team" },
+  { date: "Nov 10", name: "Apps as sites" },
+  { date: "Nov 5", name: "Mac computer use across apps" },
+  { date: "Nov 5", name: "Saved Workflows" },
+  { date: "Nov 3", name: "Website tools in the browser" },
+  { date: "Nov 3", name: "Rules for what agents can do" },
+  { date: "Nov 3", name: "Your own MCP in the Library" },
+  { date: "Oct 30", name: "Every-few-hours and meeting schedules" },
+  { date: "Oct 26", name: "Import from Claude" },
+  { date: "Oct 26", name: "Computer use on Windows" },
+  { date: "Oct 26", name: "Organization prompts" },
+  { date: "Oct 23", name: "OneDrive and SharePoint files" },
+  { date: "Oct 22", name: "OpenCode v2 for everyone" },
+  { date: "Oct 13", name: "Self-hosted OpenWork Web" }
 ];
+
+/** Desktop releases in the same 30 days, v0.18.58 to v0.18.66. */
+const RELEASES_IN_WINDOW = 9;
+
+/** Shown before "Show more": enough to see the pace without a wall of rows. */
+const SHIPPED_SHOWN = 6;
+
+function ShippedList({ entries }: { entries: ShippedEntry[] }) {
+  return (
+    <ol className="grid gap-x-10 md:grid-cols-2">
+      {entries.map((entry) => (
+        <li
+          key={entry.name}
+          data-shipped={entry.date}
+          className="flex min-h-[46px] items-center gap-4 border-b border-[var(--lp-border)] py-2 text-[14.5px] text-[var(--lp-ink)]"
+        >
+          <span className="w-[50px] shrink-0 text-[13px] tabular-nums text-[var(--lp-muted)]">{entry.date}</span>
+          {entry.name}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 export function RoadmapPage() {
   return (
     <div data-testid="openwork-roadmap" className="text-[var(--lp-ink)]">
-      <section className="flex flex-col gap-12 pb-4 pt-12 md:pt-20 lg:flex-row lg:items-end lg:gap-16">
-        <div className="min-w-0 flex-1">
-          <p className="text-[15px] text-[var(--lp-muted)]">Roadmap, updated October 27</p>
-          <h1 className="mt-5 text-[clamp(2.5rem,4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]">
-            <span className="block">A workspace for everyone.</span>
-            <span className="block">On any platform.</span>
-          </h1>
-          <p className="mt-6 max-w-[640px] text-[17px] leading-[1.6] text-[var(--lp-body)] lg:text-lg">
-            Teams of every size get the controls they care about. Everyone else gets AI that is set up for them, on desktop, web, and the agents they already use.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-x-7 gap-y-3">
-            {STATUS_ORDER.map((status) => (
-              <span key={status} className="flex items-center gap-2.5 text-[13px] text-[var(--lp-muted)]">
-                <RoadmapStatusPill status={status} />
-                {STATUS[status].hint}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="flex w-full flex-col gap-2 rounded-[24px] bg-[var(--lp-tonal)] p-5 lg:w-[400px] lg:shrink-0">
-          <span className="px-1 pb-1.5 text-sm text-[var(--lp-muted)]">Shipped since August</span>
-          {SHIPPED.map((item) => (
-            <div key={item.name} className="flex min-h-[52px] items-center gap-3 rounded-[10px] bg-white px-3.5">
-              <Check size={13} strokeWidth={2.6} className="shrink-0 text-[#047857]" aria-hidden="true" />
-              <span className="flex flex-col">
-                <span className="text-[13.5px] font-medium text-[var(--lp-ink)]">{item.name}</span>
-                <span className="text-xs text-[var(--lp-muted)]">{item.detail}</span>
-              </span>
-            </div>
-          ))}
-        </div>
+      <section className="pb-4 pt-12 md:pt-20">
+        <p className="text-[15px] text-[var(--lp-muted)]">Roadmap, updated November 12</p>
+        <h1 className="mt-5 text-[clamp(2.5rem,4vw,3.25rem)] font-medium leading-[1.08] tracking-[-0.045em]">
+          <span className="block">A workspace for everyone.</span>
+          <span className="block">On any platform.</span>
+        </h1>
+        <p className="mt-6 max-w-[640px] text-[17px] leading-[1.6] text-[var(--lp-body)] lg:text-lg">
+          Teams of every size get the controls they care about. Everyone else gets AI that is set up for them, on desktop, web, and the agents they already use.
+        </p>
       </section>
 
-      {ROADMAP_PRODUCTS.map((product) => (
-        <section key={product.id} id={product.id} aria-labelledby={`${product.id}-heading`} className="mt-28 scroll-mt-24 md:mt-36">
-          <div className="text-[15px] text-[var(--lp-muted)]">{product.label}</div>
-          <h2
-            id={`${product.id}-heading`}
-            className="mt-3 text-[36px] font-light leading-[42px] tracking-[-0.015em] md:text-[44px] md:leading-[50px]"
-          >
-            <span className="block">{product.heading[0]}</span>
-            <span className="block">{product.heading[1]}</span>
-          </h2>
-          <p className="mt-6 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">{product.intro}</p>
-          <Preview id={product.id} />
-          <StatusColumns product={product} />
-        </section>
-      ))}
+      <section aria-labelledby="shipped-heading" data-testid="roadmap-shipped" className="mt-10 md:mt-12">
+        <div className="flex flex-col gap-2 border-b border-[var(--lp-ink)] pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="shipped-heading" className="text-[22px] font-medium leading-[28px] tracking-[-0.02em]">
+              Shipped in the last 30 days
+            </h2>
+            <p className="mt-1 text-sm text-[var(--lp-muted)]">
+              {ROADMAP_SHIPPED.length} features in {RELEASES_IN_WINDOW} desktop releases.
+            </p>
+          </div>
+          <a href="/docs/changelog" className="inline-flex items-center gap-1 text-sm font-medium text-[var(--lp-ink)] underline-offset-4 hover:underline">
+            Full changelog
+            <ArrowRight size={14} strokeWidth={2.2} aria-hidden="true" />
+          </a>
+        </div>
+        <ShippedList entries={ROADMAP_SHIPPED.slice(0, SHIPPED_SHOWN)} />
+        <details className="group">
+          <summary className="flex min-h-[46px] cursor-pointer list-none items-center gap-1.5 text-[14px] font-medium text-[var(--lp-ink)] underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
+            <span className="group-open:hidden">Show {ROADMAP_SHIPPED.length - SHIPPED_SHOWN} more</span>
+            <span className="hidden group-open:inline">Show fewer</span>
+            <ChevronDown size={14} strokeWidth={2.2} aria-hidden="true" className="transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="border-t border-[var(--lp-border)]">
+            <ShippedList entries={ROADMAP_SHIPPED.slice(SHIPPED_SHOWN)} />
+          </div>
+        </details>
+      </section>
+
+      <section aria-label="Products" className="mt-14 md:mt-20">
+        <RoadmapExplorer
+          audiences={ROADMAP_AUDIENCES}
+          labels={Object.fromEntries(ROADMAP_PRODUCTS.map((product) => [product.id, product.label]))}
+          panels={Object.fromEntries(
+            ROADMAP_PRODUCTS.map((product) => [
+              product.id,
+              <section key={product.id} aria-labelledby={`${product.id}-heading`}>
+                <h2
+                  id={`${product.id}-heading`}
+                  className="text-[28px] font-light leading-[34px] tracking-[-0.015em] md:text-[44px] md:leading-[50px]"
+                >
+                  <span className="block">{product.heading[0]}</span>
+                  <span className="block">{product.heading[1]}</span>
+                </h2>
+                <p className="mt-5 max-w-[640px] text-[16px] leading-[25px] text-[var(--lp-body)]">{product.intro}</p>
+                <Preview id={product.id} />
+                <StatusColumns product={product} />
+              </section>
+            ])
+          )}
+        />
+      </section>
 
       <section className="mt-32 flex flex-col gap-5 border-t border-[var(--lp-border)] pb-8 pt-12 sm:flex-row sm:items-center sm:justify-between md:mt-40">
         <h2 className="text-[28px] font-light leading-[34px] tracking-[-0.015em]">What should we build next?</h2>

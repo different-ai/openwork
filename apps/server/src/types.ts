@@ -126,13 +126,15 @@ export interface ServerConfig {
   /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
   anonymousInference?: { desktop: DesktopFreeHost };
+  /** Host-provisioned Den origin for signed-out feature discovery; never accepted from HTTP or workspace config. */
+  trustedDenOrigin?: string;
   /**
    * Set by OpenWork Desktop or a hosted web bootstrap for a brand-new install (no earlier
    * OpenWork state on disk). The server then starts on this engine unless an
    * engine choice is already saved or OpenCode v1 history exists.
    */
   freshInstallEngine?: "v2";
-  /** Automatic v1-to-v2 migration is on by default; false is an explicit local opt-out. */
+  /** Automatic v2 engine selection is on by default; false is an explicit local opt-out. */
   engineAutoUpgrade?: boolean;
   /** @deprecated Legacy rollout marker, ignored. Never reverts a migrated instance. */
   engineForcePolicy?: boolean;

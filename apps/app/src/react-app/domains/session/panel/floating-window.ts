@@ -5,9 +5,11 @@ import { isElectronRuntime } from "@/app/lib/runtime-env";
 // Must match FLOATING_VIEW_PREFIX in apps/desktop/electron/floating-view-window.mjs.
 const FLOATING_VIEW_PREFIX = "openwork-floating-";
 const EDGE = 16;
+// A new window opens down and to the right of the app, like any app's next window.
+const CASCADE = 32;
 
-// Only the Electron shell turns the named window into a borderless one; a
-// browser with a stubbed bridge (test fixtures) keeps the in-app layout.
+// Only the Electron shell turns the named window into a real one; a browser
+// with a stubbed bridge (test fixtures) has nowhere to host a native page.
 function canFloat() {
   return isElectronRuntime() && /\bElectron\//.test(navigator.userAgent);
 }
@@ -15,11 +17,26 @@ function canFloat() {
 type FloatingWindowOptions = {
   /** Window title; never "OpenWork", which names the app's own page. */
   title: string;
+  /** Size of a first window; the screen may have less room. */
   width: number;
   height: number;
-  /** The person closed the window itself (for example with Cmd+W). */
+  /** The person closed the window itself, or it could not open. */
   onClosed: () => void;
 };
+
+type WindowPlacement = { left: number; top: number; width: number; height: number };
+
+// Where the person last left each window, so it comes back there.
+const placements = new Map<string, WindowPlacement>();
+
+function firstPlacement(width: number, height: number): WindowPlacement {
+  return {
+    left: Math.round(window.screenX + CASCADE),
+    top: Math.round(window.screenY + CASCADE),
+    width: Math.min(width, window.screen.availWidth - EDGE * 2),
+    height: Math.min(height, window.screen.availHeight - EDGE * 2),
+  };
+}
 
 /**
  * Keeps the floating window's styles, theme and platform markers in step with
@@ -52,8 +69,6 @@ function mirrorDocument(source: Document, target: Document) {
     const to = target.documentElement;
     for (const name of to.getAttributeNames()) if (!from.hasAttribute(name)) to.removeAttribute(name);
     for (const name of from.getAttributeNames()) to.setAttribute(name, from.getAttribute(name) ?? "");
-    // Only the floating surface paints; the window itself stays see-through.
-    to.style.background = "transparent";
   };
   copyStyles();
   copyRoot();
@@ -72,9 +87,9 @@ function mirrorDocument(source: Document, target: Document) {
 }
 
 /**
- * Opens a borderless desktop window that floats over every app and returns a
- * container inside it to portal into. Null outside the desktop app, before it
- * opens, or when the host refused it; callers then keep their in-app layout.
+ * Opens a desktop window of the app and returns a container inside it to portal
+ * into. Null until it opens. Outside the desktop app, or when the host refuses
+ * it, `onClosed` reports that there is no window.
  */
 export function useFloatingWindow(name: string, open: boolean, { title, width, height, onClosed }: FloatingWindowOptions): HTMLElement | null {
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
@@ -83,15 +98,19 @@ export function useFloatingWindow(name: string, open: boolean, { title, width, h
   size.current = { width, height, title };
 
   React.useLayoutEffect(() => {
-    if (!open || !canFloat()) return;
-    const { width: w, height: h, title: initialTitle } = size.current;
-    const left = Math.round(window.screenX + window.outerWidth - w - EDGE);
-    const top = Math.round(window.screenY + 64);
-    const popup = window.open("about:blank", `${FLOATING_VIEW_PREFIX}${name}`, `popup,width=${w},height=${h},left=${left},top=${top}`);
-    if (!popup) return;
+    if (!open) return;
+    const { width: firstWidth, height: firstHeight, title: initialTitle } = size.current;
+    const { left, top, width: w, height: h } = placements.get(name) ?? firstPlacement(firstWidth, firstHeight);
+    const popup = canFloat()
+      ? window.open("about:blank", `${FLOATING_VIEW_PREFIX}${name}`, `popup,width=${w},height=${h},left=${left},top=${top}`)
+      : null;
+    if (!popup) {
+      closed();
+      return;
+    }
     const doc = popup.document;
     doc.title = initialTitle;
-    Object.assign(doc.body.style, { margin: "0", background: "transparent", overflow: "hidden" });
+    Object.assign(doc.body.style, { margin: "0", overflow: "hidden" });
     const root = doc.createElement("div");
     root.dataset.floatingWindow = name;
     doc.body.appendChild(root);
@@ -100,7 +119,11 @@ export function useFloatingWindow(name: string, open: boolean, { title, width, h
     let disposed = false;
     // A window the person closed reports it on the next check.
     const watch = window.setInterval(() => {
-      if (!popup.closed || disposed) return;
+      if (disposed) return;
+      if (!popup.closed) {
+        placements.set(name, { left: popup.screenX, top: popup.screenY, width: popup.outerWidth, height: popup.outerHeight });
+        return;
+      }
       disposed = true;
       window.clearInterval(watch);
       stopMirror();
@@ -121,27 +144,6 @@ export function useFloatingWindow(name: string, open: boolean, { title, width, h
   }, [container, title]);
 
   return container;
-}
-
-/**
- * Sizes a floating window to its content's height, so the window has no empty
- * margin around the surface. Full screen leaves it be.
- */
-export function useFitFloatingWindow(container: HTMLElement | null) {
-  React.useLayoutEffect(() => {
-    const view = container?.ownerDocument.defaultView;
-    const content = container?.firstElementChild;
-    if (!container || !view || !content || view === window) return;
-    const fit = () => {
-      if (container.ownerDocument.fullscreenElement) return;
-      const height = Math.ceil(content.getBoundingClientRect().height);
-      if (height > 0 && height !== view.innerHeight) view.resizeTo(view.outerWidth, height);
-    };
-    const resize = new ResizeObserver(fit);
-    resize.observe(content);
-    fit();
-    return () => resize.disconnect();
-  }, [container]);
 }
 
 /**

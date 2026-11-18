@@ -1,5 +1,7 @@
 # Computer use in the background
 
+> **Generally available:** `computerUse` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - **Feature key:** `computerUse` (includes background delivery)
 - **Deployments:** cloud and self-hosted
 - **Author:** reachjalil
@@ -11,6 +13,11 @@ On a Mac, an agent with control of an app window works in that window where
 it is. The window is not brought to the front, the person's cursor does not
 move and their Space does not change, so they keep working in their own apps.
 Several chats can each work in their own window at the same time.
+
+While the person watches the chat in OpenWork, the agent works in view
+instead: its app comes forward beside the OpenWork window. Selecting another
+chat, hiding OpenWork or bringing another app in front sends it back to the
+background, and returning to the chat brings it into view again.
 
 Agents also read the window's accessibility tree first. An observation skips
 the screenshot when the tree names at least eight controls to act on, and the
@@ -24,7 +31,8 @@ Some apps and steps still need the front, and get it the way they did before
 - single steps in any app: menu shortcuts (⌘ keys), clicks with modifier
   keys, hover, drags, and typing in Chromium, Electron and Catalyst apps.
   When such a step needs the window brought forward and uses coordinates,
-  nothing is sent and the agent is asked to look again.
+  nothing is sent and the agent is asked to look again. That look and the
+  session's later steps take the front, so the repeated step goes through.
 
 ## How it works
 

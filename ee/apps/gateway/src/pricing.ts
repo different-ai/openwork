@@ -1,11 +1,10 @@
-// Cost snapshot from models.dev pricing (src/models/base.json). Prices are USD
-// per 1M tokens, so micro-USD per token equals the listed price.
-import { readFileSync } from "node:fs"
-import path from "node:path"
-import { fileURLToPath } from "node:url"
+// Cost snapshot from models.dev pricing (src/models/base.json) plus the custom
+// providers in src/models/providers. Prices are USD per 1M tokens, so
+// micro-USD per token equals the listed price.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
 import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { readProviderCatalog } from "./models/catalog.js"
 
 export type ModelPrice = {
   input: number
@@ -30,8 +29,6 @@ export type CostEstimateInput = {
   cacheWriteTokens: number | null
   reasoningTokens: number | null
 }
-
-const baseJsonPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "models", "base.json")
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -100,7 +97,7 @@ let fileCatalog: PricingCatalog | null = null
 
 export function loadPricingCatalogFromFile(): PricingCatalog {
   if (!fileCatalog) {
-    const parsed: unknown = JSON.parse(readFileSync(baseJsonPath, "utf8"))
+    const parsed: unknown = readProviderCatalog()
     fileCatalog = createPricingCatalog(isRecord(parsed) ? withMicrosoftFoundryProvider(withBedrockMantleProvider(parsed)) : parsed)
   }
   return fileCatalog

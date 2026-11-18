@@ -372,8 +372,8 @@ export async function listExternalMcpConnections(organizationId: OrganizationId)
 export async function getExternalMcpConnection(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionRow | null> {
-  const rows = await db
+}, database: typeof db.$primary = db): Promise<ExternalMcpConnectionRow | null> {
+  const rows = await database
     .select()
     .from(ExternalMcpConnectionTable)
     .where(and(
@@ -496,8 +496,10 @@ export async function createExternalMcpConnection(input: {
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
   access: ExternalMcpAccessInput
+  /** Reuse this id for the new row (config-blob imports; the caller checked it is free). */
+  id?: ExternalMcpConnectionId
 }): Promise<ExternalMcpConnectionRow> {
-  const id = createDenTypeId("externalMcpConnection")
+  const id = input.id ?? createDenTypeId("externalMcpConnection")
   const oauthConfiguration: ExternalMcpOAuthConfiguration | null = input.authType === "oauth" && input.kind !== "native_provider"
     ? {
         ...(input.oauthConfiguration ?? {
@@ -541,7 +543,7 @@ export async function createExternalMcpConnection(input: {
     // Save both records together so a failed grant never leaves a connection.
     if (grants.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grants)
   }))
-  const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id })
+  const created = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId: id }, db.$primary)
   if (!created) throw new Error("Failed to create external MCP connection.")
   return created
 }
@@ -807,8 +809,8 @@ export async function listExternalMcpConnectionAccess(input: {
 export async function listDirectExternalMcpConnectionAccess(input: {
   organizationId: OrganizationId
   connectionId: ExternalMcpConnectionId
-}): Promise<ExternalMcpConnectionAccessGrantRow[]> {
-  return db
+}, database: typeof db.$primary = db): Promise<ExternalMcpConnectionAccessGrantRow[]> {
+  return database
     .select()
     .from(ExternalMcpConnectionAccessGrantTable)
     .where(and(
@@ -826,10 +828,10 @@ export async function listDirectExternalMcpConnectionAccess(input: {
 export async function listDirectExternalMcpConnectionAccessByConnection(input: {
   organizationId: OrganizationId
   connectionIds: ExternalMcpConnectionId[]
-}): Promise<Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>> {
+}, database: typeof db.$primary = db): Promise<Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>> {
   const grants = new Map<ExternalMcpConnectionId, ExternalMcpConnectionAccessGrantRow[]>()
   if (input.connectionIds.length === 0) return grants
-  const rows = await db
+  const rows = await database
     .select()
     .from(ExternalMcpConnectionAccessGrantTable)
     .where(and(
@@ -917,12 +919,7 @@ export async function replaceExternalMcpConnectionAccess(input: {
       isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
     ))
     if (sameAccess(existing, input.access)) return
-    await tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
-      eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-    ))
-    const rows = accessGrantRows(input)
-    if (rows.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
+    await writeDirectAccessDiff(tx, existing, input)
     if (usesMemberApiKey(connection)) {
       // Members who lose access lose their stored key; everyone else keeps theirs.
       await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })
@@ -947,6 +944,32 @@ export async function replaceExternalMcpConnectionAccessForPluginBinding(input: 
   if (rows.length > 0) {
     await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
   }
+}
+
+/**
+ * Makes a connection's direct grants equal `input.access`, writing only the
+ * grants that are added or removed: grants that stay keep their row.
+ */
+async function writeDirectAccessDiff(tx: ExternalMcpTransaction, existing: ExternalMcpConnectionAccessGrantRow[], input: {
+  organizationId: OrganizationId
+  connectionId: ExternalMcpConnectionId
+  access: ExternalMcpAccessInput
+  createdByOrgMembershipId: OrgMembershipId
+}): Promise<void> {
+  const wanted = accessGrantRows(input)
+  const keyOf = (row: { orgWide?: boolean | null; orgMembershipId?: string | null; teamId?: string | null }) =>
+    row.orgWide ? "org" : row.orgMembershipId ? `member:${row.orgMembershipId}` : row.teamId ? `team:${row.teamId}` : "none"
+  const wantedKeys = new Set(wanted.map(keyOf))
+  const kept = new Set<string>()
+  const removed = existing.filter((row) => {
+    const key = keyOf(row)
+    if (!wantedKeys.has(key) || kept.has(key)) return true
+    kept.add(key)
+    return false
+  }).map((row) => row.id)
+  if (removed.length > 0) await tx.delete(ExternalMcpConnectionAccessGrantTable).where(inArray(ExternalMcpConnectionAccessGrantTable.id, removed))
+  const added = wanted.filter((row) => !kept.has(keyOf(row)))
+  if (added.length > 0) await tx.insert(ExternalMcpConnectionAccessGrantTable).values(added)
 }
 
 function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<string> {
@@ -1268,20 +1291,12 @@ export async function updateExternalMcpConnection(
     }
 
     if (accessChanged) {
-      await tx.delete(ExternalMcpConnectionAccessGrantTable).where(and(
-        eq(ExternalMcpConnectionAccessGrantTable.organizationId, input.organizationId),
-        eq(ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId, input.connectionId),
-        isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
-      ))
-      const grantRows = accessGrantRows({
+      await writeDirectAccessDiff(tx, directGrants, {
         organizationId: input.organizationId,
         connectionId: input.connectionId,
         access: input.access,
         createdByOrgMembershipId: input.updatedByOrgMembershipId,
       })
-      if (grantRows.length > 0) {
-        await tx.insert(ExternalMcpConnectionAccessGrantTable).values(grantRows)
-      }
       if (usesMemberApiKey(existing)) {
         // Members who lose access lose their stored key; everyone else keeps theirs.
         await pruneUnreachableMemberApiKeys(tx, { organizationId: input.organizationId, connectionId: input.connectionId })
@@ -1450,10 +1465,14 @@ export async function listUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  /** Connections this caller can't use although the member can: an admin took them away from Workbot. */
+  withheldConnectionIds?: ReadonlySet<string>
 }): Promise<ExternalMcpConnectionRow[]> {
   const directConnections = await directlyUsableExternalMcpConnections(input)
   const sourcedConnections = await sourcedUsableExternalMcpConnections(input)
-  return withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
+  const usable = await withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)
+  const withheld = input.withheldConnectionIds
+  return withheld?.size ? usable.filter((connection) => !withheld.has(connection.id)) : usable
 }
 
 /**
@@ -1714,10 +1733,12 @@ function sameExternalMcpIdentity(
     && current.apiKeyAuthScheme === expected.apiKeyAuthScheme
 }
 
+// Identity reads below hand out credentials, PKCE verifiers and refresh tokens
+// written moments earlier (an OAuth callback can return instantly): primary.
 async function readExternalMcpConnectionForIdentity(
   connection: ExternalMcpConnectionRow,
 ): Promise<ExternalMcpConnectionRow | null> {
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(ExternalMcpConnectionTable)
     .where(and(
@@ -1750,7 +1771,7 @@ export async function readOrgOAuthClientForExternalMcpIdentity(
 ): Promise<ExternalMcpIdentityRead<typeof OrgOAuthClientTable.$inferSelect>> {
   const beforeClientRead = await readExternalMcpConnectionForIdentity(connection)
   if (!beforeClientRead || !sameExternalMcpIdentity(beforeClientRead, connection)) return { current: false }
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(OrgOAuthClientTable)
     .where(and(
@@ -1851,7 +1872,7 @@ export async function readConnectedAccountForExternalMcpIdentity(input: {
 }): Promise<ExternalMcpIdentityRead<typeof ConnectedAccountTable.$inferSelect>> {
   const beforeAccountRead = await readExternalMcpConnectionForIdentity(input.connection)
   if (!beforeAccountRead || !sameExternalMcpIdentity(beforeAccountRead, input.connection)) return { current: false }
-  const rows = await db
+  const rows = await db.$primary
     .select()
     .from(ConnectedAccountTable)
     .where(and(

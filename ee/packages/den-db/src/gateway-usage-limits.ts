@@ -21,6 +21,7 @@ import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
 import { readGatewayUsageResetPage } from "./gateway-usage-reset-page"
 import {
   activeUsageMember,
+  assignableUsageMember,
   usagePolicies,
   currentUsage,
   effectiveUsagePolicyScopes,
@@ -47,7 +48,7 @@ import {
 } from "./schema/gateway-usage-limits"
 
 export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
-export { withGatewayUsageEntitlementMutation, lockUsageOrganization } from "./gateway-usage-entitlements"
+export { withGatewayUsageEntitlementMutation, lockUsageOrganization, moveUsageMemberAssignments } from "./gateway-usage-entitlements"
 export { gatewayProviderUsageLimitsEnabled } from "./gateway-usage-features"
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
 export {
@@ -352,7 +353,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
             const memberId = "memberId" in target ? target.memberId : null
             const teamId = "teamId" in target ? target.teamId : null
-            if (memberId) await activeUsageMember(tx, { ...scope, memberId }, true)
+            // Someone invited who has not joined yet may hold a limit: their member row keeps its id when they join.
+            if (memberId) await assignableUsageMember(tx, { ...scope, memberId })
             if (teamId) {
               const [team] = await tx
                 .select()

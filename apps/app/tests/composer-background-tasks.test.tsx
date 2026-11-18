@@ -26,12 +26,12 @@ function shell(id: string, command: string, startedAt: number) {
   return { id, sessionId: "ses_1", command, startedAt, observedAt: Date.now() }
 }
 
-async function render(shells: ReturnType<typeof shell>[], syncDegraded = false) {
+async function render(shells: ReturnType<typeof shell>[], syncDegraded = false, onStop?: (shellID: string) => Promise<void>) {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
   mounted = { root, container }
-  await act(async () => root.render(createElement(ComposerBackgroundTasks, { shells, syncDegraded })))
+  await act(async () => root.render(createElement(ComposerBackgroundTasks, { shells, syncDegraded, onStop })))
   return container
 }
 
@@ -65,4 +65,46 @@ test("a connection that cannot confirm the commands keeps them listed, without s
 test("nothing running, nothing shown", async () => {
   const container = await render([])
   expect(container.innerHTML).toBe("")
+})
+
+test("Stop targets only its row and stays disabled until the request finishes", async () => {
+  const calls: string[] = []
+  let finish = () => {}
+  const pending = new Promise<void>((resolve) => { finish = resolve })
+  const container = await render([shell("sh_1", "sleep 120", Date.now()), shell("sh_2", "sleep 240", Date.now())], false, async (id) => { calls.push(id); await pending })
+  const button = container.querySelector<HTMLButtonElement>('[data-background-task="sh_1"] [data-background-task-stop]')!
+  await act(async () => button.click())
+  expect(calls).toEqual(["sh_1"])
+  expect(button.disabled).toBe(true)
+  expect(container.querySelector('[data-background-task="sh_1"] [data-background-task-status]')?.textContent).toBe("Stopping")
+  expect(container.querySelector('[data-background-task="sh_1"] .ow-text-shimmer')).toBeNull()
+  await act(async () => button.click())
+  expect(calls).toEqual(["sh_1"])
+  await act(async () => finish())
+})
+
+test("a failed stop keeps the row and offers Retry stop", async () => {
+  let attempts = 0
+  const container = await render([shell("sh_1", "sleep 120", Date.now())], false, async () => {
+    if (++attempts === 1) throw new Error("network failed")
+  })
+  const button = container.querySelector<HTMLButtonElement>("[data-background-task-stop]")!
+  await act(async () => button.click())
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not stop")
+  expect(button.textContent).toBe("Retry stop")
+  expect(button.disabled).toBe(false)
+  await act(async () => button.click())
+  expect(attempts).toBe(2)
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+})
+
+test("Stop is unavailable without V2 support and disabled while reconnecting", async () => {
+  const calls: string[] = []
+  const container = await render([shell("sh_1", "sleep 120", Date.now())], true, async (id) => { calls.push(id) })
+  const button = container.querySelector<HTMLButtonElement>("[data-background-task-stop]")!
+  expect(button.disabled).toBe(true)
+  await act(async () => button.click())
+  expect(calls).toEqual([])
+  await act(async () => mounted?.root.render(createElement(ComposerBackgroundTasks, { shells: [shell("sh_1", "sleep 120", Date.now())], syncDegraded: false })))
+  expect(container.querySelector("[data-background-task-stop]")).toBeNull()
 })

@@ -39,7 +39,8 @@ import {
 } from "../mcp-apps.js"
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
-import { launchInitialResults, requiredScope, type McpAppLaunchDataStore } from "./app-launch-data.js"
+import { launchInitialResults, launchReadHandoff, requiredScope, type LaunchReadHandoff, type McpAppLaunchDataStore } from "./app-launch-data.js"
+import { APP_SITE_HEADER } from "./app-site.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -59,11 +60,11 @@ const launchInputSchema: Tool["inputSchema"] = {
     input: {
       type: "object",
       additionalProperties: true,
-      description: "Optional JSON launch input the App receives.",
+      description: "Optional JSON launch input the artifact receives.",
     },
     timeZone: {
       type: "string",
-      description: "Optional IANA time zone for the data the App loads as it opens.",
+      description: "Optional IANA time zone for the data the artifact loads as it opens.",
     },
   },
   additionalProperties: false,
@@ -81,7 +82,7 @@ function launchTool(definition: McpAppServerDefinition): Tool {
   return {
     name: MCP_APP_LAUNCH_TOOL_NAME,
     title: `Open ${app.title}`,
-    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the App's read-only data" : "; opening runs no other tools"}.`,
+    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the artifact's read-only data" : "; opening runs no other tools"}.`,
     inputSchema: launchInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: app.resourceUri, visibility: ["model", "app"] }, "ui/resourceUri": app.resourceUri },
@@ -108,9 +109,9 @@ function boundTool(binding: McpAppToolBinding): Tool {
 type AppRefusal = "not_a_member" | "other_organization" | "apps_off" | "not_found"
 
 const REFUSAL_MESSAGES: Record<Exclude<AppRefusal, "other_organization">, string> = {
-  not_a_member: "The App is not available: this connection is not signed in to an organization you belong to.",
-  apps_off: "The App is not available: Apps built in OpenWork are turned off for this organization.",
-  not_found: "The App is not available.",
+  not_a_member: "The artifact is not available: this connection is not signed in to an organization you belong to.",
+  apps_off: "The artifact is not available: artifacts built in OpenWork are turned off for this organization.",
+  not_found: "The artifact is not available.",
 }
 
 /**
@@ -134,7 +135,7 @@ async function appOrganizationForMember(appId: string, userId: string) {
 async function refuseAppRequest(request: Request, input: { reason: AppRefusal; organizationId: string; appId: string; organizationName?: string }): Promise<Response> {
   console.error("mcp_app_server_refused", { reason: input.reason, organizationId: input.organizationId, appId: input.appId })
   const message = input.reason === "other_organization"
-    ? `This App belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the App again.`
+    ? `This artifact belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the artifact again.`
     : REFUSAL_MESSAGES[input.reason]
   return appUnavailableResponse(request, message, input.reason)
 }
@@ -175,6 +176,10 @@ export function createMcpAppServer(input: {
   launchData?: McpAppLaunchDataStore
   /** Whether a read's result may be kept for this caller's next open. */
   canKeep?: (binding: McpAppToolBinding) => boolean
+  /** Where a launch read past its budget waits for this caller's own call. */
+  launchReads?: LaunchReadHandoff
+  /** Replaces the default instructions, which describe tools that run as the caller. */
+  instructions?: string
 }) {
   const { app, tools } = input.definition
   const server = new McpServer({ name: app.title, version: "1.0.0" }, {
@@ -183,7 +188,7 @@ export function createMcpAppServer(input: {
       resources: { listChanged: false, subscribe: false },
       extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } },
     },
-    instructions: `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
+    instructions: input.instructions ?? `This is the ${app.title} artifact from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
   server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -198,7 +203,7 @@ export function createMcpAppServer(input: {
       // without any gets reads made ahead of it. They stay out of the model's
       // view in _meta, which hosts pass to the App with the result.
       const initialResults = input.definition.loadsWithLaunch && Object.keys(launchInput).length === 0
-        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, canKeep: input.canKeep })
+        ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, canKeep: input.canKeep, handoff: input.launchReads })
         : []
       return {
         content: [{ type: "text", text: app.textFallback }],
@@ -215,7 +220,8 @@ export function createMcpAppServer(input: {
     }
     const scope = requiredScope(binding)
     if (!input.scopes.has(scope)) return scopeError(binding.name, scope)
-    return input.callTool(binding, args)
+    const run = () => input.callTool(binding, args)
+    return input.launchReads ? input.launchReads.call(binding, args, run) : run()
   })
 
   server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
@@ -225,13 +231,13 @@ export function createMcpAppServer(input: {
   server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const revision = parseMcpAppResourceUri(request.params.uri)
     if (!revision || revision.appId !== app.appId || !input.scopes.has(DEN_MCP_READ_SCOPE)) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", { error: "mcp_app_not_found" })
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", { error: "mcp_app_not_found" })
     }
     let resource: McpAppResource
     try {
       resource = await input.loadResource(revision)
     } catch (error) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", {
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", {
         error: error instanceof McpAppError ? error.code : "mcp_app_unavailable",
       })
     }
@@ -295,6 +301,9 @@ async function handleMcpAppServerRequestUntimed(input: {
     if (error instanceof McpAppError) return refuse("not_found")
     throw error
   }
+  // The site page asks on a signed-in visitor's behalf. An App that was not
+  // made a site reads the same to it as one that does not exist.
+  if (context.req.header(APP_SITE_HEADER) && !definition.site) return refuse("not_found")
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,
@@ -304,6 +313,12 @@ async function handleMcpAppServerRequestUntimed(input: {
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
     }),
     canKeep: (binding) => mcpAppToolKeepable(capabilityContext, binding),
+    // The launch and the App's later call arrive as separate requests, so a
+    // read is matched to its caller by everything that shapes its result.
+    launchReads: launchReadHandoff(JSON.stringify([
+      organizationId, member.orgMembershipId, [...member.teamIds].sort(), mcpPrincipalCredentialId(principal),
+      [...principal.scopes].sort(), definition.app.appId, definition.app.revisionId,
+    ])),
     launchData: {
       // The inventory revision limits stale hits; launchInitialResults still
       // runs every read through current authorization before accepting a hit.

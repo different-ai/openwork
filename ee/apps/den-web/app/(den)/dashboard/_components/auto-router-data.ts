@@ -26,10 +26,10 @@ function autoRouterOptionsQueryKey(orgId: string): string[] {
 }
 
 /** The organization's Smart Routers, every task in use, and whether this person may change them. */
-export function useAutoRouters(orgId: string, enabled = true) {
+export function useAutoRouters(orgId: string) {
   return useQuery({
     queryKey: autoRoutersQueryKey(orgId),
-    enabled: enabled && Boolean(orgId),
+    enabled: Boolean(orgId),
     retry: false,
     queryFn: async ({ signal }): Promise<AutoRouterList> => {
       const { response, payload } = await requestJson(
