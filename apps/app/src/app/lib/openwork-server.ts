@@ -471,6 +471,13 @@ export type OpenworkAuthorizedFoldersResponse = {
   workspaceRoot: string;
 };
 
+export type OpenworkSandboxSettingsResponse = {
+  allowHostExecution: boolean;
+  effectiveAllowHostExecution: boolean;
+  managed: boolean;
+  featureEnabled: boolean;
+};
+
 export type OpenworkPermissionAction = "allow" | "ask" | "deny";
 export type OpenworkPermissionSource = "engine" | "global" | "openwork" | "workspace";
 export type OpenworkEffectivePermissionKey =
@@ -1944,6 +1951,24 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "PUT",
           body: { folders },
+          timeoutMs: timeouts.config,
+        },
+      ),
+    getSandboxSettings: (workspaceId: string) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
+    setSandboxSettings: (workspaceId: string, allowHostExecution: boolean) =>
+      requestJson<OpenworkSandboxSettingsResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
+        {
+          token,
+          hostToken,
+          method: "PUT",
+          body: { allowHostExecution },
           timeoutMs: timeouts.config,
         },
       ),

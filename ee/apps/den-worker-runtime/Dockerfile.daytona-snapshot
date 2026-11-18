@@ -33,6 +33,8 @@ COPY packages/install-config/ packages/install-config/
 COPY packages/managed-deployments/ packages/managed-deployments/
 COPY packages/paths/ packages/paths/
 COPY packages/product-analytics/ packages/product-analytics/
+COPY packages/sandbox/ packages/sandbox/
+COPY packages/sandbox-microsandbox/ packages/sandbox-microsandbox/
 COPY packages/types/ packages/types/
 COPY packages/ui/ packages/ui/
 COPY packages/workbook/ packages/workbook/

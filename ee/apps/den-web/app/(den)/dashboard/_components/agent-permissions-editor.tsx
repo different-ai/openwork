@@ -38,6 +38,7 @@ import {
   getEveryoneAgentsRoute,
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   permissionLockReason,
   type DenOrgContext,
 } from "../../_lib/den-org";
@@ -55,6 +56,7 @@ import {
   agentPermissionBlockedBy,
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
+  hostExecutionRowVisible,
   storedAgentPermissionDecision,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -370,6 +372,7 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
 /** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
+  hostExecution: "Off runs commands and files in a local sandbox, and blocks apps, the built-in browser and local MCP servers",
   fileEdits: "Create, change and delete files in the member's folders",
   externalFolders: "Read and change files outside the member's workspace folders",
   computerUse: "See and control apps on the member's computer",
@@ -397,11 +400,14 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
+  const { orgContext } = useOrgDashboard();
+  const features = { sandboxOnly: orgFeatureEnabled(orgContext, "sandboxTools") };
+  const hostExecution = hostExecutionRowVisible(features, settings, team === null ? null : everyone);
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area).map((group) => (
+        {visibleAgentPermissionGroups(area, { hostExecution }).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -414,7 +420,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );

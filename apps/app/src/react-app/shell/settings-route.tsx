@@ -106,6 +106,7 @@ import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
+import { HostExecutionPanel } from "@/react-app/domains/settings/panels/host-execution-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { SETTINGS_FIND_LABEL } from "@/react-app/domains/settings/find/settings-find";
@@ -1179,6 +1180,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
   const settingsFindEnabled = useDesktopFeature("settingsFind");
+  const sandboxToolsEnabled = useDesktopFeature("sandboxTools");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -2388,6 +2390,16 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 setConfigActionStatus(t("settings.config_updated"));
                 setPermissionsRefreshToken((token) => token + 1);
                 void providerAuthStore.refreshProviders();
+                void connectionsStore.refreshMcpServers();
+              }}
+            />
+            <HostExecutionPanel
+              openworkServerClient={openworkClient}
+              openworkServerStatus={routeOpenworkStatus}
+              runtimeWorkspaceId={runtimeWorkspaceId}
+              sandboxRolloutEnabled={sandboxToolsEnabled}
+              onUpdated={() => {
+                setPermissionsRefreshToken((token) => token + 1);
                 void connectionsStore.refreshMcpServers();
               }}
             />

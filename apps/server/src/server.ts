@@ -119,6 +119,8 @@ import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
@@ -1044,12 +1046,21 @@ export async function startServer(
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
+          await engineV2Preview.ensureProjectIsolation();
+          if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
+            await engineV2Preview.assertSandboxReady(workspace.path);
+          }
+          // Isolation may have replaced the process and its credentials.
           const connection = engineV2Preview.connection();
           if (!connection) {
             return finalize(jsonResponse({ error: "engine_v2_preview_not_running" }, 503));
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
+          // Reads can initialize a location and import its project plugins.
+          // Enforce process isolation before warmups or any native forwarding,
+          // not merely after a prompt's provider preparation has already run.
+          await engineV2Preview.assertProjectConfigReady();
           // As in v1, requests go straight to the engine: OpenWork upkeep
           // (provider mirroring, MCP registration) runs when configuration
           // changes, and never holds reads. A folder's upkeep starts in the
@@ -1068,6 +1079,7 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
+            resolveConnection: () => engineV2Preview.connection(),
             logWarning: (message, attributes) => logger.log("warn", message, attributes),
             // A turn uses the connections that are ready; MCP upkeep runs in
             // the background and the engine adds tools as connections finish.
@@ -1430,9 +1442,15 @@ async function resolveV2SessionExecutionDirectory(
 }
 
 export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpencodeV2Request>[0]) {
-  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeV2Request(input);
+  const current = () => {
+    if (!input.resolveConnection) return input;
+    const connection = input.resolveConnection();
+    if (!connection) throw new ApiError(503, "engine_v2_preview_not_running", "The engine is restarting. Retry this request.");
+    return { ...input, connection };
+  };
+  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeV2Request(current());
   const release = await enterEngineMutation(input.config, "v2", input.request.signal);
-  try { return await forwardOpencodeV2Request(input); }
+  try { return await forwardOpencodeV2Request(current()); }
   finally { await release(); }
 }
 
@@ -1447,6 +1465,8 @@ async function forwardOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
+  /** Re-read after a queued mutation crosses a same-engine process restart. */
+  resolveConnection?: () => { url: string; username: string; password: string } | undefined;
   /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
   prepareExecution?: (directory: string) => Promise<void>;
   /** Restart one connection that is not healthy (v1's `POST /mcp/:name/connect`). */
@@ -1952,16 +1972,24 @@ export function createWorkspaceOpencodeClient(
     });
   }
   const directory = resolveOpencodeDirectory(workspace);
-  touchEngineWorkspaceInstance(config, workspace, baseUrl);
   const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
     : directory ? baseFetch : undefined;
 
+  const transport = clientFetch ?? globalThis.fetch;
+  const guardedFetch: typeof fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const policy = managedDesktopPolicy(config);
+    if (await policy.requiresSandbox()) await policy.assertHostExecution();
+    // Even legacy SDK reads initialize a project. Do not register a reaper
+    // location (which may later probe it) until host authority was checked.
+    touchEngineWorkspaceInstance(config, workspace, baseUrl);
+    return transport(input, init);
+  }, { preconnect: transport.preconnect });
   return createOpencodeClient({
     baseUrl,
     ...(directory ? { directory } : {}),
-    ...(clientFetch ? { fetch: clientFetch } : {}),
+    fetch: guardedFetch,
     ...(connection.authHeader ? { headers: { Authorization: connection.authHeader } } : {}),
   });
 }
@@ -1970,6 +1998,7 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
   if (result.data != null) {
     return result.data;
   }
+  if (result.error instanceof ApiError) throw result.error;
   if (result.error === undefined) {
     throw new ApiError(502, "opencode_empty_response", "OpenCode returned an empty response", { path });
   }
@@ -3340,6 +3369,30 @@ function createRoutes(
       }),
       files: { workspace: opencodeConfigPath(workspace.path), global: globalPath },
     });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
+  });
+  addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const parsed = sandboxSettingsSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "allowHostExecution must be a boolean");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
+    });
+    await engineV2Preview.ensureProjectIsolation({
+      localAllowHostExecution: parsed.data.allowHostExecution,
+      commit: () => writeSandboxSettings(config, parsed.data),
+    });
+    await recordAudit(workspace.path, {
+      id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
+      action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
+    });
+    return jsonResponse(await managedDesktopPolicy(config).sandboxSettings());
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
@@ -4842,7 +4895,7 @@ async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspace = await resolveWorkspaceWithoutBootstrap(config, id);
   const resolvedWorkspace = workspace.path;
-  if (!config.readOnly) {
+  if (!config.readOnly && !await managedDesktopPolicy(config).requiresSandbox()) {
     const ensured = await ensureWorkspaceFiles(resolvedWorkspace, workspace.preset ?? "starter");
     const bootstrapReloadReasons = new Set<ReloadReason>(ensured.reloadReasons);
     if (await repairCommands(resolvedWorkspace)) {
@@ -5506,6 +5559,7 @@ async function reloadOpencodeEngine(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<RolloverOutcome> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const pool = enginePoolForConfig(config);
   if (pool) {
     // The outcome is the caller's proof: only an applied action means the
@@ -5528,6 +5582,7 @@ async function reloadOpencodeEngineInPlace(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean },
 ): Promise<void> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const activeState = activeEngineMcpServerState(config, serverState);
   if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
