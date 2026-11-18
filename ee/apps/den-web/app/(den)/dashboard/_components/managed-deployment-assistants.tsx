@@ -4,9 +4,11 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 
-export function ManagedDeploymentAssistants({ value, profile, onChange, onUpgrade, enabled, disabled = false, lockReason, openByDefault = false }: {
+export function ManagedDeploymentAssistants({ value, profile, onChange, onUpgrade, enabled, disabled = false, lockReason, openByDefault = false, viaConfiguration = false }: {
   value: AwsAssistants; profile: AwsRuntimeProfile; onChange: (value: AwsAssistants) => void; onUpgrade?: () => void;
   enabled: boolean; disabled?: boolean; lockReason?: string; openByDefault?: boolean;
+  /** The gateway runtime is added with Edit configuration on this deployment, not by waiting for an Update. */
+  viaConfiguration?: boolean;
 }) {
   const locked = !enabled || disabled;
   return (
@@ -16,8 +18,10 @@ export function ManagedDeploymentAssistants({ value, profile, onChange, onUpgrad
         {lockReason || !enabled ? <p className="flex items-start gap-2 text-[var(--dls-text-secondary)]"><LockKeyhole aria-hidden className="mt-0.5 size-4 shrink-0" />{lockReason ?? "Gateway-managed runtimes aren't enabled for this workspace. Ask your OpenWork operator to enable them."}</p> : null}
         {profile === "legacy" ? <>
           <IncludedRow label="Runtime profile" value="Legacy" />
-          <p className="text-[var(--dls-text-secondary)]">Existing services are unchanged. A newer, approved Update can add the model gateway, managed runner, Workbot and Slack/Automations.</p>
-          {onUpgrade ? <DenButton type="button" variant="secondary" disabled={locked} onClick={onUpgrade}>Include gateway runtime in this update</DenButton> : null}
+          <p className="text-[var(--dls-text-secondary)]">{viaConfiguration
+            ? "Existing services are unchanged. Edit configuration can add the model gateway, managed runner, Workbot and Slack/Automations."
+            : "Existing services are unchanged. A newer, approved Update can add the model gateway, managed runner, Workbot and Slack/Automations."}</p>
+          {onUpgrade && !viaConfiguration ? <DenButton type="button" variant="secondary" disabled={locked} onClick={onUpgrade}>Include gateway runtime in this update</DenButton> : null}
         </> : <>
           <div className="divide-y divide-[var(--dls-border)]" aria-label="Included runtime services">
             {["Den", "Model gateway", "Managed runner", "Workbot", "Slack and Automations"].map((label) => <IncludedRow key={label} label={label} value="Included" />)}

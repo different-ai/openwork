@@ -34,7 +34,9 @@ export function ConfigurationChangeForm({ deployment, draft, onDraft, planned, a
   const gatewayLock = recordedGateway ? null : gatewayLockReason(deployment, assistantsAvailable);
   const changed = planned.ok && planned.plan.changes.length > 0;
   const planLock = planned.ok && changed ? planLockReason(deployment, planned.plan, assistantsAvailable) : null;
-  const message = error ?? (planned.ok ? null : planned.message);
+  // A value still to enter is why Review changes is locked, not something that went wrong.
+  const missing = !error && !planned.ok && planned.incomplete ? planned.message : null;
+  const message = error ?? (planned.ok || planned.incomplete ? null : planned.message);
   const setAssistants = (assistants: AwsManagedDeploymentInput["target"]["assistants"]) => onDraft({ ...draft, target: { ...draft.target, assistants } });
   const runtime = (
     <ManagedDeploymentAssistants value={draft.target.assistants} profile="gateway" onChange={setAssistants} enabled={assistantsAvailable} disabled={locked} openByDefault
@@ -82,7 +84,7 @@ export function ConfigurationChangeForm({ deployment, draft, onDraft, planned, a
         </dl>
       </section>
 
-      <ConfigurationLockLine reason={entry.reason ?? planLock} testId="deployment-configuration-lock" />
+      <ConfigurationLockLine reason={entry.reason ?? planLock ?? missing} testId="deployment-configuration-lock" />
       {message ? <p role="alert" className="text-[13px] text-red-700" data-testid="deployment-configuration-error">{message}</p> : null}
       <div className="flex justify-end">
         <DenButton type="submit" data-testid="deployment-configuration-review" disabled={!changed || planLock !== null || locked}>Review changes</DenButton>

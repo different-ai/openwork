@@ -27,3 +27,12 @@ test("legacy runtime offers an explicit approved-update upgrade and preserves it
   assert.ok(!html.includes("Cloud computers (optional)"));
   assert.equal(value.headlessRunnerEnabled, false);
 });
+
+test("where Edit configuration adds the gateway runtime, the legacy block points there and offers no Update control", () => {
+  const value = awsTargetSchema.parse(target).assistants;
+  const html = renderToStaticMarkup(createElement(ManagedDeploymentAssistants, { profile: "legacy", value, enabled: true, viaConfiguration: true, onUpgrade: () => undefined, onChange: () => undefined }));
+  assert.ok(html.includes("Existing services are unchanged. Edit configuration can add the model gateway, managed runner, Workbot and Slack/Automations."));
+  assert.ok(!html.includes("A newer, approved Update"), "waiting for a newer installer is no longer true");
+  assert.ok(!html.includes("Include gateway runtime in this update"), "no disabled Update control beside the pointer to Edit configuration");
+  assert.ok(!html.includes("<button"));
+});

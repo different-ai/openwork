@@ -24,7 +24,7 @@ import { useFeatureIntro } from "../_features/feature-intros";
 import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
 import { ManagedDeploymentConfigurationDialog } from "./managed-deployment-configuration-dialog";
-import { configurationEntry, runtimeLockReason } from "./managed-deployment-configuration-state";
+import { CHANGE_STOPPED_REPORTING, changeFailureMessage, changeNeverApproved, configurationEntry, currentHandoff, runtimeBlock } from "./managed-deployment-configuration-state";
 import { ConfigurationLockLine, ManagedDeploymentConfigurationSummary, type ConfigurationControls } from "./managed-deployment-configuration-summary";
 export { deploymentStatus } from "./managed-deployments-state";
 
@@ -197,7 +197,7 @@ export function ManagedDeploymentsScreen() {
   }
 
   const configurationControls: ConfigurationControls | null = configUpdates ? {
-    onEdit: () => { setActionError(null); setConfiguringId(selected?.id ?? null); }, runReauthableAction, reauthDialogOpen,
+    onEdit: () => { setActionError(null); setConfiguringId(selected?.id ?? null); }, runReauthableAction, reauthDialogOpen, permissionReason: permissionLockReason("deployments.manage"),
     onResult: (deployment, next) => { replace(deployment); setLaunch(next); setCopied(false); setActionError(null); },
   } : null;
 
@@ -308,7 +308,7 @@ export function ManagedDeploymentsScreen() {
             </ul>
           )}
           {selected ? (
-            <DeploymentDetail key={`${selected.id}:${selected.run?.id ?? "none"}`} deployment={selected} launch={launch?.deployment.id === selected.id ? launch : null} busy={busy} canManage={access.canManageDeployments}
+            <DeploymentDetail key={`${selected.id}:${selected.run?.id ?? "none"}`} deployment={selected} launch={currentHandoff(launch, selected)} busy={busy} canManage={access.canManageDeployments}
               assistantsAvailable={assistantsAvailable} copied={copied} actionError={actionError} canPrepare={(configuration?.providers.some((entry) => entry.provider === selected.provider && entry.available) ?? false) && !(selected.provider === "aws" && (selected.target.runtimeProfile === "gateway" || assistantsEnabled(selected.target.assistants)) && !assistantsAvailable)}
               configuration={configurationControls}
               onPrepare={(kind, assistants, profile) => { void prepare(selected, kind, assistants, profile); }}
@@ -346,8 +346,9 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
   const nextStep = run?.events.length ?? 0;
   const neverStarted = !installed && (!run || run.state === "awaiting_approval");
   const health = deployment.health;
-  const configurationControl = configurationEntry(deployment, { enabled: configuration !== null, canManage });
+  const configurationControl = configurationEntry(deployment, { enabled: configuration !== null, canManage, permissionReason: configuration?.permissionReason });
   const changeRun = configuration !== null && run?.kind === "configure";
+  const runtime = runtimeBlock(deployment, assistantState.reason, configurationControl, assistantsAvailable);
   return (
     <div className="flex min-w-0 flex-col gap-6 border-t border-gray-100 px-2 pt-6" data-testid="managed-deployment-detail">
       <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_13rem]">
@@ -367,7 +368,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
 
       {deployment.provider === "aws" ? <ManagedDeploymentAssistants value={assistantDraft ?? deployment.target.assistants} profile={runtimeProfileDraft ?? deployment.target.runtimeProfile} onChange={setAssistantDraft}
         onUpgrade={() => { setRuntimeProfileDraft("gateway"); setAssistantDraft(gatewayAssistants(deployment.target.assistants)); }}
-        enabled={assistantsAvailable} disabled={!assistantState.editable || busy} lockReason={runtimeLockReason(deployment, assistantState.reason, configurationControl, assistantsAvailable) ?? undefined} /> : null}
+        enabled={assistantsAvailable} disabled={!assistantState.editable || busy} lockReason={runtime.reason ?? undefined} viaConfiguration={runtime.viaConfiguration} /> : null}
 
       {installed ? (
         <section aria-labelledby="checks-heading" className="space-y-2">
@@ -390,7 +391,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
 
       {configuration ? <ManagedDeploymentConfigurationSummary deployment={deployment} canManage={canManage} commandShown={Boolean(launch?.command)} controls={configuration} /> : null}
 
-      {run && run.state !== "ready" ? (
+      {run && run.state !== "ready" && !(changeRun && changeNeverApproved(run)) ? (
         <section aria-labelledby="run-heading" className="space-y-2">
           <h3 id="run-heading" className="text-[13px] font-semibold text-gray-900">{run.kind === "configure" ? "Configuration change" : run.kind === "update" ? `Update to ${run.version}` : run.kind === "retry" ? `Retry ${run.version}` : `Install ${run.version}`}</h3>
           {run.state === "awaiting_approval" && !run.expired ? <p className="text-[13px] text-gray-500">Waiting for approval in {cloud}{gcp ? " Shell" : ""}.</p> : null}
@@ -402,13 +403,13 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
                 <li key={step} className="flex min-h-9 items-center gap-3 text-[13px]">
                   {state === "ok" ? <CheckCircle2 aria-hidden className="size-4 text-gray-500" /> : state === "failing" ? <XCircle aria-hidden className="size-4 text-red-600" /> : <CircleDashed aria-hidden className={`size-4 ${state === "running" ? "text-gray-700 motion-safe:animate-pulse" : "text-gray-300"}`} />}
                   <span className={state === "pending" ? "text-gray-500" : "text-gray-900"}>{gcp && step === "account_verified" ? "Google Cloud project and domain verified" : STEP_LABELS[step]}</span>
-                  {event ? <time className="ml-auto text-gray-400" dateTime={event.receivedAt}>{new Date(event.receivedAt).toLocaleTimeString()}</time> : null}
+                  {event ? <time className="ml-auto text-gray-500" dateTime={event.receivedAt}>{new Date(event.receivedAt).toLocaleTimeString()}</time> : null}
                 </li>
               );
             })}
           </ol>
-          {failure?.errorCode ? <p role="alert" className="text-[13px] text-red-700">{gcp ? gcpFailureMessage(failure.errorCode) : FAILURE_LABELS[failure.errorCode]}</p> : null}
-          {run.expired && !failure && !(changeRun && run.state === "awaiting_approval") ? <p role="alert" className="text-[13px] text-red-700">The installer stopped reporting. Open the installer logs in {cloud}, then retry.</p> : null}
+          {failure?.errorCode ? <p role="alert" className="text-[13px] text-red-700">{gcp ? gcpFailureMessage(failure.errorCode) : (changeRun ? changeFailureMessage(failure.errorCode) : null) ?? FAILURE_LABELS[failure.errorCode]}</p> : null}
+          {run.expired && !failure ? <p role="alert" className="text-[13px] text-red-700">{changeRun ? CHANGE_STOPPED_REPORTING : `The installer stopped reporting. Open the installer logs in ${cloud}, then retry.`}</p> : null}
         </section>
       ) : null}
 
@@ -421,7 +422,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
             <DenButton type="button" onClick={() => onCopy(launch.command ?? "")}><Copy aria-hidden className="size-4" />{copied ? "Copied" : "Copy command"}</DenButton>
             <a className={buttonVariants({ variant: "secondary" })} href={deployment.provider === "gcp" ? `https://console.cloud.google.com/?project=${encodeURIComponent(deployment.target.projectId)}&cloudshell=true` : `https://${deployment.target.region}.console.aws.amazon.com/cloudshell/home?region=${deployment.target.region}`} target="_blank" rel="noopener noreferrer">Open {gcp ? "Google Cloud Shell" : "AWS CloudShell"}<ExternalLink aria-hidden className="size-4" /></a>
           </div>
-          <details className="text-[13px]"><summary className="cursor-pointer text-gray-500">Technical details</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-3 font-mono text-[12px] text-gray-700">{launch.command}</pre></details>
+          <details className="text-[13px]"><summary className="cursor-pointer text-gray-500" data-testid="managed-deployment-command-toggle">Technical details</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-3 font-mono text-[12px] text-gray-700" data-testid="managed-deployment-command">{launch.command}</pre></details>
         </section>
       ) : null}
 

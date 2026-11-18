@@ -25,6 +25,8 @@ export type ConfigurationControls = {
   runReauthableAction: RunReauthableAction;
   /** The identity check is on screen; a dialog steps aside so it can be reached. */
   reauthDialogOpen: boolean;
+  /** Why someone who may not manage deployments finds these controls locked, and who can change that. */
+  permissionReason: string;
 };
 
 /** The deployment changed after the page last loaded it, so the request was not applied. */
@@ -136,6 +138,7 @@ export function ManagedDeploymentConfigurationSummary({ deployment, canManage, c
           {change.state === "awaiting_approval" || change.state === "expired" ? <DenButton type="button" variant="secondary" data-testid="managed-deployment-configuration-discard" loading={pending === "discard"} disabled={locked} onClick={() => { void send("discard"); }}>Discard change</DenButton> : null}
         </div>
       )}
+      {change.state === "applying" || canManage ? null : <ConfigurationLockLine reason={controls.permissionReason} testId="managed-deployment-configuration-change-lock" />}
     </section>
   );
 }

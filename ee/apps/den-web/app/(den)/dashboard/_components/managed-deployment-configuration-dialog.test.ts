@@ -9,7 +9,8 @@ import { ManagedDeploymentConfigurationSummary } from "./managed-deployment-conf
 
 const SECRET_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:managed/computer-Ab12Cd";
 const noop = () => undefined;
-const controls = { onEdit: noop, onResult: noop, runReauthableAction: async () => undefined, reauthDialogOpen: false };
+const PERMISSION = "Needs the “Manage deployments” permission. Ask the organization owner.";
+const controls = { onEdit: noop, onResult: noop, runReauthableAction: async () => undefined, reauthDialogOpen: false, permissionReason: PERMISSION };
 
 function deployment(options: { target?: Record<string, unknown>; configuration?: Record<string, unknown>; view?: Record<string, unknown> } = {}): EditableDeployment {
   const parsed = managedDeploymentSchema.parse({
@@ -84,8 +85,15 @@ test("adding the gateway runtime shows its services and computers, takes ARNs on
   assert.ok(!html.includes('type="password"'));
   assert.ok(html.includes("Keep core services only"));
   assert.ok(!html.includes("deployment-configuration-add-gateway"));
-  assert.match(html, /role="alert"[^>]*>Enter the ARN of your plain-string computer provider API key secret\.</);
+  assert.match(html, /data-testid="deployment-configuration-lock"><svg[^>]*>.*?<\/svg>Enter the ARN of your plain-string computer provider API key secret\.<\/p>/, "a value still to enter is why review is locked");
+  assert.ok(!html.includes('role="alert"'), "nothing has gone wrong yet");
   assert.match(tag(html, "deployment-configuration-review"), / disabled=""/);
+
+  const foreign: AwsManagedDeploymentInput = { ...draft, target: { ...draft.target, assistants: { ...draft.target.assistants, computerProvider: "daytona", computerSnapshot: "computer-snapshot", computerSecretArn: SECRET_ARN.replace("123456789012", "210987654321") } } };
+  const refused = form(item, { draft: foreign });
+  assert.match(refused, /role="alert"[^>]*>Use a Secrets Manager secret in this deployment&#x27;s AWS account and region\.</, "a value that can't be used is an error");
+  assert.ok(!refused.includes("deployment-configuration-lock"));
+  assert.match(tag(refused, "deployment-configuration-review"), / disabled=""/);
 });
 
 test("a gateway deployment edits its computers in place, and a change enables the review", () => {
@@ -115,8 +123,9 @@ test("the review shows before and after, what each change does, and asks for con
   assert.match(html, /Cloud computers<\/p><dl[^>]*><dt[^>]*>Before<\/dt><dd[^>]*>Off<\/dd><dt[^>]*>After<\/dt><dd[^>]*>Daytona<\/dd>/);
   assert.match(html, new RegExp(`Before</dt><dd[^>]*>Not set</dd><dt[^>]*>After</dt><dd[^>]*>${SECRET_ARN}</dd>`));
   assert.equal((html.match(/data-testid="deployment-configuration-change-effect"/g) ?? []).length, 3, "the three computer values share one sentence");
-  assert.ok(html.includes("An administrator who has already signed in stays the administrator."));
-  assert.ok(html.includes("They can&#x27;t be removed later."));
+  assert.ok(html.includes("An administrator who has already signed in stays the administrator. The OpenWork API and web app restart."));
+  assert.ok(html.includes("They can&#x27;t be removed later.</p>"));
+  assert.equal((html.match(/The OpenWork API and web app restart\./g) ?? []).length, 1, "the restart every approved change causes is said once");
   assert.match(html, /data-testid="deployment-configuration-consent"[^>]*>I&#x27;ll approve this in AWS account 123456789012 by running one command in AWS CloudShell; nothing changes until I do\./);
   assert.ok(html.includes('role="checkbox"'));
   assert.match(tag(html, "deployment-configuration-submit"), / disabled=""/);
@@ -162,5 +171,8 @@ test("a requested change on the deployment says what is true and offers only the
 
   const readOnly = summary("awaiting_approval", { canManage: false });
   for (const name of ["show-command", "edit-change", "discard"]) assert.match(tag(readOnly, `managed-deployment-configuration-${name}`), / disabled=""/, name);
+  assert.match(readOnly, new RegExp(`data-testid="managed-deployment-configuration-change-lock"><svg[^>]*>.*?</svg>${PERMISSION}</p>`), "the locked actions say why, and who can change it, beside them");
+  assert.ok(!awaiting.includes("managed-deployment-configuration-change-lock"));
+  assert.ok(!summary("applying", { canManage: false }).includes("managed-deployment-configuration-change-lock"), "nothing to lock while AWS applies it");
   assert.equal(renderToStaticMarkup(createElement(ManagedDeploymentConfigurationSummary, { deployment: item, canManage: true, commandShown: false, controls })), "");
 });
