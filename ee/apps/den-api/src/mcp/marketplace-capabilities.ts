@@ -45,6 +45,7 @@ import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
 import { workflowRunNeedsLiveRuntime } from "./workflow-live-inference.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
+import { skillFilesFromPayload, type SkillFile } from "../skill-files.js"
 
 import { buildMarketplaceCapabilityName, MARKETPLACE_CAPABILITY_PREFIX } from "./marketplace-capability-name.js"
 
@@ -812,7 +813,7 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
 
 /** Authorized SKILL.md source per marketplace capability, or why it is withheld. */
 export type MarketplaceSkillSource =
-  | { content: string; provenance: string }
+  | { content: string; provenance: string; files: SkillFile[] }
   | { blocked: { status: string; message: string; action: unknown } }
 
 /**
@@ -868,7 +869,11 @@ export async function listAccessibleMarketplaceSkillSources(input: {
       })
       continue
     }
-    sources.set(capability, { content: version.rawSourceText ?? "", provenance: provenance(row.plugin.name) })
+    sources.set(capability, {
+      content: version.rawSourceText ?? "",
+      provenance: provenance(row.plugin.name),
+      files: skillFilesFromPayload(version.normalizedPayloadJson),
+    })
   }
   return sources
 }

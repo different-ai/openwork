@@ -440,7 +440,7 @@ function agentPluginAssetWarnings(input: {
     )).length
   }, 0)
   return extraAssetCount > 0
-    ? [`${extraAssetCount} additional skill asset${extraAssetCount === 1 ? " was" : "s were"} found. OpenWork imports the SKILL.md entrypoint; referenced skill assets are not installed yet.`]
+    ? [`${extraAssetCount} additional skill file${extraAssetCount === 1 ? " was" : "s were"} found. OpenWork imports text files beside SKILL.md; binary or very large files are left out.`]
     : []
 }
 
