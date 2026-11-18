@@ -1319,6 +1319,9 @@ importers:
       '@openwork/sandbox-freestyle':
         specifier: workspace:*
         version: link:../../../packages/sandbox-freestyle
+      '@openwork/sandbox-instabox':
+        specifier: workspace:*
+        version: link:../../../packages/sandbox-instabox
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types

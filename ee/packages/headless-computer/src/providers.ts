@@ -5,7 +5,7 @@ import { computerSnapshotSlug } from "./image.js"
 const COMPUTER_RESOURCES = { cpu: 2, memoryGb: 4, diskGb: 8 }
 
 export type ComputerProviderConfig = {
-  kind: "freestyle" | "daytona"
+  kind: "freestyle" | "daytona" | "instabox"
   apiKey: string
   snapshot?: string
   apiUrl?: string
@@ -68,6 +68,12 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
       // The viewer port is reached through Freestyle's TLS edge; tickets inside the guest still gate every connection.
       ...(config.desktop ? { endpointDomain: config.endpointDomain ?? "style.dev" } : {}),
     })
+  }
+  if (config.kind === "instabox") {
+    if (!config.snapshot) throw new Error("instabox computers require HEADLESS_COMPUTER_SNAPSHOT built with snapshot:build:instabox")
+    const { createInstaboxProvider } = await import("@openwork/sandbox-instabox")
+    // The account's plan sets the size: every instabox plan offers its default, not every plan offers 2 vCPU.
+    return createInstaboxProvider({ apiKey: config.apiKey, template: config.snapshot })
   }
   if (!config.snapshot) throw new Error("Daytona computers require HEADLESS_COMPUTER_SNAPSHOT built with snapshot:build:daytona")
   if (config.desktop && config.sandboxClass !== "linux-vm") throw new Error("Daytona desktop access requires a Linux VM snapshot")

@@ -100,7 +100,8 @@ const configSchema = z.object({
   HEADLESS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   HEADLESS_S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
   /** A Linux computer per conversation (bash and look tools): off, or a Freestyle VM. */
-  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona"]).default("off"),
+  HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona", "instabox"]).default("off"),
+  INSTABOX_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
   DAYTONA_TARGET: z.string().min(1).optional(),
@@ -266,9 +267,11 @@ function errorReportingConfig(value: z.infer<typeof configSchema>): Config["erro
 
 function computerConfig(value: z.infer<typeof configSchema>): Config["computer"] {
   if (value.HEADLESS_COMPUTER === "off") return undefined
-  const apiKey = value.HEADLESS_COMPUTER === "daytona" ? value.DAYTONA_API_KEY : value.FREESTYLE_API_KEY
-  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : "FREESTYLE_API_KEY"}`)
+  const keyName = ({ daytona: "DAYTONA_API_KEY", freestyle: "FREESTYLE_API_KEY", instabox: "INSTABOX_API_KEY" } as const)[value.HEADLESS_COMPUTER]
+  const apiKey = value[keyName]
+  if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${keyName}`)
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")
+  if (value.HEADLESS_COMPUTER === "instabox" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("instabox computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:instabox)")
   if (value.HEADLESS_COMPUTER === "daytona" && value.HEADLESS_COMPUTER_DESKTOP === "true" && value.HEADLESS_COMPUTER_CLASS !== "linux-vm") throw new Error("Daytona desktop computers require HEADLESS_COMPUTER_CLASS=linux-vm for memory-preserving pause and snapshots")
   if (value.HEADLESS_COMPUTER === "freestyle" && value.HEADLESS_COMPUTER_DESKTOP === "true" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Freestyle desktop computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:freestyle-desktop)")
   return {

@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "pnpm --filter \"@openwork-ee/headless-computer^...\" --if-present run build && node scripts/build-desktop.mjs && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:@openwork/sandbox --external:@openwork/sandbox-freestyle --external:@openwork/sandbox-daytona --external:zod",
+    "build": "pnpm --filter \"@openwork-ee/headless-computer^...\" --if-present run build && node scripts/build-desktop.mjs && esbuild src/index.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/index.js --external:@openwork/sandbox --external:@openwork/sandbox-freestyle --external:@openwork/sandbox-daytona --external:@openwork/sandbox-instabox --external:zod",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "snapshot:build": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-snapshot.ts",
     "snapshot:build:daytona": "NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" tsx scripts/build-daytona-snapshot.ts",
@@ -25,6 +25,7 @@
     "@openwork/sandbox-daytona": "workspace:*",
     "@openwork/sandbox-differently": "workspace:*",
     "@openwork/sandbox-freestyle": "workspace:*",
+    "@openwork/sandbox-instabox": "workspace:*",
     "freestyle": "0.2.13",
     "ws": "8.21.0",
     "zod": "^4.6.6",
