@@ -29,7 +29,7 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     const rows = await text('[data-testid="managed-deployment-row"]');
     const setting = (await text('[data-testid="aws-sign-in-setting"]')).join(" ");
     await user.screenshot();
-    const listed = rows.length === 1 && rows[0].includes(DEPLOYMENT_NAME) && rows[0].includes(account) && rows[0].includes("Awaiting AWS approval") && setting.includes("Not set");
+    const listed = rows.length === 1 && rows[0].includes(DEPLOYMENT_NAME) && rows[0].includes(account) && rows[0].includes("Awaiting AWS approval") && setting.includes("Optional · Not set");
     evidence.recordAssertionEvidence("The list shows the deployment with its account and state, and AWS sign-in as not set", `row: ${rows.join(" | ")}; setting: ${setting}`, listed);
     expect(listed).toBe(true);
     await user.click({ testId: "managed-deployment-row" });
@@ -40,8 +40,8 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     const signIn = (await text('[data-testid="deployment-approve-sign-in"]')).join(" ");
     const href = (await probe.linkTargets('[data-testid="deployment-approve-link"]'))[0] ?? "";
     await user.screenshot();
-    const ok = signIn.includes(`Sign in to AWS account ${account}`) && signIn.includes("Save your sign-in page") && href.startsWith("https://us-east-1.console.aws.amazon.com/");
-    evidence.recordAssertionEvidence("Step 1 names the AWS account and offers to save the sign-in page; the approval button is the plain console link", `step 1: ${signIn}; button opens: ${href.slice(0, 60)}`, ok);
+    const ok = signIn.includes(`Sign in to AWS account ${account}`) && signIn.includes("Use an access portal (optional)") && href.startsWith("https://us-east-1.console.aws.amazon.com/");
+    evidence.recordAssertionEvidence("Step 1 names the AWS account and offers an access portal as optional; the approval button is the plain console link", `step 1: ${signIn}; button opens: ${href.slice(0, 60)}`, ok);
     expect(ok).toBe(true);
   });
 

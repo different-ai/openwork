@@ -119,6 +119,7 @@ function AwsSignInDialog({ open, onClose, saved, onSave }: {
             <Dialog.Close render={<DenButton type="button" variant="ghost" aria-label="Close" disabled={busy}><X aria-hidden className="size-4" /></DenButton>} />
           </div>
           <form onSubmit={submit} className="space-y-4">
+            <p className="text-[13px] leading-5 text-gray-600">Optional. Save this only if your team signs in to AWS through an access portal. Otherwise leave it and sign in to AWS the way you usually do.</p>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">AWS access portal URL</span>
               <DenInput data-testid="aws-sign-in-portal" value={portalUrl} onChange={(event) => setPortalUrl(event.target.value)} required placeholder="https://your-company.awsapps.com/start" /></label>
             <label className="block space-y-1 text-[13px]"><span className="text-gray-700">Role name (optional)</span>
@@ -214,7 +215,7 @@ export function GuidedDeploymentsList() {
               <SectionTitle title="Settings" />
               <ItemPanel>
                 <ItemRow testId="aws-sign-in-setting" logo={<CloudLogo provider="aws" />} title="AWS sign-in" statusOnNarrow
-                  status={signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Not set"}
+                  status={signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Optional · Not set"}
                   action={access.canManageDeployments ? <DenButton type="button" variant="secondary" size="sm" data-testid="aws-sign-in-open" onClick={() => setSignInOpen(true)}>{signIn ? "Edit" : "Set up"}</DenButton> : undefined} />
               </ItemPanel>
             </section>
@@ -354,7 +355,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
           <div className={ROW_CLASS} data-testid="deployment-approve-sign-in">
             <StepNumber value={1} />
             <StepText title={`Sign in to AWS account ${account}`} description="In this browser, the way you usually do" />
-            {canManage ? <DenButton type="button" variant="secondary" size="sm" data-testid="aws-sign-in-open" onClick={onSignIn}>Save your sign-in page</DenButton> : null}
+            {canManage ? <DenButton type="button" variant="ghost" size="sm" data-testid="aws-sign-in-open" onClick={onSignIn}>Use an access portal (optional)</DenButton> : null}
           </div>
         )) : null}
         <div className={ROW_CLASS} data-testid="deployment-approve-step">
@@ -469,7 +470,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
             label: "AWS sign-in",
             value: canManage
               ? <button type="button" className="underline-offset-2 hover:underline" data-testid="aws-sign-in-detail" onClick={onSignIn}>{signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Set up"}</button>
-              : signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Not set",
+              : signIn ? `${portalHost(signIn)} · ${signIn.roleName ?? "Choose role at sign-in"}` : "Optional · Not set",
           }] : []),
         ]} />
       </section>
