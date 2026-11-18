@@ -373,15 +373,18 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
     remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),
     /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
-    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
+    /** With `skillId`, publishes the taught skill's next version instead of creating another skill. */
+    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string, skillId?: string) {
       const client = new Client({ name: "openwork-workbot", version: "1" })
       const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
         requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
       })
       try {
         await client.connect(transport, { timeout: TIMEOUT_MS })
-        const result = await client.callTool({ name: "create_skill", arguments: { pluginName, skillMarkdown } }, undefined, { timeout: TIMEOUT_MS })
-        if (result.isError) throw new Error("The skill could not be saved. Check your skill-creation permission or choose a different name.")
+        const result = await client.callTool(skillId
+          ? { name: "update_skill", arguments: { skillId, skillMarkdown, reason: "Edited after teaching in the browser" } }
+          : { name: "create_skill", arguments: { pluginName, skillMarkdown } }, undefined, { timeout: TIMEOUT_MS })
+        if (result.isError) throw new Error(skillId ? "The skill could not be updated. Check that you can still edit it." : "The skill could not be saved. Check your skill-creation permission or choose a different name.")
         return skillCreatedPayloadSchema.parse(result.structuredContent)
       } finally { await client.close() }
     },

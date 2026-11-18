@@ -241,7 +241,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
     if (!member.den.enabled || !member.den.browser || !member.den.browserDemonstrations || !await allowed()) return c.json({ error: "feature_disabled" }, 403)
     const raw: unknown = await c.req.json().catch(() => null)
-    const save = z.object({ action: z.literal("save"), demonstrationId: z.string().uuid(), name: z.string().trim().min(1).max(100), purpose: z.string().trim().min(1).max(1000) }).strict().safeParse(raw)
+    const save = z.object({ action: z.literal("save"), demonstrationId: z.string().uuid(), name: z.string().trim().min(1).max(100), purpose: z.string().trim().min(1).max(1000), skillId: z.string().trim().min(1).max(160).optional() }).strict().safeParse(raw)
     const command = demonstrationCommandSchema.safeParse(raw)
     if (!save.success && !command.success) return c.json({ error: "invalid_request" }, 400)
     try {
@@ -254,13 +254,15 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         if (!state.ok || state.value.demonstration?.id !== save.data.demonstrationId) return c.json({ error: "demonstration_unavailable" }, 409)
         const markdown = compileBrowserDemonstration(state.value.demonstration, save.data.name, save.data.purpose)
         if (!await allowed()) return c.json({ error: "feature_disabled" }, 403)
-        const key = JSON.stringify([member.den.organization.id, member.den.memberId, save.data.demonstrationId])
+        // Editing the saved skill names it: each changed draft is one new version of that skill, which Den allows only
+        // to someone who can edit it. Without a skill named, a demonstration is saved as a new skill once.
+        const key = JSON.stringify([member.den.organization.id, member.den.memberId, save.data.demonstrationId, ...(save.data.skillId ? [save.data.skillId, markdown] : [])])
         let receipt = teachingSaves.get(key)
         if (receipt && (receipt.markdown !== markdown || receipt.name !== save.data.name)) return c.json({ error: "already_saved", message: "This demonstration already has a save attempt. Check the saved skill before making another version." }, 409)
         if (!receipt) {
           if (teachingSaves.size >= 1000) return c.json({ error: "save_capacity", message: "Skill saving is busy. Keep your draft and try again later." }, 503)
           // Retain failed/uncertain saves too: never automatically repeat a persistent write.
-          receipt = { markdown, name: save.data.name, saving: den.saveBrowserSkill(member.accessToken, save.data.name, markdown) }
+          receipt = { markdown, name: save.data.name, saving: den.saveBrowserSkill(member.accessToken, save.data.name, markdown, save.data.skillId) }
           teachingSaves.set(key, receipt)
         }
         const saved = await receipt.saving
