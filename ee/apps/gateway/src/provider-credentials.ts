@@ -34,12 +34,14 @@ export type GatewayCredentialLookup = {
   scope: GatewayAccessScope
   selection: GatewayGrantSelection
   subject: string
+  consistency?: "primary"
 }
 export type LoadProviderCredential = (input: GatewayCredentialLookup) => Promise<GatewayCredential | null>
 
 type CredentialId = GatewayCredential["id"]
 
 type MaterializedCredential =
+  | { kind: "feature_disabled" }
   | { kind: "secret"; credentialId: CredentialId; credentialKind: GatewayProviderCredentialKind; secret: string }
   | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys" | "aws_sso"; awsKeys: GatewayAwsKeysSecret }
   | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed" }
@@ -92,10 +94,10 @@ async function materialize(
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret: parsed.token.accessToken }
     case "oauth_azure": {
       const identity = parsed.token.microsoftIdentity
-      // Fresh tokens need the same tenant, client and scope binding as renewed tokens.
-      if (input.set.credential_mode !== "member" || !identity
+      // LiteLLM's custom API tokens must match the selected member app registration.
+      if (input.apiScope !== null && (input.set.credential_mode !== "member" || !identity
         || identity.tenantId.toLowerCase() !== input.set.oauth_tenant_id?.toLowerCase()
-        || identity.clientId !== input.set.oauth_client_id || (identity.scope ?? null) !== input.apiScope) {
+        || identity.clientId !== input.set.oauth_client_id || identity.scope !== input.apiScope)) {
         return { kind: "auth_required", credentialId: credential.id, reason: "inactive" }
       }
       return { kind: "secret", credentialId: credential.id, credentialKind: parsed.kind, secret: parsed.token.accessToken }
@@ -140,6 +142,8 @@ export async function resolveUpstreamCredential(input: {
   /** From ProviderCatalog, not provider_config.env or member input. */
   envNames: string[]
   loadProviderCredential: LoadProviderCredential
+  /** Only LiteLLM member Entra requests opt in to fresh feature checks around token work. */
+  checkLiteLlmEntraFeature?: () => Promise<boolean>
   refreshMemberToken?: RefreshMemberToken
   mintGcpAccessToken?: MintGcpAccessToken
   mintAwsRoleCredentials?: MintAwsRoleCredentials
@@ -154,7 +158,8 @@ export async function resolveUpstreamCredential(input: {
   const inactive = (credentialId: CredentialId | null): ResolvedUpstreamCredential => set.credential_mode === "member"
     ? { kind: "auth_required", credentialId, reason: "inactive" } : { kind: "org_credential_missing" }
   if (input.provider.status !== "active" || set.status !== "active") return inactive(null)
-  const lookup = { scope: input.scope, selection: input.selection, subject }
+  const lookup: GatewayCredentialLookup = { scope: input.scope, selection: input.selection, subject,
+    consistency: liteLlmEntraScope(input.provider) !== null ? "primary" : undefined }
   let credential = await input.loadProviderCredential(lookup)
   if (!credential) return set.credential_mode === "member" ? { kind: "auth_required", credentialId: null, reason: "missing" } : { kind: "org_credential_missing" }
   if (credential.status !== "active") return inactive(credential.id)
@@ -175,6 +180,7 @@ export async function resolveUpstreamCredential(input: {
   const refreshKind = credential.kind
   // The API scope members' Microsoft tokens are for: a LiteLLM provider's own, or null for Azure Cognitive Services (Foundry).
   const apiScope = liteLlmEntraScope(input.provider)
+  if (apiScope !== null && input.checkLiteLlmEntraFeature && !await input.checkLiteLlmEntraFeature()) return { kind: "feature_disabled" }
   if (set.credential_mode === "member" && isRefreshableCredentialKind(refreshKind) && parsed.kind === refreshKind && input.refreshMemberToken
     && needsOauthRefresh(credential, hasRefreshToken(parsed), clock())) {
     const outcome = await input.refreshMemberToken({ credential: { ...credential, kind: refreshKind }, provider: { ...set, api_scope: apiScope }, authorization: lookup, subject, now: clock(), clock })
@@ -191,6 +197,7 @@ export async function resolveUpstreamCredential(input: {
   if (isExpired(credential, clock())) return set.credential_mode === "member"
     ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
     : { kind: "org_credential_expired", credentialId: credential.id }
+  if (apiScope !== null && input.checkLiteLlmEntraFeature && !await input.checkLiteLlmEntraFeature()) return { kind: "feature_disabled" }
   const result = await materialize(credential, parsed, { envNames: input.envNames, now: clock(), mintGcpAccessToken: input.mintGcpAccessToken, mintAwsRoleCredentials: input.mintAwsRoleCredentials, set, apiScope })
   // The minter's cache is not authorization. Recheck after mint/refresh/cache
   // awaits so concurrent revocation or replacement never returns that token.
@@ -213,7 +220,7 @@ export const loadProviderCredentialFromDb: LoadProviderCredential = async (input
   const { db } = await import("./db.js")
   // Cache hits still require a live member, provider and grant. This runs both
   // before and after token work, including for a shared org credential.
-  const authorized = selectGatewayGrant(await loadGatewayAccessFromDb(input.scope), input.selection.requestedModel, input.selection.row.grant.id)
+  const authorized = selectGatewayGrant(await loadGatewayAccessFromDb(input.scope, input.consistency), input.selection.requestedModel, input.selection.row.grant.id)
   if (authorized.kind !== "selected" || !sameGatewaySelection(input.selection, authorized.selection)) return null
   const set = authorized.selection.row.credentialSet
   if (input.subject !== (set.credential_mode === "member" ? input.scope.orgMembershipId : ORG_CREDENTIAL_SUBJECT)) return null

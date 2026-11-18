@@ -17,7 +17,7 @@ export type GatewayAccessRow = {
   credentialSet: typeof GatewayCredentialSetTable.$inferSelect
   model: typeof GatewayProviderModelTable.$inferSelect | null
 }
-export type LoadGatewayAccess = (scope: GatewayAccessScope) => Promise<GatewayAccessRow[]>
+export type LoadGatewayAccess = (scope: GatewayAccessScope, consistency?: "primary") => Promise<GatewayAccessRow[]>
 export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name">
 /** An access row across every provider the member can reach, tagged with its provider. */
 export type GatewayMemberAccessRow = GatewayAccessRow & { provider: GatewayAccessProvider }
@@ -90,8 +90,10 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
     ))
 }
 
-// Revocation fences must see committed grants and set configuration, not a lagging replica.
-export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db.$primary)
+export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope, consistency) => {
+  const { db } = await import("./db.js")
+  return loadGatewayAccess(scope, consistency === "primary" ? db.$primary : db)
+}
 
 export type GatewayGrantSelection = {
   row: GatewayAccessRow

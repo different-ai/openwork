@@ -52,6 +52,7 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
+import { checkLiteLlmEntraFeature, type CheckLiteLlmEntraFeature } from "./litellm-entra-feature.js"
 import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
@@ -90,6 +91,7 @@ type JsonObject = Record<string, unknown>
 export type LoadGatewayProvider = (input: {
   inferenceProviderId: string
   organizationId: string
+  consistency?: "primary"
 }) => Promise<GatewayProvider | null>
 
 export type GatewayDependencies = {
@@ -99,6 +101,7 @@ export type GatewayDependencies = {
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
   loadGatewayProvider: LoadGatewayProvider
+  checkLiteLlmEntraFeature: CheckLiteLlmEntraFeature
   loadGatewayAccess: LoadGatewayAccess
   loadMemberGatewayAccess: LoadMemberGatewayAccess
   resolveGatewayModelProvider: ResolveGatewayModelProvider
@@ -159,7 +162,8 @@ export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
     return null
   }
   const { db } = await import("./db.js")
-  const [row] = await db.$primary
+  const database = input.consistency === "primary" ? db.$primary : db
+  const [row] = await database
     .select({
       id: GatewayProviderTable.id,
       organization_id: GatewayProviderTable.organization_id,
@@ -180,6 +184,12 @@ export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function usesLiteLlmEntra(provider: GatewayProvider) {
+  const settings = provider.settings
+  return isLiteLlmProviderId(provider.provider_id) && isJsonObject(settings)
+    && isJsonObject(settings.litellm) && settings.litellm.keySource === "entra"
 }
 
 function gatewayError(status: number, code: string, message: string, extra: JsonObject = {}) {
@@ -826,6 +836,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
     loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
+    checkLiteLlmEntraFeature: input.checkLiteLlmEntraFeature ?? checkLiteLlmEntraFeature,
     loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
     loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
     resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
@@ -864,15 +875,34 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const request = target?.request ?? c.req.raw
     const incomingHeaders = sanitizeIncomingHeaders(request.headers)
 
-    const provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
+    let provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
     if (!provider) {
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
+    }
+    const entraMode = usesLiteLlmEntra(provider)
+    const featureDisabled = () => gatewayError(403, "feature_disabled", "Microsoft sign-in for this provider is turned off.")
+    const entraEnabled = async () => {
+      try {
+        return await dependencies.checkLiteLlmEntraFeature(identity)
+      } catch {
+        return false
+      }
+    }
+    if (entraMode) {
+      if (!await entraEnabled()) return featureDisabled()
+      // Discover via the existing read path; only the new mode opts in to primary fences.
+      const current = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
+      if (!current || !usesLiteLlmEntra(current) || liteLlmEntraScope(current) === null) {
+        return gatewayError(503, "provider_configuration_changed", "The inference provider changed. Retry the same selection.")
+      }
+      provider = current
     }
 
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
     const rest = target?.rest ?? restOfPath(requestUrl.pathname, inferenceProviderId)
     const scope = { ...identity, gatewayProviderId: provider.id }
-    const accessRows = await dependencies.loadGatewayAccess(scope)
+    const consistency = entraMode ? "primary" : undefined
+    const accessRows = await dependencies.loadGatewayAccess(scope, consistency)
     if (method === "GET" && /^(?:v1(?:beta|alpha)?\/)?models\/?$/.test(rest)) {
       if (!accessRows.length) return gatewayError(403, "provider_access_denied", "No current Gateway access grants.")
       const grantId = c.req.header(GATEWAY_GRANT_HEADER)
@@ -1018,6 +1048,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
+      checkLiteLlmEntraFeature: entraMode ? entraEnabled : undefined,
       refreshMemberToken: dependencies.refreshMemberToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
       mintAwsRoleCredentials: dependencies.mintAwsRoleCredentials,
@@ -1032,6 +1063,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
+        case "feature_disabled":
+          return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
         case "retry": {
           const response = gatewayError(503, "provider_credential_retry", "The provider credential is temporarily unavailable. Retry shortly.", { provider_id: provider.id })
           response.headers.set("retry-after", "5")
@@ -1130,13 +1163,15 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     if (usageRejection) return reject(usageRejection, usageRejection.headers.get("x-openwork-error-code") ?? "openwork_gateway_accounting_unavailable", "Gateway usage admission rejected")
 
-    // Routing and token scope are provider-owned, not part of the grant or credential version.
-    const currentProvider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
-    if (!currentProvider || !isDeepStrictEqual(provider, currentProvider)) {
-      return reject(gatewayError(503, "provider_configuration_changed", "The inference provider changed before dispatch. Retry the same selection."), "credential_changed", "Gateway provider changed")
+    if (entraMode) {
+      // Routing and token scope are provider-owned, not part of the grant or credential version.
+      const currentProvider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
+      if (!currentProvider || !isDeepStrictEqual(provider, currentProvider)) {
+        return reject(gatewayError(503, "provider_configuration_changed", "The inference provider changed before dispatch. Retry the same selection."), "credential_changed", "Gateway provider changed")
+      }
     }
     // Recheck after accounting awaits. Never reselect or materialize a fallback.
-    const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
+    const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope, consistency), prepared.requestedModel, selection.row.grant.id)
     if (currentSelection.kind !== "selected" || !sameGatewaySelection(selection, currentSelection.selection)) {
       return reject(gatewayError(403, "gateway_selection_revoked", "The selected Gateway access is no longer available."), "gateway_selection_revoked", "Gateway selection revoked")
     }
@@ -1146,6 +1181,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
     const dispatch = async (): Promise<Response> => {
+      if (entraMode && !await entraEnabled()) {
+        lifetime.dispose()
+        return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
+      }
       let upstream: Response
       try {
         validateInferenceUrl(prepared.url)
