@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
 // Self-reference, not "./schema.js": den-api loads this package's TypeScript
 // source at runtime, where only package exports resolve to the .ts files.
-import { assistantsEnabled, awsRegionSchema, gatewayAssistants, type AwsTarget } from "@openwork/managed-deployments/schema"
+import { assistantsEnabled, awsRegionSchema, gatewayAssistants, type AwsSignIn, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform
@@ -22,6 +22,21 @@ export function healthRoleName(deploymentId: string) {
 }
 export function consoleUrl(deploymentId: string, region: string) {
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks?filteringText=${stackName(deploymentId)}`
+}
+
+export function cloudShellUrl(region: string) {
+  return `https://${region}.console.aws.amazon.com/cloudshell/home?region=${region}`
+}
+
+/**
+ * Opens an AWS console page through the organization's access portal: the
+ * portal signs the person in to this account with this role, then goes to the
+ * page. Without a saved sign-in the console page is returned as it is.
+ */
+export function throughAccessPortal(destination: string, accountId: string, signIn: AwsSignIn | null) {
+  if (!signIn) return destination
+  const params = new URLSearchParams({ account_id: accountId, role_name: signIn.roleName, destination })
+  return `${signIn.portalUrl}/#/console?${params}`
 }
 
 // ---- Identity proof: a signed, unsent STS GetCallerIdentity request ----
