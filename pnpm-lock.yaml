@@ -486,6 +486,12 @@ importers:
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
+      '@openwork/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
+      '@openwork/sandbox-microsandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-microsandbox
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types

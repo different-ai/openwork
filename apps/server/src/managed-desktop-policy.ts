@@ -344,6 +344,27 @@ class ManagedDesktopPolicy {
     const denial = agentPermissionDenial(rules, action, [name]);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
+  /** First-slice local sandbox tools require a fresh rollout read bound to this sign-in. */
+  async localSandboxAccess(): Promise<{ enabled: boolean; scope: string }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return { enabled: false, scope: "signed-out" };
+    try {
+      const payload = await this.readDenJson(session, "/v1/org", generation);
+      this.identityChanged(generation);
+      const features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      if (features.sandboxTools !== true) return { enabled: false, scope: "disabled" };
+      const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+      this.identityChanged(generation);
+      // The pilot must not let a new tool name bypass existing command/edit/folder approval rules.
+      const restrictive = agentPermissionRulesOf(policy).some(rule =>
+        ["shell", "edit", "external_directory"].includes(rule.action) && rule.effect !== "allow");
+      return { enabled: !restrictive, scope: sessionKey(session) };
+    } catch {
+      return { enabled: false, scope: "unverified" };
+    }
+  }
+
   /** Remote computers require the signed-in organization's verified rollout. */
   async remoteComputersEnabled(): Promise<boolean> {
     const session = this.session;

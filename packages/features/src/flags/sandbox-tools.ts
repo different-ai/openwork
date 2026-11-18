@@ -2,7 +2,7 @@ import { defineFeature, everywhere } from "@openwork/features/define"
 
 export default defineFeature({
   label: "Desktop: sandbox tools",
-  description: "The agent gets extra sandbox command, file and preview tools while its usual tools stay on this computer. Setup chooses a local microsandbox microVM or Remote through Differently, which holds provider keys and selects the remote pool. Remote also requires sandboxGateway. An unavailable sandbox is an error, never a switch to another backend or host execution.",
+  description: "Pilot local microsandbox tools with live workspace and Authorized Folders mounts. Adds guest command, read, write, edit, glob and grep tools; normal host tools are unchanged in this first slice. Sandbox-only replacement is not exposed until its permission and host-tool controls are complete. Runtime failures never fall back to host execution.",
   category: "computerUse",
   added: "2026-11-17",
   since: "2026-11",

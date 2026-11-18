@@ -1,59 +1,53 @@
-# Sandbox tools
+# Local sandbox tools
 
-Tool rollout: `sandboxTools` (cloud and self-hosted, off). Remote availability reuses `sandboxGateway` (off).
-Author: `benjaminshafii`.
+Feature `sandboxTools`, cloud and self-hosted, off. Owner: `benjaminshafii`.
 
-**Status: design and local microVM adapter foundation only. The tools are not wired into the app.** Turning either
-flag on does not enable these new tools today. [design.md](design.md) covers the architecture, prerequisites and
-verification plan.
+**First slice:** local microsandbox adapter, v2 plugin, authenticated bridge and live Authorized Folders mounts.
+The full [sandbox-only design](design.md) is specified but its permission controls are follow-ups. No remote
+backend or gateway rollout is used.
 
 ## What changes
 
-The agent gets extra tools next to its usual host shell and file tools:
+With the pilot rollout enabled for a signed-in organization member, v2 offers `sandbox_shell`, `sandbox_read`,
+`sandbox_write`, `sandbox_edit`, `sandbox_glob` and `sandbox_grep`. They execute only through the local guest's
+`@openwork/sandbox` run/files blocks. Normal host tools stay available in this pilot: **this is not confinement
+of the whole agent**.
 
-| Tool | For |
-| --- | --- |
-| `sandbox_bash` | run a command in the selected sandbox |
-| `sandbox_job` | inspect or stop background work |
-| `sandbox_read`, `sandbox_write` | read and write guest files |
-| `sandbox_preview` | obtain an approved web preview |
-| `sandbox_status` | see location, verified grants, mounts, state and jobs |
+The workspace and allowed engine-wide Authorized Folders are live bind mounts at the same absolute paths. The
+source is `permission.external_directory` in the runtime row, not `config.authorizedRoots`. Current folder grants
+are access permissions, not per-folder write modes. A read-only server creates ro binds; restrictive/unrepresentable
+rules fail closed. Managed shell/edit/folder approvals must not be bypassed by new tool names, so the initial pilot
+is unavailable while such restrictions exist.
 
-Setup chooses one execution location:
+The plugin also implements same-name `shell/read/write/edit/glob/grep` replacement via registry transforms, tested
+through an injected mode resolver. The actual host bridge returns only off/additive modes. Do not expose its `only`
+mode before the Den/local permission store, host computer/browser/local-MCP blocks and other execution-route checks
+in design sections 5–6 and 11 are complete.
 
-- **Remote** (the default remote path): use the existing Differently gateway and an approved template/profile.
-  Differently chooses the Freestyle/Daytona pool by policy and holds the provider keys. OpenWork has only a
-  project-scoped gateway connection, not separate upstream accounts or credentials.
-- **This computer**: local microsandbox, in-process, on Apple Silicon macOS or Linux with KVM. No gateway or
-  provider key is needed. Differently explicitly does not support microsandbox's embedded runtime.
+## Try the pilot
 
-The workspace starts off until setup is accepted. It never changes execution location because a runtime or gateway
-is unavailable. Remote sees no local workspace folder; Local sees only approved mounts, read-only by default.
-Network defaults to denied. Required remote isolation/network/preview grants must be enforceable by the gateway;
-otherwise the Remote option is unavailable on that connection.
+On a development checkout with Apple Silicon macOS or Linux KVM, install dependencies and build `openwork-server`.
+Use the normal registry rollout for `sandboxTools` in a disposable organization; this PR changes no rollout state.
+Open a registered workspace with v2, configure Authorized Folders normally, and ask for a sandbox command.
+The runtime uses `alpine:3.22`, no network and a 15-minute idle stop. A missing/unsupported native runtime is an
+error, never host execution. Use a short `MSB_HOME` on macOS; no automatic runtime install or privilege change.
 
-## Flags and failure behavior
+Runtime folder changes stop the old instance; the next guest call recreates it with the new grants and a restart
+receipt. Live host files survive, but guest scratch is reset. Unrelated runtime-row changes do not reset it.
+The native-runtime packaging/signing and end-to-end Settings workflow remain follow-ups before broad enablement.
 
-`sandboxTools` rolls out the new tool surface. `sandboxGateway` is reused for Remote, which requires both flags.
-Local does not require `sandboxGateway`. No duplicate remote-provider rollout or direct-provider setup is added.
-Both use the registry's normal member/org/deployment resolution. Den org settings bound each workspace choice;
-without an org, use the deployment's `/v1/features` and explicitly configured local/gateway setup.
+## Turning it off
 
-Gateway down, missing connection, policy refusal, flag off: return unavailable. **No fallback to a direct provider,
-local VM or host execution.** Existing Workbot's different fallback behavior is unchanged; these tools do not use
-its fallback router. A dispatched command whose result is lost is outcome-unknown, not proof it did not run.
+Off/unverified refuses calls even if the engine still has a listed tool. Refresh/reload removes the additive tool
+catalog at the next prompt. Existing host behavior is unchanged in this pilot. Once required sandbox-only exists,
+flag loss must block execution rather than restore host primitives; that policy is not reachable yet.
 
-Killing `sandboxTools` stops new admission for both modes; killing `sandboxGateway` stops only Remote, without
-switching it to Local. Authorization is checked server-side on each call with at most 60 seconds of verified-policy
-reuse. Stop owned sandboxes on revocation/sign-out; retain disks as the documented provider TTL permits.
+Watch unavailable-runtime/policy errors, create latency, mount-restart receipts and leftover VM disks. Timeout means
+an outcome may be unknown, not permission to rerun on the host.
 
-## Implementation and evidence
+## Evidence
 
-- `packages/sandbox-microsandbox`: the new unwired local adapter; run its `test` and opt-in `test:live` scripts.
-- `packages/sandbox-differently`: reuse this existing remote adapter. Design section 9 lists its metadata and
-  admission gaps and the required Differently-side network/preview/profile work.
-- `packages/features/src/flags/sandbox-gateway.ts` and
-  [Workbot gateway documentation](../../computer-use/workbot.md#through-a-sandbox-gateway): existing gateway setup.
-
-Watch unavailable reasons, gateway policy refusals, unknown execution outcomes, start latency and uncollected
-sandboxes. No guest application-secret injection in v1. No provider keys leave Differently.
+Adapter: `pnpm --filter @openwork/sandbox-microsandbox test` and opt-in `MICROSANDBOX_LIVE=1 ... test:live`.
+Server tests: `sandbox-tools.vitest.test.ts`, `sandbox-mounts.vitest.test.ts`, `local-sandbox-runtime.vitest.test.ts`;
+real local bridge test: `local-sandbox-bridge.live.vitest.test.ts`. Design sections 10–11 list the remaining product proofs
+and exact permission/UI follow-ups. No production or remote provider is exercised.

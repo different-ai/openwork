@@ -15,6 +15,8 @@ import { askWithoutWaiting } from "./opencode-v2-background-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
 import type { FileSendApprovals, FileSendPolicy } from "./file-send-approval.js";
+import { createSandboxToolsBridge } from "./sandbox-tools-bridge.js";
+import type { ServerConfig } from "./types.js";
 
 const requestSchema = z.object({
   name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
@@ -214,6 +216,7 @@ export async function createV2ContextBridge(
    * as already approved in the chat.
    */
   fileSends?: { approvals: FileSendApprovals; approvedRequest: (path: string, init?: RequestInit) => Promise<unknown> },
+  sandboxConfig?: ServerConfig,
 ) {
   const token = randomBytes(32).toString("base64url");
   const plugin = await OpenWorkExtensionsPreview();
@@ -491,6 +494,10 @@ export async function createV2ContextBridge(
     }
   } });
   const browser = await createV2BrowserBridge().catch(async error => { await server.stop(); await plugin.dispose(); throw error; });
+  const sandbox = sandboxConfig ? await createSandboxToolsBridge(sandboxConfig).catch(async error => {
+    await browser.close(); await server.stop(); await plugin.dispose(); throw error;
+  }) : undefined;
   return { url: `http://127.0.0.1:${server.port}/read`, token, browser: { url: browser.url, token: browser.token },
-    close: async () => { questions.abort(); await browser.close(); await server.stop(); await plugin.dispose(); } };
+    ...(sandbox ? { sandbox: { url: sandbox.url, token: sandbox.token } } : {}),
+    close: async () => { questions.abort(); await sandbox?.close(); await browser.close(); await server.stop(); await plugin.dispose(); } };
 }

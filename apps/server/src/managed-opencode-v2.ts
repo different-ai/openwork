@@ -8,6 +8,7 @@ import { gatewayBase } from "./gateway-quota.js";
 import { openworkAgentPermissionsV2PluginPath, openworkAutoRouteV2PluginPath, openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkMcpReadinessV2PluginPath, openworkProviderFiltersV2PluginPath, openworkProviderSyncV2PluginPath, openworkVisibleReasoningV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { pathToFileURL } from "node:url";
+import { openworkSandboxV2PluginPath } from "./openwork-extensions-plugin-path.js";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
@@ -67,7 +68,7 @@ export interface ManagedOpencodeV2ServerOptions {
   port?: number;
   env?: Record<string, string>;
   bootTimeoutMs?: number;
-  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string }; sandbox?: { url: string; token: string } };
   /** Session capability travels once over an inherited pipe, never environment or config. */
   providerSession?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
@@ -254,10 +255,11 @@ export function renderOpencodeV2Config(input: {
   visibleReasoningPluginDirectory?: string;
   autoRoutePluginDirectory?: string;
   contextPluginDirectory?: string;
-  contextTools?: { url: string; token: string; browser?: { url: string; token: string } };
+  contextTools?: { url: string; token: string; browser?: { url: string; token: string }; sandbox?: { url: string; token: string } };
   agentPermissionRules?: AgentPermissionRule[];
   organizationMcp?: OrganizationMcpServers;
   agentPermissionsPluginDirectory?: string;
+  sandboxPluginDirectory?: string;
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id)
@@ -349,6 +351,10 @@ export function renderOpencodeV2Config(input: {
       package: pathToFileURL(input.agentPermissionsPluginDirectory).href,
       options: { rules: input.agentPermissionRules, organizationMcp: input.organizationMcp ?? {} },
     }] : []),
+    ...(input.contextTools?.sandbox && input.sandboxPluginDirectory ? [{
+      package: pathToFileURL(input.sandboxPluginDirectory).href,
+      options: input.contextTools.sandbox,
+    }] : []),
   ];
   // The engine applies the last matching rule, so the managed execution
   // denials come last: an agent permission exception never lifts them. The
@@ -426,6 +432,7 @@ async function createManagedOpencodeV2ServerInner(
   const visibleReasoningPluginDirectory = join(instanceRoot, "visible-reasoning-plugin");
   const autoRoutePluginDirectory = join(instanceRoot, "auto-route-plugin");
   const contextPluginDirectory = join(instanceRoot, "context-plugin");
+  const sandboxPluginDirectory = join(instanceRoot, "sandbox-plugin");
   const agentPermissionsPluginDirectory = join(instanceRoot, "agent-permissions-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
@@ -484,6 +491,12 @@ async function createManagedOpencodeV2ServerInner(
     await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
     await writeFile(join(contextPluginDirectory, "server.js"),
       `export { default } from ${JSON.stringify(pathToFileURL(openworkContextV2PluginPath()).href)};\n`, { mode: 0o600 });
+  }
+  if (options.contextTools?.sandbox) {
+    await mkdir(sandboxPluginDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(join(sandboxPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+    await writeFile(join(sandboxPluginDirectory, "server.js"),
+      `export { default } from ${JSON.stringify(pathToFileURL(openworkSandboxV2PluginPath()).href)};\n`, { mode: 0o600 });
   }
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
@@ -601,6 +614,7 @@ async function createManagedOpencodeV2ServerInner(
       visibleReasoningPluginDirectory,
       autoRoutePluginDirectory,
       contextPluginDirectory,
+      sandboxPluginDirectory,
       contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       ...(options.agentPermissions ? await agentPermissionsConfig(options.agentPermissions) : {}),

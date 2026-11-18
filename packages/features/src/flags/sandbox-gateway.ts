@@ -1,11 +1,11 @@
 import { defineFeature, everywhere } from "@openwork/features/define"
 
 export default defineFeature({
-  label: "Computers through the sandbox gateway",
-  description: "Use Differently for remote sandbox placement and provider credentials. Workbot needs a runner with SANDBOX_GATEWAY configured; without it, or during an infrastructure outage, new Workbot computers use the runner's own provider. Planned sandbox tools reuse this rollout for Remote access alongside sandboxTools, but fail closed without any direct-provider or local fallback. Local microsandbox does not need this rollout.",
+  label: "Workbot: computers through the sandbox gateway",
+  description: "Workbot's cloud computers for this organization run through the runner's sandbox gateway (Differently), which holds the provider keys and picks the provider, instead of the runner's own Freestyle or Daytona account. Needs a runner with SANDBOX_GATEWAY set; without one, or while it is down, new computers use the runner's own provider.",
   category: "computerUse",
   added: "2026-10-28",
-  since: "2026-11",
+  since: "2026-10",
   author: "reachjalil",
   docs: "docs/computer-use/workbot.md",
   deployments: everywhere,

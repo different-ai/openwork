@@ -1,491 +1,321 @@
-# Sandbox tools: local microsandbox and remote through Differently
+# Local sandbox tools and sandbox-only mode
 
-Status: draft, revised 2026-11-17. Tool feature `sandboxTools`, off by default; remote availability reuses
-`sandboxGateway`, also off by default. Author: `benjaminshafii`.
+Revised 2026-11-17. Feature: `sandboxTools`, cloud and self-hosted, **off**. Owner: `benjaminshafii`.
 
-OpenWork's agent keeps its normal shell on the host and gets extra sandbox command, file and preview tools.
-Setup chooses **This computer** (in-process microsandbox) or **Remote** (the existing Differently gateway).
-Differently, not OpenWork, selects the remote pool and holds the OpenSandbox, Daytona and Freestyle credentials.
+**Scope:** local microsandbox only. This supersedes earlier gateway/provider-routing designs. The PR restores the
+existing gateway flag and Workbot docs unchanged. No remote backend or provider credentials are added.
 
-This PR adds only a local adapter foundation and the design. No agent tools or gateway routing are wired yet.
-Nothing here changes production settings or the existing Workbot routing behavior.
+**Delivery boundary:** this PR implements the adapter, local tool host, authenticated bridge, v2 plugin and live
+mount planning. It exposes only the additive pilot through a verified org rollout. The plugin's same-name
+replacement mechanism is implemented and tested, but **sandbox-only is not exposed as a product setting yet**.
+The policy/UI and host-escape controls below must land together before that setting can be enabled. The user
+explicitly allowed this first-slice delivery; follow-ups are listed in section 11 and the PR body.
 
-## 1. Decisions
+## 1. Two local modes, one flag
 
-| Question | Decision |
-| --- | --- |
-| Shape | Extra `sandbox_bash`, `sandbox_job`, `sandbox_read`, `sandbox_write`, `sandbox_preview`, `sandbox_status` tools. Normal shell and file tools remain on the host. |
-| Contract | Reuse `@openwork/sandbox` unchanged. Local: `@openwork/sandbox-microsandbox`. Remote: the existing `@openwork/sandbox-differently`. |
-| Selection | A trusted workspace setting chooses `off`, `microsandbox` or `differently`, within the organization's bound. Never infer the mode from available keys or current health. |
-| Remote placement | Differently project policy and template/pool configuration select Freestyle or Daytona. OpenWork may pass approved narrowing constraints, not separate provider settings. |
-| Credentials | Provider keys stay in Differently. OpenWork needs only the gateway connection: URL and a project-scoped gateway credential or a Den-held connection. Local microsandbox needs no key. |
-| Rollout | `sandboxTools` controls the new tools. Reuse `sandboxGateway` for permission to use Remote; do not add another remote-provider flag. |
-| Failures | No automatic switch from gateway to a direct adapter, local microsandbox or host shell. No automatic command replay. |
-| External sandbox protocol | Borrow the security pattern, not its wire protocol in v1. No server planned; a client adapter remains future work. |
-| Direct adapters | Keep existing packages for their current consumers. Do not expose them as fallback routes for these tools. |
-
-## 2. Existing architecture and why the gateway is the default
-
-- `packages/sandbox/src/provider.ts` and `blocks.ts` already define lifecycle, opaque references, `run`, `files`,
-  optional pause/snapshots, preview endpoints and `platform.isolation` including `microvm`. Reuse their `withBlocks`,
-  `ensureRunning`, `sandboxName`, scope labels and conformance cases.
-- `packages/sandbox-differently/src/index.ts` is already a `SandboxProvider`. It authenticates with a project-scoped
-  gateway key and accepts `template`, `placement`, `classification` and resource options. Differently holds the
-  upstream provider keys and decides placement. This is the remote adapter for the new tools, not a later option.
-- `ee/packages/headless-computer/src/providers.ts` already loads that adapter in `createGatewayProvider`.
-  `docs/computer-use/workbot.md` documents `SANDBOX_GATEWAY=differently` with URL, project key and template.
-- `packages/features/src/flags/sandbox-gateway.ts` declares the existing `sandboxGateway` rollout.
-- **Existing Workbot fallback is not the new tool contract.** `ee/apps/headless-runner/src/computer-route.ts`
-  intentionally makes a new computer on the runner's direct provider when the gateway has infrastructure trouble.
-  It does not bypass policy refusals and it pins an existing computer to its side. Reuse the adapter, credential
-  model and flag, **not `routeComputers` or its fallback logic**. This PR does not change Workbot's behavior.
-- `packages/sandbox-freestyle` and `packages/sandbox-daytona` remain required by existing headless computers,
-  remote-computer targets and cloud-runtime consumers. Removing them would be unrelated breakage. Their existence
-  does not justify another credential store, setup path or automatic fallback for sandbox tools.
-
-### microsandbox is deliberately separate
-
-Differently's [provider note](https://github.com/different-ai/differently/blob/main/docs/providers/microsandbox.md)
-explicitly marks microsandbox unsupported. The 2026 rewrite removed the old self-hosted server API; its SDK embeds
-the runtime and spawns local `msb` processes. There is no server for Differently's control plane to call.
-
-Therefore `packages/sandbox-microsandbox` stays a local, in-process OpenWork adapter. Do not add a fake microsandbox
-pool to Differently, depend on an obsolete `msb server` endpoint, or treat the separate hosted microsandbox service
-as this local backend. A future per-host remote plugin would be a separate project, not a v1 prerequisite.
-
-Earlier Rust examples and `Dockerfile.microsandbox` run the entire OpenWork server in a VM, which is the opposite
-of this tool-only shape. Do not reuse their workspace `sandboxBackend` fields: those make the whole workspace's
-files remote in the UI, whereas this design leaves normal host tools unchanged.
-
-## 3. Scope and execution path
-
-```
-v2 engine: normal shell/file tools --------------------------> host (unchanged)
-          sandbox tools
-                |
-                v
-     authenticated loopback bridge in OpenWork server
-       | verify rollout, identity, organization bound, workspace setting
-       | resolve exactly one backend; record execution outcome
-       |
-       +-- mode=microsandbox --> @openwork/sandbox-microsandbox
-       |                         --> native SDK --> local msb child --> microVM
-       |
-       +-- mode=differently --> @openwork/sandbox-differently
-                                 --> Differently project/template/placement policy
-                                      +--> Freestyle VM
-                                      +--> Daytona sandbox (approved isolation class)
-```
-
-Differently can also manage OpenSandbox. It is not implicitly included in this v1 Remote offer: restrict the
-project/allowed pools to approved Freestyle/Daytona pools until another pool meets the required network, preview,
-isolation and lifecycle contract. Do not assume all pools expose the same capabilities.
-
-Tool definitions belong in `apps/server/src/opencode-plugins/openwork-sandbox.ts`, in the plain-object shape of
-`openwork-computer-use.ts`. The server-side host owns provider construction and settings resolution. The v2 engine's
-context plugin registers the definitions and calls a scoped loopback bridge, like the browser/computer bridge.
-Neither native modules nor gateway credentials belong in the engine/plugin bundle.
-
-**v2 only** for this feature. v1 inherits the server's environment and has a separate plugin registration path;
-its Settings entry says the tools require the current engine. A tool-only sandbox is not a promise to confine
-all of v1 or v2's ordinary host operations.
-
-Not included yet: Windows, extra host-folder mounts, host-folder sync to remote, sandbox-only agent mode, secrets
-injected into guest requests, or a new Differently adapter for microsandbox.
-
-## 4. How setup selects local versus remote
-
-### 4.1 Rollouts: reuse instead of duplicate
-
-| Tools rollout | Gateway rollout | Workspace mode | Result |
-| --- | --- | --- | --- |
-| `sandboxTools=false` | either | any | New tools unavailable. Existing Workbot unaffected. |
-| `sandboxTools=true` | either | `off` | No sandbox tools offered. |
-| `sandboxTools=true` | either | `microsandbox` | Local tools, subject to settings and platform support. |
-| `sandboxTools=true` | `sandboxGateway=false` | `differently` | Remote locked; no fallback to local/direct. |
-| `sandboxTools=true` | `sandboxGateway=true` | `differently` | Tools use the configured Differently connection and approved remote profile. |
-
-`sandboxTools` is a distinct rollout for a genuinely new tool surface. `sandboxGateway` is reused for the existing
-remote-gateway route; there is no `remoteSandboxTools`, per-provider flag or env enable switch. The gateway flag's
-label/docs are broadened to include this planned use while explicitly retaining Workbot's current fallback rules.
-Both flags resolve through the central registry, including kill switches and member/organization overrides.
-
-List/reload tools at a prompt boundary, and enforce again inside the server for **every** call, including files,
-status and previews. A still-listed tool after revocation must fail closed. Killing `sandboxGateway` removes only
-Remote access for these tools; it must not turn a Remote workspace into a Local workspace. Killing `sandboxTools`
-stops admission for both. Bounded in-flight work may finish; revoke preview transports and stop owned sandboxes.
-
-### 4.2 Organization bound in Den
-
-Use a typed org setting, projected into `/v1/me/desktop-config`, following the existing automation-settings pattern.
-Do **not** add enum fields to the boolean desktop-policy catalog: its general enforcement is off.
-
-Proposed shape (not an API implemented in this PR):
-
-```ts
-{
-  backends: ("microsandbox" | "differently")[]
-  defaultBackend: "microsandbox" | "differently" | null
-  isolation: ("container" | "vm" | "microvm")[]
-  local: {
-    workspaceAccess: "none" | "read" | "read-write"
-    network: { egress: "none" } | { egress: "allow-list"; domains: string[] }
-    previews: boolean
-    image: string | null  // approved OCI digest, or OpenWork's image
-  }
-  remote: {
-    connectionRef: string  // one configured Differently connection, not an upstream key
-    profiles: string[]     // approved connection-local profiles: template + narrowing pool constraints
-    defaultProfile: string | null
-    previews: "off" | "authenticated-link"
-  }
-}
-```
-
-There are no `freestyle.apiKey`, `daytona.apiKey`, provider API URLs or upstream snapshot IDs here. Remote profiles
-refer to approved mappings in the gateway setup, not to arbitrary request fields. The Differently project/pool
-policy remains authoritative even if OpenWork passes a narrowing `allowedPools`, `classification` or placement
-constraint. If a remote profile allows both Freestyle and Daytona, choosing between them is Differently's policy.
-If the administrator needs one vendor, restrict that profile to its pools there.
-
-OpenWork must verify actual granted isolation and network/preview guarantees rather than asserting all returned
-sandboxes are VMs. `vm` and `microvm` are explicit allowed values, not a presumed total security ordering.
-An unsatisfiable profile returns unavailable; it never widens into another pool.
-
-### 4.3 Per-workspace choice
-
-Store a typed row in `runtime.sqlite`, keyed by workspace and identity scope, written through the desktop's trusted
-Settings path (renderer -> Electron main -> host-token server route). Never import this row from
-`.opencode/openwork.json`, `opencode.json` or another agent-writable workspace file.
-
-```ts
-{
-  backend: "off" | "microsandbox" | "differently"
-  remoteProfile: string | null
-  workspaceAccess: "none" | "read" | "read-write"  // local only
-  localNetwork: { egress: "none" } | { egress: "allow-list"; domains: string[] }
-  previewPorts: number[]
-}
-```
-
-- Setup asks **This computer** or **Remote**, and explains the different file access. Unless the organization
-  specifies a different default, preselect **Remote via Differently** when setup is enabled. If Remote cannot be
-  admitted, show it locked with the reason; do not silently preselect Local instead. Default execution remains
-  `off` until setup is accepted. Do not select from machine health, missing credentials or probe results.
-- Local means only the recorded workspace root may be mounted, read-only by default at `/workspace`, with writable
-  scratch space at `/work`. Other folders, server data, the vault and `MSB_HOME` are excluded.
-- Remote means an empty remote filesystem or an approved template; it does not mount this computer's workspace.
-  Clone from an allowed origin or write files using the sandbox tools. No implicit upload/sync.
-- Local access/network can only narrow the org bound. A remote profile must be in the allowed profile list, and
-  ports must satisfy the connection/profile's preview policy. Refuse invalid combinations rather than clamp them.
-- A missing local runtime reports how to install/enable it. A missing or unhealthy gateway reports the gateway
-  problem. Neither condition changes the saved choice.
-
-### 4.4 Verification and identity
-
-Signed-in members use `/v1/org` feature resolution and the org bound. Missing org settings grant nothing. Signed-out
-people use `/v1/features`, as `add-a-feature` prescribes, plus an operator-configured gateway connection for Remote
-if allowed there. An unreachable Den, or identity changing during a read, is **unverifiable**, not signed-out mode.
-
-Check on every call; reuse an identity-bound verified answer for at most 60 seconds. After that a failed refresh
-refuses dispatch and stops the sandbox. Revocation can therefore take up to one minute; the rollout UI and tests
-must state that. No stale cross-sign-in policy reuse.
-
-Name with `sandboxName(scope, "tools", workspaceId)`, where scope hashes install id, Den origin, organization,
-member and (for Remote) the gateway connection/project reference. Persist the **adapter's opaque `SandboxRef`**;
-remote pool choice is not a reason for OpenWork to change providerId from `differently` to `freestyle` or `daytona`.
-Fingerprint all effective grants, backend/connection/profile, image/template revision and ports. A change stops the
-old sandbox and returns `sandbox_needs_reset`. Reset explicitly warns about data loss. Never silently migrate a
-sandbox or reattach one under a different identity.
-
-The host shell runs as the same OS user and can read local databases. Host-token routes are an API boundary, not
-an OS security boundary. The strongest managed bound is Den-verified memory. This feature does not make local
-storage inaccessible to the agent's ordinary host tools.
-
-## 5. Credentials and network policy
-
-### 5.1 Existing gateway connection model
-
-Reuse `SANDBOX_GATEWAY=differently`, URL, project-scoped key and template from the runner model. These are
-connection settings, not new feature flags. For desktop setup, store the gateway credential in host-managed
-encrypted storage or keep it in Den and mediate gateway calls there. Expose a connection reference to the renderer,
-settings row and engine, never the key. Existing encrypted-store infrastructure should be shared, not copied.
-The runner may continue its existing operator-env path, but new desktop tools must not place the gateway key in
-engine/guest env, command arguments, workspace files, transcripts, logs or preview URLs.
-
-Provider keys stay in Differently's deployment configuration. They do not get copied to a second OpenWork vault.
-A Den-mediated connection should retain Differently as the placement and provider-credential authority; it is not
-a second provider broker implemented by OpenWork. Gateway project credentials still need least privilege,
-identity scoping, rotation and revocation; they are not harmless merely because they are not provider keys.
-
-### 5.2 Default-deny is a requirement, not inferred gateway behavior
-
-The existing adapter sends template, placement, classification, resource, env and labels when creating a sandbox.
-It does **not** send a portable network policy or `exposePorts`. Its capability reader only derives common
-pause/stop support. It cannot currently prove the new security contract from `describe()` alone.
-
-For Remote, bind the org-approved profile to a Differently project/template/pool configuration that enforces
-no egress by default (or its explicit origin allow-list), approved isolation, preview constraints and lifetime.
-An arbitrary template name or label is not proof of enforcement. Until these guarantees can be verified and
-negotiated, Remote remains unavailable for sandbox tools on that connection, even if exec/files work.
-
-Changing guest proxy environment variables is not an enforcement boundary. Egress must be enforced by the gateway's
-provider configuration or infrastructure outside the guest. A guest cannot be allowed to bypass a host-name proxy
-using direct IP, alternate DNS, IPv6, UDP, redirects, private ranges or metadata endpoints. Section 9 lists the gaps
-that need confirming/closing on Differently's side.
-
-### 5.3 Secrets used by commands
-
-No injected guest secrets in v1. Do not confuse this with the upstream provider keys, which already stay in
-Differently. An application token for a Git host or package registry is a separate problem.
-
-Later: a proxy outside the guest swaps scoped placeholders for real tokens, bound to trusted destination,
-method/path/header and verified TLS identity. Den or Differently can hold those application secrets; the guest sees
-only placeholders. Follow the external-sandbox pattern, with response redaction and explicit secret grants.
-
-A local experiment showed microsandbox's raw-value secret API writes the value into host DB/WAL, including after
-destroy. An echoing allowed host returns it to the guest. The new adapter deliberately exposes no secrets option.
-Reference-based secret storage and a hostile/echoing upstream need separate verification before this is added.
-
-## 6. Tool surface
-
-The engine supplies conversation and call id, never model-controlled identity arguments. Use flat Zod tool schemas
-and `provider-safe-tool-schema.ts` rules. All results are untrusted data.
-
-| Tool | Input | Output |
+| Mode | Tool catalog | Host execution |
 | --- | --- | --- |
-| `sandbox_bash` | command, description, cwd?, timeout_seconds? (1–300, default 120), background? | exit code, separate stdout/stderr, bounded to 64 KB each with explicit truncation; or background job id |
-| `sandbox_job` | job, stop? | running/exited state, exit code, bounded log tail; optionally cancel first |
-| `sandbox_read` | guest path, line offset/limit? | text, at most 256 KB, explicit binary/missing errors |
-| `sandbox_write` | guest path, content (at most 1 MB) | write result, creating parent directories |
-| `sandbox_preview` | guest port | approved endpoint, kind, expiry/auth requirements; never a raw upstream command-API token |
-| `sandbox_status` | none | Local or Differently, actual verified isolation/placement when available, guest state, mounts, network/preview grants and jobs; no keys |
+| Off | Existing catalog | Unchanged |
+| Extra sandbox tools | Add `sandbox_shell`, `sandbox_read`, `sandbox_write`, `sandbox_edit`, `sandbox_glob`, `sandbox_grep` | Normal host tools remain; this is not agent confinement |
+| Sandbox only | Remove native `shell/read/write/edit/glob/grep`; install guest implementations under those exact names | No host implementations of those IDs, no shell prefix and no fallback; other execution rails must also be blocked as section 5 specifies |
 
-Call `withBlocks(provider, ["run", "files"])` before allocating compute. Bash must exist in the approved image or
-gateway template; adapters promise `sh`, so the host wraps tool commands with `bash -c`. Default cwd is the mounted
-`/workspace` or writable `/work`. For local read-only source, build/install into `/work/project` after copying it.
+The plugin uses `context.tool.transform(editor => editor.remove(id))`, following
+`openwork-agent-permissions-v2.ts`, then registers sandbox implementations. Validate all schemas before modifying
+the catalog: an invalid replacement must abort rather than silently leave a host tool behind. Reload on prompt
+when mode changes, but verify mode and authorization before **every execution**, including stale catalog calls. Additive status outages withhold sandbox tools without
+breaking unrelated prompts; a previously required-only catalog must never restore host primitives on a status error.
+A missing/unavailable sandbox produces an error. Never restore host primitives as error recovery.
 
-Use the existing Workbot pattern of guest-resident background jobs and logs; it works with synchronous adapters,
-including Differently's `detachedExec: false`. Freestyle's five-minute exec limit still matters behind the gateway.
-Do not copy EE implementation into the public server; reuse patterns or extract shared licensed primitives.
+The first-slice bridge can return only `off` or `tools`, not `only`. No renderer, environment variable or workspace
+file can enable replacement mode through this bridge. Tests exercise `only` through the plugin's dependency seam;
+that is not a claim that full sandbox-only security has shipped.
 
-Deduplicate by engine call id so a repeated transport request returns the original receipt rather than executing
-again. Dispatch is once, and timeout/disconnect may mean side effects already happened. No per-command approval
-inside the explicit setup grant, but existing authorization must not be bypassed through a new tool name.
+`sandboxTools` is the sole feature gate. No additional backend/gateway flag. Off/unverifiable denies sandbox calls.
+When full sandbox-only is required, killing the rollout must **not re-enable host execution**: refuse new agent
+turns with an actionable error until the requirement is removed or the rollout/runtime is restored.
 
-Previews are opt-in, never opened automatically. A page's JavaScript runs in a host browser outside the guest's
-egress rules. Open in the isolated built-in browser, not the person's external profile. Remote previews must pass
-the profile's authentication/expiry policy; an unguessable stable public hostname is not authentication.
+## 2. Existing abstraction and code path
 
-## 7. Local adapter foundation in this PR
-
-`createMicrosandboxProvider(options, deps): SandboxProvider`, pinned to `microsandbox` 0.7.15:
-
-```ts
-{
-  image: string
-  network: { egress: "none" } | { egress: "allow-list"; domains: readonly string[] }
-  mounts?: readonly { hostPath: string; guestPath: string; access: "ro" | "rw" }[]
-}
+```
+v2 engine plugin (registry tools)
+  -> authenticated loopback sandbox bridge
+    -> OpenWork server: rollout + workspace + mount-plan validation
+      -> @openwork/sandbox contract
+        -> @openwork/sandbox-microsandbox
+          -> native microsandbox SDK -> local msb child -> Linux microVM
 ```
 
-- `provider.ts` implements the existing contract. `native-driver.ts` is SDK glue with lazy native loading and an
-  injectable test seam, not a competing application-facing provider interface.
-- `platform: { os: "linux", isolation: "microvm" }`; `run`, `files`, `pause`, stop/start; no volumes, snapshots,
-  detached exec or cold-start memory restore claimed.
-- Pin the SDK's process-wide backend to local and refuse non-local handles. No microsandbox cloud backend.
-- Mount/network grants are fixed by host-constructed options, not widened by job-controlled `SandboxSpec` fields.
-  Reject roots, non-normalized paths, wildcard hosts and IPs masquerading as host names.
-- Explicit no-network or host allow-list on TCP 80/443, with TLS inspection for host-name enforcement and DNS
-  rebinding protection. Do not claim this is a complete HTTP-only proxy: a raw TCP connection on allowed port 80
-  was accepted in a live probe.
-- Previews bind only `127.0.0.1`, at ports chosen during create. Retry a port collision up to three times, never a
-  dispatched command. Cancel slow create; cleanup requires the per-attempt ownership label, not just the name.
-- Ref includes SDK id and name; stale references cannot adopt a later sandbox with the same name. Shared connection
-  attempts are cached, with owner-conditional eviction. Adversarial concurrency testing remains work to do.
-- Map native errors to `SandboxError`; missing runtime is non-retryable. A timeout never means success or licenses
-  rerunning on the host. Refuse unsupported maintenance semantics rather than silently renewing idle activity.
+Use existing `SandboxProvider`, `SandboxBlocks`, `SandboxError`, opaque references, `withBlocks`, `ensureRunning`,
+`sandboxName` and the conformance suites. Isolation already includes `microvm`. The internal SDK driver in the
+adapter is a test seam, not a second application-facing provider contract.
 
-`MSB_HOME` must be short on macOS (Unix sockets are limited to 104 bytes). Resolve approved real mount paths;
-the SDK rejects symlinked host paths. Same-user races, hardlink aliases, writable mounts and resource exhaustion
-still need adversarial testing before claiming a hardened sandbox-only mode.
+Plugin bundles cannot carry the native runtime. The SDK loads lazily in the host server. The engine receives only
+a scoped loopback credential, never host API tokens or sandbox-provider credentials. The bridge does not expose
+host shell or filesystem operations. Unsupported platforms/runtime errors remain errors.
 
-## 8. Lifecycle, failure and direct adapters
+Implementation files:
 
-One sandbox per workspace **and identity/connection scope**, not per conversation; conversations share its files
-and jobs. Serialize create/start/stop/reset and protect active commands from concurrent destructive reset.
-Backend/profile changes require explicit reset, not silent destruction or migration.
+- `packages/sandbox-microsandbox/`: existing shared-contract adapter; explicit network, mounts, lifecycle, guest
+  run/files/pause, loopback endpoint support; no SDK-hosted backend selection and no secrets option.
+- `apps/server/src/sandbox-tool-host.ts`: bounded guest command/read/write/edit/glob/grep implementations.
+- `apps/server/src/opencode-plugins/openwork-sandbox-v2.ts`: additive or same-name replacement transform.
+- `apps/server/src/sandbox-tools-bridge.ts`: authenticated server-side API, rejects browser Origins and unknown
+  operations; validates the engine's workspace directory against registered workspaces.
+- `apps/server/src/local-sandbox-runtime.ts`: local lifecycle, scope, mount refresh, serialized operations and
+  fail-closed feature access. It imports neither remote adapters nor a host command executor.
+- `managed-opencode-v2.ts`, `engine-v2-preview.ts`, `opencode-v2-context-bridge.ts`: plugin loader and bridge wiring.
 
-| Failure | Behavior |
+No v1 implementation: there is no shell-prefix facility to redirect v1, and v1 inherits host environment state.
+A required sandbox-only policy will block legacy engine execution rather than degrade to v1.
+
+## 3. Tool behavior and failure model
+
+The first slice implements six primitives against guest `run`/`files` blocks only:
+
+- `shell`: POSIX sh in the guest, absolute guest cwd, timeout up to 120 seconds. Nonzero exits are ordinary results;
+  stdout/stderr are visibly separated in returned text and output is bounded to 32 KB.
+- `read`: UTF-8 guest file, 1-based line pagination, 128 KB file limit.
+- `write`: UTF-8 guest file; existing parent required, no implicit host directory creation.
+- `edit`: exact replacement, ambiguous matches refused unless `replaceAll`; no host file I/O. Not atomic against
+  unrelated guest processes, so the host serializes its own operations per workspace.
+- `glob`/`grep`: guest Linux `find`, `grep` and `head`, shell-quoted inputs and bounded output. This is a small
+  primitive implementation, not a promise of every native-tool option or regex dialect.
+
+The pilot image is `alpine:3.22`, with no network. A product image should be digest-pinned, release-tested and have
+explicitly documented utilities. Guest command names are `shell`, not a claim that Bash is installed.
+
+Preview/background-job product tools are follow-ups. The adapter's loopback endpoint support remains covered by
+its live suite. Do not silently map unrelated host tools (PDF readers, process launchers, patches) to a partial
+replacement: remove or block them in sandbox-only until a reviewed guest implementation exists.
+
+**Failure distinctions:** invalid input/disabled feature/allocation failure means the command did not start.
+Execution timeout/disconnect may mean guest side effects happened. Do not retry automatically or assert that
+nothing ran. Never switch to a host tool, another backend or another provider. A guest that is stopped or missing
+must report unavailable unless explicitly restarted on the same local backend with unchanged grants.
+
+Follow-up: durable call-id deduplication, guest background status/cancel, and richer receipts. The first slice has
+no transparent exec retries. Cancellation is propagated to the bridge; provider deadlines bound guest operations,
+but a dropped request is not proof that every guest descendant was killed.
+
+## 4. Verify the Claude Agent provider, do not assume its CLI bypasses tools
+
+The checked engine version is pinned in `apps/server/src/opencode-v2-artifacts.json`: OpenCode **2.2.6**.
+The sibling engine checkout was absent, so the independent mapper inspected the actual upstream tag
+[`v2.2.6`](https://github.com/anomalyco/opencode/tree/v2.2.6), not generic Claude CLI behavior:
+
+1. `packages/core/src/plugin/provider/claude-agent/claude/query-options.ts:58–71,98–104` sets `tools: []`,
+   `settingSources: []`, `strictMcpConfig: true`, disables configured hooks/skills and allows only
+   `mcp__opencode__*`; it installs OpenCode's in-process MCP tool server.
+2. `.../claude-agent/tools/server.ts:16–30` advertises OpenCode's supplied definitions and sends calls through
+   `pending.call`, rather than executing native Bash/Read/Edit.
+3. `.../language-model/convert-claude-stream.ts:93–104` turns recognized MCP names into normal tool-call events.
+4. `packages/core/src/session/runner/step.ts:119–130` and `packages/core/src/tool.ts:121–182,201–230,247–319`
+   execute through the transformed registry and before/after hooks, including Code Mode child calls.
+
+**Decision:** do **not** block `claude-agent` merely because it launches the user's CLI: in this pinned integration,
+its advertised primitive calls traverse OpenCode's tool registry and therefore see the replacements. This is not
+native Bash interception. Add a regression witness for this route before product sandbox-only rollout and recheck
+on engine/SDK upgrades. Unoffered-tool handling and SDK native-tool exclusion still need live verification.
+Unknown provider integrations that execute their own native tools must be refused in required-only mode until their
+path is verified. Tool replacement cannot prevent trusted engine internals from reading config or writing history.
+
+## 5. Other host-touching tools: policy for sandbox-only
+
+Removing six IDs is **not sufficient**. Product sandbox-only must use default-deny for unreviewed host execution
+rails and enforce in the host as well as the model catalog:
+
+| Surface | Sandbox-only decision and enforcement |
 | --- | --- |
-| Local mode, unsupported host/runtime | Local unavailable; keep saved mode; no remote/host substitution |
-| Remote mode, gateway disabled/missing/down | Remote unavailable; no direct Freestyle/Daytona, local or host substitution |
-| Gateway auth, quota, classification or placement refusal | Surface refusal unchanged; do not relax constraints or change accounts |
-| Remote create times out | Outcome unknown; use gateway idempotency key and lookup to reconcile before another create; never replay an exec |
-| Setting/profile revision no longer permitted | Refuse new calls, stop sandbox, require reset where configuration differs |
-| Command dispatched then timeout/disconnect | May have run inside selected sandbox; preserve receipt and inspect job before retry |
+| Desktop computer use and scripting | Block `computer_*`, `computer_run`, AppleScript/JXA/Blender, clipboard and computer file transfer. Inject denies into `apps/desktop/electron/computer-agent-permissions.mjs` checks so direct/stale bridge calls cannot bypass catalog removal. Never control the user's desktop as an alternate terminal. |
+| Built-in browser | Disable the browser tool family and refuse calls at the server/desktop bridge in the initial only-mode release. A host browser runs page JavaScript outside guest network policy and may expose uploads/downloads or localhost. A guest browser can be designed later. |
+| Local MCP servers | Disable local/stdio servers before connection/spawn through `context.mcp.transform`; block local HTTP MCP too unless explicitly classified and approved. Names such as `openwork-cloud` are not sufficient identity. Preserve only verified organization remote connections with their own grants, and review them for local host-execution routes. |
+| Host file/transfer tools | Remove and host-block Drive pull/upload, mail attachment fulfillment, office/PDF/spreadsheet readers and other local path tools until they explicitly resolve paths in the guest. |
+| Other native tools | Block `patch`, worktree mutation and any tool that can execute or mutate host files. Catalog default-deny must cover aliases, custom tools, late transforms and Code Mode, not just the six names. |
+| Delegation/app commands | New child sessions inherit the requirement. Refuse commands that create an unconstrained engine/session or mutate tool/MCP config. Direct engine session-shell/PTY, command templates and public execution routes need admission checks. |
+| Engine background work | History/config/snapshots may touch the host outside tools. Describe only-mode as agent-tool confinement, not a VM for the entire OpenWork/OpenCode process. |
 
-Pre-dispatch failures say the command did not start. Post-dispatch failures say it may have run. Both explicitly
-forbid running it on the host instead. Tool descriptions are not an enforcement mechanism against the separate
-normal host-shell tool; this is isolation of selected operations, not confinement of the whole agent.
+Remote MCP network access remains a deliberate capability, not "network off everywhere". The initial safe choice
+is to withhold any unreviewed remote tool that can command this host. A policy editor must describe this loss of
+computer/browser/local-MCP capability before the member opts in.
 
-Stop on sign-out, shutdown and permission loss; reconcile owned instances at startup. Local uses its idle timer
-as a crash backstop. **Differently currently has no adapter-level idle-stop backstop**: `autoStopMinutes` is not
-sent as provider enforcement. Remote must have host-owned idle scheduling plus a gateway-enforced finite TTL and
-renewal policy that survives desktop crashes. TTL expiry means possible remote data loss; show that in setup.
-Do not promise indefinite persistence via `autoDeleteMinutes: -1`: the gateway adapter maps it to a long finite TTL.
+**Not shipped in the first slice:** these host-surface controls. Accordingly there is no reachable `only` mode in
+the server policy yet, even though the replacement transform itself is tested. Extra-tool pilot behavior leaves
+these surfaces unchanged and does not claim to confine the agent.
 
-### Why keep direct adapters at all?
+## 6. Organization and local control (follow-up, specified now)
 
-They serve existing callers and tests; they are not a default or fallback for the new tools. This design adds no
-direct-provider setup/credential UI and no automatic fallback. A future direct route would need a demonstrated
-requirement (for example an installation explicitly operating without a gateway), a separate reviewed policy and
-visible operator choice made before execution, not outage-based selection. None is justified for v1.
+### Organization member permissions
 
-Differently itself may select or fail over among pools **within the authorized project/profile constraints before
-an operation is dispatched**. That is gateway-owned placement, not permission for OpenWork to bypass the gateway
-or replay a command on another sandbox.
+Use `packages/types/src/den/agent-permissions.ts`'s definition system, not a separate sandbox org/provider setting:
 
-## 9. Differently-side prerequisites and OpenWork adapter work
+- Add key `hostExecution`, host action `host_execution`, section Commands, toggle label **Run tools on this
+  computer**, default `allow`. `deny` means sandbox-only is required. The UI explains that commands/files go into
+  the local VM and desktop/browser/local MCP access is blocked. No `ask` variant for a whole-run confinement mode.
+- Add to `AGENT_PERMISSION_ACTIONS`, `AGENT_HARNESS_PERMISSION_KEYS` and `AGENT_HARNESS_PERMISSION_ACTIONS`.
+  This is host-enforced; **do not add it to `agent-permission-engine.ts`'s `v2Action` grammar**.
+- The Den member/team editor (`agent-permissions-editor.tsx`) and free-text `permission_key` storage pick up the
+  definition; no enum migration or new independent permissions table is needed.
+- Add `X-OpenWork-Sandbox-Only: 1`. In `/v1/me/desktop-config`, filter the new action for clients without it,
+  following the existing capability-header filters at `routes/me/index.ts:513–519`, so older clients can parse
+  their known actions. **Filtering alone must not allow legacy host execution:** require a compatible desktop
+  version before assigning the policy, and refuse execution on unsupported clients/engines. Test old-client
+  parsing separately from fail-closed policy admission.
+- `managed-desktop-policy.ts` reads the action with a verified current identity, resolves the effective mode and
+  enforces it on engine admission and all host bridges. Plugin options come from this trusted resolver, never the
+  workspace or renderer. A signed-in policy that cannot be checked cannot relax a known requirement.
 
-These are requirements to confirm against the gateway's contract, not APIs claimed to exist. This PR does not edit
-or deploy Differently. Existing create/exec/files/lifecycle APIs and project keys can already support a basic
-remote prototype; production-safe Remote admission additionally needs the guarantees below.
+### Single user without an organization
 
-| Requirement | Current OpenWork integration | Needed work / owner |
-| --- | --- | --- |
-| Project-scoped auth and placement narrowing | Existing gateway key, template, classification, allowed pools/strategy options | Reuse. Configure approved Freestyle/Daytona pools in Differently; do not add upstream keys to OpenWork. |
-| Enforced network policy/profile | No per-request network policy in Differently's current create schema; OpenWork's adapter does not send/verify one. OpenSandbox has pool-level none/allow-list enforcement, Freestyle deny-all/public, and the Daytona adapter advertises no egress control. | Configure narrowly approved pools for fixed policies; workspace-specific narrowing needs gateway API/enforcement work. Differently must expose the granted policy/revision, not merely a capability bit. Never admit a Daytona pool as default-deny without verifying/adding enforcement. |
-| Actual placement/isolation | Differently already exposes tenant-visible `/v1/capabilities` and create-time required capabilities; this adapter does not send them and defaults to `isolation: "unknown"` | Extend the OpenWork adapter to pass required capabilities (e.g. `isolation.microvm`, `network.egress-control`, `ports.expose`) and read actual placement. Declared capability names are operator claims, not independent isolation verification or proof of a specific network policy. Add returned metadata only where the current gateway contract lacks it. |
-| Authenticated previews | Differently returns `{port,url}`; upstreams differ (Daytona signed, Freestyle public, other pools gateway/scope links). The OpenWork adapter flattens every link to `stable` without expiry. | Extend Differently's port metadata for effective auth scope/expiry and provide an authenticated proxy where required, or disable previews on unsuitable pools. Map endpoint semantics accurately in OpenWork; never relay a sandbox-wide command token. |
-| Port restrictions | Adapter's create body omits `spec.exposePorts`; endpoint accepts a requested port | Profile or gateway must restrict permitted preview ports. Enforce in OpenWork too; if gateway API cannot carry/enforce the restriction, extend it rather than claim create-time port enforcement. |
-| Stable security-profile revision | Template/placement settings supplied, no verified security fingerprint | Return/version grants so changed gateway configuration invalidates reuse. Define the server's revision and revocation semantics. |
-| Idle/TTL cleanup | Finite TTL supported; auto-stop not a gateway backstop | Configure safe finite TTL and limits; extend Differently only if durable idle stop is required beyond current TTL, and document pause vs stop and data retention. |
-| Guest application-secret proxy | Not part of the adapter contract | Future only: external proxy with scoped substitution/redaction. No microsandbox backend work required in Differently. |
+Add a typed local **allowHostExecution** setting, persisted outside workspace files in the server runtime database,
+written through the Settings -> Permissions privileged host path. Add a row next to Authorized Folders; the current
+`effective-permissions-panel.tsx` is read-only and is not an editable store. The row shows effective mode, restart
+requirement, provider compatibility and the reason if managed. Read `/v1/features` for signed-out rollout access;
+an unreachable managed session is not equivalent to signed-out.
 
-Source checks in [Differently](https://github.com/different-ai/differently): `pkg/api/types.go` and
-`api/openapi.yaml` (create/placement/port schemas), `internal/server/tenancy.go` (tenant-visible capabilities),
-`docs/guides/keys-and-providers.md`, `docs/guides/opensandbox-pools.md`, `docs/providers/freestyle.md` and
-`docs/adapters/specification.md`. No live provider or production gateway was queried.
+Normalize local `true/false` into `allow/deny` and merge with the org `host_execution` decision via
+`stricterAgentPermissionDecision`. A local Allow cannot undo org Deny; local Deny remains stricter than org Allow.
+Default Allow preserves existing behavior. Remove access to the row when flag off, but do not relax a stored
+managed/local requirement on flag loss: block incompatible execution instead. Changes apply at a safe turn boundary,
+reload the tool registry and dispose old host-capable MCP sessions; stale calls are denied at dispatch.
 
-Keep these extensions in `packages/sandbox-differently` options and mappings; reuse the existing shared blocks and
-endpoint shape. If required security metadata cannot be expressed, propose a backward-compatible extension to the
-shared contract with conformance tests, not a parallel remote interface. Don't upgrade SDKs or alter legacy Workbot
-routing as part of this design revision.
+### Safe first-slice access today
 
-## 10. External sandbox protocol decision
+Only an org member with a freshly verified `sandboxTools` rollout gets additive tools. The server separately reads
+`/v1/me/desktop-config` and refuses the pilot for restrictive shell/edit/external-directory rules, including `ask`:
+new sandbox tool names must not bypass existing approvals via writable bind mounts. Signed-out/local controls are
+not implemented yet. No policy settings are changed by this PR.
 
-Grounding: [Prime Radiant's write-up](https://blog.primeradiant.com/external-sandboxes-for-coding-agents/),
+## 7. Mount the Authorized Folders list, not authorizedRoots
+
+Source of truth: engine-wide runtime row in `runtime-opencode-config-store.ts`,
+`permission.external_directory`. `server.ts:3345–3401` writes Authorized Folders there. Do **not** derive guest
+mounts from `config.authorizedRoots`, which is a separate server filesystem boundary.
+
+- Mount workspace **plus every representable allowed Authorized Folder** as live bind mounts.
+- Guest path equals the original **absolute** host path used by the model, not `/workspace` remapping. Canonicalize
+  the host source with `realpath` (e.g. macOS `/var` -> `/private/var`) while preserving the guest alias.
+- Current editor entries look like `"/absolute/folder/*": "allow"`. `ask` and `deny` are not preauthorized mounts.
+  The current external-directory permission has **no per-folder ro/rw distinction**. OpenCode checks read/edit
+  permissions separately. Do not invent a readonly enum or interpret `ask` as readonly.
+- First slice uses rw for explicit allow + writable workspace, and ro for every bind when `config.readOnly` is true.
+  It refuses restrictive managed edit/command/folder policies rather than bypass their permission prompts. Full
+  policy integration must intersect read/edit grants: edit-not-allowed means ro or unavailable, never a writable
+  parent alias. If future values explicitly encode readonly, parse them before allowing a mount; unknown shapes
+  currently fail closed.
+- Arbitrary hidden glob policies cannot always be represented as bind mounts. Refuse unrepresentable patterns,
+  roots, or a granted parent containing a restricted subtree. Respect later broad deny/ask rules. A denied child
+  must not remain reachable through a parent bind or alias. Canonicalize restrictions as well as grants (including
+  existing ancestors of missing paths) before checking overlap; lexical `/var` versus `/private/var` checks alone
+  are insufficient. Conservative alias conflicts are refused rather than widened.
+- Exclude runtime DB/vault folders and actual `MSB_HOME`, including ancestor/descendant overlaps. Symlinks inside a
+  guest bind resolve under guest semantics; hardlink aliases and host-side rename races still require adversarial
+  testing. This is not protection from another same-user process controlling the mount source.
+
+### Changes while running
+
+Microsandbox's persisted configuration survives stop/start; merely restarting the old instance would retain its
+old mounts. Therefore the first slice fingerprints the canonical mount plan and serializes mount transitions with
+its own tool calls. Runtime-row writes trigger re-evaluation; changed/invalid grants stop the old VM. On the next
+call a changed plan **destroys and recreates** the VM, with a visible `sandboxRestarted` receipt. Host bind contents
+survive; guest-only scratch is reset. Unrelated runtime writes with the same plan do not restart it.
+
+On server restart, an old instance with the stable scope/name is recreated before reuse, never adopted with stale
+mount grants. The pilot is intentionally scratch-oriented. Follow-up: preserve a separate authorized data disk and
+show a restart notice in Settings; immediate interruption of active long-running guest commands on revocation needs
+explicit cancellation tests. No remount API is assumed.
+
+## 8. Local adapter security and packaging
+
+Local only, Apple Silicon macOS and Linux KVM; Windows preview is not admitted. The adapter always sets the network
+policy because the SDK's unconfigured default is open egress. Pilot has no network; host-name allow-list support is
+adapter-level only. HTTPS host-name enforcement needs interception; no claim of exact protocol equivalence or
+HTTP-only enforcement on allowed TCP ports. No raw secrets or proxy keys are mounted/provisioned in v1.
+
+VM identity includes an install/verified-account scope, workspace and mount fingerprint. The SDK backend is pinned
+local and foreign/cloud handles refused. Slow create is cancelled; failed cleanup checks its per-attempt owner;
+port collision retries do not replay commands. Native errors stay errors.
+
+The adapter needs its optional platform package, SDK native addon and `msb`/firmware pair. `MSB_HOME` must be short
+on macOS due to Unix socket limits. Server build and plugin bundling are included; packaged Electron signing,
+notarization, library unpacking, Linux permissions and npm/compiled standalone delivery require separate evidence.
+A missing module/runtime must produce unavailable rather than a host implementation. Keep the rollout off until
+shipping-runtime validation. No first-use download, root privilege change or production flag is performed here.
+
+## 9. External-sandbox pattern
+
+[Prime Radiant](https://blog.primeradiant.com/external-sandboxes-for-coding-agents/),
 [protocol revision 1](https://github.com/prime-radiant-inc/external-sandbox/blob/main/PROTOCOL.md), and
-[Simon Willison's discussion](https://simonwillison.net/2026/Nov/17/).
+[Simon Willison](https://simonwillison.net/2026/Nov/17/) motivate explicit mounts, default-deny networking and
+host-held secret substitution. Pi's `--no-builtin-tools` shape motivates same-name registry replacement in only mode.
+There is no shell-prefix mechanism in OpenWork today.
 
-Agent on host, only declared ro/rw mounts visible, network off unless an HTTP(S) allow-list proxy is enabled,
-placeholders swapped for host-held secrets, trusted web UI edits proxy policy. Pi replaces all tools with
-`--no-builtin-tools`; Claude Code redirects Bash via `CLAUDE_CODE_SHELL_PREFIX` but leaves native file tools on host;
-Codex uses exec-server. Our v1 deliberately keeps normal host tools, so it does not claim Pi-style confinement.
+Do not speak the wire protocol in v1: the in-process SDK and existing `SandboxProvider` already provide local
+lifecycle/files/run/endpoints. Revision 1's unauthenticated loopback CLI callers and experimental Codex exec-server
+format add no required capability. No server implementation planned. Secret swapping is future work: real values
+persisted in host DB/WAL during experiments and an echoing trusted upstream returned them to the guest.
 
-Wire: loopback HTTP discovery and buffered exec, `/exec/ws`, `/codex` process/file RPC based on experimental Codex
-0.164.0. Mounts are configured at launch. Proxy credential substitution matches a whole header over HTTPS, with
-method/path/origin restrictions, resolved-address checks, upstream TLS verification and redaction.
+## 10. Verification plan
 
-**No wire implementation in v1.** Published 16 November as experimental, no wire-version negotiation, no lifecycle
-or preview contract, and local CLI callers are not authenticated. OpenWork already has its authenticated engine
-bridge, the local native SDK and the Differently remote API. Wrapping either in a second protocol adds no needed
-capability. Differently is the control plane for remote placement and keys, not an external-sandbox server.
+Follow `verify-openwork` and `write-a-spec`: pure mapping/server authorization rules get colocated tests; the
+complete user-controlled mode needs a real product proof, before/after on dev and this branch, not just mocks.
 
-Adopt the security principles without claiming equivalence: local SDK host allow-lists lack method/path limits and
-echo redaction; gateway guarantees need the explicit work in section 9. Future `sandbox-external` client support
-would need to describe externally owned lifecycle/mounts honestly, pin revision and pass its conformance suite.
-No server implementation is planned.
+Implemented tests:
 
-## 11. Test plan: verify-openwork / write-a-spec
+- Adapter offline contract suite and opt-in real VM suite: lifecycle, ids, files, mounts, egress, preview, timeout.
+- `sandbox-tools.vitest.test.ts`: schemas, guest effects, input/output bounds, no host fallback, same-name removal
+  and registration, additive mode, stale-mode rejection, loopback envelopes. It deliberately proves that replacing
+  six tools alone does not remove unrelated host rails.
+- `sandbox-mounts.vitest.test.ts`: same absolute paths, current permission values, ro server mode, restricted
+  subtrees, root/glob refusal, canonical aliases, protected runtime state and fingerprint changes.
+- `local-sandbox-runtime.vitest.test.ts`: flag admission, registered workspace only, mount recreation and no
+  dispatch after revocation, real bridge auth.
 
-- **Local adapter:** colocated unit/contract tests and opt-in real microVM conformance. Keep unsupported capability
-  cases explicit; existing conformance cases can return early for unclaimed storage, which is not evidence of volume
-  support. Test mounts, egress, previews, timeout cancellation, port conflict and stale references.
-- **Selector/resolver:** table tests for both flags, all three workspace modes, missing/unhealthy gateway,
-  policy/classification/auth refusals, signed-out vs unverifiable identity, profile changes and sign-out. Assert
-  exactly one factory is constructed, zero direct factories or host commands, and no switch on any failure.
-- **Gateway adapter:** mock-HTTP tests verify project auth stays in headers, approved template/placement narrowing,
-  denied network/preview constraints, pool metadata, TTL/expiry mapping and no retries of `/exec`. Never use fixture
-  production keys. If a gateway prerequisite is absent, assert Remote unavailable before allocation/dispatch.
-- **Tool host/bridge:** existing fake provider, scoped token/auth checks, call-id replay, outcome-unknown receipts,
-  output limits, revoked settings even while listed, serialized reset. Test background status/stop and no env/key
-  leakage. API tests for org setting edits and feature-disabled cases.
-- **Flag regression:** `sandboxTools` off leaves Workbot unchanged; `sandboxGateway` off leaves Local available
-  but refuses Remote; gateway outage does not invoke `routeComputers`' direct-provider fallback for the new tools.
-- **Differently integration:** a disposable test project with approved Freestyle/Daytona pools verifies real
-  placement, egress deny/allow, scoped previews and TTL cleanup. Do not use production or claim mock responses prove
-  provider network enforcement. Exact required gateway-side versions/capabilities go in the test report.
-- **Product proof:** `evals/proofs/sandbox-tools.proof.test.ts`, using `appWeb`, scripted model and disposable Den.
-  At least before/action/after/boundary steps with `recordAssertionEvidence` and screenshots for each visual beat.
-  Before: tools off. After: select Local, observe a mounted random nonce and inability to read a host-only nonce.
-  Then select approved Remote with both flags on, witness gateway allocation/actual placement independently.
-  Boundary: gateway unavailable/refused, a sandbox command errors and creates no host sentinel; verify no direct
-  account allocation. Revoke `sandboxGateway`: Remote refuses, Local does not change choice automatically.
-- **Placement/runtime:** real local microVM needs Apple Silicon or KVM. Declare needs; follow `run-tests` placement
-  and report its line. Skips are Incomplete. Match packaged Electron Node, macOS signing and Linux KVM, not just Bun.
-- Run the proof against dev and branch; don't claim a green result before tool wiring exists. Run spec lint,
-  report/design review and `pnpm check` on the exact head. No production probes.
+Before product sandbox-only enablement:
 
-## 12. Code and measured evidence
+- Resolve local/org decisions as a truth table, including old desktop capability headers, identity changes, flag
+  kill while only-mode is required and offline policy refresh. No stale grant may re-enable host tools.
+- Drive Settings -> Permissions and Den member agent-permission editor through the real UI; show managed reason
+  and stricter-wins. Proof lives at `evals/proofs/sandbox-only.proof.test.ts`; record evidence each step and
+  screenshots for visible changes. Declare Apple Silicon/KVM needs; skips are Incomplete.
+- Independent guest/host nonce witnesses show reads/writes only hit mounted paths. Remove a folder during an active
+  session and prove the next guest cannot access it through any alias. Prove ro refuses writes from shell too.
+- Plugin/engine test: instrument pinned Claude Agent's OpenCode MCP tool route, verify replacements execute and
+  native CLI tools remain disabled. Do not block that provider based only on its name.
+- Negative calls for desktop scripts/computer/browser/localhost MCP, `patch`, custom tools, late plugin transforms,
+  Code Mode, child sessions, engine session-shell and file-fulfillment bridges. A hidden tool still needs host-side
+  denial. Sandbox down never results in a host sentinel file or restored builtins.
+- Run local bridge-to-real-microVM tests, then the shipping Electron/Node runtime and packaged macOS/Linux. Keep
+  screenshots and exact commands/counts in the evidence report. `pnpm check` must pass; no production probes.
 
-This PR contains `packages/sandbox-microsandbox`, the off `sandboxTools` declaration/generated list, and these docs.
-The existing `sandboxGateway` entry is documented as reused for Remote; it retains its key/default/ownership and
-existing Workbot semantics. No new runtime routing or production flag settings are changed.
+## 11. Follow-ups before full scope is complete
 
-Before the gateway design correction, on Apple Silicon macOS with Node 24.22.2 and microsandbox 0.7.15:
+1. `host_execution` definition/harness key, Den editor integration, capability header/filter and old-client gate.
+2. Editable local permission setting and Settings -> Permissions row; stricter-wins resolver in the host.
+3. Host-side enforcement for computer/browser/local MCP and other rails; native engine direct-exec/child-session
+   admission; policy-aware sandbox tool permissions. Only then allow the bridge to return `only`.
+4. Claude Agent regression witness; engine catalog transform ordering/late replacement protection.
+5. Safe required-only handling when flag/runtime/policy unavailable, plus active-command revocation and durable
+   call receipts. No disable-switch path that restores the host primitives.
+6. User-visible mount-restart notice, guest scratch retention and exhaustive overlap/symlink/readonly tests.
+7. Packaged native-runtime distribution and real Settings/Den product proof. Preview/background jobs remain later.
 
-- Offline: 23 passed, 0 failed, 0 skipped. Live: 18 passed, 0 failed, 0 skipped in a fresh short runtime home.
-  No test sandboxes remained; the runtime home was removed. These prove the local adapter only, not Remote.
-- `pnpm --filter @openwork/sandbox-microsandbox... build` and all eight `pnpm check` checks passed.
-- Measured default SDK egress was unrestricted without policy. Explicit policy denied egress while loopback preview
-  worked. Allowed HTTPS needed TLS interception. Symlinked host bind paths were refused.
-- Slow create could be cancelled; a failed bind left a stopped instance until cleaned up. SDK secret values were
-  found in host WAL after destroy; no secret option ships. Basic native calls also worked under Bun 1.3.10.
+These are follow-ups, not features claimed shipped by the first-slice plugin. No new agent-permission action,
+editable local store or Settings row is introduced in this slice.
 
-Not verified: packaged Electron, signing/notarization, Linux KVM, DNS pinning under attack, connection-cache races,
-Differently security profiles/remote network enforcement/restricted previews, or a complete agent-tool journey.
-The gateway provider note and the existing integration were inspected read-only; no provider/deployment was touched.
-After this design/flag-metadata revision, `pnpm --filter @openwork/features test` passed 15/15 and `pnpm check`
-passed all eight checks. The local adapter implementation is unchanged by this revision; no remote behavior is
-claimed tested.
+## 12. Future remote work only
 
-## 13. Implementation order and remaining questions
+Differently, Freestyle and Daytona are future scope. Their existing adapters and Workbot gateway rollout remain
+untouched, and the local runtime/plugin imports none of them. Revisit selection, credential custody, remote mounts,
+network enforcement and preview semantics in a separate design before admitting Remote. Microsandbox's embedded
+runtime has no self-hosted server API for a gateway to call; that does not affect this local in-process design.
 
-1. Agree and test the two-mode resolver and gateway guarantees, before exposing Remote.
-2. Reuse the Differently adapter; add verified security-profile/endpoint metadata support alongside its conformance
-   tests. Track any required gateway changes separately as section 9 lists.
-3. Implement org bound, identity-scoped workspace settings, v2 tool host/bridge and lifecycle without any direct
-   fallback. Reuse `sandboxGateway`; keep `sandboxTools` as only the new-surface flag.
-4. Setup UI, explicit reset and local runtime/image packaging. Microsandbox optional platform package is about
-   99 MB on macOS arm64; first-use install vs signed bundling needs packaging evidence.
-5. Product proof and disposable gateway integration test, then a flagged pilot. Guest secrets are later work.
+## 13. Evidence and review provenance
 
-Questions: gateway connection delivered by Den or operator-configured locally; short-lived project credentials
-versus a host-held project key; exact immutable remote-profile/capability contract; authenticated preview transport;
-idle/TTL retention; per-workspace shared sandbox versus per-conversation memory cost. None requires collecting
-Freestyle/Daytona keys in OpenWork or implementing microsandbox inside Differently.
+The primary agent is GPT-6.1 Sol. Earlier default explore agents were not verified as Fable. Independent Sol
+research/reviews informed the adapter; a fresh source mapper verified the pinned Claude Agent registry path and
+Authorized Folders semantics. The earlier assumption that the CLI necessarily bypassed the registry was corrected;
+no provider block is introduced on that unsupported premise.
 
-## 14. Review conclusions and correction history
-
-The primary agent is GPT-6.1 Sol, not the requested Fable; codebase mapping used default explore agents whose model
-identity was not verified. Explicit GPT-6.1 Sol agents performed external research and independent review. This is
-an independent-agent comparison, not a verified Fable/Sol comparison.
-
-The initial review agreed on the shared contract, local adapter and deferred external wire protocol. It corrected
-false claims about timeout non-execution, create-only policy checks, signed-out behavior, isolation ordering,
-reset data loss, hosted-SDK selection, create cleanup, port races, raw secret persistence and proof witnesses.
-Those corrections remain in this revision. Reviewed compromises remain explicit: authorization enforced on each
-call with at most 60-second verified-policy reuse; provider timeout/call-id receipts rather than a universal cancel
-protocol; a host-browser preview is not governed by guest egress restrictions; same-user host shell is not confined.
-
-The user's correction supersedes the earlier remote-provider recommendation: **Differently is the default and
-only v1 Remote route**, not a future alternative to direct provider keys in OpenWork. The earlier proposed direct
-provider vault/UI, SDK upgrade slices and extra provider selection fields are removed. Keep existing direct adapters
-only for their existing consumers; no outage fallback is justified for the new tools. Local microsandbox is separate
-because Differently explicitly does not support it. A fresh independent Sol review checked the gateway schemas,
-provider notes and existing router and agreed with this correction. It confirmed that required-capability admission
-already exists upstream but is not sent by OpenWork's adapter; per-request network policy and uniform preview
-metadata do not exist. Section 9 distinguishes configuration reuse, OpenWork adapter work and actual gateway-side
-prerequisites rather than treating all of them as a new gateway implementation.
+Previously measured adapter foundation: 23 offline and 18 live cases, zero failures/skips on Apple Silicon Node
+24.22.2; server build and checks were rerun during this revision. Updated test evidence is in this PR's report.
+No claim is made that the full permission-controlled sandbox-only journey or packaged native runtime is proven.
