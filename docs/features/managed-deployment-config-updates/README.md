@@ -381,6 +381,11 @@ The deployment still records the old configuration:
 
 ![Awaiting AWS approval: the requested changes, six pending steps, and the AWS CloudShell command](./awaiting-approval.png)
 
+When guided AWS sign-in is also enabled, the same editor is available from
+the deployment detail page's header:
+
+![Guided deployment detail: Edit configuration in the header, with the corrected first administrator email and unchanged installed version](./guided-deployment.png)
+
 States of a requested change, and what the page offers in each:
 
 | State | Status | Actions |
