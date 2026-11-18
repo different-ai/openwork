@@ -271,8 +271,9 @@ const ADMIN_PATH: Record<AdminView, string> = {
   analytics: "analytics"
 };
 
-export function LpDemoCloud() {
-  const [tab, setTab] = useState<BrowserTab>("web");
+/** `adminOnly` shows just the Acme Studio admin dashboard, with no OpenWork Web tab. */
+export function LpDemoCloud({ adminOnly = false }: { adminOnly?: boolean }) {
+  const [tab, setTab] = useState<BrowserTab>(adminOnly ? "admin" : "web");
   const [adminView, setAdminView] = useState<AdminView>("members");
   const url = tab === "web" ? "app.openworklabs.com/acme-studio/web" : `app.openworklabs.com/acme-studio/${ADMIN_PATH[adminView]}`;
 
@@ -285,7 +286,7 @@ export function LpDemoCloud() {
             <span className="h-[11px] w-[11px] rounded-full bg-[#FEBC2E]" />
             <span className="h-[11px] w-[11px] rounded-full bg-[#28C840]" />
           </span>
-          <BrowserTabButton selected={tab === "web"} onSelect={() => setTab("web")} label="OpenWork Web" />
+          {adminOnly ? null : <BrowserTabButton selected={tab === "web"} onSelect={() => setTab("web")} label="OpenWork Web" />}
           <BrowserTabButton selected={tab === "admin"} onSelect={() => setTab("admin")} label="Admin · Acme Studio" />
         </div>
         <div className="flex h-10 items-center border-b border-[#EEF0F3] bg-white px-3">
@@ -299,7 +300,7 @@ export function LpDemoCloud() {
         {tab === "web" ? (
           <LpDemoDesktop windowControls={false} />
         ) : (
-          <CloudAdmin view={adminView} onView={setAdminView} onOpenWeb={() => setTab("web")} />
+          <CloudAdmin view={adminView} onView={setAdminView} onOpenWeb={adminOnly ? null : () => setTab("web")} />
         )}
       </div>
     </div>
@@ -332,7 +333,8 @@ const ADMIN_NAV: AdminNav[] = [
   { id: "analytics", icon: <BarChart3 size={16} strokeWidth={1.5} />, label: "Analytics" }
 ];
 
-function CloudAdmin({ view, onView, onOpenWeb }: { view: AdminView; onView: (view: AdminView) => void; onOpenWeb: () => void }) {
+function CloudAdmin({ view, onView, onOpenWeb }: { view: AdminView; onView: (view: AdminView) => void; onOpenWeb: (() => void) | null }) {
+  const nav = onOpenWeb ? ADMIN_NAV : ADMIN_NAV.filter((item) => item.id !== "web");
   return (
     <div className="flex min-h-0 w-full">
       <aside className="hidden w-[220px] shrink-0 flex-col gap-0.5 border-r border-[#EEF0F3] bg-[#F7F8FA] px-2.5 py-4 md:flex" aria-label="Admin sidebar">
@@ -343,14 +345,14 @@ function CloudAdmin({ view, onView, onOpenWeb }: { view: AdminView; onView: (vie
             <span className="text-[11px] text-[#6B7280]">Team · free up to 5</span>
           </span>
         </div>
-        {ADMIN_NAV.map((item) => {
+        {nav.map((item) => {
           const selected = item.id === view;
           return (
             <button
               key={item.id}
               type="button"
               aria-current={selected ? "page" : undefined}
-              onClick={() => (item.id === "web" ? onOpenWeb() : onView(item.id))}
+              onClick={() => (item.id === "web" ? onOpenWeb?.() : onView(item.id))}
               className={`flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors duration-150 ${focusRing} ${selected ? "bg-[#E7EAEE] font-medium text-[var(--lp-ink)]" : "text-[#374151] hover:bg-[#EEF0F3]"}`}
             >
               <span aria-hidden="true">{item.icon}</span>

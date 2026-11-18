@@ -4,10 +4,12 @@ import { AUTO_ROUTER_THINKING_LABELS, autoRouterThinkingLevelSchema, type AutoRo
 import { CLAUDE_CODE_LONG_CONTEXT, claudeCodeBaseUrl, claudeDesktopListsModel, codexBaseUrl, cursorBaseUrl } from "@openwork/types/den/gateway-cursor";
 import { Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { orgFeatureEnabled } from "../../_lib/den-org";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenSelect } from "../../_components/ui/select";
 import { claudeCodeToolModelName, claudeModelId, gatewayToolModelLabel, gatewayToolModelName, useGatewayToolModels, type GatewayToolModel } from "./cursor-setup-data";
 import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 /**
  * Setting up a 3rd party tool with an AI Gateway API key: a choice of
@@ -15,7 +17,7 @@ import { GATEWAY_API_KEYS_DOCS_URL } from "./gateway-api-keys-data";
  * still be shown, and on Set up Cursor without a key.
  */
 
-export type GatewayToolId = "cursor" | "codex" | "codex-app" | "claude-code" | "claude-desktop" | "other";
+export type GatewayToolId = "cursor" | "codex" | "codex-app" | "claude-code" | "claude-desktop" | "opencode" | "other";
 
 type GatewayTool = { id: GatewayToolId; name: string; slug?: string; serviceUrl?: string; line: string };
 
@@ -25,6 +27,7 @@ export const GATEWAY_TOOLS: readonly GatewayTool[] = [
   { id: "codex-app", name: "Codex app", slug: "openai", serviceUrl: "https://openai.com", line: "Every model, in Codex in the ChatGPT app" },
   { id: "claude-code", name: "Claude Code", slug: "claude", serviceUrl: "https://claude.com", line: "Every model, in Claude Code" },
   { id: "claude-desktop", name: "Claude Desktop", slug: "claude", serviceUrl: "https://claude.com", line: "Your Claude models, in the Claude app" },
+  { id: "opencode", name: "OpenCode", serviceUrl: "https://opencode.ai", line: "Every model, in the OpenCode CLI" },
   { id: "other", name: "Another tool", line: "Any OpenAI or Anthropic compatible tool" },
 ];
 
@@ -33,12 +36,21 @@ export const CLAUDE_CODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/cl
 export const CODEX_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex";
 export const CODEX_APP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/codex-desktop";
 export const CLAUDE_DESKTOP_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/claude-desktop";
+export const OPENCODE_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/opencode";
+
+/** The tools this organization offers: OpenCode only while `gatewayOpenCodeSetup` is on. */
+export function useGatewayTools(): readonly GatewayTool[] {
+  const { orgContext } = useOrgDashboard();
+  const openCode = orgFeatureEnabled(orgContext, "gatewayOpenCodeSetup");
+  return openCode ? GATEWAY_TOOLS : GATEWAY_TOOLS.filter((tool) => tool.id !== "opencode");
+}
 
 /** The large choice of tools under "Start using this key". */
 export function GatewayToolPicker({ onPick }: { onPick: (tool: GatewayToolId) => void }) {
+  const tools = useGatewayTools();
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" data-testid="gateway-tool-picker">
-      {GATEWAY_TOOLS.map((tool) => (
+      {tools.map((tool) => (
         <button
           key={tool.id}
           type="button"
@@ -513,6 +525,55 @@ export function ClaudeDesktopSteps({ apiKey, baseUrl }: { apiKey: string | null;
   );
 }
 
+/**
+ * `opencode.json` for OpenCode: an `openwork` provider on the Gateway's OpenAI compatible endpoint
+ * that reads the key from OPENWORK_API_KEY, every model the person can use, and the chosen one as
+ * the default. OpenCode's /models switches between the rest.
+ */
+export function openCodeConfig(input: { baseUrl: string; models: readonly GatewayToolModel[]; model: GatewayToolModel }) {
+  return JSON.stringify({
+    $schema: "https://opencode.ai/config.json",
+    provider: {
+      openwork: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "OpenWork",
+        options: { baseURL: input.baseUrl, apiKey: "{env:OPENWORK_API_KEY}" },
+        models: Object.fromEntries(input.models.map((entry) => [entry.alias, { name: entry.name }])),
+      },
+    },
+    model: `openwork/${input.model.alias}`,
+  }, null, 2);
+}
+
+/** OpenCode: the key in the shell profile, and an `openwork` provider in opencode.json. */
+export function OpenCodeSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
+  const models = useGatewayToolModels(true);
+  const list = models.data ?? [];
+  return (
+    <div className="flex flex-col gap-4" data-testid="gateway-tool-opencode">
+      <ol className="flex flex-col gap-4">
+        <SetupStep number={1} field={<CopyField value={`export OPENWORK_API_KEY="${apiKey ?? "<your API key>"}"`} label="Copy the key line" testId="gateway-tool-opencode-env" />}>
+          Add this line to your shell profile (for example <Strong>~/.zshrc</Strong>), then open a new terminal:
+        </SetupStep>
+        <SetupStep
+          number={2}
+          field={(
+            <ModelSnippet models={list} loading={models.isLoading} error={models.error} empty="Your organization hasn't given you any models yet.">
+              {(model) => model ? <CopyField multiline label="Copy the OpenCode configuration" testId="gateway-tool-opencode-config" value={openCodeConfig({ baseUrl, models: list, model })} /> : null}
+            </ModelSnippet>
+          )}
+        >
+          Choose your default model, then save this as <Strong>opencode.json</Strong> in your project, or as <Strong>~/.config/opencode/opencode.json</Strong> for every project. Already have one? Merge the <Strong>openwork</Strong> provider into it.
+        </SetupStep>
+        <SetupStep number={3} field={<CopyField value="opencode" label="Copy the command" />}>
+          Start OpenCode in your project. <Strong>/models</Strong> lists your OpenWork models under <Strong>OpenWork</Strong>.
+        </SetupStep>
+      </ol>
+      <DocsLink href={OPENCODE_DOCS_URL} />
+    </div>
+  );
+}
+
 /** Any other tool: the key and both base URLs, with each model's id. */
 export function OtherToolSteps({ apiKey, baseUrl }: { apiKey: string | null; baseUrl: string }) {
   const models = useGatewayToolModels(true);
@@ -549,6 +610,7 @@ export function GatewayToolSteps({ tool, apiKey, baseUrl }: { tool: GatewayToolI
     case "codex-app": return <CodexAppSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "claude-code": return <ClaudeCodeSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "claude-desktop": return <ClaudeDesktopSteps apiKey={apiKey} baseUrl={baseUrl} />;
+    case "opencode": return <OpenCodeSteps apiKey={apiKey} baseUrl={baseUrl} />;
     case "other": return <OtherToolSteps apiKey={apiKey} baseUrl={baseUrl} />;
   }
 }

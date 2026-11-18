@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Route } from "lucide-react";
+import { ArrowUpRight, Route } from "lucide-react";
 
 import { LandingFaq } from "../../components/landing-faq";
 import { BrandLogo } from "../../components/lp-brand-logos";
@@ -20,7 +20,8 @@ import {
   LpTiers,
   salesCallHref
 } from "../../components/lp-product-page";
-import { AwsMark, MicrosoftMark } from "../../components/lp-service-marks";
+import { AwsMark, LiteLlmMark, MicrosoftMark, OpenCodeMark, TrueFoundryMark } from "../../components/lp-service-marks";
+import { OpenWorkMark } from "../../components/openwork-mark";
 import { StructuredData } from "../../components/structured-data";
 import { aiGatewayFaq, faqSchema } from "../../lib/faq";
 import { getGithubData } from "../../lib/github";
@@ -31,7 +32,7 @@ const DOCS_URL = "/docs/ai-gateway/overview";
 export const metadata: Metadata = withSocialMetadata({
   title: "AI Gateway — add a provider once, give everyone the right models",
   description:
-    "Connect OpenAI, Anthropic, Bedrock, Vertex or Azure once. Choose who can use each model, set spend limits, and see cost by person. Members never handle a key.",
+    "Connect OpenAI, Anthropic, Bedrock, Vertex or Azure once, or plug in the LiteLLM or TrueFoundry gateway you already run. Use the same models in OpenWork, Claude Code, Codex, Cursor and OpenCode. Members never handle a key.",
   alternates: { canonical: "/ai-gateway" }
 });
 
@@ -54,19 +55,33 @@ export default async function AiGatewayPage() {
         label="AI Gateway"
         badge="Keys stay on the server"
         lines={["Add a provider once.", "Everyone gets the right models."]}
-        sub="Connect OpenAI, Anthropic, Bedrock, Vertex or Azure in OpenWork Cloud. Choose who can use each model and set spend limits. Members pick a model and never handle a key."
+        sub="Connect OpenAI, Anthropic, Bedrock, Vertex or Azure, or keep the LiteLLM or TrueFoundry gateway you already run. Choose who can use each model and set spend limits. Members never handle a key."
         actions={
-          <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <a href={CLOUD_SIGNUP_URL} className="lp-pill-primary">
-                Set up AI Gateway
-              </a>
-              <a href={DOCS_URL} className="lp-pill-secondary">
-                Read the docs
-              </a>
+          <>
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <a href={CLOUD_SIGNUP_URL} className="lp-pill-primary">
+                  Set up AI Gateway
+                </a>
+                <a href={DOCS_URL} className="lp-pill-secondary">
+                  Read the docs
+                </a>
+              </div>
+              <span className="text-[13px] text-[var(--lp-muted)]">On OpenWork Cloud or self-hosted.</span>
             </div>
-            <span className="text-[13px] text-[var(--lp-muted)]">On OpenWork Cloud or self-hosted.</span>
-          </div>
+            <a
+              href="#works-with-heading"
+              className="group mt-8 flex flex-wrap items-center gap-x-5 gap-y-2.5 text-[13px] text-[var(--lp-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--lp-ink)]"
+            >
+              <span className="transition-colors duration-150 ease-out group-hover:text-[var(--lp-ink)]">Works with</span>
+              {[...GATEWAYS, ...HARNESSES.slice(1, 5)].map((item) => (
+                <span key={item.name} className="inline-flex items-center gap-1.5 text-[var(--lp-body)]">
+                  <span className="flex h-4 w-4 items-center justify-center [&>svg]:h-4 [&>svg]:w-4">{item.mark}</span>
+                  {item.name}
+                </span>
+              ))}
+            </a>
+          </>
         }
       >
         <LpPreviewFrame label="AI Gateway preview">
@@ -105,6 +120,20 @@ export default async function AiGatewayPage() {
             <span className="flex h-[30px] items-center px-2.5 text-[13px] text-[#374151]">Claude Haiku</span>
           </LpStepCard>
         </LpStep>
+      </section>
+
+      <section aria-labelledby="works-with-heading" className="mt-24 md:mt-28">
+        <LpProductHeading
+          id="works-with-heading"
+          label="Works with"
+          lines={["Keep your gateway.", "Use any harness."]}
+          aside="Each person gets their own AI Gateway key. The same models and spend limits apply in every tool."
+          size="small"
+        />
+        <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-12">
+          <GuideList label="AI gateways you already run" items={GATEWAYS} />
+          <GuideList label="Harnesses" items={HARNESSES} twoColumns />
+        </div>
       </section>
 
       <section aria-labelledby="flow-heading" className="mt-24 md:mt-32">
@@ -176,7 +205,7 @@ export default async function AiGatewayPage() {
           lines={["Use the providers you already pay for."]}
           aside={
             <>
-              Already run LiteLLM or Bifrost? Keep it and add it as a provider.{" "}
+              Already run LiteLLM, TrueFoundry or Bifrost? Keep it and add it as a provider.{" "}
               <a href="/docs/ai-gateway/compare-litellm-bifrost" className="text-[var(--lp-ink)] underline underline-offset-4">
                 Compare them
               </a>
@@ -188,8 +217,8 @@ export default async function AiGatewayPage() {
       </section>
 
       <section aria-labelledby="more-heading" className="mt-24 md:mt-28">
-        <LpProductHeading id="more-heading" label="Rolling out" lines={["More ways to use the same models."]} size="small" />
-        <div className="mt-8 grid gap-8 md:grid-cols-2">
+        <LpProductHeading id="more-heading" label="Rolling out" lines={["Let OpenWork pick the model."]} size="small" />
+        <div className="mt-8 grid max-w-[560px] gap-8">
           <LpFact
             title={
               <>
@@ -200,18 +229,6 @@ export default async function AiGatewayPage() {
             Members pick Smart instead of a model. Each prompt goes to the model you tagged for that kind of work, at the thinking level it needs.{" "}
             <a href="/docs/ai-gateway/auto-model-routing" className="text-[var(--lp-ink)] underline underline-offset-4">
               How routing works
-            </a>
-          </LpFact>
-          <LpFact
-            title={
-              <>
-                Keys for Claude Code, Codex and Cursor<LpStatusBadge>Rolling out</LpStatusBadge>
-              </>
-            }
-          >
-            Members create their own AI Gateway API key and use your organization&apos;s models in other tools. The same access rules and limits apply.{" "}
-            <a href="/docs/ai-gateway/third-party-tools" className="text-[var(--lp-ink)] underline underline-offset-4">
-              How API keys work
             </a>
           </LpFact>
         </div>
@@ -253,8 +270,66 @@ const PROVIDERS: { name: string; mark: ReactNode }[] = [
   { name: "Azure OpenAI", mark: <MicrosoftMark className="h-5 w-5" /> },
   { name: "Mistral", mark: <BrandLogo name="mistral" className="h-5 w-5 text-[#FA520F]" /> },
   { name: "OpenRouter", mark: <BrandLogo name="openrouter" className="h-5 w-5 text-[#6467F2]" /> },
-  { name: "LiteLLM and more", mark: <Route className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.5} aria-hidden="true" /> }
+  { name: "LiteLLM, TrueFoundry and more", mark: <Route className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.5} aria-hidden="true" /> }
 ];
+
+type Guide = { name: string; detail: string; href: string; mark: ReactNode };
+
+const GATEWAYS: Guide[] = [
+  {
+    name: "LiteLLM",
+    detail: "Shared, personal or OpenWork-made keys",
+    href: "/docs/ai-gateway/litellm",
+    mark: <LiteLlmMark className="h-5 w-5" />
+  },
+  {
+    name: "TrueFoundry",
+    detail: "OpenWork makes each person's key",
+    href: "/docs/ai-gateway/truefoundry",
+    mark: <TrueFoundryMark className="h-5 w-5" />
+  }
+];
+
+const HARNESSES: Guide[] = [
+  { name: "OpenWork", detail: "Built in, no key to create", href: DOCS_URL, mark: <OpenWorkMark className="h-5 w-auto" /> },
+  { name: "Claude Code", detail: "Every model, not just Claude", href: "/docs/ai-gateway/claude-code", mark: <BrandLogo name="claude" className="h-5 w-5 text-[#D97757]" /> },
+  { name: "Codex", detail: "The CLI and the ChatGPT app", href: "/docs/ai-gateway/codex", mark: <BrandLogo name="openai" className="h-5 w-5 text-[#111]" /> },
+  { name: "Cursor", detail: "Chat and agent, run locally", href: "/docs/ai-gateway/cursor", mark: <BrandLogo name="cursor" className="h-5 w-5 text-[#111]" /> },
+  { name: "OpenCode", detail: "One opencode.json", href: "/docs/ai-gateway/opencode", mark: <OpenCodeMark className="h-5 w-5" /> },
+  { name: "Any other tool", detail: "OpenAI or Anthropic compatible", href: "/docs/ai-gateway/third-party-tools", mark: <Route className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.5} aria-hidden="true" /> }
+];
+
+/** A ruled list of setup guides: mark, name and one line, linking to the guide. */
+function GuideList({ label, items, twoColumns = false }: { label: string; items: Guide[]; twoColumns?: boolean }) {
+  return (
+    <div>
+      <h3 className="text-[13px] font-normal text-[var(--lp-muted)]">{label}</h3>
+      <ul aria-label={label} className={`mt-3 grid border-b border-[var(--lp-border)] ${twoColumns ? "sm:grid-cols-2" : ""}`}>
+        {items.map((item, index) => (
+          <li key={item.name} className={`border-t border-[var(--lp-border)] ${twoColumns && index % 2 === 1 ? "sm:border-l" : ""}`}>
+            <a
+              href={item.href}
+              className={`group flex min-h-[64px] items-center gap-3 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--lp-ink)] ${
+                twoColumns ? (index % 2 === 1 ? "sm:pl-5" : "sm:pr-5") : ""
+              }`}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center">{item.mark}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-[var(--lp-ink)]">{item.name}</span>
+                <span className="block text-[13px] text-[var(--lp-muted)]">{item.detail}</span>
+              </span>
+              <ArrowUpRight
+                className="h-4 w-4 shrink-0 text-[var(--lp-muted)] opacity-0 transition-opacity duration-150 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 motion-reduce:transition-none"
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function StepRow({ label, value }: { label: string; value: string }) {
   return (
