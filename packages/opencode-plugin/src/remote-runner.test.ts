@@ -1,12 +1,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { realpathSync } from "node:fs"
+import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { readLocationSessionChoices, type LocationSessionChoices } from "./remote-access.ts"
 import { parseJournal, type Command, type Request } from "../../remote-sessions/src/index.ts"
 import { createRemoteRunnerController } from "./remote-runner.ts"
 import { createNativeHost } from "./test-native.ts"
 import { DenAuthError, isRecord } from "./den.ts"
 
-function fixture() {
-  const host = createNativeHost()
+function fixture(sessionChoices: LocationSessionChoices = { [realpathSync(process.cwd())]: "created" }, directory = process.cwd()) {
+  const host = createNativeHost(directory)
   let now = 5000
   let offline = false
   let status = 200
@@ -14,6 +19,11 @@ function fixture() {
   const users = new Map<string, unknown>([["member-one", "usr_one"], ["member-two", "usr_two"]])
   let meStatus = 200
   let completionStatus = 200
+  let registrationStatus = 200
+  let answerSupported = true
+  let reportStatus = 200
+  let sessionPolicy: unknown = { ceiling: "created", optIn: true }
+  let reportedPolicy: unknown = undefined
   let blockedMe: (() => Promise<Response>) | null = null
   let blockedWork: (() => Promise<Response>) | null = null
   let work: unknown[] = [{ kind: "remote_session_create", commandId: "cmd_example" }]
@@ -33,9 +43,13 @@ function fixture() {
       user: { id: users.get(new Headers(init?.headers).get("authorization")?.replace(/^Bearer /, "") ?? ""), email: "unchanged@example.test" },
       session: { activeOrganizationId: "org_not_approved" },
     }, { status: meStatus })
-    if (path === "/v1/session-runners/token") return Response.json({ token: `runner_${++tokenGeneration}_${"x".repeat(64)}`, expiresAt: now + 60 * 60_000 })
+    if (path === "/v1/session-runners/token") {
+      const rejectsAnswer = !answerSupported && isRecord(body) && Array.isArray(body.capabilities) && body.capabilities.includes("remote_session_answer_v1")
+      return Response.json({ token: `runner_${++tokenGeneration}_${"x".repeat(64)}`, expiresAt: now + 60 * 60_000 }, { status: rejectsAnswer ? 400 : registrationStatus })
+    }
     if (path === "/v1/session-runners/inventory") return Response.json({ ok: true, updatedAt: now })
-    if (path === "/v1/session-runners/work") return blockedWork ? blockedWork() : Response.json({ items: work })
+    if (path === "/v1/session-runners/sessions") return Response.json({ ok: true, updatedAt: now, sessionAccess: reportedPolicy ?? sessionPolicy }, { status: reportStatus })
+    if (path === "/v1/session-runners/work") return blockedWork ? blockedWork() : Response.json({ items: work, sessionAccess: sessionPolicy })
     if (path === `/v1/remote-session-commands/${command.commandId}/claim`) return Response.json({ assignment: command })
     if (path === `/v1/remote-session-commands/${command.commandId}/complete`) {
       if (completionStatus !== 200) return Response.json({ error: "unavailable" }, { status: completionStatus })
@@ -52,7 +66,7 @@ function fixture() {
     throw new Error(`Unexpected path ${path}`)
   }
   const controller = createRemoteRunnerController({ ctx: host.ctx, apiBaseUrl: "https://den.example.test", label: "Example workstation",
-    fetch: fetcher, now: () => now, random: () => 0.5,
+    sessionChoices, fetch: fetcher, now: () => now, random: () => 0.5,
     schedule: (_callback, delay) => { scheduled.push(delay); return () => {} },
     acquireOwnership: async () => { acquired++; return { release: async () => { released++ } } },
   })
@@ -60,6 +74,11 @@ function fixture() {
     host, calls, command, requests, scheduled, controller, fetcher, users,
     set meStatus(value: number) { meStatus = value },
     set completionStatus(value: number) { completionStatus = value },
+    set registrationStatus(value: number) { registrationStatus = value },
+    set answerSupported(value: boolean) { answerSupported = value },
+    set reportStatus(value: number) { reportStatus = value },
+    set sessionPolicy(value: unknown) { sessionPolicy = value },
+    set reportedPolicy(value: unknown) { reportedPolicy = value },
     set blockedMe(value: (() => Promise<Response>) | null) { blockedMe = value },
     get now() { return now }, set now(value: number) { now = value },
     set offline(value: boolean) { offline = value }, set status(value: number) { status = value },
@@ -76,7 +95,7 @@ test("registers a standalone remote-only runner and reports just the approved na
   await f.controller.poll()
   const registration = f.calls.find(call => call.path.endsWith("/token"))
   assert.ok(isRecord(registration?.body))
-  assert.deepEqual(registration.body.capabilities, ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1", "remote_session_answer_v1"])
+  assert.deepEqual(registration.body.capabilities, ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1", "remote_session_choice_v1", "remote_session_answer_v1"])
   assert.equal(registration.body.protocolVersion, 1)
   assert.equal(registration.body.concurrency, 1)
   assert.equal(registration.auth, "Bearer member-one")
@@ -98,7 +117,7 @@ test("a native inventory failure is inspectable without leaking its exception or
   f.host.ctx.model.list = async () => { throw new Error("Native decoder failed: Bearer private-test-credential") }
   await f.controller.poll()
   const status = f.controller.inspectStatus()
-  assert.deepEqual(status, { state: "retrying", phase: "inventory", failures: 1, observedAt: f.now, error: "inventory_failed" })
+  assert.deepEqual(status, { state: "retrying", phase: "inventory", failures: 1, observedAt: f.now, access: "off", error: "inventory_failed" })
   const recorded = [...f.host.storage.entries()].find(([key]) => key.startsWith("remoteSessions/status/"))?.[1]
   assert.deepEqual(recorded, status)
   assert.ok(!JSON.stringify(recorded).includes("private-test-credential"))
@@ -146,6 +165,7 @@ test("restart recovers a prepared deterministic create after native creation but
   f.host.storage.set(journalKey, JSON.parse(JSON.stringify({ version: 1, commands: [prepared], requests: [] })))
   await f.controller.close()
   const restarted = createRemoteRunnerController({ ctx: f.host.ctx, apiBaseUrl: "https://den.example.test", fetch: f.fetcher,
+    sessionChoices: { [realpathSync(process.cwd())]: "created" },
     now: () => f.now, acquireOwnership: async () => ({ release: async () => {} }) })
   await restarted.poll()
   assert.equal(f.host.sessions.size, 1)
@@ -459,6 +479,193 @@ test("background retries back off with bounded jitter and return to the ordinary
   await f.controller.poll()
   assert.equal(f.scheduled.at(-1), 3000)
   await f.controller.close()
+})
+
+test("registration alone reports off and never claims work or touches native sessions", async () => {
+  const f = fixture({})
+  await f.controller.poll()
+  assert.deepEqual(f.calls.find(call => call.path.endsWith("/sessions"))?.body, { access: "off", chosen: true, sessions: [] })
+  assert.ok(!f.calls.some(call => call.path.endsWith("/claim")))
+  assert.ok(!f.host.calls.some(call => call.method.startsWith("session.")))
+  await f.controller.close()
+})
+
+test("explicit created consent is acknowledged before native effects and never advertises local sessions", async () => {
+  const f = fixture()
+  f.sessionPolicy = { ceiling: "all", optIn: true }
+  await f.controller.poll()
+  const report = f.calls.findIndex(call => call.path.endsWith("/sessions"))
+  const claim = f.calls.findIndex(call => call.path.endsWith("/claim"))
+  assert.ok(report >= 0 && claim > report)
+  assert.deepEqual(f.calls[report]?.body, { access: "created", chosen: true, sessions: [] })
+  assert.equal(nativePrompts(f), 1)
+  assert.ok(!JSON.stringify(f.calls.find(call => call.path.endsWith("/token"))?.body).includes("remote_session_access_v1"))
+  await f.controller.close()
+})
+
+test("a shared inherited config allows two exact workspaces but not their home or a nested Location", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-owner-choice-"))
+  const home = realpathSync(root)
+  const first = join(home, "first")
+  const second = join(home, "second")
+  const nested = join(first, "nested")
+  try {
+    await mkdir(nested, { recursive: true })
+    await mkdir(second)
+    const choices = { [first]: "created", [second]: "created" }
+    const runners = []
+    for (const directory of [first, second, home, nested]) {
+      const f = fixture(readLocationSessionChoices(choices), directory)
+      try {
+        await f.controller.poll()
+        const registration = f.calls.find(call => call.path.endsWith("/token"))?.body
+        assert.ok(isRecord(registration))
+        runners.push(registration.runnerId)
+        const allowed = directory === first || directory === second
+        assert.equal(nativePrompts(f), allowed ? 1 : 0)
+        assert.deepEqual(f.calls.find(call => call.path.endsWith("/sessions"))?.body,
+          { access: allowed ? "created" : "off", chosen: true, sessions: [] })
+      } finally { await f.controller.close() }
+    }
+    assert.equal(new Set(runners).size, 4)
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
+test("a lowered organization ceiling stops journal recovery, native reads and claims on the next poll", async () => {
+  const f = fixture()
+  await f.controller.poll()
+  const before = f.host.calls.length
+  const httpBefore = f.calls.length
+  f.sessionPolicy = { ceiling: "off", optIn: true }
+  await f.controller.poll()
+  assert.ok(!f.host.calls.slice(before).some(call => call.method.startsWith("session.")))
+  assert.ok(!f.calls.slice(httpBefore).some(call => call.path.endsWith("/claim") || call.path.endsWith("/session")))
+  assert.deepEqual(f.calls.at(-1)?.body, { access: "off", chosen: true, sessions: [] })
+  f.sessionPolicy = { ceiling: "created", optIn: true }
+  f.work = []
+  await f.controller.poll()
+  assert.equal(nativePrompts(f), 1, "restoring access resumes observation, not the original prompt")
+  await f.controller.close()
+})
+
+test("while off, recovery still acknowledges a result that already happened, with no native call or new claim", async () => {
+  const f = fixture()
+  f.completionStatus = 500
+  await f.controller.poll()
+  assert.equal(nativePrompts(f), 1)
+  assert.equal(f.journals()[0]?.commands[0]?.completionAcknowledged, false)
+  assert.equal(f.controller.inspectStatus().state, "retrying")
+  f.completionStatus = 200
+  f.sessionPolicy = { ceiling: "off", optIn: true }
+  const native = f.host.calls.length
+  const http = f.calls.length
+  await f.controller.poll()
+  const later = f.calls.slice(http)
+  assert.ok(!f.host.calls.slice(native).some(call => call.method.startsWith("session.")), "no native read or prompt while off")
+  assert.ok(!later.some(call => call.path.endsWith("/claim") || call.path.endsWith("/session")))
+  const completion = later.find(call => call.path.endsWith(`/${f.command.commandId}/complete`))
+  assert.ok(isRecord(completion?.body) && completion.body.status === "delivered", "Den is not left holding an unfinished claim")
+  assert.equal(f.journals()[0]?.commands[0]?.completionAcknowledged, true)
+  assert.deepEqual(later.find(call => call.path.endsWith("/sessions"))?.body, { access: "off", chosen: true, sessions: [] })
+  assert.equal(f.controller.inspectStatus().state, "connected")
+  assert.equal(f.controller.inspectStatus().access, "off")
+  await f.controller.close()
+})
+
+test("status says whether this exact Location takes tasks right now", async () => {
+  const allowed = fixture()
+  await allowed.controller.poll()
+  assert.equal(allowed.controller.inspectStatus().access, "created")
+  allowed.sessionPolicy = { ceiling: "off", optIn: true }
+  await allowed.controller.poll()
+  assert.equal(allowed.controller.inspectStatus().access, "off")
+  await allowed.controller.close()
+  assert.equal(allowed.controller.inspectStatus().access, "off")
+  const unlisted = fixture({})
+  await unlisted.controller.poll()
+  assert.deepEqual({ ...unlisted.controller.inspectStatus(), observedAt: 0 },
+    { state: "connected", phase: "recovery", failures: 0, observedAt: 0, access: "off", error: null })
+  assert.equal(nativePrompts(unlisted), 0)
+  await unlisted.controller.close()
+})
+
+test("a policy lowered in the consent acknowledgement wins over the earlier work response", async () => {
+  const f = fixture()
+  f.reportedPolicy = { ceiling: "off", optIn: true }
+  await f.controller.poll()
+  assert.equal(nativePrompts(f), 0)
+  assert.ok(!f.calls.some(call => call.path.endsWith("/claim")))
+  await f.controller.close()
+})
+
+test("a server without answer support can step down without dropping owner choice", async () => {
+  const f = fixture()
+  f.answerSupported = false
+  await f.controller.poll()
+  assert.equal(f.controller.inspectStatus().state, "connected")
+  assert.equal(nativePrompts(f), 1)
+  const registrations = f.calls.filter(call => call.path.endsWith("/token"))
+  assert.equal(registrations.length, 2)
+  assert.ok(isRecord(registrations[1]?.body) && Array.isArray(registrations[1].body.capabilities))
+  assert.ok(registrations[1].body.capabilities.includes("remote_session_choice_v1"))
+  assert.ok(!registrations[1].body.capabilities.includes("remote_session_answer_v1"))
+  await f.controller.close()
+})
+
+test("an old server rejecting owner choice never gets a legacy capability fallback", async () => {
+  const f = fixture()
+  f.registrationStatus = 400
+  await f.controller.poll()
+  const registrations = f.calls.filter(call => call.path.endsWith("/token"))
+  assert.equal(registrations.length, 2, "only the answer capability may be retried without")
+  for (const call of registrations) {
+    assert.ok(isRecord(call.body) && Array.isArray(call.body.capabilities))
+    assert.ok(call.body.capabilities.includes("remote_session_choice_v1"))
+  }
+  assert.equal(nativePrompts(f), 0)
+  assert.equal(f.controller.inspectStatus().phase, "registration")
+  await f.controller.close()
+})
+
+test("missing or malformed server policy and failed consent reports cannot authorize new or recovered work", async () => {
+  for (const policy of [undefined, null, {}, { ceiling: "created" }, { ceiling: "unknown", optIn: true }]) {
+    const f = fixture()
+    await f.controller.poll()
+    const before = f.host.calls.length
+    f.sessionPolicy = policy
+    await f.controller.poll()
+    assert.equal(f.controller.inspectStatus().phase, "access")
+    assert.equal(f.controller.inspectStatus().state, "retrying")
+    assert.ok(!f.host.calls.slice(before).some(call => call.method.startsWith("session.")))
+    await f.controller.close()
+  }
+  for (const status of [403, 404, 500]) {
+    const f = fixture()
+    f.reportStatus = status
+    await f.controller.poll()
+    assert.equal(nativePrompts(f), 0)
+    assert.ok(!f.calls.some(call => call.path.endsWith("/claim")))
+    await f.controller.close()
+  }
+})
+
+test("orderly reload revokes the old allowance and removed config keeps the same runner off", async () => {
+  const f = fixture()
+  await f.controller.poll()
+  const first = f.calls.find(call => call.path.endsWith("/token"))?.body
+  await f.controller.close()
+  assert.deepEqual(f.calls.at(-1)?.body, { access: "off", chosen: true, sessions: [] })
+  const before = f.host.calls.length
+  const restarted = createRemoteRunnerController({ ctx: f.host.ctx, apiBaseUrl: "https://den.example.test", fetch: f.fetcher,
+    now: () => f.now, acquireOwnership: async () => ({ release: async () => {} }) })
+  try {
+    await restarted.poll()
+    const last = f.calls.filter(call => call.path.endsWith("/token")).at(-1)?.body
+    assert.ok(isRecord(first) && isRecord(last))
+    assert.equal(last.runnerId, first.runnerId)
+    assert.deepEqual(f.calls.at(-1)?.body, { access: "off", chosen: true, sessions: [] })
+    assert.ok(!f.host.calls.slice(before).some(call => call.method.startsWith("session.")))
+  } finally { await restarted.close() }
 })
 
 test("a second Location denied process ownership never registers or claims", async () => {

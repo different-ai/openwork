@@ -110,7 +110,8 @@ The plugin also ends the OpenWork session and removes the models and MCP servers
         "apiBaseUrl": "https://api.openworklabs.com", // self-hosted or enterprise OpenWork
         "providers": true,                            // false: no AI Gateway models
         "mcp": true,                                  // false: no OpenWork MCP servers
-        "remoteSessions": false,                      // true: explicitly approve remote prompts here
+        "remoteSessions": false,                      // true: register this Location as a remote target
+        "remoteSessionAccess": {},                      // exact canonical directories -> "off" or "created"; default off
         "label": "My OpenCode computer",               // optional remote target display name
         "refreshIntervalMs": 300000                   // how often to refresh (minimum 60000)
       }
@@ -121,12 +122,37 @@ The plugin also ends the OpenWork session and removes the models and MCP servers
 
 ## Optional remote sessions
 
-**Signing in does not approve this machine for remote work.** Remote sessions are off by default. Only set `"remoteSessions": true` yourself when you want OpenWork's remote-session tools (including Slack and MCP) to create sessions and send prompts in this OpenCode Location. Your organization must also enable **Remote session targets**; the plugin cannot enable that rollout.
+**Signing in or registering a target does not approve remote work.** `remoteSessions` defaults to `false`. Setting it to `true` registers the current Location, but access still defaults to `off`, including when upgrading a configuration that already had `remoteSessions: true`.
+
+To let OpenWork's remote-session tools (including Slack and MCP) start tasks in specific headless workspaces, the computer's owner adds an exact-directory allowlist to the plugin's options in their trusted OpenCode configuration:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [{
+    "package": "opencode-openwork",
+    "options": {
+      "remoteSessions": true,
+      "remoteSessionAccess": {
+        "/home/owner/projects/notes": "created",
+        "/home/owner/projects/code": "created",
+        "/home/owner": "off"
+      }
+    }
+  }]
+}
+```
+
+Use canonical absolute directories (`pwd -P` in each workspace; on Windows, the resolved path with the same drive-letter and folder casing). Keys match the Location's actual directory exactly: no parent inheritance, child directories, globs, relative paths or symlink aliases. This matters because OpenCode merges global and ancestor configuration into each Location. An omitted directory, invalid value or `"all"` means `off`. `created` allows only new remote tasks and control of the sessions those tasks created, never access to sessions started locally. The plugin does not offer all-session access.
+
+The allowlist is local configuration, not an organization setting: it applies to whichever OpenWork account and organization is signed in at that Location, so signing in to another organization carries the same directory choice there. Runner identities and journals remain partitioned by the verified member and organization, and only that member's own remote tools can start tasks on the runner. The organization's current access ceiling always wins and cannot be changed by this option. The existing `remoteTasksOptIn` rollout (cloud and self-hosted) controls the server's owner-consent requirement; this plugin implements its existing runner protocol rather than bypassing it. No live rollout change is needed in the plugin.
 
 The runner advertises only the directory where this plugin instance is loaded, with an opaque workspace ID and that Location's available native models. It uses the same native OpenCode host as your interactive work—no embedded OpenWork server, service discovery, local HTTP connection, or authentication override. Normal OpenCode permissions remain in effect. Permission and question waits are reported to the caller; answer them in OpenCode. The plugin never approves them for you.
 
-- Set `remoteSessions` back to `false` and reload the plugin to withdraw local approval. Sign-out, credential expiry, account/organization changes, and plugin unload stop remote polling and native control. Already admitted native sessions are not deleted or silently interrupted.
-- Runner health is inspectable through the controller's `inspectStatus()` and plugin storage at `remoteSessions/status/<directory hash>`. It records the last credentials, registration, inventory, recovery, or work failure phase without credentials, prompts, or provider exception text.
+- To revoke access, remove the directory's allowlist entry or set it to `"off"`; OpenCode reloads the plugin when configuration changes. Keeping `remoteSessions: true` lets it report `off` to Den on every poll. Turning `remoteSessions` off stops registration and polling entirely. Orderly unload also makes a bounded best-effort `off` report. If the computer is offline or killed abruptly, Den may retain its previous report until it reconnects, but the local runner never controls native sessions without current consent. Already admitted native sessions are not deleted or silently interrupted.
+- Sign-out, credential expiry, account/organization changes, and plugin unload stop native control. Every cycle obtains the current organization policy and acknowledges an access report before recovering journaled work or claiming anything new. Reports always contain an empty local-session list. Lowering the organization ceiling to `off` stops native reads, prompts and progress reporting on the next successful poll. While a Location is `off`, recovery makes no native call: journaled work that had not finished fails with `remote_access_off`, and results that already happened are still acknowledged so Den does not keep stale claims. Sessions that were already delivered resume observation if access returns.
+- A server must accept `remote_session_choice_v1`, send `{ ceiling, optIn }` in the work response and acknowledge `PUT /v1/session-runners/sessions`. Older servers that reject the capability, omit policy, or reject reports fail closed: no legacy fallback can claim work. Update Den first. The optional answer capability may still step down independently.
+- Runner health is inspectable through the controller's `inspectStatus()` and plugin storage at `remoteSessions/status/<directory hash>`. It records the last credentials, registration, inventory, access, recovery, or work failure phase without credentials, prompts, or provider exception text, and `access` (`off` or `created`): what this exact Location takes right now. `connected` with `access: "off"` usually means the directory key does not match the Location's canonical path, or the organization limit is off. An unsupported consent protocol reports `access_failed` or `registration_failed` and retries with backoff.
 - Runner tokens renew in the background without clearing the durable delivery journal. Reconnecting reuses saved receipts and stable prompt IDs rather than creating or sending the same work twice. Interrupted creation is recovered by a deterministic native session ID; the returned session must match the original command metadata and approved directory before it is trusted.
 - A process-safe lock permits only one runner for the same actual directory. A live or suspended process's lock is never stolen; a dead process's marker can be reclaimed. An unreadable or incomplete lock fails closed.
 - **Transcript limitation:** OpenCode 2.0.26's plugin host exposes recent context after compaction, not full historical messages. Reads declare `historyScope: "context"`; unknown or compacted pagination cursors return an explicit error. Tool summaries and text are bounded and may be truncated.
