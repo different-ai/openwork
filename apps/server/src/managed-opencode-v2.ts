@@ -392,6 +392,21 @@ const ENGINE_INHERITED_ENV = [
   "OPENCODE_CLAUDE_PATH",
 ];
 
+// Outbound proxy settings, in both spellings tools read. The engine calls
+// providers and MCP servers itself, so on a network that only allows traffic
+// through a proxy it needs the same route as the rest of the machine.
+const ENGINE_PROXY_ENV = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
+const ENGINE_NO_PROXY_ENV = ["NO_PROXY", "no_proxy"];
+// The engine reaches OpenWork's own bridges and local model servers on
+// loopback; those calls must never be sent to the proxy.
+const ENGINE_LOOPBACK_NO_PROXY = ["localhost", "127.0.0.1", "::1"];
+
+function noProxyWithLoopback(value: string | undefined): string {
+  const entries = (value ?? "").split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (entries.includes("*")) return entries.join(",");
+  return [...entries, ...ENGINE_LOOPBACK_NO_PROXY.filter((host) => !entries.includes(host))].join(",");
+}
+
 /** Caller values win; on Windows each name matches any spelling (`Path`, `windir`) and is passed once. */
 export function inheritedEngineEnv(
   env: NodeJS.ProcessEnv | undefined,
@@ -407,6 +422,19 @@ export function inheritedEngineEnv(
   for (const name of ENGINE_INHERITED_ENV) {
     const value = read(env, name) ?? read(parentEnv, name);
     if (value !== undefined) setEnv(inherited, name, value, opts);
+  }
+  let proxied = false;
+  for (const name of ENGINE_PROXY_ENV) {
+    const value = read(env, name) ?? read(parentEnv, name);
+    if (value === undefined) continue;
+    setEnv(inherited, name, value, opts);
+    if (value.trim()) proxied = true;
+  }
+  const noProxy = ENGINE_NO_PROXY_ENV.map((name) => read(env, name) ?? read(parentEnv, name));
+  for (const [index, name] of ENGINE_NO_PROXY_ENV.entries()) {
+    const value = noProxy[index] ?? noProxy.find((entry) => entry !== undefined);
+    if (proxied) setEnv(inherited, name, noProxyWithLoopback(value), opts);
+    else if (noProxy[index] !== undefined) setEnv(inherited, name, noProxy[index], opts);
   }
   return inherited;
 }

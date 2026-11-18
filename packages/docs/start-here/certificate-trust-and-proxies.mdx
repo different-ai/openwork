@@ -24,7 +24,8 @@ The desktop also starts the embedded OpenWork server plus local runtimes and sid
 - If the user or launcher already set `NODE_EXTRA_CA_CERTS`, that user-provided value wins and OpenWork does not overwrite it.
 - The Electron main process extends Node's default CA list with the same generated additions when the runtime supports it, so the embedded server's own outbound TLS diagnostics and probes use the same enterprise roots.
 - The generated bundle is for spawned Node-compatible runtimes. It does not configure Electron's Chromium trust store.
-- Do not assume every sidecar honors `HTTP_PROXY` or `HTTPS_PROXY` universally. Use proxy settings documented for the specific runtime or sidecar.
+- The agent engine receives `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` from the environment OpenWork was started with, in either spelling. When a proxy is set, OpenWork adds `localhost`, `127.0.0.1`, and `::1` to `NO_PROXY` so the engine's local connections stay direct. The engine does not read the system proxy or a PAC file; on a proxy-only network, start OpenWork with these variables set.
+- Do not assume every other sidecar honors `HTTP_PROXY` or `HTTPS_PROXY`. Use proxy settings documented for the specific runtime or sidecar.
 
 #### Automatic chain repair for the activated organization server
 
