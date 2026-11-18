@@ -13,7 +13,8 @@ again.
 
 With the feature off, the panel only ever shows the main chat's pages. A page
 opened from the split pane loads out of sight until that chat is moved into
-its own chat.
+its own chat. A file opened from the split pane shows in the main chat's
+panel, so the click never opens an empty panel.
 
 ## Rules
 
