@@ -113,5 +113,9 @@ function release(provider: Provider, environment: NodeJS.ProcessEnv): ManagedDep
   const parsed = schemaFor(provider).safeParse(releaseInput(provider, environment))
   return parsed.success ? parsed.data : null
 }
+export function managedDeploymentApiOrigin(environment: NodeJS.ProcessEnv = process.env): string | null {
+  const parsed = releaseSchema.shape.apiOrigin.safeParse(environment.DEN_API_PUBLIC_URL)
+  return parsed.success ? parsed.data : null
+}
 export function awsRelease(environment: NodeJS.ProcessEnv = process.env): ManagedDeploymentRelease | null { return release("aws", environment) }
 export function gcpRelease(environment: NodeJS.ProcessEnv = process.env): ManagedDeploymentRelease | null { return release("gcp", environment) }
