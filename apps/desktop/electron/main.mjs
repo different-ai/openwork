@@ -25,7 +25,7 @@ import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./me
 import { registerMigrationIpc } from "./migration.mjs";
 import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
-import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
+import { createRuntimeManager, createSystemCaCertificateVerifyProc, sandboxFeatureDenOrigin } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
@@ -1517,6 +1517,7 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  trustedDenOrigin: async () => sandboxFeatureDenOrigin((await workspaceStore.getDesktopBootstrapConfig()).apiBaseUrl),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
   driveFileApproval: async ({ provider, action, path: filePath, name, fileId, webViewLink, mode }) => {

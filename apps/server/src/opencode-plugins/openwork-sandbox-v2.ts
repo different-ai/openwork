@@ -23,6 +23,43 @@ export type SandboxNativeTool = {
   execute(input: unknown, call: SandboxToolCall): Promise<SandboxEngineResult>;
 };
 type Registration = { dispose(): Promise<void> };
+export type SandboxInferenceEvent = {
+  tools: Record<string, unknown>;
+  system: { text: string; metadata?: Record<string, unknown> }[];
+};
+const instructionMetadata = z.object({
+  experimental: z.object({
+    instructions: z.array(z.object({ key: z.string(), text: z.string() }).passthrough()),
+  }).passthrough(),
+}).passthrough();
+
+/** Core 2.2.6 retains the initial instruction catalog independently of the tool
+ * snapshot. Its supported request hooks identify generated sources explicitly;
+ * never scrub arbitrary user/policy text merely for mentioning a host tool. */
+function removeHostCatalog(event: SandboxInferenceEvent) {
+  // The pinned core opencode-tools plugin appends this separate, unkeyed
+  // SystemPart even after its session_move tool was removed by a transform.
+  const worktreeGuidance = "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.";
+  for (let index = event.system.length - 1; index >= 0; index--) {
+    const part = event.system[index]!;
+    if (part.text === worktreeGuidance && part.metadata === undefined) {
+      event.system.splice(index, 1);
+      continue;
+    }
+    const parsed = instructionMetadata.safeParse(part.metadata);
+    if (!parsed.success) continue;
+    const sources = parsed.data.experimental.instructions;
+    for (const source of sources) {
+      if (source.key !== "core/codemode" || !source.text) continue;
+      const start = part.text.indexOf(source.text);
+      if (start < 0) throw new Error("Sandbox-only mode could not isolate the generated host tool catalog. No inference was admitted.");
+      part.text = part.text.slice(0, start) + part.text.slice(start + source.text.length);
+    }
+    part.metadata = { ...parsed.data, experimental: {
+      ...parsed.data.experimental, instructions: sources.filter(source => source.key !== "core/codemode"),
+    } };
+  }
+}
 export type HostNativeTool = {
   name: string; description: string; input: Record<string, unknown>; options?: { codemode?: boolean };
   execute(input: unknown, call: SandboxToolCall): Promise<unknown>;
@@ -42,7 +79,7 @@ export type SandboxPluginContext = {
   };
   session: { hook: {
     (name: "prompt", callback: () => Promise<void>): Promise<Registration>;
-    (name: "context" | "generate" | "compaction", callback: (event: { tools: Record<string, unknown> }) => Promise<void>): Promise<Registration>;
+    (name: "context" | "generate" | "compaction", callback: (event: SandboxInferenceEvent) => Promise<void>): Promise<Registration>;
   } };
 };
 export type SandboxPluginDependencies = {
@@ -128,9 +165,9 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
         name: catalogMode === "only" ? name : `sandbox_${name}`,
         description: sandboxToolDescriptions[name],
         input: definition.input,
-        // Required mode must never require Code Mode's host-side interpreter:
-        // it has its own fetch/network surface outside the guest primitives.
-        options: { codemode: catalogMode !== "only" },
+        // Guest operations are direct tools in both modes. Code Mode's host-side
+        // interpreter must never be required to reach the local microVM.
+        options: { codemode: false },
         async execute(input, call) {
           call.signal.throwIfAborted();
           if (closed) throw new Error("Sandbox tools are closed.");
@@ -179,6 +216,7 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
       const current = modeSchema.parse(await dependencies.status());
       if (current !== "only") return;
       assertProjectIsolation();
+      removeHostCatalog(event);
       for (const id of Object.keys(event.tools)) if (!SANDBOX_TOOL_NAMES.some(name => id === name)) delete event.tools[id];
       // OpenCode 2.2.6's built-in patch hook removes edit/write for gpt-* on
       // all three request kinds. Restore only our validated guest descriptors,

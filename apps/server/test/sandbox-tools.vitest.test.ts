@@ -139,7 +139,10 @@ test("normal mode adds six provider-safe sandbox IDs without replacing host tool
   try {
     assert.deepEqual([...fixture.tools.keys()], SANDBOX_TOOL_NAMES.map(name => `sandbox_${name}`));
     for (const name of SANDBOX_TOOL_NAMES) assert.ok(fixture.builtins.has(name));
-    for (const tool of fixture.tools.values()) assert.deepEqual(providerSchemaProblems(tool.input), []);
+    for (const tool of fixture.tools.values()) {
+      assert.deepEqual(providerSchemaProblems(tool.input), []);
+      assert.equal(tool.options?.codemode, false, "guest tools are directly callable without Code Mode");
+    }
     const tool = fixture.tools.get("sandbox_shell"); assert.ok(tool);
     await tool.execute({ command: "pwd" }, call());
     assert.equal(fixture.executions(), 1);
@@ -160,6 +163,7 @@ test("only mode replaces six primitive IDs and default-denies all other host too
     for (const name of SANDBOX_TOOL_NAMES) assert.equal(fixture.builtins.has(name), false);
     assert.equal(fixture.builtins.has("browser"), false);
     assert.equal(fixture.builtins.has("mcp_host_tool"), false);
+    for (const tool of fixture.tools.values()) assert.equal(tool.options?.codemode, false);
     const tool = fixture.tools.get("shell"); assert.ok(tool);
     await tool.execute({ command: "pwd" }, call());
     fixture.setMode("tools");

@@ -10,7 +10,7 @@ import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManage
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
 import { resolveHostExecution, stricterAgentPermissionDecision, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
-import { readSandboxSettings, readSandboxRequirement, writeSandboxRequirement } from "./sandbox-settings-store.js";
+import { readSandboxSettings, readAppliedSandboxSettings, readSandboxRequirement, writeSandboxRequirement } from "./sandbox-settings-store.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "./sandbox-host-guards.js";
 
@@ -256,7 +256,7 @@ class ManagedDesktopPolicy {
     if (request.method === "POST" && /\/session\/[^/]+\/abort\/?$/.test(decoded)) return;
     // Even a v1 read can initialize a workspace and start its local MCPs.
     // Only v2 has the replacement catalog and MCP pre-spawn guards.
-    await this.assertHostExecution();
+    await this.assertHostExecution((await readSandboxSettings(this.config)).allowHostExecution);
     if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
     const generation = this.generation;
     const rules = await this.agentPermissionRulesFor(["external_directory"], true);
@@ -387,8 +387,9 @@ class ManagedDesktopPolicy {
   /** The local preference is independent of rollout. Turning the feature off must never restore host tools. */
   async sandboxSettings(): Promise<{ allowHostExecution: boolean; effectiveAllowHostExecution: boolean; managed: boolean; featureEnabled: boolean }> {
     const local = await readSandboxSettings(this.config);
+    const applied = await readAppliedSandboxSettings(this.config);
     const access = await this.localSandboxAccess();
-    const effect = stricterAgentPermissionDecision(local.allowHostExecution ? "allow" : "deny", access.hostDenied || !access.hostPolicyVerified ? "deny" : "allow");
+    const effect = stricterAgentPermissionDecision(applied.allowHostExecution ? "allow" : "deny", access.hostDenied || !access.hostPolicyVerified ? "deny" : "allow");
     return { ...local, effectiveAllowHostExecution: effect === "allow", managed: access.hostDenied, featureEnabled: access.enabled };
   }
   /** Fresh control-plane authority only; no workspace file, environment enable switch or unscoped disk policy. */
@@ -432,7 +433,7 @@ class ManagedDesktopPolicy {
     }
   }
   async assertHostExecution(localAllowHostExecution?: boolean): Promise<void> {
-    const local = { allowHostExecution: localAllowHostExecution ?? (await readSandboxSettings(this.config)).allowHostExecution };
+    const local = { allowHostExecution: localAllowHostExecution ?? (await readAppliedSandboxSettings(this.config)).allowHostExecution };
     // A local denial does not need a network round trip to be authoritative.
     if (!local.allowHostExecution) throw new ApiError(403, "sandbox_only", "Host execution is disabled. Use the sandbox tools; nothing ran on the host.");
     if (!this.session) return;

@@ -1,6 +1,7 @@
 import { startupPhase } from "./startup-phase.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { assertSandboxEngineIdle } from "./sandbox-engine-transition.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
@@ -164,7 +165,8 @@ export interface EngineV2Preview {
   ensureWorkspaceReady(directory: string): Promise<void>;
   assertSandboxReady(directory: string): Promise<void>;
   assertProjectConfigReady(): Promise<void>;
-  ensureProjectIsolation(options?: { localAllowHostExecution?: boolean; commit?: () => Promise<void> }): Promise<void>;
+  ensureProjectIsolation(options?: { deferBusy?: boolean }): Promise<void>;
+  projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }>;
   refreshProviders(): Promise<void>;
   refreshGatewayInventory(): void;
   /**
@@ -979,29 +981,50 @@ export function createEngineV2Preview(options: {
   }
 
   let isolationInFlight: Promise<void> | undefined;
-  function ensureProjectIsolation(change: { localAllowHostExecution?: boolean; commit?: () => Promise<void> } = {}): Promise<void> {
-    if (!change.commit && isolationInFlight) return isolationInFlight;
+  let isolationRefreshing = false;
+  let isolationTimer: ReturnType<typeof setInterval> | undefined;
+  async function localSandboxSettingsPending(): Promise<boolean> {
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    return desired.allowHostExecution !== applied.allowHostExecution;
+  }
+  async function projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }> {
+    const policy = managedDesktopPolicy(config);
+    const required = await policy.requiresSandbox();
+    return {
+      pending: isolationRefreshing || await localSandboxSettingsPending()
+        || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
+      effectiveAllowHostExecution: sidecar ? !sidecar.projectConfigDisabled : !required,
+    };
+  }
+  function deferBusyIsolation(error: unknown): void {
+    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) return;
+    throw error;
+  }
+  async function ensureProjectIsolation(change: { deferBusy?: boolean } = {}): Promise<void> {
+    if (isolationInFlight) return change.deferBusy ? isolationInFlight.catch(deferBusyIsolation) : isolationInFlight;
     const pending = (async () => {
       if (startPromise) await startPromise;
       // Do not override the embedding host's deferred startup/history handoff.
       // A process that is not running will read the preference when it starts.
       const policy = managedDesktopPolicy(config);
-      const needsChange = async () => sidecar !== undefined && sidecar.projectConfigDisabled !== await policy.requiresSandbox(change.localAllowHostExecution);
-      if (!await needsChange()) { await change.commit?.(); return; }
+      if (!sidecar) { await applySandboxSettings(config); return; }
+      const needsChange = async () => sidecar !== undefined && (sidecar.projectConfigDisabled !== await policy.requiresSandbox() || await localSandboxSettingsPending());
+      if (!await needsChange()) return;
       await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
         const active = sidecar;
         if (!active) throw new ApiError(503, "sandbox_unavailable", "The engine stopped before the permission could be applied. Retry; nothing ran on the host.");
         // Never restart into project-enabled mode on unknown authority. A fresh
         // denial may update the desired mode and eliminate the transition.
-        if (!await policy.requiresSandbox(change.localAllowHostExecution)) {
-          try { await policy.assertHostExecution(change.localAllowHostExecution); }
-          catch (error) { if (!await policy.requiresSandbox(change.localAllowHostExecution)) throw error; }
+        if (!await policy.requiresSandbox()) {
+          try { await policy.assertHostExecution(true); }
+          catch (error) { if (!await policy.requiresSandbox()) throw error; }
         }
-        if (!await needsChange()) { await change.commit?.(); return; }
+        if (!await needsChange()) return;
+        // The desired setting is already durable. Busy or unknown activity keeps
+        // this process intact; fresh admissions cannot cross its policy mismatch.
         await assertSandboxEngineIdle(active);
-        // Busy/unknown checks run before persistence. A 409 leaves the local
-        // preference unchanged and never stops somebody else's task.
-        await change.commit?.();
+        isolationRefreshing = true;
+        await applySandboxSettings(config);
         const resume = allowRunning;
         await stopRuntime();
         if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "The engine was stopped while applying permissions. Start it and retry.");
@@ -1017,12 +1040,15 @@ export function createEngineV2Preview(options: {
       } });
     })();
     isolationInFlight = pending;
-    return pending.finally(() => { if (isolationInFlight === pending) isolationInFlight = undefined; });
+    const settled = pending.finally(() => {
+      if (isolationInFlight === pending) { isolationInFlight = undefined; isolationRefreshing = false; }
+    });
+    return change.deferBusy ? settled.catch(deferBusyIsolation) : settled;
   }
 
   async function assertProjectConfigReady(): Promise<void> {
-    if (sidecar && !sidecar.projectConfigDisabled && await managedDesktopPolicy(config).requiresSandbox()) {
-      throw new ApiError(503, "sandbox_engine_restart_required", "Restart the engine to use sandbox-only mode without project configuration or workspace plugins. No workspace was initialized.");
+    if ((await projectIsolationStatus()).pending) {
+      throw new ApiError(409, "sandbox_engine_policy_pending", "Saved. Applies when current tasks finish. No new task was started.");
     }
   }
 
@@ -1220,6 +1246,8 @@ export function createEngineV2Preview(options: {
     mcpLocations.clear();
     if (mcpHealthTimer) clearInterval(mcpHealthTimer);
     mcpHealthTimer = undefined;
+    if (isolationTimer) clearInterval(isolationTimer);
+    isolationTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
@@ -1243,6 +1271,9 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    // No old native process remains at cold startup or after the idle fence.
+    // Materialize durable desired intent before the bridge decides spawn policy.
+    await applySandboxSettings(config);
     contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends, config) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
@@ -1297,6 +1328,13 @@ export function createEngineV2Preview(options: {
       });
       mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
       mcpHealthTimer.unref?.();
+      // Native isolation is process-global. Reconcile both directions without
+      // making the person find an idle moment or resend their saved preference.
+      isolationTimer = setInterval(() => {
+        if (stopping || !allowRunning || !sidecar) return;
+        void ensureProjectIsolation({ deferBusy: true }).catch(error => warn(`Permissions: ${errorMessage(error)}`));
+      }, 500);
+      isolationTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
@@ -1379,7 +1417,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
-    await managedDesktopPolicy(config).assertHostExecution();
+    await managedDesktopPolicy(config).assertHostExecution((await readSandboxSettings(config)).allowHostExecution);
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1583,7 +1621,7 @@ export function createEngineV2Preview(options: {
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, refreshProviders,
+  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
     refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
     syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

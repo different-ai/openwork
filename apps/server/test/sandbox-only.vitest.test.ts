@@ -7,10 +7,10 @@ import { createFakeProvider } from "../../../packages/sandbox/src/testing/fake-p
 import type { ServerConfig } from "../src/types.js";
 import { createLocalSandboxRuntime } from "../src/local-sandbox-runtime.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
-import { readSandboxSettings, writeSandboxSettings } from "../src/sandbox-settings-store.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings, writeSandboxSettings } from "../src/sandbox-settings-store.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "../src/sandbox-host-guards.js";
 import { serve } from "../src/serve-node.js";
-import { setupSandboxTools, type SandboxPluginContext, type SandboxToolMode, type HostNativeTool } from "../src/opencode-plugins/openwork-sandbox-v2.js";
+import { setupSandboxTools, type SandboxPluginContext, type SandboxToolMode, type HostNativeTool, type SandboxInferenceEvent } from "../src/opencode-plugins/openwork-sandbox-v2.js";
 import { SANDBOX_TOOL_NAMES } from "../src/sandbox-tool-host.js";
 
 async function fixture() {
@@ -58,6 +58,30 @@ test("local preference is engine-global DB state; a workspace JSON cannot import
     expect(JSON.parse(await readFile(join(f.workspace, "openwork.json"), "utf8"))).toEqual({ allowHostExecution: true });
     await expect(managedDesktopPolicy(f.config).assertHostExecution()).rejects.toThrow("Host execution is disabled");
   } finally { await f.cleanup(); }
+});
+
+test("desired intent is durable without changing the applied local policy of active work", async () => {
+  const f = await fixture();
+  const policy = managedDesktopPolicy(f.config);
+  const runtime = createLocalSandboxRuntime(f.config, { access: async () => ({ enabled: true, scope: "fixture" }) });
+  try {
+    await applySandboxSettings(f.config);
+    await writeSandboxSettings(f.config, { allowHostExecution: false });
+    expect(await readSandboxSettings({ ...f.config })).toEqual({ allowHostExecution: false });
+    expect(await readAppliedSandboxSettings({ ...f.config })).toEqual({ allowHostExecution: true });
+    expect(await policy.requiresSandbox()).toBe(true);
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "tools" });
+    await expect(policy.assertLegacyExecutionRequest(new Request("http://localhost/opencode/session", { method: "POST" }), "/opencode/session")).rejects.toMatchObject({ code: "sandbox_only" });
+    await applySandboxSettings(f.config);
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    expect(await runtime.status(f.workspace)).toEqual({ mode: "only" });
+    await writeSandboxSettings(f.config, { allowHostExecution: true });
+    expect(await readAppliedSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    await applySandboxSettings(f.config);
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+  } finally { await runtime.close(); await f.cleanup(); }
 });
 
 test("verified org deny beats local allow, survives flag off/outage and scoped cold restart", async () => {
@@ -156,7 +180,7 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
   let mode: SandboxToolMode = "only";
   let before: ((event: { tool: string }) => Promise<void>) | undefined;
   let prompt: (() => Promise<void>) | undefined;
-  const inference = new Map<string, (event: { tools: Record<string, unknown> }) => Promise<void>>();
+  const inference = new Map<string, (event: SandboxInferenceEvent) => Promise<void>>();
   const originals = new Set([...SANDBOX_TOOL_NAMES, "patch", "browser_open", "computer_script", "custom_host_command", "drive_pull_file"]);
   const tools = new Map<string, HostNativeTool>();
   const mcp = new Map<string, unknown>([["local", { type: "local", command: ["sh", "-c", "touch /host-sentinel"] }], ["remote", { type: "remote", url: "https://fixture.invalid/mcp" }]]);
@@ -179,8 +203,17 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
     for (const hook of inference.values()) {
       // OpenCode 2.2.6's patch preference deletes these before our hook for
       // gpt-* models. Only guest definitions may be restored, on every flow.
-      const finalCatalog = { tools: Object.fromEntries([...SANDBOX_TOOL_NAMES.filter(name => name !== "edit" && name !== "write"), "patch", "execute", "browser", "browser_open", "custom_host"].map(id => [id, {}])) };
+      const hostCatalog = "# Code Mode\n- tools.opencode.models\n- tools.openwork_context";
+      const policy = "Keep control-plane authorization and pending queue instructions. User text may mention tools.opencode.models.";
+      const finalCatalog = {
+        tools: Object.fromEntries([...SANDBOX_TOOL_NAMES.filter(name => name !== "edit" && name !== "write"), "patch", "execute", "browser", "browser_open", "custom_host"].map(id => [id, {}])),
+        system: [{ text: `${policy}\n\n${hostCatalog}\n\nLater hook safety instruction.`, metadata: { experimental: { instructions: [
+          { key: "entry/openwork-context", text: policy }, { key: "core/codemode", text: hostCatalog },
+        ] } } }, { text: "Unkeyed user instruction mentioning Code Mode must remain." }],
+      };
       await hook(finalCatalog);
+      expect(finalCatalog.system.map(part => part.text)).toEqual([`${policy}\n\n\n\nLater hook safety instruction.`, "Unkeyed user instruction mentioning Code Mode must remain."]);
+      expect(finalCatalog.system[0]?.metadata?.experimental.instructions).toEqual([{ key: "entry/openwork-context", text: policy }]);
       expect(Object.keys(finalCatalog.tools).sort()).toEqual([...SANDBOX_TOOL_NAMES].sort());
       for (const name of SANDBOX_TOOL_NAMES) expect(finalCatalog.tools[name]).toEqual({ description: tools.get(name)!.description, input: tools.get(name)!.input });
     }
@@ -188,7 +221,15 @@ test("required catalog is bounded, before-call guards reject stale custom tools,
     await expect(tools.get("shell")!.execute({ command: "touch /host-sentinel" }, { sessionID: "root", signal: new AbortController().signal })).rejects.toThrow("guest down");
     await expect(tools.get("shell")!.execute({ command: "touch /host-sentinel" }, { sessionID: "child", signal: new AbortController().signal })).rejects.toThrow("guest down");
     expect(guestCalls).toBe(2);
-    mode = "off";
+    for (const ordinaryMode of ["tools", "off"] satisfies SandboxToolMode[]) {
+      mode = ordinaryMode;
+      for (const hook of inference.values()) {
+        const ordinary = { tools: { execute: {} }, system: [{ text: "Host catalog", metadata: { experimental: { instructions: [{ key: "core/codemode", text: "Host catalog" }] } } }] };
+        await hook(ordinary);
+        expect(ordinary.tools).toEqual({ execute: {} });
+        expect(ordinary.system[0]?.text).toBe("Host catalog");
+      }
+    }
     await expect(prompt?.()).rejects.toThrow("Restart the engine");
     expect([...originals]).toEqual([]);
   } finally { await close(); }
@@ -352,7 +393,7 @@ test("settings route requires approval before engine-global writes and leaves wo
   const hostHeaders = { "x-openwork-host-token": f.config.hostToken, "content-type": "application/json" };
   try {
     const route = `${root}/workspace/ws_sandbox/sandbox-settings`;
-    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, managed: false, featureEnabled: false });
+    expect(await (await fetch(route, { headers })).json()).toEqual({ allowHostExecution: true, effectiveAllowHostExecution: true, pending: false, managed: false, featureEnabled: false });
     const pending = fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: false }) });
     let approvalId: string | undefined;
     for (let attempt = 0; attempt < 50 && !approvalId; attempt++) {
@@ -365,7 +406,7 @@ test("settings route requires approval before engine-global writes and leaves wo
     await fetch(`${root}/approvals/${approvalId}`, { method: "POST", headers: hostHeaders, body: JSON.stringify({ reply: "allow" }) });
     const updated = await pending;
     expect(updated.status).toBe(200);
-    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: false });
+    expect(await updated.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: false });
     expect(await readSandboxSettings(f.config)).toEqual({ allowHostExecution: false });
     expect((await fetch(`${root}/workspace/ws_sandbox/files/raw?path=missing.txt`, { headers })).status).toBe(403);
     expect((await fetch(route, { method: "PUT", headers, body: JSON.stringify({ allowHostExecution: "yes" }) })).status).toBe(400);
