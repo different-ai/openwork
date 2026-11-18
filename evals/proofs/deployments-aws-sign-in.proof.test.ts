@@ -68,7 +68,7 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
   });
 
   await step("the admin can also save an exact role name", async () => {
-    await user.click({ text: /^Change$/, role: "button" });
+    await user.click({ testId: "aws-sign-in-detail" });
     await user.see({ testId: "aws-sign-in-dialog" });
     await user.type({ testId: "aws-sign-in-role" }, ROLE_NAME);
     await user.screenshot();
