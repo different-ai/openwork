@@ -211,17 +211,21 @@ async function settle() {
 }
 
 test("reads options with safe defaults", () => {
-  assert.deepEqual(readOptions({}), { apiBaseUrl: "https://api.openworklabs.com", providers: true, mcp: true, remoteSessions: false, refreshIntervalMs: 300_000 })
+  assert.deepEqual(readOptions({}), { apiBaseUrl: "https://api.openworklabs.com", providers: true, mcp: true, remoteSessions: false, remoteSessionAccess: {}, refreshIntervalMs: 300_000 })
   assert.deepEqual(readOptions({ apiBaseUrl: "https://den.example/", providers: false, refreshIntervalMs: 5 }), {
     apiBaseUrl: "https://den.example",
     providers: false,
     mcp: true,
     remoteSessions: false,
+    remoteSessionAccess: {},
     refreshIntervalMs: 60_000,
   })
   assert.equal(readOptions({ apiBaseUrl: "javascript:alert(1)" }).apiBaseUrl, "https://api.openworklabs.com")
   assert.equal(readOptions({ remoteSessions: "true" }).remoteSessions, false)
   assert.equal(readOptions({ remoteSessions: true }).remoteSessions, true)
+  assert.deepEqual(readOptions({ remoteSessions: true }).remoteSessionAccess, {}, "registration never becomes consent on upgrade")
+  assert.deepEqual(readOptions({ remoteSessionAccess: { [process.cwd()]: "created", relative: "created" } }).remoteSessionAccess,
+    { [process.cwd()]: "created" })
   assert.equal(readOptions({ label: "  Example computer  " }).label, "Example computer")
 })
 

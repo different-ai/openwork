@@ -85,6 +85,25 @@ opt-in.
   computers: "Takes tasks from Workbot", or that it takes none and what would
   change that.
 
+## Headless OpenCode Locations
+
+`opencode-openwork` implements the same owner-choice protocol without a desktop
+settings page. `remoteSessions: true` registers a Location but does not grant
+access. The owner must also list each canonical absolute directory under
+`remoteSessionAccess` with `"created"`; omitted directories stay `off`, including
+an ancestor home Location that inherits the same OpenCode configuration. There
+is no `"all"` option. See the [plugin configuration and server compatibility
+requirements](../../../packages/opencode-plugin/README.md#optional-remote-sessions).
+
+The runner registers `remote_session_choice_v1`, obtains the live organization
+ceiling and reports `{ access, chosen: true, sessions: [] }` through the existing
+session-runner routes before recovering or claiming work. No database mutation,
+new owner-consent endpoint, or rollout change is required. The local default is
+always `off`, even with this rollout disabled; the server still enforces the
+organization's ceiling. An older server that cannot acknowledge the choice
+never authorizes native work. Orderly unload reports `off` best-effort; after an
+abrupt exit Den can retain its last report until the runner reconnects.
+
 ## Turning it off
 
 Turn `remoteTasksOptIn` off (or use its kill switch). Computers whose owners
@@ -103,5 +122,10 @@ limit of Off keeps applying.
   both the journalled and the older path.
 - `ee/apps/den-api/test/api/`: refusals, automatic selection, the organization
   limit, the opt-in default, older apps.
+- `ee/apps/den-api/test/api/headless-owner-choice.api.test.ts`: the actual plugin
+  controller against real Den routes and throwaway MySQL (fixture native host):
+  two allowed Locations, home denied, member isolation, revocation, re-enable and
+  organization Off. `packages/opencode-plugin/src/remote-{access,runner}.test.ts`
+  also cover invalid configuration, exact-directory scope and old-server denial.
 - `evals/proofs/den-remote-access-off.proof.test.ts`: real Den web and API with
   stand-in computers.

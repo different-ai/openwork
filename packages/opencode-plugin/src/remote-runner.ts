@@ -13,8 +13,9 @@ import { createNativeOpenCodeAdapter, nativeWorkspace } from "./native-opencode.
 export { hasNativeSessionHost } from "./native-opencode.ts"
 import type { NativePluginContext } from "./opencode.ts"
 import { acquireRunnerOwnership, type RunnerOwnership } from "./runner-ownership.ts"
+import { headlessSessionAccess, isHeadlessSessionPolicy, type LocationSessionChoices } from "./remote-access.ts"
 
-const CAPABILITIES = ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1"]
+const CAPABILITIES = ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1", "remote_session_choice_v1"]
 /** Answers pending permissions from the person; older Den versions reject the unknown capability, so step down. */
 const ANSWER_CAPABILITIES = [...CAPABILITIES, "remote_session_answer_v1"]
 const RENEW_MS = 30 * 60_000
@@ -55,11 +56,12 @@ interface Active {
   tokenExpiresAt: number
   registeredAt: number
   inventoryAt: number
+  sessionPolicy: unknown
 }
 
 export interface RemoteRunnerStatus {
   state: "waiting" | "connected" | "retrying" | "closed"
-  phase: "credentials" | "registration" | "inventory" | "recovery" | "work"
+  phase: "credentials" | "registration" | "inventory" | "access" | "recovery" | "work"
   failures: number
   observedAt: number
   /** Stable local diagnosis; never contains provider errors, credentials, or prompts. */
@@ -81,6 +83,7 @@ export function createRemoteRunnerController(input: {
   ctx: NativePluginContext
   apiBaseUrl: string
   label?: string
+  sessionChoices?: LocationSessionChoices
   fetch?: Fetch
   now?: () => number
   random?: () => number
@@ -190,8 +193,10 @@ export function createRemoteRunnerController(input: {
           token: () => disposed || active !== state || state.account.credentialExpiresAt <= now() || state.tokenExpiresAt <= now() ? null : state.token,
           fetch: (url, init) => fetcher(String(url), init), timeoutMs: 10_000 }),
         now,
+        sessionAccess: () => disposed || active !== state || state.account.credentialExpiresAt <= now() || state.tokenExpiresAt <= now()
+          ? "off" : headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy),
       }),
-      token: null, tokenExpiresAt: 0, registeredAt: 0, inventoryAt: 0,
+      token: null, tokenExpiresAt: 0, registeredAt: 0, inventoryAt: 0, sessionPolicy: null,
     }
     // Invalid storage must fail closed before claiming any work.
     await state.runner.inspect()
@@ -207,6 +212,7 @@ export function createRemoteRunnerController(input: {
     try { response = await mint(ANSWER_CAPABILITIES) }
     catch (error) {
       if (!(error instanceof DenRequestError) || error.status !== 400) throw error
+      // Only answer support is optional. Never step down from owner-choice enforcement.
       response = await mint(CAPABILITIES)
     }
     signal.throwIfAborted()
@@ -219,6 +225,7 @@ export function createRemoteRunnerController(input: {
     state.tokenExpiresAt = response.expiresAt
     state.registeredAt = now()
     state.inventoryAt = 0
+    state.sessionPolicy = null
   }
 
   async function runnerRequest(state: Active, path: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
@@ -265,7 +272,28 @@ export function createRemoteRunnerController(input: {
       }
       state.inventoryAt = now()
     }
-    // Restore receipts and pending outboxes before fetching more claimed work.
+    // Learn the live organization ceiling before recovery, too: it may have been lowered while offline.
+    phase = "work"
+    state.sessionPolicy = null
+    const response = await runnerRequest(state, "/v1/session-runners/work", signal)
+    signal.throwIfAborted()
+    if (!isRecord(response) || !Array.isArray(response.items) || response.items.length > 10) throw new Error("Invalid session-runner work response.")
+    phase = "access"
+    if (!isHeadlessSessionPolicy(response.sessionAccess)) throw new Error("OpenWork must support headless owner choice before taking tasks.")
+    state.sessionPolicy = response.sessionAccess
+    const access = headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy)
+    // Registration is not consent. Report the exact Location's explicit deny-by-default choice;
+    // no local-session inventory or attach capability is ever published by this headless runner.
+    const report = await runnerRequest(state, "/v1/session-runners/sessions", signal, { access, chosen: true, sessions: [] })
+    signal.throwIfAborted()
+    if (!isRecord(report) || report.ok !== true || typeof report.updatedAt !== "number" || !Number.isFinite(report.updatedAt)
+      || !isHeadlessSessionPolicy(report.sessionAccess)) {
+      state.sessionPolicy = null
+      throw new Error("OpenWork returned an invalid owner-choice acknowledgement.")
+    }
+    state.sessionPolicy = report.sessionAccess
+    if (headlessSessionAccess(input.sessionChoices ?? {}, directory ?? "", state.sessionPolicy) === "off") return
+    // Restore receipts and pending outboxes before claiming more work, but only after consent is acknowledged.
     phase = "recovery"
     await state.runner.reconcile(signal)
     const journal = await state.runner.inspect()
@@ -273,9 +301,6 @@ export function createRemoteRunnerController(input: {
       await state.runner.prune({ retainCommands: 128, retainRequests: 128 })
     }
     phase = "work"
-    const response = await runnerRequest(state, "/v1/session-runners/work", signal)
-    signal.throwIfAborted()
-    if (!isRecord(response) || !Array.isArray(response.items) || response.items.length > 10) throw new Error("Invalid session-runner work response.")
     for (const item of response.items) {
       signal.throwIfAborted()
       if (!isRecord(item)) throw new Error("Invalid session-runner work item.")
@@ -307,6 +332,7 @@ export function createRemoteRunnerController(input: {
       failures = 0
       await recordStatus(active ? "connected" : "waiting")
     }).catch(async error => {
+      if (active) active.sessionPolicy = null
       if (!controller.signal.aborted) {
         failures++
         // Server-side feature disable/revocation withdraws approval immediately. Keep journals for safe reconnect.
@@ -342,6 +368,10 @@ export function createRemoteRunnerController(input: {
       cancelTimer?.()
       operation?.abort(new Error("The OpenWork plugin unloaded."))
       await flight
+      // Clear Den's last allowance on orderly reload/unload as well as stopping locally at once.
+      // Offline revocation remains local; the next registration reports the current choice again.
+      if (active?.token) await runnerRequest(active, "/v1/session-runners/sessions", AbortSignal.timeout(1000),
+        { access: "off", chosen: true, sessions: [] }).catch(() => {})
       active = null
       await ownership?.release()
       ownership = null

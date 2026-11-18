@@ -41,6 +41,7 @@ import type {
 import { fetchSharedGatewayInventory, inventoryRequestTicket } from "./inventory-fetch.ts"
 import { toProviderRecord, type GatewayProvider, type ProviderRecord } from "./providers.ts"
 import type { RemoteRunnerController } from "./remote-runner.ts"
+import { readLocationSessionChoices, type LocationSessionChoices } from "./remote-access.ts"
 
 export const PLUGIN_ID = "openwork"
 export const DEFAULT_API_BASE_URL = "https://api.openworklabs.com"
@@ -57,6 +58,8 @@ export interface PluginOptions {
   readonly mcp: boolean
   /** Sign-in alone is not permission to remotely run prompts on this machine. */
   readonly remoteSessions: boolean
+  /** Exact canonical Location directories the owner allows to take newly created remote tasks. */
+  readonly remoteSessionAccess: LocationSessionChoices
   readonly label?: string
   readonly refreshIntervalMs: number
 }
@@ -73,6 +76,7 @@ export function readOptions(options: Readonly<Record<string, unknown>>): PluginO
     providers: options.providers !== false,
     mcp: options.mcp !== false,
     remoteSessions: options.remoteSessions === true,
+    remoteSessionAccess: readLocationSessionChoices(options.remoteSessionAccess),
     ...(typeof options.label === "string" && options.label.trim() ? { label: options.label.trim().slice(0, 120) } : {}),
     refreshIntervalMs: interval,
   }
@@ -496,14 +500,15 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
       }
 
       // 4. Refresh now, on sign-in, sign-out and account switches, and on a timer.
-      // Explicit remote approval starts a separate background loop; it never gates a native prompt.
+      // Registration starts a separate background loop; exact-Location consent is enforced inside it.
       if (options.remoteSessions) {
         // Keep ordinary Git sparse installs working without the optional shared source package.
         // A missing optional module must never disable sign-in, providers, or MCP.
         remoteLoading = import("./remote-runner.ts").then(async module => {
           if (disposed) return
           if (!module.hasNativeSessionHost(ctx)) throw new Error("native_host_unavailable")
-          remote.current = module.createRemoteRunnerController({ ctx, apiBaseUrl: options.apiBaseUrl, label: options.label, fetch: fetcher, now })
+          remote.current = module.createRemoteRunnerController({ ctx, apiBaseUrl: options.apiBaseUrl, label: options.label,
+            sessionChoices: options.remoteSessionAccess, fetch: fetcher, now })
           await ctx.storage.set("remoteSessions/status", { status: "enabled", directory: ctx.location.directory })
           if (!disposed) remote.current.start()
         }).catch(async () => {
