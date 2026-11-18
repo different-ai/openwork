@@ -33,14 +33,12 @@ test("structured release-verification messages survive the browser proxy and adm
   for (status of [400, 502]) {
     const sent = await sendAdmin("/v1/admin/managed-releases/validate", "POST", { provider: "aws", version: "1.2.3", expectedRevision: "revision" });
     assert.equal(sent.ok, false);
-    if (sent.ok) assert.fail("verification must fail");
     assert.equal(sent.status, status);
     assert.equal(sent.code, payload.error);
     assert.equal(sent.message, payload.message);
 
     const requested = await requestAdmin("/v1/admin/managed-releases/validate", () => null);
     assert.equal(requested.access, "error");
-    if (requested.access === "ready") assert.fail("verification must fail");
     assert.equal(requested.status, status);
     assert.equal(requested.code, payload.error);
     assert.equal(requested.message, payload.message);
