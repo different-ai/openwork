@@ -38,10 +38,13 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, teachRequest = 0, onTeachRequestSettled, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
+  /** Counts up each time the chat asks for the teaching window; `onTeachRequestSettled` says it is open. */
+  teachRequest?: number;
+  onTeachRequestSettled?(): void;
   onViewChange?(view: ComputerView): void;
   /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
@@ -81,6 +84,11 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
   const teachable = canTeach && host.browserDemonstrations === true && views.includes("browser");
+  // Asked from the chat: the Browser view with the teaching window open, ready for the person to start.
+  useEffect(() => {
+    if (!teachRequest || !teachable) return;
+    setView("browser"); setTeachOpen(true); onTeachRequestSettled?.();
+  }, [teachRequest, teachable]);
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);

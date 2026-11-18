@@ -369,6 +369,8 @@ export type RunnerCapabilities = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  /** The host opens its teaching window when the person asks to teach a browser task (`open_teaching`). */
+  teachingNavigation?: boolean
   /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
   sandboxGateway?: boolean
   /** Trusted host rollout, not a model argument. */
@@ -393,6 +395,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
   ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
@@ -485,6 +488,13 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
+      // The newest setting goes first, so an older runner that only lacks it keeps every other setting. Without
+      // teaching navigation the person opens the teaching window themselves.
+      if (unknownSetting(status, payload) && input.teachingNavigation !== undefined) {
+        const { teachingNavigation: _teaching, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
       // Older runners keep all other settings, without the new read-only recovery behavior.
       if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
         const { browserRecovery: _recovery, ...rest } = compatible

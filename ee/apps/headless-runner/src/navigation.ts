@@ -19,3 +19,14 @@ export function openDocument(input: Record<string, unknown>): ToolResult {
     ? { output: JSON.stringify({ fileId: parsed.data.fileId, status: "requested" }), isError: false }
     : { output: "Choose a valid Google Drive file id.", isError: true }
 }
+
+/** The host opens its teaching window on this receipt. Recording starts only when the person presses Start teaching. */
+export const TEACHING_NAVIGATION_TOOL: ToolSpec = {
+  name: "open_teaching",
+  description: "Open the Teach Workbot window in the person's Browser view, where they show you a browser task once so you can repeat it. Use only when the person asks to teach you, to show you how they do something on a website, or to record steps for you. This only opens the window: they choose the tab and press Start teaching, so never say recording has started.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+}
+
+export function openTeaching(): ToolResult {
+  return { output: JSON.stringify({ status: "requested" }), isError: false }
+}

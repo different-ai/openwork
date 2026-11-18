@@ -14,6 +14,13 @@ is unavailable until it moves to a current build (see
 
 ## Teach, review, and run
 
+Asking Workbot in the main chat to be taught a browser task ("let me show you
+how I do this") opens Browser with the teaching window ready. Workbot requests
+it with `open_teaching` (message turns only, never tasks or reports); the
+person still chooses the tab and presses Start teaching, so nothing is recorded
+before they do. The page follows the request once, for a message sent from that
+page. A Teach Workbot action under the reply opens the window again.
+
 1. Open Browser and choose the whiteboard, Teach Workbot, in its toolbar. The
    teaching window floats over the page, which keeps its size; collapse it to
    its latest step or hide it, and teaching continues (the whiteboard shows a
