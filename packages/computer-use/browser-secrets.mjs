@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 /** @typedef {{ tabId: string, url: string, method?: string, headers?: Record<string, string>, body?: Uint8Array | null, bodyComplete?: boolean, resourceType?: string }} BrowserSecretRequest */
 /** @typedef {BrowserSecretSummary & { value: string }} Secret */
 /** @typedef {{ placeholder: string, sessionId: string, secretRef: string, ref: string, generation: number, expiresAt: number,
- *   endedAt: number | null, endReason: string | null, sentTo: Set<string>, reasons: Set<string>, missed: number }} Entry */
+ *   endedAt: number | null, endReason: string | null, sentTo: Set<string>, reasons: Set<string>, acted: boolean, missed: number }} Entry */
 /** @typedef {{ generation: number, entries: Entry[], live: Entry[], nextChange: number, announced: boolean }} TabRecord */
 /** @typedef {{ point: string, bytes: number[] }} Unit one code point of a value and its UTF-8 bytes */
 /** @typedef {{ replacement: string, widen: boolean, match: (text: string, at: number) => number[] | null }} Candidate `match` gives every offset the encoding can end at */
@@ -454,12 +454,14 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
     return url.origin;
   }
 
+  // What a page sends on its own, before the agent clicks or presses a key, says nothing about a
+  // form the agent has not submitted yet: only requests after `noteAction` are counted.
   /** @param {BrowserSecretRequest} input @param {Entry[]} entries @param {Buffer | null} body */
   function countMissed(input, entries, body) {
     if (!entries.length || !body?.length || input.bodyComplete === false || UNCOUNTED_RESOURCES.has(String(input.resourceType))) return;
     if (["GET", "HEAD"].includes(String(input.method).toUpperCase())) return;
     const origin = originOf(input.url)?.origin;
-    if (origin) for (const entry of entries) if (secretOf(entry)?.origins.includes(origin)) entry.missed++;
+    if (origin) for (const entry of entries) if (entry.acted && secretOf(entry)?.origins.includes(origin)) entry.missed++;
   }
 
   /** The origin a value may be swapped into for this request, or null. @param {BrowserSecretRequest} input */
@@ -652,11 +654,20 @@ export function createBrowserSecrets({ allowLoopbackHttp = false, placeholderTtl
       const placeholder = `${tag}${randomToken(PLACEHOLDER_LENGTH - TAG_LENGTH)}`;
       record.entries = record.entries.filter((entry) => entry.ref !== ref || entry.generation !== record.generation);
       record.entries.push({ placeholder, sessionId, secretRef, ref, generation: record.generation, expiresAt: now() + placeholderTtlMs,
-        endedAt: null, endReason: null, sentTo: new Set(), reasons: new Set(), missed: 0 });
+        endedAt: null, endReason: null, sentTo: new Set(), reasons: new Set(), acted: false, missed: 0 });
       record.nextChange = -Infinity;
       settle(tabId);
       schedule();
       return { placeholder };
+    },
+    /**
+     * The agent is about to click or press a key in the tab. From here on, a request with a body to an
+     * allowed origin that does not carry a placeholder entered before this call counts as
+     * `left_without_secret`; what was counted for an earlier click or key is forgotten.
+     * @param {string} tabId
+     */
+    noteAction(tabId) {
+      for (const entry of settle(tabId)) { entry.acted = true; entry.missed = 0; }
     },
     /** The tab's top document changed: requests already on their way may still carry its placeholders for `lingerMs`. @param {string} tabId */
     documentChanged(tabId) {

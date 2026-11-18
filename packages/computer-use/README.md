@@ -447,6 +447,15 @@ already correct control. Form receipts verify the retained value and expose
 `value_mismatch` when a page rewrites or rejects it. Field values filled by the
 page or person stay withheld; only the exact value entered by the agent can be
 read back. Select option references are opaque and limited to the observed list.
+`fill_secret` enters a secret the person saved for the page's site, named by the
+`secretRef` an observation lists in `availableSecrets`: after the person
+confirms the site, secret and field, a random placeholder is typed and the host
+swaps it for the value only in a request to a site the secret is allowed for.
+The step is `verified` or `failed` and never returns the value or the
+placeholder; receipts and observations report what became of it in `secrets`
+(`pending`, `sent` or `not_sent`), and everything the browser host returns is
+redacted of saved secrets and placeholders. A document that received one takes
+no more images.
 Submission still requires
 observing the resulting page; an uncertain submit must never be replayed.
 References expire after a minute and are consumed once. Before input, the host

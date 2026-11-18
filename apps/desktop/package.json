@@ -25,6 +25,7 @@
     "typecheck:electron": "pnpm --filter @openwork/computer-use build && pnpm --filter @openwork/remote-sessions build && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "test:session-runner": "node --test ./test/remote-session-transcript.test.mjs",
     "test:native-navigation": "node --test ./test/browser-navigation-native.test.mjs",
+    "test:browser-secret-swap": "node --test ./test/browser-secret-swap.test.mjs",
     "test:login-entry": "node --test ./test/login-entry.test.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },

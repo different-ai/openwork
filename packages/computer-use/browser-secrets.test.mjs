@@ -502,8 +502,9 @@ test("status: pending, then sent with the origins that received the value", () =
   assert.deepEqual(secrets.status("s1", "tab-2"), []);
 });
 
-test("status: a request with a body to an allowed origin that does not carry the placeholder is left_without_secret", () => {
+test("status: after the agent acts, a request with a body to an allowed origin that does not carry the placeholder is left_without_secret", () => {
   const { secrets, placeholder } = seeded();
+  secrets.noteAction(TAB);
   secrets.rewrite(request({ method: "GET", url: `${SITE}/app.js` }));
   secrets.rewrite(jsonRequest({ user: "someone" }, { method: "HEAD" }));
   secrets.rewrite(jsonRequest({ user: "someone" }, { url: `${OTHER}/collect` }));
@@ -515,6 +516,54 @@ test("status: a request with a body to an allowed origin that does not carry the
   assert.deepEqual(state(secrets), ["not_sent:left_without_secret"]);
   secrets.rewrite(jsonRequest({ password: placeholder }));
   assert.deepEqual(state(secrets), ["sent"]);
+});
+
+test("status: what the page sends before the agent clicks or presses a key is never left_without_secret", () => {
+  const { secrets, secret, placeholder } = seeded();
+  secrets.rewrite(jsonRequest({ event: "field_changed" }));
+  secrets.rewrite(jsonRequest({ event: "heartbeat" }));
+  assert.deepEqual(state(secrets), ["pending"]);
+  // An action in another tab says nothing about this one.
+  secrets.noteAction("tab-2");
+  secrets.rewrite(jsonRequest({ event: "heartbeat" }));
+  assert.deepEqual(state(secrets), ["pending"]);
+  secrets.noteAction(TAB);
+  assert.deepEqual(state(secrets), ["pending"]);
+  secrets.rewrite(jsonRequest({ passwordHash: "0f0f0f" }));
+  assert.deepEqual(state(secrets), ["not_sent:left_without_secret"]);
+  // A placeholder entered after that action waits for an action of its own.
+  secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: TAB, origin: SITE, ref: "e2" });
+  secrets.rewrite(jsonRequest({ event: "heartbeat" }));
+  assert.deepEqual(state(secrets), ["not_sent:left_without_secret", "pending"]);
+  assert.ok(!JSON.stringify(secrets.status("s1", TAB)).includes(placeholder));
+});
+
+test("status: left_without_secret is judged on the requests that follow the latest click or key", () => {
+  const { secrets, placeholder } = seeded();
+  // A first step of a sign-in form posts the user name alone.
+  secrets.noteAction(TAB);
+  secrets.rewrite(jsonRequest({ user: "someone" }));
+  assert.deepEqual(state(secrets), ["not_sent:left_without_secret"]);
+  secrets.noteAction(TAB);
+  assert.deepEqual(state(secrets), ["pending"]);
+  secrets.rewrite(jsonRequest({ password: placeholder }));
+  assert.deepEqual(state(secrets), ["sent"]);
+  // Once sent, a later request without it changes nothing.
+  secrets.noteAction(TAB);
+  secrets.rewrite(jsonRequest({ user: "someone" }));
+  assert.deepEqual(state(secrets), ["sent"]);
+});
+
+test("noteAction on a tab without placeholders, or after they ended, does nothing", () => {
+  const { secrets } = store();
+  secrets.noteAction(TAB);
+  secrets.noteAction(undefined);
+  assert.deepEqual(secrets.status("s1", TAB), []);
+  const held = seeded();
+  held.secrets.tabClosed(TAB);
+  held.secrets.noteAction(TAB);
+  held.secrets.rewrite(jsonRequest({ user: "someone" }));
+  assert.deepEqual(state(held.secrets), ["not_sent:expired"]);
 });
 
 test("status: a changed document lets requests in flight finish, then the placeholder expires", () => {

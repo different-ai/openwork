@@ -44,7 +44,9 @@ const BLOCKED_CHORDS = [
 ].map((parts) => ({ key: parts.at(-1), modifiers: parts.slice(0, -1) }));
 // Chromium on macOS runs these through the app menu, not page key events.
 const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
-const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+const ACTION_TYPES = ["click", "fill", "fill_secret", "select", "set_checked", "key", "scroll", "reveal", "attach"];
+/** The whole of a fill_secret action: a handle, never text. */
+const SECRET_ACTION_KEYS = ["type", "ref", "secretRef"];
 /** As many files as the approval card lists; the broker refuses more. */
 const MAX_FILES = 20;
 const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
@@ -109,6 +111,9 @@ function observePage(id, options = {}) {
     || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
   // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
   const isSensitive = element => isCredential(element) || isPayment(element);
+  // A saved secret goes only into a single-line text field or a text area, named here by its real type.
+  const secretField = element => element instanceof HTMLTextAreaElement ? "textarea"
+    : element instanceof HTMLInputElement && ["password", "text", "email", "tel", "url", "search"].includes(element.type) ? element.type : null;
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -284,6 +289,7 @@ function observePage(id, options = {}) {
   registry.optionRef = optionRef;
   registry.identify = identify;
   registry.isCredential = isCredential;
+  registry.secretField = secretField;
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -352,6 +358,19 @@ const BLOCKER_NEXT = {
   consent: "A cookie or consent dialog covers this page. Observe it (mode interactive) and choose the option the person would want, the most private one such as Reject all unless they said otherwise, then continue.",
   bot_check: "The site is showing a human-verification check the agent must not solve. Tell the person and let them complete it in the browser view, then observe again.",
 };
+// A saved secret the agent cannot enter by its handle is the person's to enter, never a reason to ask for it in chat.
+const SECRET_HANDOFF = "Call browser_handoff so the person enters it directly in the browser; never ask for it in chat.";
+const SECRET_REFUSALS = {
+  secrets_unavailable: `Saved secrets cannot be entered in this browser right now, so nothing was typed. ${SECRET_HANDOFF}`,
+  unknown_secret: `That secretRef is not one of this conversation's saved secrets, so nothing was typed. Use one the observation lists in availableSecrets. Without one: ${SECRET_HANDOFF}`,
+  secret_not_allowed_here: `That secret is not allowed on this website, so nothing was typed. ${SECRET_HANDOFF}`,
+  sign_in_required: "Take over and sign in directly in the browser, then resume.",
+  credential_declined: "The person did not confirm entering this secret on this site. Nothing was typed.",
+  not_editable: "A saved secret goes only into an editable text, password, email, phone, address or search field. Nothing was typed.",
+  stale_element: "The field changed before the secret could be entered, so nothing was typed. Observe again before choosing an action.",
+  value_mismatch: `The field did not keep what was typed for the secret; it may limit length or characters. ${SECRET_HANDOFF}`,
+};
+const SECRET_NOT_SENT = "A saved secret did not reach the site: secrets lists it as not_sent. Do not enter it again or ask for it in chat. Unless the person has already finished this step, call browser_handoff so they do it directly in the browser.";
 // Failures that are the page being busy, not something for a person to fix: the tab stays usable.
 const TRANSIENT_CODES = new Set(["page_changed", "busy", "navigation_timeout"]);
 function prepareAction(id, action) {
@@ -401,6 +420,9 @@ function prepareAction(id, action) {
     const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
     if (!editable || control.readOnly) throw new Error("not_editable");
   }
+  // The field's type as it is at this moment: the person is shown it before a secret is typed there.
+  const field = action.type === "fill_secret" && element ? registry.secretField(element) : null;
+  if (action.type === "fill_secret" && (!field || control.readOnly)) throw new Error("not_editable");
   if (action.type === "select") {
     if (!(element instanceof HTMLSelectElement) || (!element.multiple && action.values.length > 1)) throw new Error("not_selectable");
     for (const value of action.values) {
@@ -420,7 +442,7 @@ function prepareAction(id, action) {
     const hit = document.elementFromPoint(x, y);
     if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
-  return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
+  return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked, ...(field ? { field } : {}) };
 }
 /** Whether this step would click, fill or press a key in a password or one-time-code field. */
 function credentialTarget(id, action) {
@@ -438,9 +460,11 @@ function applyFormAction(action) {
   if (!element?.isConnected) throw new Error("stale_element");
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
-  // Once a password or code was filled in this document, it takes no more images.
-  if (action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
-  // The agent may read back exactly what it entered.
+  const field = action.type === "fill_secret" ? registry.secretField(element) : null;
+  if (action.type === "fill_secret" && (!field || registry.describe(element).readOnly)) throw new Error("not_editable");
+  // Once a password, code or saved secret was filled in this document, it takes no more images.
+  if (field || action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
+  // The agent may read back exactly what it entered. What stands in for a saved secret is not recorded here.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
     : element instanceof HTMLTextAreaElement ? action.text.replace(/\r\n?/g, "\n") : action.text);
@@ -464,6 +488,11 @@ function applyFormAction(action) {
     else element.select();
     if (document.activeElement !== element || !element.isConnected) throw new Error("stale_element");
   }
+  if (field) {
+    element.select();
+    if (document.activeElement !== element || !element.isConnected) throw new Error("stale_element");
+    return { inserted: false, field };
+  }
   return { inserted: false };
 }
 async function verifyFormAction(action) {
@@ -481,14 +510,15 @@ async function verifyFormAction(action) {
     if (matchingSince !== null && performance.now() - matchingSince >= 150) {
       // The agent's own verified entry is what it now knows; later actions in a batch bind to it.
       registry.snapshots.set(element, JSON.stringify(control));
-      return { verified: true, control: registry.describe(element) };
+      // Only whether a saved secret's field kept what was typed leaves the page.
+      return action.type === "fill_secret" ? { verified: true } : { verified: true, control: registry.describe(element) };
     }
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (performance.now() < deadline);
   // A rejected or transformed entry can restore a value filled by the page or
   // person. Only the exact requested value remains eligible for readback.
   if (!element.isConnected) throw new Error("stale_element");
-  return { verified: false, control: registry.describe(element) };
+  return action.type === "fill_secret" ? { verified: false } : { verified: false, control: registry.describe(element) };
 }
 async function captureObservation(webContents, viewport, hostCapture = undefined) {
   if (typeof webContents.captureObservation === "function") return webContents.captureObservation(viewport);
@@ -632,6 +662,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   // A password or code is typed only on a site (exact origin) the person confirmed. Without
   // this, as on hosts that cannot ask, sign-in fields stay with the person.
   approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  // Saved secrets (browser-secrets.mjs): the agent names one by its handle and a placeholder is typed in its place.
+  // Absent on hosts without them. Whatever this host returns is redacted through it, whether or not the flag is on.
+  secrets = /** @type {ReturnType<typeof import("./browser-secrets.mjs").createBrowserSecrets> | undefined} */ (undefined),
+  // The feature flag, read at each use.
+  secretsEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
+  // Asked for every secret, every time: `site` is the page's exact origin and `field` the type of the field it goes into.
+  approveSecret = /** @type {((sessionId: string, request: { site: string, label: string, kind: string, field: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  // Resolves true only once every outgoing request of this tab is being intercepted. Nothing is typed before that.
+  armSecretSwap = /** @type {(tab: { tabId: string }) => Promise<boolean>} */ (async (_tab) => false),
   fileChooserMs = 5000,
   // After a takeover or cancellation stops the agent's navigation, page navigation stays guarded this long
   // (and while any agent operation is still unwinding), so a late task redirect cannot land; then the tab is the person's.
@@ -794,8 +833,26 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     forget(state);
     if (closed) { state.controller?.abort(); states.delete(tabId); }
   }
+  /** Whether saved secrets may be listed and entered right now. A flag that cannot be read is off. */
+  async function secretsOn() {
+    try { return secrets !== undefined && await secretsEnabled() === true; } catch { return false; }
+  }
+  /** What became of the secrets entered in this tab, never a value or a placeholder. @param {string} sessionId @param {string} tabId */
+  function secretReport(sessionId, tabId) {
+    const status = secrets ? secrets.status(sessionId, tabId) : [];
+    return { status, undelivered: status.some((entry) => entry.state === "not_sent") };
+  }
   /**
-   * @param {{ mode?: string, limit?: number, includeText?: boolean }} [options]
+   * An act receipt with that status; an undelivered secret is the first thing `next` says.
+   * @template {{ next?: unknown }} T @param {string} sessionId @param {string} tabId @param {T} receipt @param {boolean} keepNext
+   */
+  function withSecrets(sessionId, tabId, receipt, keepNext) {
+    const { status, undelivered } = secretReport(sessionId, tabId);
+    if (!status.length) return receipt;
+    return { ...receipt, secrets: status, ...(undelivered ? { next: keepNext ? `${SECRET_NOT_SENT} ${receipt.next}` : SECRET_NOT_SENT } : {}) };
+  }
+  /**
+   * @param {{ mode?: string, limit?: number, includeText?: boolean, sessionId?: string }} [options]
    */
   async function observe(tab, includeImage, signal, query = null, options = {}) {
     const state = stateFor(tab.tabId);
@@ -814,9 +871,16 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
     }
+    const offered = typeof options.sessionId === "string" && await secretsOn();
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed during observation. Observe again.");
     signal.throwIfAborted();
+    // The agent learns a saved secret by its handle, name and kind, only on a page of a site it is allowed for.
+    const origin = originOf(url);
+    const available = offered && origin ? secrets.availableFor(options.sessionId, origin) : [];
+    const entered = typeof options.sessionId === "string" ? secretReport(options.sessionId, tab.tabId) : { status: [], undelivered: false };
+    const secretState = { ...(available.length ? { availableSecrets: available } : {}), ...(entered.status.length ? { secrets: entered.status } : {}),
+      ...(entered.undelivered ? { secretsNext: SECRET_NOT_SENT } : {}) };
     // Every observation of this document stays usable while its refs resolve.
     const record = { id, revision, url, viewport: page.viewport, digest, sent: new Set() };
     if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
@@ -826,10 +890,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
     if (mode === "interactive") {
       const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...secretState, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
     const { hasCredentialField: _credential, ...full } = page;
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...(image ? { image } : {}) };
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...secretState, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
   async function settle(tab, observed, since, signal) {
@@ -916,14 +980,16 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(found?.blocker ? { blocker: found.blocker } : {}), ...(passages.length ? {} : { next }) };
   }
   /**
-   * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
+   * @typedef {{ type?: string, ref?: string, text?: string, secretRef?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
    * @param {{ signal?: AbortSignal, recovery?: boolean }} options
    */
-  async function request({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}) {
+  async function perform({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}) {
     let tab, state, dispatched = false, abort, controller, openingController;
+    // A single action's receipt gains the tab's secret status on its way out; a replayed receipt is returned as stored.
+    let single = false;
     /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
     let entry = null;
     try {
@@ -1006,7 +1072,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         await prepare(tab);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText }));
+        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText, sessionId }));
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
           forget(state);
@@ -1051,17 +1117,23 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           entry = { id: args.request_id, input, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
             dispatched: true, mayHaveChangedState: true, retrySafe: false, next: "observe", request_id: args.request_id } };
         }
+        single = !batch;
         const observed = state.observations.get(args.observationId);
         if (!observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("stale_observation", "Observe the current page before acting.");
         const keys = new Map();
         for (const [index, action] of actions.entries()) {
-          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, select, set_checked, key, scroll, reveal or attach.");
+          if (!action || typeof action !== "object" || !ACTION_TYPES.includes(action.type)) fail("invalid_action", "Use click, fill, fill_secret, select, set_checked, key, scroll, reveal or attach.");
           if (action.ref !== undefined && (typeof action.ref !== "string" || !action.ref || action.ref.length > 64)) fail("invalid_action", "Use a ref from an observation of this page.");
           if (action.type === "click" && !action.ref) {
             if (index > 0) fail("invalid_action", "An image-coordinate click can only be the first action. Use refs for later steps.");
             if (!observed.digest || state.latest !== observed) fail("image_required", "Observe with includeImage before clicking image coordinates.");
           }
           if (action.type === "fill" && (typeof action.text !== "string" || action.text.length > 8000 || !action.ref)) fail("invalid_action", "Fill needs an observed editable reference and text of at most 8000 characters.");
+          // A secret is named by its handle alone: an action that also carries text, or anything else, is refused whole.
+          if (action.type === "fill_secret" && (!action.ref || typeof action.secretRef !== "string" || !action.secretRef || action.secretRef.length > 128
+            || !Object.keys(action).every((key) => SECRET_ACTION_KEYS.includes(key)))) {
+            fail("invalid_action", "Fill_secret needs an observed editable reference and a secretRef from availableSecrets, and nothing else: no text.");
+          }
           if (action.type === "attach" && (!action.ref || !Array.isArray(action.files) || action.files.length < 1 || action.files.length > 10
             || !action.files.every((file) => typeof file === "string" && file.startsWith("/") && file.length <= 4096))) {
             fail("invalid_action", "Attach needs the observed upload control's ref and one to ten absolute file paths.");
@@ -1103,7 +1175,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (!await allowed(observed.url) || state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed or access was blocked while preparing the action. Observe again.");
         requestSignal.throwIfAborted();
         if (actions[0].type === "click" && !actions[0].ref && imageDigest(await captureObservation(tab.view.webContents, observed.viewport, (viewport) => capture(tab, viewport))) !== observed.digest) fail("stale_observation", "The image changed. Observe again before choosing coordinates.");
-        if (actions.some((action) => ["fill", "select", "reveal"].includes(action.type))) {
+        if (actions.some((action) => ["fill", "fill_secret", "select", "reveal"].includes(action.type))) {
           // DOM-backed form edits must release the same native input lease as
           // keyboard and pointer events on the shared cloud desktop.
           await beforeInput(tab);
@@ -1122,12 +1194,110 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         // that clicks, fills or presses a key in its field: focusing it can autofill a saved
         // password, Enter can submit one, and a click earlier in a batch can focus the field.
         let confirmedSite = null;
+        // The site the person confirmed a saved secret for. A click or key in its field is not asked about again;
+        // text the agent types into a password or code field still is.
+        let secretSite = null;
         // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
-        const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
+        const leftConfirmedSite = () => [confirmedSite, secretSite].some((site) => site !== null && originOf(contents.getURL()) !== site);
         const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
+        const current = () => state.observations.get(observed.id) === observed && observed.revision === tab.webMcpRevision && observed.url === contents.getURL();
+        // A saved secret is typed as a placeholder that the host swaps for the value on the way to an allowed site.
+        // Every check runs again after each wait, and nothing is typed unless all of them still hold.
+        /** @returns {Promise<{ verified: boolean, site: string } | { code: string, error: string } | { changed: string, error: string }>} */
+        const enterSecret = async (action) => {
+          /** @param {string} code */
+          const refuse = (code) => ({ code, error: SECRET_REFUSALS[code] ?? "The observed control is no longer ready. Observe again before choosing an action." });
+          const changed = { changed: "stale_observation", error: "The page or observation changed while preparing the action. Observe again." };
+          const target = { type: "fill_secret", ref: action.ref };
+          const inPage = async (step, ...args) => {
+            try { return await isolated(contents, step, ...args); }
+            catch (error) {
+              const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
+              if (!code) throw error;
+              return { code };
+            }
+          };
+          const live = () => { requestSignal.throwIfAborted(); checkNavigation(navigationScope); return current(); };
+          const arm = async () => { try { return await armSecretSwap(tab) === true; } catch { return false; } };
+          if (!secrets || !await secretsOn()) return refuse("secrets_unavailable");
+          if (!live()) return changed;
+          const site = originOf(observed.url);
+          const secret = secrets.describe(sessionId, action.secretRef);
+          if (!secret) return refuse("unknown_secret");
+          // No question is asked about a site the secret is not allowed on.
+          if (!site || !secret.origins.includes(site)) return refuse("secret_not_allowed_here");
+          const shown = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          if (shown.code) return refuse(shown.code);
+          if (!approveSecret) return refuse("sign_in_required");
+          const approved = await approveSecret(sessionId, { site, label: secret.label, kind: secret.kind, field: shown.field }, requestSignal) === true;
+          if (!live()) return changed;
+          if (!approved) return refuse("credential_declined");
+          // The answer covers what the person was shown: this page, this secret and this kind of field.
+          const kept = () => {
+            const now = secrets.describe(sessionId, action.secretRef);
+            return !now || now.label !== secret.label || now.kind !== secret.kind ? "unknown_secret" : now.origins.includes(site) ? null : "secret_not_allowed_here";
+          };
+          if (!await secretsOn()) return refuse("secrets_unavailable");
+          const again = await inPage(prepareAction, observed.id, target);
+          if (!live()) return changed;
+          const lost = kept();
+          if (lost) return refuse(lost);
+          if (again.code) return refuse(again.code);
+          if (again.field !== shown.field) return refuse("stale_element");
+          const armed = await arm();
+          if (!live()) return changed;
+          if (!armed) return refuse("secrets_unavailable");
+          publish(tab.tabId, "running", action.type);
+          dispatched = true;
+          const focused = await inPage(applyFormAction, target);
+          // Taking focus gives the page a moment to leave or to change the field: only a placeholder for this
+          // document, secret and field is issued, with its requests still intercepted, and only then typed.
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (focused.code) return refuse(focused.code);
+          if (focused.field !== shown.field) return refuse("stale_element");
+          const stillArmed = await arm();
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (!stillArmed) return refuse("secrets_unavailable");
+          let placeholder;
+          try { ({ placeholder } = secrets.issue({ sessionId, secretRef: action.secretRef, tabId: tab.tabId, origin: site, ref: action.ref })); }
+          catch (error) { return refuse(["unknown_secret", "secret_not_allowed_here"].includes(error?.code) ? error.code : "secrets_unavailable"); }
+          await contents.insertText(placeholder);
+          requestSignal.throwIfAborted();
+          // The comparison happens in the page's isolated world; only its yes or no comes back.
+          const result = await inPage(verifyFormAction, { ...target, text: placeholder });
+          requestSignal.throwIfAborted();
+          return { verified: result.verified === true, site };
+        };
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
-          if (!confirmedSite && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
+          if (action.type === "fill_secret") {
+            const entered = await enterSecret(action);
+            if ("changed" in entered) {
+              if (!steps.length) fail(entered.changed, entered.error);
+              interrupted = "page_changed";
+              break;
+            }
+            const step = { type: action.type, ref: action.ref, secretRef: action.secretRef };
+            if ("code" in entered) {
+              if (!batch) fail(entered.code, entered.error);
+              failure = { index, ...step, code: entered.code, error: entered.error };
+              break;
+            }
+            secretSite = entered.site;
+            const outcome = entered.verified ? "verified" : "failed";
+            const mismatch = entered.verified ? {} : { code: "value_mismatch", error: SECRET_REFUSALS.value_mismatch };
+            if (!batch) {
+              return { ok: entered.verified, dispatched, mayHaveChangedState: dispatched, outcome, retrySafe: false, ...mismatch,
+                tabId: tab.tabId, ref: action.ref, secretRef: action.secretRef, next: "observe" };
+            }
+            // A field that did not keep what was typed is listed with the steps and stops the batch.
+            steps.push({ i: index, ...step, outcome });
+            if (entered.verified) continue;
+            failure = { index, ...step, outcome, ...mismatch };
+            break;
+          }
+          if (!confirmedSite && !(secretSite && action.type !== "fill") && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
             && await isolated(contents, credentialTarget, observed.id, action)) {
             const site = new URL(observed.url).origin;
             const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
@@ -1222,6 +1392,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
               if (action.type === "scroll") {
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: action.deltaY * scale });
               } else {
+                // What the page sends from here on is the answer to this click: see `left_without_secret`.
+                if (action.type === "click") secrets?.noteAction(tab.tabId);
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
                 requestSignal.throwIfAborted();
                 await cdp.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
@@ -1232,6 +1404,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           }
           if (action.type === "key") {
             const key = keys.get(index);
+            secrets?.noteAction(tab.tabId);
             if (key.edit && typeof contents[key.edit] === "function") contents[key.edit]();
             else {
               await contents.sendInputEvent({ type: "keyDown", keyCode: key.keyCode, modifiers: key.modifiers });
@@ -1267,26 +1440,29 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         // The receipt carries the resulting page so the model need not observe again.
         let observation;
         try {
-          const { ok: _ok, tabId: _tabId, trust: _trust, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive" });
+          // The receipt itself says what became of the secrets, once.
+          const { ok: _ok, tabId: _tabId, trust: _trust, secrets: _secrets, secretsNext: _secretsNext, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive", sessionId });
           observation = post;
         } catch (error) {
           if (requestSignal.aborted) throw error;
           observation = { ok: false, code: error instanceof BrowserTaskError ? error.code : "observation_unavailable", error: "The resulting page could not be read. Observe before continuing." };
         }
-        const completed = steps.length, failed = failure ? 1 : 0, skipped = actions.length - completed - failed;
-        const receipt = { ok: !failure, tabId: tab.tabId, trust: TRUST, completed, failed, skipped,
+        const completed = steps.filter((step) => step.outcome !== "failed").length, failed = failure ? 1 : 0, skipped = actions.length - completed - failed;
+        const receipt = withSecrets(sessionId, tab.tabId, { ok: !failure, tabId: tab.tabId, trust: TRUST, completed, failed, skipped,
           ...(failure ? { code: failure.code, error: failure.error, failedStep: failure } : {}),
           ...(skipped && interrupted ? { skippedBecause: interrupted } : {}),
           steps, ...(page ? { page: page.outcome } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false,
           ...(entry ? { request_id: entry.id } : {}), observation,
-          next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." };
-        if (entry) entry.receipt = receipt;
+          next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." },
+          Boolean(failure || skipped));
+        // What is kept for a retry is already free of every secret and placeholder.
+        if (entry) entry.receipt = secrets ? secrets.redact(receipt) : receipt;
         return receipt;
       };
       const result = await Promise.race([run(), canceled]);
       requestSignal.throwIfAborted();
       if (state.status !== "paused") publish(tab.tabId, result.ok ? "idle" : "needs_attention", result.ok ? null : result.code);
-      return result;
+      return single ? withSecrets(sessionId, tab.tabId, result, false) : result;
     } catch (error) {
       // Refs stay usable after a refused action; after input, the page may differ.
       if (state && state.controller === controller && (dispatched || !(error instanceof BrowserTaskError))) forget(state);
@@ -1310,12 +1486,22 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) {
         publish(tab.tabId, TRANSIENT_CODES.has(code) ? "idle" : "needs_attention", TRANSIENT_CODES.has(code) ? null : code);
       }
-      return { ok: false, code, error: message, ...(tab ? { tabId: tab.tabId } : {}), ...(detail ? { detail } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false, next, trust: TRUST };
+      const refusal = { ok: false, code, error: message, ...(tab ? { tabId: tab.tabId } : {}), ...(detail ? { detail } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false, next, trust: TRUST };
+      return operation === "act" && tab && typeof sessionId === "string" ? withSecrets(sessionId, tab.tabId, refusal, next !== "review") : refusal;
     } finally {
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
       if (signal && abort) signal.removeEventListener("abort", abort);
       if (state && state.controller === controller) state.controller = null;
     }
+  }
+  /**
+   * The only way a result leaves this host. Page text, a site tool's answer or an error can echo a saved secret or
+   * the placeholder typed in its place: every result of every operation is redacted, whether or not the flag is on.
+   * @param {Parameters<typeof perform>[0]} [input] @param {Parameters<typeof perform>[1]} [options]
+   */
+  async function request(input, options) {
+    const result = await perform(input, options);
+    return secrets ? secrets.redact(result) : result;
   }
   return { request, pause, resume, invalidate, stateFor, navigationGuard, inheritNavigation, manualNavigation };
 }
