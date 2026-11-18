@@ -64,9 +64,10 @@ export async function enterEngineMutation(config: object, engine: Engine, signal
 }
 
 /** Block new mutations immediately, drain forwarded HTTP mutations, then run
- * the final idle/revision/routing commit. This does not stop running tasks:
- * operation must reject if the engine is not idle. Start the destination engine
- * before entering this short fence. All callers must share config identity.
+ * the final idle/routing commit. This does not stop running tasks:
+ * operation must reject if the engine is not idle. A destination that converts
+ * the source database must not start before that check and routing commit.
+ * All callers must share config identity.
  *
  * operation must resolve only after routing has committed, and must leave the
  * source selected if it throws. Successful transitions alone invalidate queued
@@ -76,6 +77,8 @@ export async function withEngineSwitchFence<T>(config: object, options: {
   from: Engine;
   to: Engine;
   operation: () => Promise<T>;
+  /** Bounded refreshes refuse in-flight HTTP mutations instead of waiting on them. */
+  rejectActive?: boolean;
 }): Promise<T> {
   const state = stateFor(config);
   const previous = state.tail;
@@ -84,6 +87,7 @@ export async function withEngineSwitchFence<T>(config: object, options: {
   state.pending++;
   try {
     await previous;
+    if (options.rejectActive && state.active) throw new ApiError(409, "engine_busy", "Wait for the current task or engine request to finish, then retry. Nothing was restarted.");
     if (state.active) await new Promise<void>(resolve => state.drained.add(resolve));
     const result = await options.operation();
     if (options.from !== options.to) {

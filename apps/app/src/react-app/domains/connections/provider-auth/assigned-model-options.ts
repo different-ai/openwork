@@ -1,4 +1,4 @@
-import type { DenOrgLlmProvider } from "@/app/lib/den";
+import type { DenOrgLlmProvider, DenOrgUsableGatewayProvider } from "@/app/lib/den";
 import type { ModelOption } from "@/app/types";
 import {
   getCloudManagedProviderId,
@@ -60,6 +60,24 @@ export function assignedModelOptions(
       return [option];
     });
   });
+}
+
+/** Only models in the ready list are selectable; pending sign-ins stay separate. */
+export function assignedGatewayModelOptions(
+  providers: readonly DenOrgUsableGatewayProvider[],
+): ModelOption[] {
+  return providers.flatMap((provider) => provider.models.map((model) => ({
+    providerID: provider.id,
+    modelID: model.id,
+    title: model.name,
+    description: provider.name,
+    behaviorTitle: "Reasoning",
+    behaviorLabel: "Default",
+    behaviorDescription: "",
+    behaviorValue: null,
+    isFree: false,
+    source: "gateway",
+  })));
 }
 
 export function markDisabledModelOptions(options: readonly ModelOption[], disabledProviderIds: readonly string[]): ModelOption[] {

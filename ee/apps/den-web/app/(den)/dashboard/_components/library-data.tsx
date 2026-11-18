@@ -59,6 +59,8 @@ export type LibraryWorkflowItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup";
   resultState: "never_run" | "fresh" | "stale" | "needs_attention";
   latestSuccessfulAt: string | null;
+  /** Why the latest run failed, when resultState is needs_attention. Older servers omit it. */
+  failureReason: string | null;
   viewState: "default" | "custom_active" | "build_failed" | "retired";
   activeViewTitle: string | null;
   automationCount: number;
@@ -233,6 +235,7 @@ function parseWorkflow(value: Record<string, unknown>): LibraryWorkflowItem | nu
   const state = value.state === "ready" || value.state === "needs_signin" || value.state === "needs_admin_setup" ? value.state : null;
   const resultState = value.resultState === "never_run" || value.resultState === "fresh" || value.resultState === "stale" || value.resultState === "needs_attention" ? value.resultState : null;
   const latestSuccessfulAt = readNullableString(value.latestSuccessfulAt);
+  const failureReason = readNullableString(value.failureReason) ?? null;
   const viewState = value.viewState === "default" || value.viewState === "custom_active" || value.viewState === "build_failed" || value.viewState === "retired" ? value.viewState : null;
   const activeViewTitle = readNullableString(value.activeViewTitle);
   const sourceKind = isRecord(value.source) && (value.source.kind === "created" || value.source.kind === "installed_template") ? value.source.kind : null;
@@ -246,7 +249,7 @@ function parseWorkflow(value: Record<string, unknown>): LibraryWorkflowItem | nu
   if (!id || (value.plugin !== null && !plugin) || !name || description === undefined || !role || !edges || !state || !resultState
     || latestSuccessfulAt === undefined || !viewState || activeViewTitle === undefined || !source
     || typeof value.automationCount !== "number" || !Number.isInteger(value.automationCount) || value.automationCount < 0) return null;
-  return { type: "workflow", id, plugin, name, description, role, edges, state, resultState, latestSuccessfulAt, viewState, activeViewTitle, automationCount: value.automationCount, source };
+  return { type: "workflow", id, plugin, name, description, role, edges, state, resultState, latestSuccessfulAt, failureReason, viewState, activeViewTitle, automationCount: value.automationCount, source };
 }
 
 function parseLibraryItem(value: unknown): LibraryItem | null {

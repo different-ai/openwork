@@ -183,6 +183,12 @@ export type EnterpriseMcpOAuthConfiguration = {
   clientMetadataUrl?: string
   authorizationServerIssuer?: string
   requestedScopes?: string[]
+  /**
+   * Ask for `requestedScopes` alone at sign-in, even when the server's sign-in
+   * challenge names more. Off by default: challenge scopes are otherwise kept.
+   * Ignored while `requestedScopes` is empty.
+   */
+  requestSelectedScopesOnly?: boolean
 }
 
 export type EnterpriseMcpRequestPhase =
@@ -423,10 +429,13 @@ export type EnterpriseMcpClientOptions = {
   expirationSkewMs?: number
   clientName?: string
   clientVersion?: string
+  /** Advertise webhook events only for an explicitly enabled subscription operation. */
+  webhookEvents?: boolean
   lifecycle?: EnterpriseMcpLifecycle
 }
 
 export interface EnterpriseMcpClient {
+  requestEvents(input: EnterpriseMcpListResourcesInput & { method: "events/list" | "events/subscribe" | "events/unsubscribe"; params: Record<string, unknown> }): Promise<Record<string, unknown>>
   connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult>
   completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void>
   abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void>

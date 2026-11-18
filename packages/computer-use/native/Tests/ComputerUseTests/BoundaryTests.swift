@@ -65,6 +65,37 @@ final class BoundaryTests: XCTestCase {
         }
     }
 
+    func testSecureTextFieldTakesTypingWithoutExposingItsValue() throws {
+        let frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        // The hash of a title an app could use to mirror what was typed: it stays in the helper.
+        let mirrored = Data("given-password".utf8)
+        let secure = ElementRecord.secureField(ref: "e1", element: AXUIElementCreateApplication(getpid()), role: "AXTextField",
+            labelHash: mirrored, frame: frame, actions: [], settable: true, enabled: true)
+        XCTAssertTrue(secure.textField, "A password the person gave can be typed into a secure field")
+        XCTAssertEqual(secure.labelHash, mirrored)
+        for compact in [false, true] {
+            let payload = try secure.payload(bounds: frame, width: 320, height: 240, compact: compact)
+            XCTAssertEqual(payload["secure"] as? Bool, true)
+            XCTAssertEqual(payload["label"] as? String, ElementRecord.secureLabel, "The app's own title never reaches the model")
+            XCTAssertNil(payload["value"])
+            XCTAssertFalse(String(describing: payload).contains("given-password"))
+        }
+        let masked = ElementRecord(ref: "e2", element: AXUIElementCreateApplication(getpid()), role: "AXGroup",
+            label: "Protected", value: nil, frame: frame, actions: [], settable: false, enabled: true, protected: true)
+        XCTAssertFalse(masked.textField, "Other protected content still never takes input")
+        // Only text entry waits for the person to confirm the app while a secure field is on screen.
+        XCTAssertTrue(try Action(["type": "type", "text": "given-password"]).entersText)
+        XCTAssertTrue(try Action(["type": "set_value", "ref": "e1", "text": "given-password"]).entersText)
+        XCTAssertFalse(try Action(["type": "click", "x": 1, "y": 1]).entersText)
+        XCTAssertFalse(try Action(["type": "key", "key": "enter"]).entersText)
+        XCTAssertTrue(try Action(["type": "key", "key": "space"]).entersText, "A space is a character too")
+        // An app approval cannot name the website, so browsers never take a password here.
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.apple.Safari", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.google.Chrome.canary", info: [:]))
+        XCTAssertTrue(WebBrowser.contains(bundleID: "com.example.newbrowser", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["HTTPS"]]]]))
+        XCTAssertFalse(WebBrowser.contains(bundleID: "com.apple.TextEdit", info: ["CFBundleURLTypes": [["CFBundleURLSchemes": ["textedit"]]]]))
+    }
+
     func testMalformedInputNeverBecomesAnAction() throws {
         let invalid: [[String: Any]] = [
             ["type": "click", "x": true, "y": 1],
@@ -108,12 +139,17 @@ final class BoundaryTests: XCTestCase {
         XCTAssertThrowsError(try Arguments(values: ["include_image": "false"]).bool("include_image", default: true))
     }
 
-    func testShortcutsAreFiniteAndExcludeClipboardAndSystemChords() throws {
+    func testShortcutsAreFiniteAndExcludeSystemChords() throws {
         for allowed in [("s", ["command"]), ("f", ["command"]), ("z", ["command", "shift"]), ("enter", ["command"]),
                         ("left", ["option", "shift"]), ("a", ["command"]), ("tab", []), ("tab", ["shift"])] {
             XCTAssertNoThrow(try Action(["type": "key", "key": allowed.0, "modifiers": allowed.1], policy: .embedded), allowed.0)
         }
-        for blocked in [("c", ["command"]), ("x", ["command"]), ("v", ["command", "shift", "option"]), ("y", ["control"]), ("k", ["control"]),
+        // The agent's own clipboard, on a Mac with the OpenWork host; never another chord with c, x or v.
+        for clipboard in ["c", "x", "v"] {
+            XCTAssertNoThrow(try Action(["type": "key", "key": clipboard, "modifiers": ["command"]], policy: .embedded), clipboard)
+            XCTAssertThrowsError(try Action(["type": "key", "key": clipboard, "modifiers": ["command"]]), "the standalone helper keeps refusing \(clipboard)")
+        }
+        for blocked in [("c", ["command", "shift"]), ("x", ["command", "option"]), ("v", ["command", "shift", "option"]), ("y", ["control"]), ("k", ["control"]),
                         ("q", ["command", "shift"]), ("w", ["command", "option"]), ("h", ["command"]), ("m", ["command"]),
                         ("tab", ["command"]), ("space", ["command"]), ("`", ["command"]), ("3", ["command", "shift"]),
                         ("4", ["command", "shift", "control"]), ("5", ["command", "shift"]), ("6", ["command", "shift"]),
@@ -121,7 +157,9 @@ final class BoundaryTests: XCTestCase {
             do { _ = try Action(["type": "key", "key": blocked.0, "modifiers": blocked.1], policy: .embedded); XCTFail("\(blocked) was allowed") }
             catch let error as UseError { XCTAssertEqual(error.code, "blocked_shortcut", blocked.0) }
         }
-        for key in ["f1", "f11", "n", "v", "q"] { XCTAssertThrowsError(try Action(["type": "key", "key": key], policy: .embedded)) }
+        for key in ["f1", "f11"] { XCTAssertThrowsError(try Action(["type": "key", "key": key], policy: .embedded)) }
+        // Bare letters parse as tool keys; the computer allows them only in creative apps with no text field focused.
+        for key in ["n", "v", "q"] { XCTAssertTrue(NativeKey.isToolKey(key, [])) }
         XCTAssertFalse(NativeKey.isBlocked("3", .maskCommand))
         XCTAssertTrue(NativeKey.isBlocked("3", [.maskCommand, .maskShift]))
         if case .key(let key, let flags) = try Action(["type": "key", "key": "redo"]) {

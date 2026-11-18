@@ -9,7 +9,7 @@ import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
 import { McpAppFact, McpStoryTiles, mcpStoryCopy } from "../../mcp/mcp-story";
 import { useMcpClient } from "../../mcp/use-mcp-client";
-import { isWorkbotSignIn } from "../../mcp/workbot-sign-in";
+import { isSignInOnly, isWorkbotSignIn } from "../../mcp/workbot-sign-in";
 import { SetupFrame } from "./setup-frame";
 import { SetupFacts, SetupPanelBody, SetupSkeletonRows } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
@@ -125,6 +125,7 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
   const client = useMcpClient(oauthQuery);
   const story = mcpStoryCopy(client);
   const workbot = isWorkbotSignIn(oauthQuery);
+  const signInOnly = isSignInOnly(oauthQuery);
   return (
     <SetupFrame
       workbot={workbot}
@@ -146,7 +147,14 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
                 bare
                 emailFirstFlow
                 socialFirst
-                emailStepContent={workbot ? { title: "Sign in to Workbot" } : { title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
+                signInOnly={signInOnly}
+                emailStepContent={
+                  signInOnly
+                    ? { title: workbot ? "Sign in to Workbot" : "Sign in to OpenWork", copy: "Use your existing OpenWork account. To get one, ask your workspace admin." }
+                    : workbot
+                      ? { title: "Sign in to Workbot" }
+                      : { title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }
+                }
               />
             )}
           </SetupPanelBody>

@@ -228,7 +228,9 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
             { label: "Skills shared", value: percent(data.skills.sharingRate), detail: `${count(data.skills.sharedTeamSkills)} of ${count(data.skills.teamSkills)} team skills` },
             { label: "Teammate skill reuse", value: percent(data.skills.teammateReuseRate), detail: `${compactCount(data.skills.teammateUses)} of ${compactCount(data.skills.teamUses)} uses` },
             { label: "Shared MCP calls", value: percent(data.mcp.sharedReuseRate), detail: `${compactCount(data.mcp.sharedConnectionCalls)} of ${compactCount(data.mcp.teamCalls)} calls` },
-            { label: "Skill creators", value: count(data.skills.creators), detail: `${count(data.catalog.plugins)} plugins · ${count(data.catalog.marketplaces)} marketplaces created` },
+            { label: "Skill creators", value: count(data.skills.creators), detail: data.catalog.pluginsCounted
+              ? `${count(data.catalog.plugins)} plugins · ${count(data.catalog.marketplaces)} marketplaces created`
+              : `${count(data.catalog.marketplaces)} marketplaces created` },
           ]} /></div>
         </>}
       </Panel>

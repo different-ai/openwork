@@ -85,6 +85,39 @@ export async function lockUsageMembers(
       .for("update")
 }
 
+/**
+ * Hands one member's direct limit assignments to another. Used when an invitation is accepted
+ * by someone who is already a member: the invitation's placeholder row is deleted, and limits
+ * assigned to it while it was pending belong to the person. Call inside
+ * `withGatewayUsageEntitlementMutation` with both members listed.
+ */
+export async function moveUsageMemberAssignments(
+  tx: UsageTx,
+  organizationId: OrganizationId,
+  from: MemberId,
+  to: MemberId,
+) {
+  const rows = await tx
+    .select({ id: A.id, policyId: A.policyId })
+    .from(A)
+    .where(and(eq(A.organizationId, organizationId), eq(A.memberId, from)))
+    .for("update")
+  if (!rows.length) return
+  const held = new Set(
+    (
+      await tx
+        .select({ policyId: A.policyId })
+        .from(A)
+        .where(and(eq(A.organizationId, organizationId), eq(A.memberId, to)))
+        .for("update")
+    ).map((row) => row.policyId),
+  )
+  for (const row of rows) {
+    if (held.has(row.policyId)) await tx.delete(A).where(eq(A.id, row.id))
+    else await tx.update(A).set({ memberId: to }).where(eq(A.id, row.id))
+  }
+}
+
 export async function withGatewayUsageEntitlementMutation<T>(
   tx: UsageTx,
   organizationId: OrganizationId,

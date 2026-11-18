@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -14,7 +15,7 @@ import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -25,8 +26,10 @@ import { readPromptsForMember } from "../../prompts.js"
 import { memberPromptsSchema } from "@openwork/types/den/prompts"
 import { getOrganizationFeatures } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
+import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSignInUrl } from "../../organization-sso-access.js"
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
+import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -55,6 +58,17 @@ const meInvitationsResponseSchema = z.object({
     expiresAt: z.string().datetime(),
   })),
 }).meta({ ref: "CurrentUserInvitationsResponse" })
+
+const meSsoSignInResponseSchema = z.object({
+  organizations: z.array(z.object({
+    organizationId: denTypeIdSchema("organization"),
+    organizationSlug: z.string(),
+    organizationName: z.string(),
+    signInPath: z.string(),
+    signInUrl: z.string().url(),
+    ssoOnly: z.boolean(),
+  })),
+}).meta({ ref: "CurrentUserSsoSignInResponse" })
 
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
@@ -139,7 +153,8 @@ function normalizeNamePart(value: string) {
 
 async function checkDownloadLinkRateLimit(userId: string, now: number) {
   const key = `me:send-download-link:${userId}`
-  const [row] = await db
+  // primary: the counter is read back right after earlier requests wrote it.
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -170,6 +185,7 @@ async function checkDownloadLinkRateLimit(userId: string, now: number) {
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
   registerMeActivationRoutes(app)
   registerMeAgentRoutes(app)
+  registerMeFeatureIntroRoutes(app)
 
   app.get(
     "/v1/me",
@@ -229,6 +245,30 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
     })
+    },
+  )
+
+  app.get(
+    "/v1/me/sso-sign-in",
+    describeRoute({
+      tags: ["Users"],
+      summary: "List current user's organization SSO sign-ins",
+      description: "Lists the signed-in person's organizations that have ready SSO (enabled connection on a verified domain), with each organization's SSO sign-in URL and whether only SSO may sign in there. Used to confirm identity before sensitive changes; unlike the sign-in page's email preflight it includes SSO that is offered but not required.",
+      responses: {
+        200: jsonResponse("Organization SSO sign-ins returned successfully.", meSsoSignInResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      },
+    }),
+    userSessionRoute(),
+    async (c) => {
+      const user = c.get("user")
+      const organizations = await listMemberSsoSignIns(user.id)
+      return c.json({
+        organizations: organizations.map((organization) => ({
+          ...organization,
+          signInUrl: ssoSignInUrl(organization.signInPath),
+        })),
+      })
     },
   )
 
@@ -385,7 +425,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         200: jsonResponse("Active organization updated successfully.", activeOrganizationResponseSchema),
         400: jsonResponse("The active organization request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update active organization.", unauthorizedSchema),
-        403: jsonResponse("The caller cannot switch this kind of session.", forbiddenSchema),
+        403: jsonResponse("The caller cannot switch this kind of session, or the organization requires SSO and this session did not sign in through it (sso_required).", forbiddenSchema.or(ssoRequiredSchema)),
       },
     }),
     userSessionRoute(),
@@ -414,6 +454,11 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       }
 
       const sessionId = normalizeDenTypeId("session", session.id)
+      // an organization that requires SSO is entered only from a session signed in through it.
+      const ssoBlock = await findSsoAccessBlock({ sessionId, organizationId: activeOrg.id })
+      if (ssoBlock) {
+        return c.json(ssoRequiredErrorBody(ssoBlock), 403)
+      }
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
       // session.organization_entered in the destination organization only.
@@ -449,7 +494,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced. X-OpenWork-Sandbox-Only: 1 clients receive the organization's host_execution rule (sandbox-only when it denies); other clients receive blocks for commands, file edits, outside folders, computer use, local MCP servers and websites while it is required, whether or not the sandbox rollout is on.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -465,7 +510,19 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         orgMemberId: currentMember.id,
       })
       const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
-      const agentPermissions = { rules: await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id }) }
+      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id })
+      const supportsBrowserUploads = c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1"
+      // Published desktops reject a rule list naming an action they do not know,
+      // so file-send rules reach only desktops that ask for them.
+      const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
+      // host_execution (sandbox-only) reaches only desktops that enforce it. A
+      // desktop that does not gets blocks it understands instead, and the
+      // sandboxTools rollout is deliberately not consulted: turning it off must
+      // not hand a required sandbox back to the host.
+      const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
+      const agentPermissions = {
+        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly }),
+      }
       // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({
@@ -475,6 +532,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
+        // Local models (Ollama, LM Studio) get their own switch only with the
+        // rollout on; otherwise they follow the provider setting, as before.
+        allowLocalModels: desktopPolicy.allowLocalModels,
         // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
         automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
         desktopAutomationsEnabled: automations.desktop,
@@ -484,10 +544,13 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         connectEnabled: true,
         liveProviderSync: true,
         nativeAffordanceCodeMode: true,
+        opencodeV2Only: features.opencodeV2Only,
         // Compatibility fields for published desktops: both behaviors are now always on.
         localProviderMirror: true,
         removeOpencodeZen: true,
         agentPermissions,
+        ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(supportsFileSends ? { fileSendPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
         ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }

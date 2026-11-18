@@ -1,58 +1,87 @@
-# Settle finished sessions (`settledSessions`)
+# Session Feed (`settledSessions`)
 
-- **Feature key:** `settledSessions`
+> **Generally available:** `settledSessions` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
+- **Feature key:** `settledSessions` (the key is permanent; the feature is now the Feed, and settling is gone)
 - **Deployments:** cloud and self-hosted (`everywhere`), off by default
 - **Author:** @reachjalil
 
 ## What people get
 
-In OpenCode v2 workspaces, a finished session can be settled. It leaves its
-group list in the sidebar and collapses into a **Settled** row at the end of its
-workspace, still one click away. Any new activity (a reply, a finished run, an
-Automation, an approval request) brings it back.
+A **Workspaces · Feed** switch replaces the Workspaces label. Feed lists every
+workspace's sessions in one stream. Workspaces is the default; the last view
+chosen is remembered on the device.
 
-- Settle or Un-settle from the row's hover actions and menu, the thread header,
-  the command palette, or Cmd/Ctrl+Shift+E. Each shows Undo.
-- Idle sessions settle on their own after 3 days unless pinned, unread, working
-  or waiting. Settings › Preferences › "Settle idle sessions after" changes it
-  (Never, 1, 3 or 7 days).
-- OpenCode v1 workspaces keep today's sidebar.
-- A **Workspaces · Feed** switch replaces the Workspaces label. Feed lists every
-  workspace's sessions in one stream: **Needs you** first, then Today,
-  Yesterday and Earlier by last activity. Each row has a second line with its
-  workspace and group, and what it is doing or how long ago it was active.
-  Settled sessions from every workspace sit in a collapsed **Settled** shelf.
-  Pinned folders, Settled and Archived stay fixed below the scrolling Feed,
-  apart from live work; one opens at a time, showing about three rows that
-  scroll. The choice of view is remembered on the device.
-- In Feed, the header's **+** starts a new session, and the group-and-sort
-  menu next to it groups by day, by activity (**Active**: working or with an
-  unread result; **Inactive**: the rest) or not at all, and sorts by last
-  activity or creation time. Needs you stays on top either way; the choice is
-  remembered on the device. Workspaces view keeps its Add workspace **+**.
-- Any workspace group can be pinned to the bottom of the Feed (the pin in the
-  group's hover actions in Workspaces view). Sessions filed in a pinned group
-  stay there, even with new activity; the folder shows a dot when something
-  inside is unread or needs you. When a session's workspace has pinned groups,
-  its ✓ button offers Settle or Move to each of them.
+- **Last interacted with first.** Rows sort by last activity: the engine's
+  session time, or work starting or finishing on this device, whichever is
+  newer. OpenCode v2 does not move a session's time when a message is sent, so
+  the sidebar records it (`noteActivity`). Today, Yesterday and Earlier group the
+  rows by the same time.
+- **Manual order.** Any row can be dragged to a new spot, including into another
+  day. It stays there until the session has new activity, which brings it back
+  to the top. Dragged spots live on the device. Sorting by creation time (the
+  group-and-sort menu) turns dragging off.
+- **Archive, not Settle.** Settling, the Settled shelf, the per-workspace
+  Settled row, auto-settle and its Preferences setting, and the agent's
+  `session.settle` command are removed. Finished work is archived: hovering a
+  row shows an **Archive** button just before the More menu (Unarchive in the
+  Archived shelf). The thread header, command palette and Cmd/Ctrl+Shift+E
+  archive or unarchive the open session.
+- Each row's second line names the workspace and group, or **Permission** /
+  **Question** when a decision is owed.
+- Waiting sessions stay in their normal place, listed once. Each 48px row gives
+  the title the full first line; Archive, More and held shortcuts share the
+  lower-right lane, so nothing in the row moves on hover, focus or shortcut hold.
+- Pinned folders and Archived stay fixed below the scrolling Feed; one opens at
+  a time, showing about three rows that scroll. Any workspace group can be
+  pinned there from its hover actions in Workspaces view; sessions filed in it
+  stay until moved, and a row can be dragged into it.
+- In Feed, the header's **+** starts a new session, and the group-and-sort menu
+  groups by day, by activity (**Active**: working, waiting or unread;
+  **Inactive**: the rest) or not at all, and sorts by last activity or creation.
 
 ## How it works
 
-Settled is derived from each session's activity time, not stored as a flag
-(`apps/app/src/react-app/domains/session/sidebar/session-settle.ts`, tested in
-`apps/app/tests/session-settle.test.ts`). Manual settles live on the device in
-the session-management store, like pins. OpenCode v2 does not move a
-session's time when a message is sent, so the sidebar also counts work starting
-on this device as activity (`noteActivity`). `session-route.tsx` resolves the
-feature once; when it is off, no workspace can settle.
+- Order: `apps/app/src/react-app/domains/session/sidebar/session-feed.ts`
+  (`feedActivityKey`, `feedKeyBetween`), tested in `apps/app/tests/session-feed.test.ts`.
+  A drop stores `{ key, at }` for the session; it sorts at `key` while its last
+  activity is not newer than `at`.
+- Activity: `session-activity.ts` and `workedAtById` in the session-management store.
+- Row: `FeedArchiveButton` in `app-sidebar.tsx`; archive
+  runs the existing `useSessionArchive` flow.
 
 ## Turning it off
 
-The kill switch puts every settled session back in its group list right away.
-Nothing is deleted: the device keeps its settle records, and turning the feature
-back on restores them.
+The sidebar goes back to the Workspaces tree with its shipped quick actions, and
+the header Archive button and shortcut stop. Nothing is deleted: activity times
+and dragged spots stay on the device for when it is turned back on. Settle
+records from earlier builds are ignored.
 
 ## Screenshots
 
-Not captured yet; add them from the real app before turning this on beyond our
-own organization.
+Captured by `evals/proofs/calm-feed.proof.test.ts` from the real app in
+headless Chrome with Den and OpenCode v2; only the model is scripted.
+
+Last interacted with first:
+
+![Feed, last active first](./feed-last-active.png)
+
+Hover shows Archive before More:
+
+![Hover: workspace name and Archive](./feed-hover-archive.png)
+
+Archived from the row, the session sits in the Archived shelf:
+
+![Archived shelf](./feed-archived-shelf.png)
+
+Held shortcuts share the lower-right lane:
+
+![Shortcuts in the Feed](./calm-feed-shortcuts.png)
+
+## Verification
+
+`evals/proofs/calm-feed.proof.test.ts` covers the Workspaces default, saved Feed
+selection, a native Question staying in place, fixed row lanes through hover,
+focus and held shortcuts, Archive before More, Archive and Unarchive from the row,
+and Pin/Unpin and Rename. Dragging is covered by unit tests
+(`session-feed.test.ts`); native HTML drag is not driven in the proof.

@@ -34,7 +34,7 @@ import { SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA, SLACK_SEND_AS_BOT_CAPABILITY, SLACK
 // The same bounds capability search gives one provider probe.
 const LIST_LIFECYCLE_TIMEOUT_MS = 8_000
 const LIST_REQUEST_TIMEOUT_MS = 5_000
-const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
+export const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
 
 /**
  * What a full-view request needs: the whole list (`tools/list`), some
@@ -179,9 +179,10 @@ export async function loadConnectFullTools(input: {
   const namespaceContext = await ctx.resolveNamespaceContext()
   const candidates: ConnectFullToolCandidate[] = []
 
-  // OpenWork's own API operations stay in search: whether a member may call one
-  // depends on per-route roles a list cannot check. The exception is the key
-  // request a connection card tells the agent to run.
+  // OpenWork's own API operations stay in search_capabilities, which the full
+  // view keeps for them: whether a member may call one depends on per-route
+  // roles a list cannot check. The exception is the key request a connection
+  // card tells the agent to run.
   if (scope !== "status") {
     if (wants("den")) {
       const keyRequest = ctx.catalog.filter((operation) => operation.name === CONNECTION_KEY_REQUEST_CAPABILITY)
@@ -241,14 +242,14 @@ export async function loadConnectFullTools(input: {
       toolName: names.get(app.appId) ?? app.appId,
       capability: buildMarketplaceCapabilityName(app.pluginId, app.appId),
       title: app.title,
-      description: `Open the App "${app.title}". ${app.description ?? ""} Its appId for read_app and update_app is ${app.appId}.`.replace(/\s+/g, " "),
+      description: `Open the artifact "${app.title}". ${app.description ?? ""} Its appId for read_app and update_app is ${app.appId}.`.replace(/\s+/g, " "),
       inputSchema: { type: "object", description: "Optional launch input the App receives." },
       annotations: { readOnlyHint: true },
     })))
   }
 
   if (member && wants(REMOTE_SESSION_TOOL_NAMESPACE)) {
-    candidates.push(...listRemoteSessionCapabilities({ answer: ctx.remoteSessionAnswersAllowed }).map((capability) => ({
+    candidates.push(...listRemoteSessionCapabilities({ answer: ctx.remoteSessionAnswersAllowed, attach: ctx.remoteSessionAttachAllowed }).map((capability) => ({
       namespace: REMOTE_SESSION_TOOL_NAMESPACE,
       toolName: capability.action,
       capability: capability.name,

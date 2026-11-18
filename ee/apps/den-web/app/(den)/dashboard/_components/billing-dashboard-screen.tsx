@@ -13,7 +13,7 @@ import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenUsageMeter } from "../../_components/ui/usage-meter";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getAiGatewayProvidersRoute, getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute, permissionLockReason } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getBillingInvoicesRoute, getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute, permissionLockReason } from "../../_lib/den-org";
 import {
   billingNotConfiguredMessage,
   isBillingNotConfiguredError,
@@ -202,9 +202,10 @@ export function BillingDashboardScreen() {
   );
   const canManageBillingSettings = access.canManageBilling;
   const canOpenPortal = access.canOpenBillingPortal;
+  const canViewInvoices = access.canViewInvoices;
   const billingLockNotice = [
     canManageBillingSettings ? null : `Starting a subscription is locked. ${permissionLockReason("billing.manage")}`,
-    canOpenPortal ? null : `Payment details, invoices and cancelling are locked. ${permissionLockReason("billing_portal.use")}`,
+    canOpenPortal ? null : `Payment details and cancelling are locked. ${permissionLockReason("billing_portal.use")}`,
   ].filter((line): line is string => line !== null).join(" ");
 
   async function refreshStripeBilling(quiet = false) {
@@ -633,6 +634,21 @@ export function BillingDashboardScreen() {
             value={totalLabel ?? ""}
             valueCaption={`per ${stripeBilling.interval}`}
           />
+          <div className="flex items-center gap-3 border-t border-gray-200 px-4 py-3" data-testid="billing-invoices-row">
+            <div className="w-9 shrink-0" />
+            <p className="min-w-0 flex-1 text-[14px] font-medium text-gray-950">Invoices</p>
+            {canViewInvoices ? (
+              <DenButton variant="secondary" size="sm" onClick={() => router.push(getBillingInvoicesRoute(activeOrg?.slug))}>
+                View invoices
+              </DenButton>
+            ) : (
+              // Locked, with why and who can change it (P4, C5).
+              <span className="inline-flex items-center gap-1.5 text-[13px] text-gray-500">
+                <LockKeyhole className="size-3.5" strokeWidth={1.5} aria-hidden="true" />
+                {permissionLockReason("billing_invoices.view")}
+              </span>
+            )}
+          </div>
         </div>
       </DenCard>
 

@@ -40,6 +40,7 @@ import type {
   DesktopCommandInvokers,
   DesktopCommandName,
   DesktopCommandResult,
+  DesktopFetchInit,
   DesktopFetchResult,
   EvalRelaunchResult,
   NukeManifestPreview,
@@ -54,19 +55,11 @@ import type {
   BrowserStatePayload,
   OpenBrowserUrlResult,
 } from "@openwork/browser-tabs";
+import type { RemoteSessionAccessMode } from "@openwork/types/automations";
 import type { ComputerRequest } from "@openwork/types/desktop-ipc";
 export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
 export type BrowserPresentationMode = "hidden" | "floating" | "side" | "fullscreen";
-
-export type BrowserThumbnail = {
-  tabId: string;
-  url: string;
-  dataUrl: string;
-  width: number;
-  height: number;
-  capturedAt: number;
-};
 
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
@@ -85,9 +78,31 @@ export type RecoveryActionResult = {
   reason?: string;
 };
 
+/**
+ * What its owner's other devices can do on this computer: nothing (`off`),
+ * start tasks (`created`), or also open sessions started here (`all`). The
+ * choice is kept per organization.
+ */
+export type RemoteSessionAccessState = {
+  /** The owner's choice for the organization this computer is connected to; null while they have not chosen. */
+  mode: RemoteSessionAccessMode | null;
+  /** The most the organization allows; null until its server says. */
+  ceiling: RemoteSessionAccessMode | null;
+  /** What applies right now. */
+  effective: RemoteSessionAccessMode;
+  /** The organization's server accepted this computer for sessions started here. */
+  supported: boolean;
+  /** A computer whose owner has not chosen takes nothing. */
+  optIn: boolean;
+  /** This computer is connected to an organization, so a choice can be made. */
+  connected: boolean;
+};
+
 export type SpeechDictationEvent =
   | { id: string; type: "ready" | "end" }
   | { id: string; type: "result"; segments: string[] }
+  | { id: string; type: "level"; level: number }
+  | { id: string; type: "status"; status: "installing"; progress?: number }
   | { id: string; type: "error"; code: string };
 
 // ---------------------------------------------------------------------------
@@ -105,6 +120,10 @@ declare global {
         command: C,
         ...args: DesktopCommandArgs<C>
       ) => Promise<DesktopCommandResult<C>>;
+      sessionPins?: {
+        read: () => { ok: true; pins: string[] | null } | { ok: false; error: string };
+        update: (change: { previous: string[]; next: string[] }) => { ok: true; pins: string[] } | { ok: false; error: string };
+      };
       computer?: {
         onRequest?: (callback: (payload: { sessionId: string; request: ComputerRequest | null }) => void) => () => void;
       };
@@ -112,7 +131,15 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
-        onCredentialRejected?: (callback: () => void) => () => void;
+        onRunLifecycle?: (callback: (event: unknown) => void) => () => void;
+        /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
+        onCredentialRejected?: (
+          callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
+        ) => () => void;
+      };
+      remoteSessionAccess?: {
+        get?: () => Promise<RemoteSessionAccessState>;
+        set?: (mode: RemoteSessionAccessMode) => Promise<RemoteSessionAccessState>;
       };
       fileSystem?: {
         getPathForFile?: (file: File) => string;
@@ -211,7 +238,10 @@ declare global {
         /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
         setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
         /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
-        thumbnail?: (tabId: string) => Promise<BrowserThumbnail | null>;
+        /** Brings the popped-out browser window to the front. Only for the person's own action. */
+        focusWindow?: () => Promise<boolean>;
+        /** A new thread's first message made it this session: its browser tabs become the session's. */
+        claimDraftTabs?: (sessionId: string) => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
@@ -229,8 +259,6 @@ declare global {
         reorderTabs?: (tabIds: string[]) => Promise<BrowserPanelTab[]>;
         taskControl?: (tabId: string, action: "pause" | "resume") => Promise<void>;
         listTabs?: () => Promise<BrowserPanelTab[]>;
-        listWebMcpTools?: (args?: { tabId?: string }) => Promise<unknown>;
-        executeWebMcpTool?: (args: { toolId: string; input?: unknown }) => Promise<unknown>;
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
@@ -263,6 +291,8 @@ declare global {
         distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
+        arch?: string;
+        isPackaged?: boolean;
         version?: string;
         evalFatalBootstrapFailure?: string | null;
       };
@@ -403,6 +433,10 @@ async function runCancellableDesktopTransfer<T>(
   }
 }
 
+export type DesktopFetchRequestInit = RequestInit & {
+  cancellable?: boolean;
+};
+
 type DesktopFetchMainOptions = {
   timeoutMs?: number;
   agentContextDiagnosticsDeadlineAtMs?: number;
@@ -410,7 +444,7 @@ type DesktopFetchMainOptions = {
 
 async function desktopFetchThroughMain(
   input: RequestInfo | URL,
-  init?: RequestInit,
+  init?: DesktopFetchRequestInit,
   options: DesktopFetchMainOptions = {},
 ): Promise<Response> {
   // Extract method/headers/body from either a Request object or the (input, init)
@@ -447,12 +481,18 @@ async function desktopFetchThroughMain(
   // command POSTs keep their distinct admission/unknown-outcome contract.
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
-    || isPermissionReplyRequest(url, { method: requestMethod });
+    || isPermissionReplyRequest(url, { method: requestMethod })
+    || init?.cancellable === true;
   const signal = cancellable && diagnosticsDeadlineAtMs === undefined
     ? init?.signal === undefined ? (input instanceof Request ? input.signal : undefined) : init.signal
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
-  const fetchResponse = () => invokeElectronHelper("__fetch", url, {
+  const fetchInit: DesktopFetchInit = {
+    // Only forward explicit refusal. Existing callers keep their transport defaults.
+    ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
+      ? { redirect: "error" satisfies RequestRedirect }
+      : {}),
+    cancellable,
     transferId,
     method,
     headers,
@@ -461,7 +501,8 @@ async function desktopFetchThroughMain(
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
       : { deadlineAtMs: diagnosticsDeadlineAtMs },
-  });
+  };
+  const fetchResponse = () => invokeElectronHelper("__fetch", url, fetchInit);
   let result: DesktopFetchResult;
   try {
     result = transferId && signal
@@ -492,7 +533,7 @@ export const desktopFetch: typeof globalThis.fetch = async (input, init) => {
   return desktopFetchThroughMain(input, init);
 };
 
-export async function desktopFetchViaMain(input: RequestInfo | URL, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+export async function desktopFetchViaMain(input: RequestInfo | URL, init?: DesktopFetchRequestInit, timeoutMs?: number): Promise<Response> {
   return desktopFetchThroughMain(input, init, { timeoutMs });
 }
 
@@ -552,6 +593,16 @@ export async function openDesktopUrlWithStatus(url: string): Promise<DesktopUrlO
 
 export async function openDesktopUrl(url: string): Promise<void> {
   await openDesktopUrlWithStatus(url);
+}
+
+/** Read-only native probe for chat file candidates; never opens or reveals the item. */
+export async function resolveDesktopChatFilePath(target: string): Promise<string | null> {
+  if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
+  try {
+    return await invokeElectronHelper("__resolveChatFilePath", target);
+  } catch {
+    return null;
+  }
 }
 
 export async function openDesktopPath(target: string): Promise<void> {

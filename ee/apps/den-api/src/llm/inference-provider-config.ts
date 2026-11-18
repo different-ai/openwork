@@ -2,6 +2,7 @@ import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
+import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
 
 type JsonRecord = Record<string, unknown>
@@ -153,6 +154,19 @@ export function bedrockSettingsError(settings: JsonRecord, allowedOrigins = infe
   if (override === undefined) return null
   const origin = (() => { try { return typeof override === "string" ? new URL(override).origin : null } catch { return null } })()
   return origin && allowedOrigins.has(origin) ? null : "Amazon Bedrock endpoints are derived from the region; a custom upstream URL must be an operator-approved origin."
+}
+
+/**
+ * Microsoft Foundry's upstream host is derived from `settings.resourceName`. Its
+ * requests can carry each member's own Entra ID token, so a custom upstream URL
+ * must stay on that resource's origin or be an operator-allowlisted origin (a
+ * deployment-owned private endpoint or proxy). Expects a validated resource name.
+ */
+export function microsoftFoundrySettingsError(settings: JsonRecord, allowedOrigins = inferenceEgressAllowedOrigins()): string | null {
+  const override = settings.upstreamBaseUrl
+  if (override === undefined) return null
+  return isMicrosoftFoundryOverrideAllowed(settings.resourceName, override, allowedOrigins)
+    ? null : "Microsoft Foundry endpoints are derived from the resource name; a custom upstream URL must be an operator-approved origin."
 }
 
 /** Persist and expose only the documented non-secret settings. */

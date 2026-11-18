@@ -114,7 +114,7 @@ export async function getSavedApp(input: {
     return { ...base, html: null, payload: null, previewNotice: "Run the workflow to give this app a result to display." }
   }
   if (snapshot.outputSchemaDigest !== revision.outputSchemaDigest) {
-    return { ...base, html: null, payload: null, previewNotice: "The workflow’s results have changed. Ask OpenWork to update this app to match." }
+    return { ...base, html: null, payload: null, previewNotice: "The workflow’s results have changed. Ask OpenWork to update this artifact to match." }
   }
   return {
     ...base,

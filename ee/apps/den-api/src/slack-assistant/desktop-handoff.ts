@@ -89,7 +89,8 @@ export async function linkDesktopCommandToSlack(input: {
   if (!tokenId) return false
   const userId = normalizeDenTypeId("user", input.userId)
   const now = new Date()
-  const [link] = await db
+  // primary: the run token was minted at the start of the turn, often moments ago.
+  const [link] = await db.$primary
     .select({ eventId: RunToken.eventId, connectionId: RunToken.connectionId })
     .from(RunToken)
     .innerJoin(OAuthAccessTokenTable, eq(OAuthAccessTokenTable.id, RunToken.tokenId))

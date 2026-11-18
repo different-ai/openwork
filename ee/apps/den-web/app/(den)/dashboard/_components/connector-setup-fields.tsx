@@ -63,7 +63,7 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   onDraftChange?: (draft: OAuthAppDraft) => void;
   /** Custom connector setup validates a reviewed draft; presets retain their existing form. */
   setupValidation?: boolean;
-  /** Exact callback supplied by a backend preset or verified runtime, never inferred here. */
+  /** Exact callback supplied by a backend preset or verified runtime, never inferred here. Shown with Copy so the admin can register it in their OAuth app. */
   callbackUrl?: string;
   /** Lets a page footer button submit these fields. */
   formId?: string;
@@ -114,14 +114,14 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
         onSave(result.input);
       }}
     >
-      {setupValidation && callbackUrl ? <div className="flex min-h-10 items-center gap-3 border-b border-gray-100 py-1.5" data-testid="oauth-app-callback">
+      {callbackUrl ? <div className="flex min-h-10 items-center gap-3 border-b border-gray-100 py-1.5" data-testid="oauth-app-callback">
         <span className="shrink-0 text-[12px] font-medium text-gray-700">Callback URL</span>
         <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-gray-600">{callbackUrl}</code>
         <DenButton type="button" size="xs" variant="secondary" aria-label="Copy callback URL" onClick={() => {
           void navigator.clipboard.writeText(callbackUrl).then(() => setCopyStatus("copied")).catch(() => setCopyStatus("failed"));
         }}>{copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy"}</DenButton>
       </div> : null}
-      {setupValidation ? <label htmlFor={`${fieldId}-client-id`} className="text-[12px] font-medium text-gray-700">Client ID</label> : null}
+      <label htmlFor={`${fieldId}-client-id`} className="text-[12px] font-medium text-gray-700">Client ID</label>
       <McpCredentialInput
         id={`${fieldId}-client-id`}
         kind="identifier"
@@ -136,7 +136,7 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
         autoFocus={!setupValidation}
       />
       {fieldError("clientId")}
-      {setupValidation ? <label htmlFor={`${fieldId}-client-secret`} className="text-[12px] font-medium text-gray-700">Client secret{secretRequired ? "" : " (optional)"}</label> : null}
+      <label htmlFor={`${fieldId}-client-secret`} className="text-[12px] font-medium text-gray-700">Client secret{secretRequired ? "" : " (optional)"}</label>
       <div className="flex items-center gap-2">
         <McpCredentialInput
           id={`${fieldId}-client-secret`}

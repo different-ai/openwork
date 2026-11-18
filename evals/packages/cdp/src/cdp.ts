@@ -358,7 +358,14 @@ export async function addInitScript<T>(client: CdpClient, script: BrowserEvaluat
   let disposed = false;
   const dispose = async () => {
     if (disposed) return;
-    await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    try {
+      await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    } catch (error) {
+      // Init scripts belong to the CDP session. A cross-origin navigation can
+      // replace it before disposal; Chromium then confirms there is no script
+      // left to remove. Other cleanup failures must remain visible.
+      if (!(error instanceof Error) || error.message !== "Script not found") throw error;
+    }
     disposed = true;
   };
   return { dispose, [Symbol.asyncDispose]: dispose };

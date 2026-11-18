@@ -18,6 +18,7 @@ Context7). The new presets:
 - Canva — `https://mcp.canva.com/mcp` (OAuth)
 - Figma — `https://mcp.figma.com/mcp` (OAuth)
 - Fireflies — `https://api.fireflies.ai/mcp` (OAuth)
+- Grafana Cloud — `https://mcp.grafana.com/mcp` (OAuth)
 - Hugging Face — `https://huggingface.co/mcp` (OAuth)
 - Honeycomb — `https://mcp.honeycomb.io/mcp` (OAuth)
 - Klaviyo — `https://mcp.klaviyo.com/mcp` (OAuth)

@@ -159,6 +159,10 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("openwork:desktop", command, ...args);
   },
+  sessionPins: {
+    read() { return ipcRenderer.sendSync("openwork:session-pins:read"); },
+    update(change) { return ipcRenderer.sendSync("openwork:session-pins:update", change); },
+  },
   computer: {
     // The agent needs computer use the chat does not have yet; null when answered.
     onRequest(callback) {
@@ -175,10 +179,23 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   automationRunner: {
+    onRunLifecycle(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openwork:automation-runner:lifecycle", handler);
+      return () => ipcRenderer.removeListener("openwork:automation-runner:lifecycle", handler);
+    },
     onCredentialRejected(callback) {
-      const handler = () => callback();
+      const handler = (_event, rejection) => callback(rejection);
       ipcRenderer.on(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
       return () => ipcRenderer.removeListener(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
+    },
+  },
+  remoteSessionAccess: {
+    get() {
+      return ipcRenderer.invoke("openwork:remote-session-access:get");
+    },
+    set(mode) {
+      return ipcRenderer.invoke("openwork:remote-session-access:set", mode);
     },
   },
   fileSystem: {
@@ -267,7 +284,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       ipcRenderer.on("openwork:browser:link-open-request", handler);
       return () => ipcRenderer.removeListener("openwork:browser:link-open-request", handler);
     },
-    show(bounds, sessionId) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId); },
+    show(bounds, sessionId, target) { return sendBrowserGeometry("openwork:browser:show", bounds, sessionId, target); },
     hide(options) {
       lastBrowserGeometry = null;
       return ipcRenderer.invoke("openwork:browser:hide", options);
@@ -275,12 +292,13 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     openUrl(url, provider, options) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider, options); },
     setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },
     setPresentation(sessionId, mode) { return ipcRenderer.invoke("openwork:browser:presentation", { sessionId, mode }); },
-    thumbnail(tabId) { return ipcRenderer.invoke("openwork:browser:thumbnail", tabId); },
+    focusWindow() { return ipcRenderer.invoke("openwork:browser:focusWindow"); },
+    claimDraftTabs(sessionId) { return ipcRenderer.invoke("openwork:browser:claimDraftTabs", sessionId); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
     reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
-    setBounds(bounds) { return sendBrowserGeometry("openwork:browser:bounds", bounds); },
+    setBounds(bounds, target) { return sendBrowserGeometry("openwork:browser:bounds", bounds, target); },
     getState() { return ipcRenderer.invoke("openwork:browser:state"); },
     createTab(url, sessionId) { return ipcRenderer.invoke("openwork:browser:createTab", url, sessionId); },
     closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
@@ -352,6 +370,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     distribution: desktopDistribution,
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
+    arch: process.arch,
+    isPackaged: ipcRenderer.sendSync("openwork:app-packaged-sync") === true,
     version: process.versions.electron,
     evalFatalBootstrapFailure: process.env.OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE ?? null,
   },

@@ -92,7 +92,20 @@ native protocol instead of expanding this port speculatively.
 | `waitForThread` | Polls to a bounded deadline. Returns `settled`, `timeout`, or `aborted` — never throws on a slow thread. |
 | `getThreadSnapshot` | Status, messages, and todos as OpenWork stores them. |
 | `abortThread` | Requests a stop. Acceptance is not proof the run ended; wait afterwards to observe idle. |
+| `getThreadWaitingFor` | Whether a thread waits on a permission or a question, from the engine's own request lists. |
+| `getThreadPending` | The request a thread waits on, a permission before a question, in words the person decides on. |
+| `getThreadPendingItems` | Every open request, up to five, in the same order: the first is what `getThreadPending` returns. |
+| `answerThread` | Answers any open request by its `requestId`: a question's answers, a permission `once` or `reject` (never "always"), or `dismiss`, which closes a question without answering it. |
 | `exportTranscript` | Flattens a snapshot into per-message text, reasoning, and tool calls. |
+
+`answerThread` checks the live request before it sends anything. A `requestId`
+that is no longer open, or names a request of the other kind, fails with code
+`stale_request`; answers that do not fit, and dismissing a permission, fail
+with `invalid_answer`. A dismissal uses the engine's own reject route (v1
+`POST /question/:id/reject`, v2 `DELETE /session/:id/form/:id`) and also
+clears a step that takes no answer from here, such as one that opens a link.
+A request from a helper the thread started is the thread's, and its reply
+goes to the helper that asked.
 
 `waitForThread` reports an outcome rather than throwing, so a caller running
 many threads can record a timeout as a result instead of losing the run.
@@ -105,13 +118,14 @@ whole contract against fixtures with no wall-clock dependency.
 ## Test
 
 ```bash
+pnpm --filter @openwork/headless-threads build
 pnpm --filter @openwork/headless-threads test
 ```
 
-The end-to-end proof lives with the server it drives, in
-`apps/server/src/headless-threads.e2e.test.ts`, and runs against a real
-OpenWork server:
+The tests run the built package against a fixture engine. The desktop's
+remote-session adapter drives the same client in
+`apps/desktop/test/session-runner.test.mjs`:
 
 ```bash
-pnpm --filter openwork-server test src/headless-threads.e2e.test.ts
+pnpm --filter @openwork/desktop test:session-runner
 ```

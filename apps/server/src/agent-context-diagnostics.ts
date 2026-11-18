@@ -338,7 +338,7 @@ function promptEvidence(configuredAgent: Record<string, unknown> | null) {
     markers: {
       searchCapabilities: prompt.includes("search_capabilities"),
       executeCapability: prompt.includes("execute_capability"),
-      artifacts: prompt.includes("## OpenWork Artifacts"),
+      artifacts: prompt.includes("## Artifacts are Apps"),
     },
   };
 }

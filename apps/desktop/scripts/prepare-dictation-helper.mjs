@@ -12,6 +12,7 @@ const outDir = resolve(outIndex >= 0 && raw[outIndex + 1] ? raw[outIndex + 1] : 
 const force = raw.includes("--force");
 const windows = process.platform === "win32";
 const source = resolve(desktopRoot, "native", "dictation", windows ? "windows.cs" : "main.swift");
+const sources = windows ? [source] : [source, ...["audio-input.swift", "transcript.swift", "speech-analyzer.swift"].map(name => resolve(desktopRoot, "native", "dictation", name))];
 const executable = join(outDir, windows ? "openwork-dictation.exe" : "openwork-dictation");
 const fingerprintPath = join(outDir, "openwork-dictation.sha256");
 
@@ -21,7 +22,11 @@ if (process.platform !== "darwin" && !windows) {
 }
 
 const arch = windows ? "anycpu" : process.arch === "x64" ? "x86_64" : "arm64";
-const sourceHash = createHash("sha256").update(arch).update(readFileSync(source)).update(readFileSync(fileURLToPath(import.meta.url))).digest("hex");
+const sdkVersion = windows ? "" : spawnSync("xcrun", ["--sdk", "macosx", "--show-sdk-version"], { encoding: "utf8" }).stdout?.trim() ?? "";
+const speechAnalyzer = Number.parseInt(sdkVersion, 10) >= 26;
+const fingerprint = createHash("sha256").update(arch).update(sdkVersion).update(readFileSync(fileURLToPath(import.meta.url)));
+for (const input of sources) fingerprint.update(readFileSync(input));
+const sourceHash = fingerprint.digest("hex");
 if (!force && existsSync(executable) && existsSync(fingerprintPath) && readFileSync(fingerprintPath, "utf8").trim() === sourceHash) {
   process.stdout.write(JSON.stringify({ ok: true, skipped: true, executable }) + "\n");
   process.exit(0);
@@ -52,7 +57,8 @@ mkdirSync(outDir, { recursive: true });
 // app's inherited entitlements), so microphone and speech permissions are OpenWork's.
 const result = windows
   ? windowsCompile()
-  : spawnSync("swiftc", ["-O", "-target", `${arch}-apple-macos14.0`, source, "-o", executable], { stdio: "inherit" });
+  : spawnSync("swiftc", ["-O", "-target", `${arch}-apple-macos14.0`,
+    ...(speechAnalyzer ? ["-D", "OPENWORK_SPEECH_ANALYZER"] : []), ...sources, "-o", executable], { stdio: "inherit" });
 if (result.error || result.status !== 0) {
   const reason = typeof result.error === "string" ? result.error : result.error?.message ?? `status ${result.status}`;
   if (!windows) throw new Error(`swiftc failed for the dictation helper: ${reason}`);
@@ -61,4 +67,4 @@ if (result.error || result.status !== 0) {
   process.exit(0);
 }
 writeFileSync(fingerprintPath, sourceHash, "utf8");
-process.stdout.write(JSON.stringify({ ok: true, executable }) + "\n");
+process.stdout.write(JSON.stringify({ ok: true, executable, ...(windows ? {} : { speechAnalyzer, sdkVersion }) }) + "\n");

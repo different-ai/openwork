@@ -11,6 +11,8 @@ import {
   HeadlessResumeGrantTable,
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
+  SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   MemberTable,
   OAuthAccessTokenTable,
   OAuthClientTable,
@@ -27,11 +29,12 @@ import { revokeUpstreamCredentials, revokeInferenceCredentialsForMembers } from 
 type UserId = typeof AuthUserTable.$inferSelect.id
 
 export async function deleteGlobalAuthUser(userId: UserId) {
-  const memberships = await db
+  // primary: every session and membership must be found, or its cache entry outlives the user.
+  const memberships = await db.$primary
     .select({ organizationId: MemberTable.organizationId })
     .from(MemberTable)
     .where(eq(MemberTable.userId, userId))
-  const sessions = await db
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, userId))
@@ -60,6 +63,8 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
     await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
     await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+    await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
+    await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.userId, userId))
     await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
     await tx.update(MemberTable).set({ userId: null }).where(eq(MemberTable.userId, userId))
     await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))

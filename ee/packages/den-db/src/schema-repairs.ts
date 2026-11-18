@@ -214,6 +214,46 @@ async function ensureOrgDefaultModelTeamIndex(executor: Executor) {
   console.log(`[den-db] ${tableName}.team_id index created`)
 }
 
+async function indexExists(executor: Executor, table: string, indexName: string) {
+  const rows = await executor.query(
+    `SELECT 1 AS present FROM information_schema.STATISTICS
+     WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ? LIMIT 1`,
+    [table, indexName],
+  )
+  return rows.length > 0
+}
+
+async function columnExists(executor: Executor, table: string, column: string) {
+  const rows = await executor.query(
+    `SELECT 1 AS present FROM information_schema.COLUMNS
+     WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ? LIMIT 1`,
+    [table, column],
+  )
+  return rows.length > 0
+}
+
+/**
+ * 0179 once created session_sso_proof, added deviceCode.sso_authenticated_at
+ * and then the indexes in separate statements. Production's first run stopped
+ * after the column; 0179 now only creates the table (with its indexes) and
+ * copies rows, so the column lives here and so do the indexes a table from
+ * that first run is missing.
+ */
+async function ensureSessionSsoProofSchema(executor: Executor) {
+  if (await tableExists(executor, "deviceCode") && !(await columnExists(executor, "deviceCode", "sso_authenticated_at"))) {
+    await runDdl(executor, "ALTER TABLE `deviceCode` ADD `sso_authenticated_at` timestamp(3)")
+    console.log("[den-db] deviceCode.sso_authenticated_at column added")
+  }
+  if (!(await tableExists(executor, "session_sso_proof"))) {
+    return
+  }
+  for (const [indexName, column] of [["session_sso_proof_org", "organization_id"], ["session_sso_proof_user", "user_id"]] as const) {
+    if (await indexExists(executor, "session_sso_proof", indexName)) continue
+    await runDdl(executor, `CREATE INDEX \`${indexName}\` ON \`session_sso_proof\` (\`${column}\`)`)
+    console.log(`[den-db] session_sso_proof.${column} index created`)
+  }
+}
+
 export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
   for (const repair of ORGANIZATION_REPAIRS) {
     if (!(await tableExists(executor, repair.table))) {
@@ -232,4 +272,5 @@ export async function ensureSchemaRepairs(executor: Executor): Promise<void> {
 
   await ensureInferenceOrgLimitAmountNullable(executor)
   await ensureOrgDefaultModelTeamIndex(executor)
+  await ensureSessionSsoProofSchema(executor)
 }

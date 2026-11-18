@@ -27,15 +27,7 @@ after(() => den.close())
 const acme = await den.createOrg(await den.signUp("Sam Rivera"), "Acme Robotics")
 const acmeMember = await den.newMember(acme.owner, acme.orgId, "Alex Chen")
 const northwind = await den.createOrg(await den.signUp("Jordan Lee"), "Northwind Labs")
-// Your agent is the remaining background feature that reports outcomes; the schedule-trigger
-// outcome features are retired (GA), so they are no longer seeded or asserted here.
-const turnedOn: Array<[string, string]> = [
-  [acme.orgId, "workbotProactive"],
-]
-for (const [orgId, key] of turnedOn) {
-  const set = await den.setFeature(orgId, key, true)
-  assert.equal(set.status, 200, `${key}: ${summary(set)}`)
-}
+await den.asPlatformAdmin("GET", "/v1/admin/features")
 const signedIn = await den.signIn(`platform-admin+${den.stamp}@example.test`)
 const adminToken = text(field(signedIn.body, "token"), "platform admin session")
 const { db } = await import("../../src/db.js")
@@ -133,36 +125,15 @@ test("only platform administrators read feature outcomes", async () => {
   assert.equal((await detail("notARealFeature")).status, 400)
 })
 
-test("Your agent: runs, how they ended and why, by organization, this week", async () => {
+test("retired agent outcomes stay stored but are absent from editable feature reports", async () => {
   const result = await report()
   assert.equal(result.status, 200, summary(result))
-  assert.equal(field(result.body, "range"), "7d")
-  const agent = feature(result, "workbotProactive")
-  const agentOutcomes = field(agent, "outcomes")
-  assert.equal(field(agentOutcomes, "unit"), "check")
-  assert.equal(field(agentOutcomes, "succeeded"), 12)
-  assert.equal(field(agentOutcomes, "delivered"), 2)
-  assert.equal(field(agentOutcomes, "failed"), 2)
-  assert.equal(field(agentOutcomes, "limited"), 1)
-  assert.equal(field(agentOutcomes, "coverage"), null)
-  assert.equal(agent.membersUsing, 1)
-  const agentDetail = await detail("workbotProactive")
-  assert.deepEqual(new Set(list(field(agentDetail.body, "feature", "reasons")).map((row) => row.reason)), new Set(["google_disconnected", "member_not_linked"]))
-  assert.doesNotMatch(agentDetail.text, /Fixture sentence/, "never the sentence a member reads")
-
-  // A feature with no reader shows adoption only.
-  const plain = feature(result, "settledSessions")
-  assert.equal(plain.outcomes, null)
-  assert.deepEqual(field(plain, "health"), { status: "not_used", count: null })
-})
-
-test("30 days include the older runs, uses and counters", async () => {
-  const result = await report("30d")
-  assert.equal(result.status, 200, summary(result))
-  const agent = feature(result, "workbotProactive")
-  assert.equal(field(agent, "outcomes", "succeeded"), 21)
-  // Check records are kept two weeks, so failures before then are not known.
-  assert.equal(field(agent, "outcomes", "coverage", "counts"), "failed")
+  for (const key of ["workbotProactive", "workbotScrollToBottom"]) {
+    assert.equal(list(field(result.body, "features")).some((row) => row.key === key), false)
+    assert.equal((await detail(key)).status, 400)
+  }
+  const historical = await db.select().from(AgentCheckTable)
+  assert.ok(historical.length > 0, "retirement must not remove operational history")
 })
 
 test("Slack bot operational outcomes remain visible after its rollout graduates", async () => {

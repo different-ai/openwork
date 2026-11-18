@@ -147,9 +147,12 @@ export function modelCount(count: number): string {
   return count === 1 ? "1 model" : `${count} models`;
 }
 
-/** The brand people sign in with: Google (Vertex), AWS (Bedrock) or Microsoft (Foundry). */
-export function signInBrand(provider: Pick<LibraryModelProvider, "providerKey">): string {
-  const method = gatewayMemberSignInMethod(provider.providerKey);
+/**
+ * The brand people sign in with: Google (Vertex), AWS (Bedrock) or Microsoft (Foundry). A provider whose sign-in
+ * depends on how it is set up (LiteLLM with Microsoft sign-in) is named by the person's own credential set.
+ */
+export function signInBrand(provider: Pick<LibraryModelProvider, "providerKey"> & Partial<Pick<LibraryModelProvider, "memberSets">>): string {
+  const method = gatewayMemberSignInMethod(provider.providerKey) ?? provider.memberSets?.[0]?.signInMethod ?? null;
   return method === "google" ? "Google" : method === "aws_sso" ? "AWS" : method === "microsoft" ? "Microsoft" : "your account";
 }
 

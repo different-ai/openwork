@@ -53,7 +53,7 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTar
   const create = async () => {
     if (!canManage) return;
     setCreating(true); setError(null);
-    try { await onCreateApp("Create one live app for my dashboard in one shot. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. Handle the underlying workflow internally; do not ask me workflow questions. My app should "); setChooser(null); }
+    try { await onCreateApp("Create and save one live artifact for my dashboard that fetches fresh data with each viewer’s own connections whenever opened or refreshed. Handle the underlying workflow internally; do not ask me workflow questions. My artifact should "); setChooser(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not start a conversation. Try again."); }
     finally { setCreating(false); }
   };

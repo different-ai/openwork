@@ -10,6 +10,7 @@ import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } 
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
 import { appToolResultConnectionToolName, connectionCardFromMcpToolResult, isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
 import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
+import { memberAccessConfirmed } from "@/react-app/domains/dashboard/mcp-app-member-access"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
 import { openDesktopUrl } from "@/app/lib/desktop"
@@ -26,6 +27,7 @@ import {
 import { useOptionalMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
 import { McpAppSignInPrompts, signInPromptFromToolResult, useMcpAppSignIn } from "./mcp-app-sign-in"
+import { changedMcpAppTool, McpAppChangedToolPrompt } from "./mcp-app-tool-change"
 import { cn } from "@/lib/utils"
 import { McpAppLoading } from "./mcp-app-loading"
 import { Button } from "@/components/ui/button"
@@ -335,13 +337,16 @@ export type McpAppSandboxViewProps = {
    * A cached Dashboard may paint now, but its tools must await a fresh,
    * access-checked lease. Called again for each call, so a host that keeps
    * this view open across launches can hand it each newer lease. Given the
-   * lease a call just found stale, it renews that lease or throws.
+   * lease a call just found stale, it renews that lease or throws. With need
+   * "lease" it may hand out the lease of a launch still running, for a stored
+   * read that only confirms access.
    */
-  resolveLiveActions?: (staleLaunchId?: string) => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
+  resolveLiveActions?: (staleLaunchId?: string, need?: "lease") => Promise<{ origin: McpAppOrigin; app: OpenworkMcpAppResource }>
   /**
    * With resolveLiveActions: this saved view goes live in place, so the App
-   * may ask for its kept read-only results. Like every call, such a read
-   * waits for the lease and a current read check before anything is shown.
+   * may ask for its kept read-only results. Such a read waits for the lease
+   * and a current read check, unless this session already compared the
+   * member's access; then it shows at once and the check follows.
    */
   goesLiveInPlace?: boolean
   /**
@@ -379,6 +384,14 @@ export type McpAppSandboxViewProps = {
   /** Sees each result of a call the App makes, so a host can swap in its own recovery UI. */
   onAppToolResult?: (result: unknown) => void
   /**
+   * Offered when a call fails because the tool changed at its provider since
+   * the App was published: starts a conversation to update the App. Given
+   * only to someone who can update it.
+   */
+  onFixChangedTool?: (tool: string) => Promise<void>
+  /** Sees each read the App asks to keep, or null when it failed, so a host can store what the App last showed. */
+  onKeptRead?: (read: { name: string; arguments: Record<string, unknown> }, result: CallToolResult | null) => void
+  /**
    * Names the open this view belongs to when it can mount again without being
    * reopened, such as a chat card scrolled back into view. Its loads then run
    * once for the open rather than once per mount.
@@ -391,7 +404,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, openKey }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInPlace = false, liveReady = false, renewsLease = true, toolName, inputArguments, result, connectionController, updateMode = "replace", onReady, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, presentation = "inline", onError, onRetry, onAppToolResult, onFixChangedTool, onKeptRead, openKey }: McpAppSandboxViewProps) {
   const openworkServerClient = origin.client
   const workspaceId = origin.workspaceId
   const readOnly = origin.readOnly
@@ -417,6 +430,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
   reportToolResultRef.current = signIn.reportToolResult
   const onAppToolResultRef = useRef(onAppToolResult)
   onAppToolResultRef.current = onAppToolResult
+  const [changedTool, setChangedTool] = useState<string | null>(null)
+  const onKeptReadRef = useRef(onKeptRead)
+  onKeptReadRef.current = onKeptRead
   const toolDeliveryRef = useRef({ inputArguments, result })
   const deliverToolDataRef = useRef<(() => Promise<void>) | null>(null)
   const replacementInput = updateMode === "replace" ? inputArguments : null
@@ -448,9 +464,9 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
     const loads = createMcpAppOpenLoads(openKey === undefined ? undefined : JSON.stringify([openKey, retryAttempt]))
     // The lease the current actions use, once a cached view has one.
     let liveLaunchId: string | undefined
-    const bindLiveActions = async (staleLaunchId?: string) => {
+    const bindLiveActions = async (staleLaunchId?: string, need?: "lease") => {
       if (!resolveLiveActions) return
-      const live = await resolveLiveActions(staleLaunchId)
+      const live = await resolveLiveActions(staleLaunchId, need)
       if (disposed || failed) throw new Error("This artifact view has closed or changed.")
       if (live.origin.readOnly || !live.app.launchId || live.app.serverName !== app.serverName
         || live.app.toolName !== app.toolName || live.app.resourceUri !== app.resourceUri) {
@@ -599,23 +615,34 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
       const cacheRequest = _meta?.[MCP_APP_CACHE_REQUEST_META]
       const call = { serverName: app.serverName, resourceUri: app.resourceUri, name, args: args ?? {} }
       try {
-        await bindLiveActions()
         // The App's last read-only result for this call, from storage. The host
         // first rechecks that the call is allowed now without approval (lease,
         // visibility, workspace denies, read-only label); the tool never runs.
+        // That takes a lease, not the launch's result, which may be running
+        // the App's reads, so the stored answer can arrive first. A saved view
+        // whose member access this session already compared answers at once
+        // and checks behind it, as its saved launch data does.
         if (cacheRequest === "read") {
           const miss = { content: [], isError: true, _meta: { [MCP_APP_CACHED_RESULT_META]: false } }
           const cached = await cachedMcpAppResult(origin, app, name, args ?? {})
           if (!cached) return miss
-          const identity = await actions.checkRead(name, args ?? {}).catch(() => null)
-          if (disposed || failed) throw new Error("This artifact view has closed or changed.")
-          // Kept from this same verified server only; a replaced server starts empty.
-          if (!identity || identity !== cached.providerIdentity) {
+          const stillAllowed = async () => {
+            await bindLiveActions(undefined, "lease")
+            const identity = await actions.checkRead(name, args ?? {}).catch(() => null)
+            if (disposed || failed) throw new Error("This artifact view has closed or changed.")
+            // Kept from this same verified server only; a replaced server starts empty.
+            if (identity && identity === cached.providerIdentity) return true
             void forgetMcpAppResult(origin, app, name, args ?? {})
-            return miss
+            return false
           }
-          return cached.result
+          if (savedLive && memberAccessConfirmed()) {
+            if (disposed || failed) throw new Error("This artifact view has closed or changed.")
+            void stillAllowed().catch(() => undefined)
+            return cached.result
+          }
+          return await stillAllowed() ? cached.result : miss
         }
+        await bindLiveActions()
         const userInteraction = _meta?.["openwork/userInteraction"] === true
         const callOnce = async () => connectionController
           ? await connectionController.callTool(actions, app, name, args, userInteraction)
@@ -654,16 +681,25 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
         // A failed answer also clears the kept one: it may mean the provider
         // no longer allows this person to read it. The open App keeps showing
         // what it already has, marked stale, but a later open starts empty.
-        if (cacheRequest === "store" && !reused) void rememberMcpAppResult(origin, app, name, args ?? {}, toolResult)
+        if (cacheRequest === "store" && !reused) {
+          void rememberMcpAppResult(origin, app, name, args ?? {}, toolResult)
+          if (!disposed && !failed) onKeptReadRef.current?.({ name, arguments: args ?? {} }, toolResult)
+        }
         // A sign-in the viewer can finish gets the row above the App; any
         // other connection failure goes to the host's connection card.
         if (!disposed && !failed) {
           if (signInPromptFromToolResult(toolResult)) reportToolResultRef.current(toolResult)
           else onAppToolResultRef.current?.(toolResult)
+          // A tool that changed at its provider needs the App updated, which no retry does.
+          const changed = changedMcpAppTool(toolResult, name)
+          if (changed) setChangedTool(changed)
         }
         return toolResult
       } catch (cause) {
-        if (cacheRequest === "store") void forgetMcpAppResult(origin, app, name, args ?? {})
+        if (cacheRequest === "store") {
+          void forgetMcpAppResult(origin, app, name, args ?? {})
+          onKeptReadRef.current?.({ name, arguments: args ?? {} }, null)
+        }
         if (cacheRequest !== "read") loads.failed(call)
         // A Dashboard view that goes live in place outlives each lease: a call
         // caught by a refresh fails alone, the next uses the newer lease, and
@@ -942,6 +978,8 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, goesLiveInP
           signIn.signedIn(connectionId)
           reload()
         }} />
+      {changedTool && onFixChangedTool ? <McpAppChangedToolPrompt tool={changedTool} onFix={onFixChangedTool}
+        className={presentation === "dashboard" ? "mb-3" : "mt-3"} /> : null}
       <div
         className={cn(
           presentation === "dashboard" ? "overflow-hidden" : "mt-3 overflow-hidden rounded-xl bg-background",
@@ -977,14 +1015,14 @@ export function isNativeConnectionAppLaunch(part: DynamicToolUIPart): boolean {
     && (launch.resourceUri === connectionActionAppResourceUri || launch.resourceUri === legacyConnectionActionAppResourceUri)
 }
 
-export function McpAppFrame({ part, origin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
+export function McpAppFrame({ part, origin, onReady }: { part: DynamicToolUIPart; origin?: McpAppOrigin; onReady?: () => void }) {
   const result = preservedResult(part)
   if (isRetiredFirstPartyConfirmation(part.toolName, result)) return null
   if (isNativeConnectionAppLaunch(part)) return null
-  return <EmbeddedMcpAppFrame part={part} origin={origin} />
+  return <EmbeddedMcpAppFrame part={part} origin={origin} onReady={onReady} />
 }
 
-function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
+function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin, onReady }: { part: DynamicToolUIPart; origin?: McpAppOrigin; onReady?: () => void }) {
   const context = useOptionalMessageList()
   const nextOrigin = surfaceOrigin ?? context?.mcpAppOrigin ?? null
   const { uiStateOwner, readOnly, getConnectionDecision, onMcpReconnect } = context ?? {}
@@ -1159,6 +1197,8 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} engine={origin.engine} />
   if (!app || resolvedFor.current !== resolution) return launch && resolvedFor.current !== resolution
     ? <McpAppLoading /> : null
+  // An empty resource is not a view: do not reserve the default iframe height.
+  if (!app.html.trim()) return null
   if (appConnection) return <DashboardConnectionCard toolName={appConnection.toolName} toolCallId={`${part.toolCallId}:app`}
     output={appConnection.output} onConnected={() => { setAppConnection(null); setResolveToken((token) => token + 1) }} />
   return (
@@ -1174,6 +1214,7 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
       result={result}
       connectionController={connectionController}
       unavailableNotice={CHAT_MCP_APP_UNAVAILABLE_NOTICE}
+      onReady={onReady}
       openKey={JSON.stringify([scope, part.toolCallId, resolveToken])}
       onRequestTeardown={() => {
         const launchId = (liveApp ?? app).launchId

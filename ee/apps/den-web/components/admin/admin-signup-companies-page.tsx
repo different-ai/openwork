@@ -121,7 +121,7 @@ export function AdminSignupCompaniesPage() {
         <li>Signups are accounts on the domain. Orgs are the organizations those people joined. Last sign-in is the latest session still on record.</li>
         <li>Active users are people seen using the app in any of those organizations in the last 30 days. Self-hosted use and turned-off telemetry are not counted.</li>
         <li>Plan is the highest stored plan across the organizations. Paying means a current active subscription; trials are not paying.</li>
-        <li>Contacted means a platform admin recorded outreach, a reply or a meeting for any of the organizations in This week.</li>
+        <li>Contacted means a platform admin recorded outreach, a reply or a meeting for any of the organizations on the Outreach tab.</li>
       </ul>
     </details>
     {data ? <p className="mt-2 text-xs text-[var(--dls-text-secondary)]">Snapshot {new Date(data.generatedAt).toLocaleString()}</p> : null}

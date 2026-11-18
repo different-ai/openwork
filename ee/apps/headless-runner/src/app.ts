@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming"
 import type { ErrorReporter } from "./error-reporting.js"
 import type { SessionEvents } from "./events.js"
 import { serviceHealthResponse, type ServiceHealthConfig } from "./service-health.js"
+import { computerDetailResponse, computerFleetResponse, type ComputerFleetConfig } from "./computer-fleet.js"
 import { SavedFileLimitError, type SavedFiles } from "./saved-files.js"
 import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
@@ -14,7 +15,7 @@ import { FILE_LIMITS, isMemoryPath, normalizePath } from "./files.js"
 import { localMemory, MemoryUnavailableError, type MemoryResolver } from "./memory.js"
 import type { Runner } from "./runner.js"
 import { scopedCatalogResponse } from "./model-catalog.js"
-import type { HeadlessModelAccess } from "@openwork-ee/headless-protocol"
+import { HEADLESS_MAX_PROMPT_CHARS, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 import { modelProbeResponse, type ModelProbe } from "./model-probe.js"
 import { CONVERSATION_TABLES, sqlRow, type SessionInput, type StoredMessage, type Store, type Turn } from "./store.js"
 import { LargeBodyUnavailableError, SegmentError, SessionStorage } from "./storage/index.js"
@@ -39,8 +40,12 @@ const createSessionBody = z
     tasks: z.boolean().optional(),
     /** The host opens a document beside this chat on the person's explicit request (`open_document`). Off unless asked for. */
     documentNavigation: z.boolean().optional(),
+    /** The host opens its teaching window on the person's explicit request (`open_teaching`). Off unless asked for. */
+    teachingNavigation: z.boolean().optional(),
     /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
     sandboxGateway: z.boolean().optional(),
+    /** Trusted host rollout for read-only browser recovery. */
+    browserRecovery: z.boolean().optional(),
     /** Who the conversation belongs to, in the caller's terms, so the caller can list one person's conversations. */
     owner: z.string().min(1).max(200).optional(),
     /** The caller's own id for the conversation, returned when listing. */
@@ -71,7 +76,7 @@ function isTimeZone(zone: string) {
 const sendBody = z
   .object({
     messageId: messageIdSchema,
-    prompt: z.string().max(100_000),
+    prompt: z.string().max(HEADLESS_MAX_PROMPT_CHARS),
     model: z.string().min(1).max(256).optional(),
     credentials: turnCredentialsSchema.default({}),
     /** Ids of saved files (POST /v1/sessions/:id/saved-files) sent with this message. */
@@ -142,6 +147,8 @@ export function createApp(input: {
   apiToken: string
   /** Validated deployment settings, used only for the authenticated configuration-presence check. */
   healthConfig?: ServiceHealthConfig
+  /** The computer settings, for the fleet list (`GET /v1/computers`): which providers to ask, with whose key. */
+  computerFleet?: ComputerFleetConfig
   /** Models a caller may pick per turn; without it only the default is listed. */
   models?: (modelAccess?: HeadlessModelAccess) => Promise<ModelCatalog>
   /** Bounded synthetic completion with scoped access or the deployment key; no conversation is created. */
@@ -200,6 +207,13 @@ export function createApp(input: {
   }
   const app = new Hono()
 
+  // Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
+  // A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
+  app.use("*", async (c, next) => {
+    await next()
+    if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive")
+  })
+
   app.get("/health", (c) => c.json({ ok: true }))
 
   app.use("/v1/*", async (c, next) => {
@@ -216,6 +230,10 @@ export function createApp(input: {
   })
 
   app.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, input.healthConfig))
+  // Every computer the providers hold for this runner, for Den's admin page. Reads the providers; touches no conversation.
+  app.get("/v1/computers", () => computerFleetResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }))
+  // One of them in full: the provider's record, where it was placed and why, and its lifecycle events.
+  app.get("/v1/computers/:source/:id", (c) => computerDetailResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
   app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
   app.post("/v1/models", bodyLimit({ maxSize: 8192 }), (c) => scopedCatalogResponse(c.req.raw, input.models))
   app.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => modelProbeResponse(c.req.raw, input.modelProbe))
@@ -247,7 +265,7 @@ export function createApp(input: {
       return c.json({ error: "desktop_not_configured" }, 409)
     } catch (error) {
       // The page only gets a stable code; the reason goes to the runner's log, where an operator can act on it.
-      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive" || error.desktopCode === "desktop_updating") ? error.desktopCode : "desktop_unavailable"
+      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive" || error.desktopCode === "desktop_updating" || error.desktopCode === "desktop_replacing") ? error.desktopCode : "desktop_unavailable"
       console.error("[headless-runner] desktop failed", { sessionId: session.id, operation: c.req.param("operation"), code, error: error instanceof Error ? error.message : "unknown" })
       return c.json({ error: code }, 409)
     }
@@ -477,6 +495,16 @@ export function createApp(input: {
     const savedKeys = store.savedFileKeys(id)
     if (!(await storage.deleteSession(id))) return c.json({ error: "unknown_session" }, 404)
     await input.files?.deleteSession(id, savedKeys)
+    return c.body(null, 204)
+  })
+
+  // Only the computer goes (its owner left the organization): the conversation, its files and its memory stay, and
+  // its next use makes a new computer.
+  app.delete("/v1/sessions/:id/computer", async (c) => {
+    const id = c.req.param("id")
+    if (!store.getSession(id)) return c.json({ error: "unknown_session" }, 404)
+    if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
+    await input.computer?.delete(id)
     return c.body(null, 204)
   })
 

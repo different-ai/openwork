@@ -237,6 +237,7 @@ export async function publishReviewPr(
     testRunDirs: string[];
     docShots?: string[];
     title?: string;
+    notice?: string;
     gaps?: string[];
     reviewUrl?: string;
     dryRun?: boolean;

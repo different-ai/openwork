@@ -5,7 +5,7 @@ on:
     # Den DB Migrate retries pending production migrations every 30 minutes;
     # without an alert a broken migration fails silently while den-api already
     # runs code that needs it (#4895). Only its scheduled ticks notify.
-    workflows: [Build and core checks, Freestyle world check, Den DB Migrate]
+    workflows: [Nightly regression, Freestyle world check, Den DB Migrate]
     types: [completed]
 
 permissions:

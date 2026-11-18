@@ -15,6 +15,7 @@ import {
   GatewayUsageChargeTable,
   GatewayUsageEventTable,
   GatewayUsageRollupTable,
+  WorkbotUsageDayTable,
   HeadlessSessionIndexTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
@@ -96,7 +97,8 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     // Usage events have no organization index; charges have no organization column.
     const events = and(inArray(GatewayUsageEventTable.memberId, memberIds), eq(GatewayUsageEventTable.organizationId, organizationId))
     await deleteParentsInBatches(
-      async (limit) => (await db.select({ id: GatewayUsageEventTable.id }).from(GatewayUsageEventTable).where(events).limit(limit)).map((row) => row.id),
+      // primary: each page must not include the rows the previous page just deleted.
+      async (limit) => (await db.$primary.select({ id: GatewayUsageEventTable.id }).from(GatewayUsageEventTable).where(events).limit(limit)).map((row) => row.id),
       async (ids) => {
         await db.delete(GatewayUsageChargeTable).where(inArray(GatewayUsageChargeTable.eventId, ids))
         await db.delete(GatewayUsageEventTable).where(inArray(GatewayUsageEventTable.id, ids))
@@ -104,7 +106,8 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     )
   }
   await deleteParentsInBatches(
-    async (limit) => (await db
+    // primary: each page must not include the rows the previous page just deleted.
+    async (limit) => (await db.$primary
       .select({ id: InferenceUsageLedgerEntryTable.id })
       .from(InferenceUsageLedgerEntryTable)
       .where(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId))
@@ -119,6 +122,7 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
   await deleteInBatches((limit) => db.delete(GatewayUsageAuditTable).where(eq(GatewayUsageAuditTable.organizationId, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId)).limit(limit))
+  await deleteInBatches((limit) => db.delete(WorkbotUsageDayTable).where(eq(WorkbotUsageDayTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId)).limit(limit))

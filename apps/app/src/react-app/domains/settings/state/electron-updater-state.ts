@@ -16,6 +16,7 @@ import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, safeStringify } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { useUpdateCheckRequestStore } from "./update-check-request";
+import { updateAnalytics } from "../../../../app/lib/analytics";
 
 export type SettingsUpdateStatus = {
   state: "idle" | "checking" | "available" | "blocked" | "downloading" | "ready" | "error";
@@ -250,10 +251,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       .getChannel()
       .then(async (state) => {
         if (cancelled) return;
+        updateAnalytics.launched(state.currentVersion ?? null);
         dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== policyReleaseChannel && bridge.setChannel) {
           const nextState = await bridge.setChannel(policyReleaseChannel);
           if (cancelled) return;
+          updateAnalytics.launched(nextState.currentVersion ?? null);
           dispatchEnvState({ type: "app-version", appVersion: nextState.currentVersion ?? null });
           if (nextState.channel && nextState.channel !== policyReleaseChannel) {
             onReleaseChannelChange(nextState.channel);
@@ -296,6 +299,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.download) {
       const message = "Electron updater downloads are available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "download");
       setUpdateStatus({ state: "error", message, failedAction: "download" });
       setError(message);
       return;
@@ -310,6 +314,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     ).catch((error: unknown) => {
       if (isCurrentReleaseChannel()) {
         const message = describeError(error);
+        updateAnalytics.failed(appVersion, "download");
         setUpdateStatus({
           state: "error",
           message,
@@ -357,6 +362,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
         const message = result?.reason ?? "Update download failed.";
+        updateAnalytics.failed(appVersion, "download");
         setUpdateStatus({
           state: "error",
           message,
@@ -387,6 +393,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
       const message = describeError(error);
+      updateAnalytics.failed(appVersion, "download");
       setUpdateStatus({
         state: "error",
         message,
@@ -397,6 +404,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       unsubProgress?.();
     }
   }, [
+    appVersion,
     onReleaseChannelChange,
     releaseChannel,
     resolvePolicyReleaseChannel,
@@ -416,6 +424,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.check) {
       const message = "Electron update checks are available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({ state: "error", message, failedAction: "check" });
       setError(message);
       return;
@@ -475,6 +484,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
       let result = await bridge.check(activeReleaseChannel, targetVersion);
       if (!isCurrentRequest()) return;
+      updateAnalytics.launched(result.currentVersion ?? null);
       dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
       let checkedReleaseChannel = result.channel ?? activeReleaseChannel;
       if (
@@ -499,6 +509,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           targetVersion = fallbackTargetVersion;
           result = await bridge.check(checkedReleaseChannel, targetVersion);
           if (!isCurrentRequest()) return;
+          updateAnalytics.launched(result.currentVersion ?? null);
           dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
           checkedReleaseChannel = result.channel ?? checkedReleaseChannel;
         }
@@ -511,6 +522,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
       if (result.reason) {
+        updateAnalytics.failed(appVersion, "check");
         setUpdateStatus({
           state: "error",
           message: result.reason,
@@ -555,12 +567,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         ? checkedReleaseChannel
         : null;
       downloadedReleaseChannelRef.current = null;
+      if (checkedUpdateState === "available") updateAnalytics.offered(result.currentVersion ?? appVersion, result.latestVersion ?? undefined);
       setUpdateStatus(nextStatus);
       if (availableAllowed && updateAutoDownload && !suppressAutoDownload) {
         await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
       if (!isCurrentRequest()) return;
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({
         state: "error",
         message: describeError(error),
@@ -602,6 +616,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         : await isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current, appVersion)
       : false;
     if (!isCurrentRequest()) return null;
+    if (allowed) updateAnalytics.offered(appVersion, result.latestVersion ?? undefined);
     return {
       lost: false,
       newest: comparison === 0,
@@ -620,11 +635,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     downloadedReleaseChannelRef.current = null;
     availableReleaseChannelRef.current = null;
     readyCheckCooldownRef.current = 0;
+    updateAnalytics.failed(appVersion, "check");
     const message = t("updates.staged_unavailable");
     const nextStatus: SettingsUpdateStatus = { state: "error", failedAction: "check", message, checkError: message };
     updateStatusRef.current = nextStatus;
     setUpdateStatus(nextStatus);
-  }, []);
+  }, [appVersion]);
 
   const checkWhileReady = useCallback(async () => {
     const staged = updateStatusRef.current;
@@ -660,6 +676,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } catch (error) {
       if (!isCurrentRequest()) return;
       readyCheckCooldownRef.current = 0;
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({
         ...staged,
         checkingForNewer: false,
@@ -671,7 +688,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } finally {
       if (readyCheckInFlightRef.current === requestId) readyCheckInFlightRef.current = null;
     }
-  }, [findNewerThanStaged, markStagedUpdateLost]);
+  }, [appVersion, findNewerThanStaged, markStagedUpdateLost]);
 
   // A release can ship after an update was downloaded. Replace the staged build
   // with the newest allowed one so a single restart lands on it, instead of a
@@ -800,6 +817,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
       const message = "Electron update install is available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "install");
       setUpdateStatus({ state: "error", message, failedAction: "install" });
       setError(message);
       return;
@@ -846,12 +864,15 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           return;
         }
       }
+      updateAnalytics.installing(appVersion, downloadedVersion);
       const result = await bridge.installAndRestart();
+      if (!result?.ok) updateAnalytics.cancelInstall();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
         const message = result?.reason ?? "Update install failed.";
         setError(message);
         if (result?.reason === "update-not-downloaded") {
+          updateAnalytics.failed(appVersion, "install");
           // The main-side staged download was invalidated; re-check so the UI
           // returns to a working stable-targeted download/install flow.
           downloadedReleaseChannelRef.current = null;
@@ -859,6 +880,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           await runCheckForUpdates(undefined, true);
           return;
         }
+        updateAnalytics.failed(appVersion, "install");
         setUpdateStatus({
           state: "error",
           message,
@@ -866,8 +888,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         });
       }
     } catch (error) {
+      updateAnalytics.cancelInstall();
       if (!isCurrentReleaseChannel()) return;
       const message = describeError(error);
+      updateAnalytics.failed(appVersion, "install");
       setUpdateStatus({
         state: "error",
         message,
@@ -891,6 +915,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         if (!bridge?.setChannel) return;
         const state = await bridge.setChannel(allowedReleaseChannel);
         if (releaseChannelRequestRef.current !== requestId) return;
+        updateAnalytics.launched(state.currentVersion ?? null);
         dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== allowedReleaseChannel) {
           onReleaseChannelChange(state.channel);
@@ -898,6 +923,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         await checkForUpdates(state.channel ?? allowedReleaseChannel);
       } catch (error) {
         if (releaseChannelRequestRef.current !== requestId) return;
+        updateAnalytics.failed(appVersion, "check");
         setUpdateStatus({
           state: "error",
           message: describeError(error),
@@ -905,7 +931,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         });
       }
     },
-    [checkForUpdates, onReleaseChannelChange, resolvePolicyReleaseChannel],
+    [appVersion, checkForUpdates, onReleaseChannelChange, resolvePolicyReleaseChannel],
   );
 
   return {

@@ -66,12 +66,25 @@ function pageRecorder(makePrivacyFilter) {
     }
     return { tag, role: privacy.redact(element.getAttribute("role") || ({ a: "link", button: "button", input: "textbox", textarea: "textbox", select: "combobox", table: "table" }[tag] || "text")).slice(0, 60), name };
   };
+  // Where a field sits in the page, as a number that says nothing about it. A page can redraw the field being typed
+  // into as a new element; the same place keeps that typing one step, and two fields with one label stay two.
+  const place = element => {
+    let path = `${element.tagName}|${element.getAttribute("type") || ""}|`;
+    if (element.id) path += `#${element.id}`;
+    else {
+      path += element.getAttribute("name") || "";
+      for (let node = element; node.parentElement; node = node.parentElement) path += `/${[...node.parentElement.children].indexOf(node)}`;
+    }
+    let hash = 0;
+    for (let index = 0; index < path.length; index++) hash = (hash * 31 + path.charCodeAt(index)) | 0;
+    return hash;
+  };
   const emit = (kind, element, extra = {}) => {
     if (!recording) return;
     collect();
     if (protectedField(element) || element.closest('[contenteditable="true"]')) return;
     if (!controls.has(element)) controls.set(element, ++sequence);
-    globalThis.__openworkDemonstrationEvent(JSON.stringify({ kind, control: controls.get(element), target: describe(element, kind === "extract"), ...extra }));
+    globalThis.__openworkDemonstrationEvent(JSON.stringify({ kind, control: controls.get(element), ...(kind === "fill" ? { place: place(element) } : {}), target: describe(element, kind === "extract"), ...extra }));
   };
   const click = event => {
     if (!event.isTrusted || !recording) return;
@@ -151,7 +164,7 @@ function connect(url, onEvent, onClose = () => {}) {
 
 export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:9222", allowed = publicDestination, now = Date.now }) {
   let demo = null, owner = null, wire = null, scriptId = null, contextId = null, frameId = null;
-  let lastField = null, connectionGeneration = 0;
+  let lastField = null, lastPlace = null, connectionGeneration = 0;
   let until = 0, serial = Promise.resolve(), writing = Promise.resolve(), events = Promise.resolve(), loaded = false;
   const enqueue = work => { events = events.catch(() => {}).then(work).catch(() => {}); };
   const contexts = new Map();
@@ -162,12 +175,15 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
     writing = writing.catch(() => {}).then(async () => { await writeFile(`${path}.tmp`, snapshot, { mode: 0o600 }); await rename(`${path}.tmp`, path); });
     return writing;
   };
-  const append = (step, fieldKey = null) => {
+  const append = (step, fieldKey = null, place = null) => {
     if (!active()) return;
-    if (demo.steps.length >= 120) { demo.phase = "paused"; demo.notice = "120 steps recorded. Finish this skill or discard it and teach a smaller task."; void persist().catch(() => {}); return; }
     const previous = demo.steps.at(-1);
-    if (step.kind === "fill" && previous?.kind === "fill" && fieldKey !== null && fieldKey === lastField) { previous.target = step.target; void persist().catch(() => {}); return; }
-    lastField = step.kind === "fill" ? fieldKey : null;
+    // Typing is one step per field: the same element, or the same place and label when the page redrew the field.
+    const sameField = fieldKey !== null && fieldKey === lastField;
+    const redrawn = place !== null && place === lastPlace && Boolean(step.target?.name) && previous?.target?.name === step.target.name && previous.target.tag === step.target.tag;
+    if (step.kind === "fill" && previous?.kind === "fill" && (sameField || redrawn)) { previous.target = step.target; lastField = fieldKey; lastPlace = place; void persist().catch(() => {}); return; }
+    if (demo.steps.length >= 120) { demo.phase = "paused"; demo.notice = "120 steps recorded. Finish this skill or discard it and teach a smaller task."; void persist().catch(() => {}); return; }
+    lastField = step.kind === "fill" ? fieldKey : null; lastPlace = step.kind === "fill" ? place : null;
     const id = (previous?.id ?? 0) + 1;
     const entry = { ...step, id, explanation: "", revision: 0 };
     if (["fill", "select"].includes(step.kind)) entry.parameter = `input_${id}`;
@@ -217,9 +233,9 @@ export function createBrowserDemonstration({ path, endpoint = "http://127.0.0.1:
       }
       if (event.params.payload.length > 2048 || !["click", "fill", "select", "key", "extract"].includes(value.kind)) return;
       if (value.target && typeof value.target === "object") for (const key of ["name", "role", "tag"]) if (typeof value.target[key] === "string") value.target[key] = privacy.redact(value.target[key]);
-      const { control, ...data } = value;
+      const { control, place, ...data } = value;
       const parsed = demonstrationSchema.shape.steps.element.safeParse({ ...data, id: 1, explanation: "", ...(value.kind === "fill" || value.kind === "select" ? { parameter: "input_1" } : {}), ...(value.kind === "extract" ? { field: "field_1" } : {}) });
-      if (parsed.success) { const { id, explanation, parameter, field, ...step } = parsed.data; enqueue(() => append(step, Number.isSafeInteger(control) ? `${event.params.executionContextId}:${control}` : null)); }
+      if (parsed.success) { const { id, explanation, parameter, field, ...step } = parsed.data; enqueue(() => append(step, Number.isSafeInteger(control) ? `${event.params.executionContextId}:${control}` : null, Number.isSafeInteger(place) ? place : null)); }
     }, () => {
       if (generation !== connectionGeneration) return;
       // The taught tab closed (the Browser view's tabs can close it) or the browser restarted: nothing more reaches

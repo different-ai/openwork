@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test src/*.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json"
   },
@@ -14,6 +15,13 @@
         "default": "./src/schema.ts"
       },
       "default": "./src/schema.ts"
+    },
+    "./configuration": {
+      "types": {
+        "openwork-build": "./dist/types/src/configuration.d.ts",
+        "default": "./src/configuration.ts"
+      },
+      "default": "./src/configuration.ts"
     },
     "./lifecycle": {
       "types": {
@@ -40,6 +48,6 @@
   "dependencies": {
     "zod": "^4.6.6",
     "jose": "6.2.8",
-    "fast-xml-parser": "5.8.0"
+    "fast-xml-parser": "5.12.0"
   }
 }

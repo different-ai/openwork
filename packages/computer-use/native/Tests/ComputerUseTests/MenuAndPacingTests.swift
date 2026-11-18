@@ -43,12 +43,194 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertEqual(MenuRules.leadingMenus, 2, "the Apple and app menus are never offered")
     }
 
+    func testDesignAppsCanOpenHiddenMenusAndFlyouts() throws {
+        guard case .rightClick(let point) = try Action(["type": "right_click", "x": 4, "y": 5], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(point, CGPoint(x: 4, y: 5))
+        guard case .hold(_, let ms) = try Action(["type": "click", "x": 4, "y": 5, "hold_ms": 800], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(ms, 800)
+        guard case .showMenu("e3") = try Action(["type": "show_menu", "ref": "e3"], policy: .embedded) else { return XCTFail() }
+        guard case .click(_, 1, let flags) = try Action(["type": "click", "x": 1, "y": 1, "modifiers": ["control"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertTrue(flags.contains(.maskControl), "control-click opens a context menu")
+        XCTAssertThrowsError(try Action(["type": "click", "x": 1, "y": 1, "modifiers": ["control"]]), "the standalone helper still refuses it")
+        XCTAssertThrowsError(try Action(["type": "double_click", "x": 1, "y": 1, "hold_ms": 800], policy: .embedded), "only a single click holds")
+        XCTAssertThrowsError(try Action(["type": "click", "x": 1, "y": 1, "hold_ms": 5_000], policy: .embedded), "held at most two seconds")
+        XCTAssertTrue(Action.rightClick(.zero).usesCoordinates)
+        XCTAssertTrue(InputDelivery.stepNeedsFront(.hold(.zero, 800), route: .appKit), "pointer-following steps take the front")
+        XCTAssertFalse(InputDelivery.stepNeedsFront(.showMenu("e1"), route: .appKit), "an accessible menu needs no front")
+    }
+
+    func testSingleLettersPickToolsOnlyInCreativeApps() throws {
+        guard case .key("u", let flags) = try Action(["type": "key", "key": "u", "modifiers": ["shift"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(flags, .maskShift)
+        guard case .key("u", let command) = try Action(["type": "key", "key": "u", "modifiers": ["command"]], policy: .embedded) else { return XCTFail() }
+        XCTAssertTrue(NativeKey.isMenuShortcut("u", command), "an unlisted Command shortcut runs only as the app's menu command")
+        XCTAssertThrowsError(try Action(["type": "key", "key": "u"]), "the standalone helper still refuses bare letters")
+        XCTAssertTrue(NativeKey.isToolKey("b", []))
+        XCTAssertFalse(NativeKey.isToolKey("enter", []))
+        XCTAssertFalse(NativeKey.isToolKey("b", .maskAlternate))
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.graphics-design"]))
+        XCTAssertTrue(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.Photography"]))
+        XCTAssertFalse(InputDelivery.takesToolKeys(info: ["LSApplicationCategoryType": "public.app-category.productivity"]), "a letter can act in a mail or notes app")
+        XCTAssertFalse(InputDelivery.takesToolKeys(info: [:]))
+    }
+
+    func testAShortcutWithNothingToTypeIntoRunsItsMenuCommand() throws {
+        let entries = [MenuEntry(path: ["File", "Save"], shortcut: "command+s"), MenuEntry(path: ["Edit", "Fill…"], shortcut: "shift+f5")]
+        let save = try Action(["type": "key", "key": "s", "modifiers": ["command"]], policy: .embedded)
+        XCTAssertEqual(InputDelivery.menuForShortcut(save, in: entries), ["File", "Save"])
+        XCTAssertNil(InputDelivery.menuForShortcut(.key("z", .maskCommand), in: entries), "no menu command, no fallback")
+        XCTAssertNil(InputDelivery.menuForShortcut(try Action(["type": "key", "key": "enter"], policy: .embedded), in: entries), "only Command shortcuts")
+    }
+
+    func testAnAppShortcutWithNoFocusedFieldGoesToTheKeyWindow() throws {
+        // Command-Shift-G in a design app: a chord, not a tool letter, and with no menu command for it.
+        let group = try Action(["type": "key", "key": "g", "modifiers": ["command", "shift"]], policy: .embedded)
+        guard case .key(let key, let flags) = group else { return XCTFail() }
+        XCTAssertFalse(NativeKey.isToolKey(key, flags), "a design app's category covers letters only")
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow(key, flags))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("s", .maskCommand))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("left", [.maskCommand, .maskShift]))
+        XCTAssertTrue(InputDelivery.sendsToKeyWindow("v", .maskCommand), "a paste of the agent's own clipboard onto a canvas")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("enter", []), "Enter still needs a known field or control")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("delete", .maskAlternate), "Option-Delete erases text")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("g", []), "a tool letter has its own check")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("q", .maskCommand), "blocked chords never reach a window")
+        XCTAssertFalse(InputDelivery.sendsToKeyWindow("w", .maskCommand))
+        // After a click in the same batch, the same rule: the shortcut goes on, secure input still stops it.
+        XCTAssertEqual(BatchContinuation.keyboard(focused: nil, field: false, typing: false, entersText: false, secureInput: false,
+            protectedOnScreen: false, credentialConfirmed: false, credentialGiven: false, shortcut: true), .keyWindow)
+        XCTAssertEqual(BatchContinuation.keyboard(focused: nil, field: false, typing: false, entersText: false, secureInput: true,
+            protectedOnScreen: false, credentialConfirmed: false, credentialGiven: false, shortcut: true), .stop)
+        XCTAssertEqual(BatchContinuation.keyboard(focused: (enabled: true, protected: true, textField: true), field: false, typing: false,
+            entersText: false, secureInput: false, protectedOnScreen: true, credentialConfirmed: false, credentialGiven: false, shortcut: true), .stop)
+    }
+
+    func testASetValueThatDidNotTakeIsReported() {
+        XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72" as CFString))
+        XCTAssertTrue(ValueReadBack.took("72", before: "12" as CFString, after: "72 pt" as CFString), "a reformatted value still changed")
+        XCTAssertFalse(ValueReadBack.took("5", before: NSNumber(value: 3), after: NSNumber(value: 3)), "the brush kept its old size")
+        XCTAssertTrue(ValueReadBack.took("5", before: NSNumber(value: 3), after: NSNumber(value: 5)))
+        XCTAssertFalse(ValueReadBack.took("Blue", before: "Red" as CFString, after: "Red" as CFString))
+        XCTAssertTrue(ValueReadBack.took("Blue", before: nil, after: "Red" as CFString), "nothing to compare, so no claim")
+    }
+
+    func testStrokesInARowStopWhenAWindowOpens() {
+        let before = WindowChanges(windows: [1], panels: [], frontmost: true)
+        XCTAssertFalse(WindowChanges(windows: [1], panels: [], frontmost: true).opened(since: before))
+        XCTAssertTrue(WindowChanges(windows: [1, 2], panels: [], frontmost: true).opened(since: before))
+        XCTAssertTrue(WindowChanges(windows: [1], panels: [9], frontmost: true).opened(since: before))
+        XCTAssertTrue(Action.isStroke(.drag([.zero, CGPoint(x: 1, y: 1)])))
+        XCTAssertFalse(Action.isStroke(.click(.zero, 1, [])))
+    }
+
+    func testOpenFileNamesTheRealFileItWillHandOver() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let photo = folder.appendingPathComponent("photo.png")
+        try Data([1, 2, 3]).write(to: photo)
+        let link = folder.appendingPathComponent("shortcut.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: photo)
+        let real = photo.resolvingSymlinksInPath().path
+
+        guard case .openFile(let opened) = try Action(["type": "open_file", "path": photo.path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(opened.path, real)
+        guard case .openFile(let followed) = try Action(["type": "open_file", "path": link.path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(followed.path, real, "the person approves the file a link points to, not the link")
+        XCTAssertTrue(try Action(["type": "open_file", "path": photo.path], policy: .embedded).requiresControl)
+
+        for (path, code) in [("photo.png", "invalid_arguments"), (folder.path, "file_unavailable"), (folder.appendingPathComponent("missing.png").path, "file_unavailable")] {
+            XCTAssertThrowsError(try Action(["type": "open_file", "path": path], policy: .embedded), path) { error in
+                XCTAssertEqual((error as? UseError)?.code, code, path)
+            }
+        }
+        XCTAssertThrowsError(try Action(["type": "open_file", "path": photo.path], policy: .desktop), "only the OpenWork host offers it")
+    }
+
+    func testSaveAsNamesTheRealDestinationAndRefusesFolders() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("exports"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let real = folder.resolvingSymlinksInPath()
+        let linkedFolder = folder.appendingPathComponent("linked")
+        try FileManager.default.createSymbolicLink(at: linkedFolder, withDestinationURL: folder.appendingPathComponent("exports"))
+        let existing = folder.appendingPathComponent("exports/old.pdf")
+        try Data([1]).write(to: existing)
+        let linkedFile = folder.appendingPathComponent("shortcut.pdf")
+        try FileManager.default.createSymbolicLink(at: linkedFile, withDestinationURL: existing)
+
+        guard case .saveAs(let file, let replace) = try Action(["type": "save_as", "path": folder.appendingPathComponent("report.pdf").path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(file.path, real.appendingPathComponent("report.pdf").path, "a new file in an existing folder")
+        XCTAssertFalse(replace, "replacing is off unless the step says so")
+        guard case .saveAs(let viaLink, _) = try Action(["type": "save_as", "path": linkedFolder.appendingPathComponent("report.pdf").path], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(viaLink.path, real.appendingPathComponent("exports/report.pdf").path, "the person approves the folder a link points to")
+        guard case .saveAs(let overLink, true) = try Action(["type": "save_as", "path": linkedFile.path, "replace": true], policy: .embedded) else { return XCTFail() }
+        XCTAssertEqual(overLink.path, real.appendingPathComponent("exports/old.pdf").path, "saving over a link writes the file it points to")
+        XCTAssertTrue(try Action(["type": "save_as", "path": existing.path], policy: .embedded).requiresControl)
+
+        for (path, code) in [("report.pdf", "invalid_arguments"), (folder.path + "/", "invalid_arguments"), (folder.appendingPathComponent("exports").path, "invalid_arguments"),
+                             (folder.appendingPathComponent("missing/report.pdf").path, "folder_unavailable")] {
+            XCTAssertThrowsError(try Action(["type": "save_as", "path": path], policy: .embedded), path) { error in
+                XCTAssertEqual((error as? UseError)?.code, code, path)
+            }
+        }
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path, "replace": "yes"], policy: .embedded))
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path, "replace": 1], policy: .embedded), "replace is a boolean, not a number")
+        XCTAssertThrowsError(try Action(["type": "save_as", "path": existing.path], policy: .desktop), "only the OpenWork host offers it")
+    }
+
+    func testSaveNeverReplacesAFileUnlessTheStepSaysSo() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let existing = folder.appendingPathComponent("report.pdf")
+        try Data([1]).write(to: existing)
+
+        XCTAssertThrowsError(try FileHandoff.refuseReplacing(existing, replace: false)) { error in
+            XCTAssertEqual((error as? UseError)?.code, "file_exists")
+            XCTAssertEqual((error as? UseError)?.payload["next"] as? String, "correct_request")
+        }
+        XCTAssertNoThrow(try FileHandoff.refuseReplacing(existing, replace: true))
+        XCTAssertNoThrow(try FileHandoff.refuseReplacing(folder.appendingPathComponent("new.pdf"), replace: false))
+
+        // The sheet's own "Replace?" prompt is answered the same way: Cancel unless replace is true.
+        XCTAssertEqual(SaveRules.replaceAnswer(buttons: ["Cancel", "Replace"], replace: false), "Cancel")
+        XCTAssertEqual(SaveRules.replaceAnswer(buttons: ["Cancel", "Replace"], replace: true), "Replace")
+        XCTAssertNil(SaveRules.replaceAnswer(buttons: ["Don't Save", "Cancel", "Save"], replace: true), "not a replace prompt")
+        XCTAssertNil(SaveRules.replaceAnswer(buttons: ["Replace"], replace: true), "a prompt without a way out is not answered")
+    }
+
+    func testASaveCountsOnlyOnceTheFileIsOnDiskAndWrittenAfterSave() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("report.pdf")
+        let since = Date()
+
+        XCTAssertNil(FileHandoff.saved(file, before: nil, since: since), "nothing on disk yet")
+        try Data(repeating: 7, count: 42).write(to: file)
+        XCTAssertEqual(FileHandoff.saved(file, before: nil, since: since)?.bytes, 42, "a new file, with its size")
+
+        // An older file left untouched by the step is not a save.
+        let old = Date(timeIntervalSinceNow: -3_600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: file.path)
+        XCTAssertNil(FileHandoff.saved(file, before: nil, since: since), "modified before Save")
+        let before = FileHandoff.stamp(file)
+        try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        XCTAssertNil(FileHandoff.saved(file, before: FileHandoff.stamp(file), since: since), "unchanged since the step began")
+        try Data(repeating: 1, count: 9).write(to: file)
+        XCTAssertEqual(FileHandoff.saved(file, before: before, since: since)?.bytes, 9, "a replaced file counts once it is rewritten")
+    }
+
     func testMenuTitlesMatchAsAPersonReadsThem() {
         XCTAssertTrue(MenuRules.same("\u{200E}Bold", "bold"))
         XCTAssertTrue(MenuRules.same("Find…", " Find… "))
         XCTAssertFalse(MenuRules.same("Bold", "Bolder"))
         XCTAssertEqual(MenuEntry(path: ["Format", "Font", "Bold"], shortcut: "command+b").display, "Format › Font › Bold (command+b)")
         XCTAssertEqual(AgentCursor.glyphs("command+shift+b"), "⇧⌘B")
+        XCTAssertEqual(AgentCursor.goalLabel("  Draw a wave\n"), "Draw a wave")
+        XCTAssertEqual(AgentCursor.goalLabel(String(repeating: "a", count: 60))?.count, 48, "long goals end with an ellipsis")
+        XCTAssertNil(AgentCursor.goalLabel(" "))
     }
 
     func testMenuActionsNeedAMenuAndACommand() throws {
@@ -125,5 +307,107 @@ final class MenuAndPacingTests: XCTestCase {
         XCTAssertTrue(ElementRecord.sameControl(button("Next", y: 80), observed, allowMove: true))
         XCTAssertFalse(ElementRecord.sameControl(button("Next", y: 80, enabled: false), observed, allowMove: true), "a disabled control is waited for, not pressed")
         XCTAssertFalse(ElementRecord.sameControl(button("Finish", y: 80), observed, allowMove: true))
+    }
+
+    /// (enabled, protected, text field) of whatever has the keyboard after the previous step.
+    private func keyboard(_ focused: (Bool, Bool, Bool)?, field: Bool = true, typing: Bool = true, secureInput: Bool = false,
+                          protectedOnScreen: Bool = false, confirmed: Bool = false, given: Bool = false) -> BatchContinuation.Keyboard {
+        BatchContinuation.keyboard(focused: focused.map { (enabled: $0.0, protected: $0.1, textField: $0.2) }, field: field, typing: typing,
+            entersText: typing, secureInput: secureInput, protectedOnScreen: protectedOnScreen, credentialConfirmed: confirmed, credentialGiven: given)
+    }
+
+    func testABatchKeepsGoingAfterAClickWhenTheNextStepReadsBack() {
+        // What each next step re-reads after a click, press or menu command.
+        XCTAssertEqual(BatchContinuation.need(.press("e4")), .control("e4"))
+        XCTAssertEqual(BatchContinuation.need(.setValue("e4", "12")), .control("e4"))
+        XCTAssertEqual(BatchContinuation.need(.menu(["Edit", "Select All"])), .menu)
+        XCTAssertEqual(BatchContinuation.need(.type("Hello")), .keyboard(field: true))
+        XCTAssertEqual(BatchContinuation.need(.key("a", .maskCommand)), .keyboard(field: false))
+        XCTAssertEqual(BatchContinuation.need(.key("delete", [])), .keyboard(field: true), "delete erases only in a text field")
+        XCTAssertEqual(BatchContinuation.need(.click(CGPoint(x: 5, y: 5), 1, [])), .pointer)
+        XCTAssertEqual(BatchContinuation.need(.drag([CGPoint(x: 1, y: 1), CGPoint(x: 9, y: 9)])), .pointer)
+        XCTAssertEqual(BatchContinuation.need(.wait(200)), .later, "a wait sends nothing; the step after it checks")
+        // click, type: the click put the caret in a field the observation did not know was focused.
+        XCTAssertEqual(keyboard((true, false, true)), .focus)
+        // click, key(command+a): any enabled control that has the keyboard.
+        XCTAssertEqual(keyboard((true, false, false), field: false, typing: false), .focus)
+        // click, type on a canvas: no listed focus, so the app's own editor, checked before each character.
+        XCTAssertEqual(keyboard(nil), .editor)
+    }
+
+    func testABatchStillStopsAfterAClickWhenItWouldHaveToGuess() {
+        XCTAssertEqual(keyboard((true, true, true)), .stop, "a secure field is never typed into without a new look")
+        XCTAssertEqual(keyboard((true, false, true), secureInput: true), .stop, "macOS reports a password box somewhere")
+        XCTAssertEqual(keyboard((true, false, true), protectedOnScreen: true), .stop, "a secure field appeared that the person has not confirmed")
+        XCTAssertEqual(keyboard((true, false, true), protectedOnScreen: true, confirmed: true, given: true), .focus, "the person confirmed this app")
+        XCTAssertEqual(keyboard((true, false, false)), .stop, "typing needs a text field")
+        XCTAssertEqual(keyboard((false, false, true)), .stop, "a disabled field")
+        XCTAssertEqual(keyboard(nil, field: false, typing: false), .stop, "a key with nothing focused is not guessed")
+        XCTAssertEqual(keyboard(nil, given: true), .stop, "a password the person gave goes only into a named field")
+    }
+
+    private func field(_ role: String, value: String?, frame: CGRect = CGRect(x: 10, y: 10, width: 80, height: 24),
+                       label: String = "Width", enabled: Bool = true, protected: Bool = false,
+                       element: AXUIElement = AXUIElementCreateApplication(getpid())) -> ElementRecord {
+        var record = ElementRecord(ref: "e2", element: element, role: role, label: label, value: value, frame: frame,
+            actions: [kAXPressAction], settable: true, enabled: enabled, protected: protected)
+        record.labelHash = Data(label.utf8); record.valueHash = value.map { Data($0.utf8) }
+        return record
+    }
+
+    func testLinkedFieldsKeepABatchGoing() {
+        let window = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let element = AXUIElementCreateApplication(getpid())
+        let height = field("AXTextField", value: "1080", label: "Height", element: element)
+        // set_value width, enter_value height: the app rewrote the linked height.
+        let rewritten = field("AXTextField", value: "1350", label: "Height", element: element)
+        for step in [Action.setValue("e2", "2400"), .enterValue("e2", "2400", .enter), .focus("e2")] {
+            XCTAssertTrue(BatchContinuation.sameControl(rewritten, height, for: step, window: window), "\(step.name) replaces the value")
+        }
+        // The inspector reflowed around the field after the image was resized.
+        let moved = field("AXTextField", value: "1350", frame: CGRect(x: 10, y: 60, width: 80, height: 24), label: "Height", element: element)
+        XCTAssertTrue(BatchContinuation.sameControl(moved, height, for: .enterValue("e2", "80", .enter), window: window))
+        // A plain button's press does not depend on a value it shows.
+        let button = field("AXButton", value: "3", label: "Look Around", element: element)
+        XCTAssertTrue(BatchContinuation.sameControl(field("AXButton", value: "4", label: "Look Around", element: element), button, for: .press("e2"), window: window))
+    }
+
+    func testABatchStillStopsWhenTheControlItselfChanged() {
+        let window = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let element = AXUIElementCreateApplication(getpid())
+        // A checkbox that already turned on would be turned off again by the press.
+        let box = field("AXCheckBox", value: "0", label: "Constrain", element: element)
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXCheckBox", value: "1", label: "Constrain", element: element), box, for: .press("e2"), window: window))
+        XCTAssertTrue(BatchContinuation.sameControl(field("AXCheckBox", value: "0", label: "Constrain", element: element), box, for: .press("e2"), window: window))
+        for role in ["AXRadioButton", "AXSwitch", "AXDisclosureTriangle"] {
+            XCTAssertFalse(BatchContinuation.sameControl(field(role, value: "1", element: element), field(role, value: "0", element: element), for: .press("e2"), window: window), role)
+        }
+        let height = field("AXTextField", value: "1080", label: "Height", element: element)
+        let step = Action.enterValue("e2", "2400", .enter)
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Depth", element: element), height, for: step, window: window), "another control under the same element")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", enabled: false, element: element), height, for: step, window: window))
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", protected: true, element: element), height, for: step, window: window),
+            "a field that turned secure is never typed into without a new look")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", label: "Height", element: AXUIElementCreateSystemWide()), height, for: step, window: window), "another element")
+        XCTAssertFalse(BatchContinuation.sameControl(field("AXTextField", value: "1080", frame: CGRect(x: 10, y: 590, width: 80, height: 24), label: "Height", element: element),
+            height, for: step, window: window), "scrolled out of the window")
+    }
+
+    func testKeysRunPastOnlyAPanelThatLeftTheKeyboardAlone() {
+        let keys = BatchContinuation.Need.keyboard(field: true)
+        XCTAssertTrue(BatchContinuation.runsPast(nil, need: .control("e1"), sessionHasKeyboard: false), "nothing changed")
+        // Edit > Find, type: a suggestions panel opened beside the window, which kept the keyboard.
+        XCTAssertTrue(BatchContinuation.runsPast(["panel_opened": true], need: keys, sessionHasKeyboard: true))
+        XCTAssertTrue(BatchContinuation.runsPast(["opened": [["window_id": 9]]], need: keys, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["opened": [["window_id": 9]]], need: keys, sessionHasKeyboard: false), "the new window took the keyboard")
+        XCTAssertFalse(BatchContinuation.runsPast(["panel_opened": true], need: .control("e1"), sessionHasKeyboard: true), "a press still stops at a new window")
+        XCTAssertFalse(BatchContinuation.runsPast(["panel_opened": true], need: .pointer, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["target_closed": true], need: keys, sessionHasKeyboard: true))
+        XCTAssertFalse(BatchContinuation.runsPast(["another_app_in_front": true, "panel_opened": true], need: keys, sessionHasKeyboard: true))
+    }
+
+    func testEveryModeRereadsBrieflyBeforeStopping() {
+        XCTAssertEqual(BatchContinuation.reread, 0.3)
+        XCTAssertLessThanOrEqual(BatchContinuation.reread, BatchPacing(mode: .waitRetry, retry: 1.5).retry)
     }
 }

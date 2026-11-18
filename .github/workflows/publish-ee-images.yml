@@ -132,6 +132,20 @@ jobs:
         if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: node --test scripts/tests/node-runtime-baseline.test.mjs packaging/helm/openwork-ee/tests/node-runtime.mjs
 
+      # The chart in git lists no feature keys, so adding a feature never
+      # conflicts there. The published chart lists and validates every key.
+      - name: Set up pnpm
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Write every feature key into the chart
+        if: ${{ steps.inputs.outputs.affected == 'true' }}
+        run: |
+          pnpm install --frozen-lockfile --filter "@openwork/features"
+          node scripts/features-sync.mjs --chart
+
       - name: Lint chart
         if: ${{ steps.inputs.outputs.affected == 'true' }}
         run: helm lint packaging/helm/openwork-ee

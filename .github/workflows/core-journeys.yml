@@ -1,17 +1,11 @@
 name: Core journeys
 
-# Runs every core journey in evals/core (listed in evals/journeys.ts) on every
-# dev push that changes more than docs, nightly on dev, and on demand. A dev
-# push also runs every one-off proof (evals/proofs) it adds or changes. PRs run
-# no journeys (only the quick check), so a journey regression is reported here,
-# on the dev push that merged it. Packaged journeys run in packaged smoke;
-# core-chat needs a Freestyle world and runs nightly in "Freestyle world check".
+# Runs every core journey in evals/core (listed in evals/journeys.ts) nightly
+# on dev and on demand. PRs and dev pushes run no journeys: a journey
+# regression is reported here once a day. Packaged journeys run in packaged
+# smoke; core-chat needs a Freestyle world and runs nightly in "Freestyle
+# world check".
 on:
-  push:
-    branches: [dev]
-    paths-ignore:
-      - "packages/docs/**"
-      - "**/*.md"
   schedule:
     - cron: "17 8 * * *"
   workflow_dispatch:
@@ -19,8 +13,6 @@ on:
 permissions:
   contents: read
 
-# Never cancel a running dev check: GitHub keeps only the newest pending run, so
-# bursts of pushes queue one run instead of cancelling each other.
 concurrency:
   group: core-journeys-${{ github.ref }}
   cancel-in-progress: false
@@ -35,27 +27,15 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
           persist-credentials: false
       - id: list
         # Packaged journeys need a packaged desktop binary (packaged smoke runs
         # them); core-chat needs a Freestyle world (Freestyle world check runs it).
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PUSH_BASE: ${{ github.event.before }}
         run: |
           set -euo pipefail
           specs=$(find evals/core -maxdepth 1 -name '*.e2e.test.ts' ! -name 'packaged-*' ! -name 'app-smoke.e2e.test.ts' ! -name 'core-chat.e2e.test.ts' | sort)
           test -n "$specs"
-          # One-off proofs this push adds or changes (PRs no longer run them).
-          if [ "$EVENT_NAME" = push ] && [ -n "${PUSH_BASE:-}" ] && [ -n "${PUSH_BASE//0/}" ]; then
-            if git fetch --no-tags --depth=1 origin "$PUSH_BASE" && proofs=$(git diff --name-only --diff-filter=AMR "$PUSH_BASE" "$GITHUB_SHA" -- 'evals/proofs/*.proof.test.ts'); then
-              specs=$(printf '%s\n%s\n' "$specs" "$proofs" | sed '/^$/d' | sort -u)
-            else
-              echo "::warning::The pushed range is unavailable; changed proofs are not listed."
-            fi
-          fi
-          printf 'matrix=%s\n' "$(printf '%s\n' $specs | jq -Rsc 'split("\n") | map(select(length > 0)) | {include: map({spec: ., name: (split("/") | last | sub("\\.(e2e|proof)\\.test\\.ts$"; ""))})}')" >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$(printf '%s\n' $specs | jq -Rsc 'split("\n") | map(select(length > 0)) | {include: map({spec: ., name: (split("/") | last | sub("\\.e2e\\.test\\.ts$"; ""))})}')" >> "$GITHUB_OUTPUT"
 
   journey:
     name: ${{ matrix.name }}

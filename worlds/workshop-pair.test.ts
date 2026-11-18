@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { forEachSeat, isProviderThrottle, pairInfrastructureUsd, parsePairOptions, retryThrottled, seatKey } from "./workshop-pair.ts";
+import { createTaskWhenEnabled, forEachSeat, isProviderThrottle, pairInfrastructureUsd, parsePairOptions, retryThrottled, seatKey } from "./workshop-pair.ts";
 import { capacityShortfall, assertDaytonaCapacity } from "./lib/workshop-capacity.ts";
 import { assertTrustedWorkshopRef, assertVerifiedWorkshopSnapshot, readSnapshotManifest, snapshotProvenanceMismatch } from "./lib/workshop-trust.ts";
 
@@ -81,4 +81,28 @@ test("attendees are only signed in to source already merged into dev", async () 
   const unmerged = execFileSync("git", ["commit-tree", "-m", "untrusted", `${merged}^{tree}`], { cwd: repo, encoding: "utf8" }).trim();
   await assert.rejects(assertTrustedWorkshopRef(unmerged, repo), /not merged into origin\/dev/);
   await assert.rejects(assertTrustedWorkshopRef("dev", repo), /full commit SHA/);
+});
+
+test("a disabled Create a new task is waited out, not treated as a failed seat", async () => {
+  const surface = {} as Parameters<typeof createTaskWhenEnabled>[0];
+  let calls = 0;
+  const enablesOnThird = async () => { calls++; if (calls < 3) throw new Error("Desktop control action session.create_task failed: Action is disabled: Create a new task"); return "ses_1"; };
+  assert.equal(await createTaskWhenEnabled(surface, 10_000, enablesOnThird), true);
+  assert.equal(calls, 3);
+  const neverEnabled = async () => { throw new Error("Action is disabled: Create a new task"); };
+  assert.equal(await createTaskWhenEnabled(surface, 0, neverEnabled), false);
+  // Any other failure still fails the stage.
+  await assert.rejects(createTaskWhenEnabled(surface, 10_000, async () => { throw new Error("renderer crashed"); }), /renderer crashed/);
+});
+
+test("the model upstream and per-attendee allowance are explicit flags with safe defaults", () => {
+  const defaults = parsePairOptions(["--output-dir", out]);
+  assert.equal(defaults.provider, "openai");
+  assert.equal(defaults.allowanceUsd, 5);
+  const claude = parsePairOptions(["--output-dir", out, "--provider", "anthropic", "--allowance-usd", "60"]);
+  assert.equal(claude.provider, "anthropic");
+  assert.equal(claude.allowanceUsd, 60);
+  for (const bad of [["--provider", "mistral"], ["--allowance-usd", "0"], ["--allowance-usd", "101"], ["--allowance-usd", "five"]]) {
+    assert.throws(() => parsePairOptions(["--output-dir", out, ...bad]));
+  }
 });

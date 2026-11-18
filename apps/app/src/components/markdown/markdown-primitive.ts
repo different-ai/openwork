@@ -15,6 +15,7 @@ import { bundledLanguages, codeToHtml } from "shiki";
 
 import { faviconUrlForHref } from "@/lib/favicon";
 import { localPathName, parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
+import { directoryReference } from "@/react-app/domains/session/artifacts/path-reference-context";
 
 import { markdownMath } from "./markdown-math";
 import { parseSessionReference } from "@/components/chat/session-reference";
@@ -311,6 +312,8 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-code-wrap",
       "aria-label",
       "aria-pressed",
+      "data-openwork-image",
+      "data-openwork-image-fallback",
       "data-openwork-image-preview",
       "data-openwork-inline-code-path",
       "data-openwork-link-href",
@@ -377,7 +380,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
   };
 }
 
-function renderVideo(href: string, label: string, fallbackHtml: string) {
+function renderVideo(href: string, label: string, fallbackHtml: string, decode = true) {
   if (!/\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i.test(href)) return null;
   // Only the workspace can stream a video; a home-folder file stays a reference that reveals it.
   if (/^~[\\/]/.test(href)) return null;
@@ -386,12 +389,12 @@ function renderVideo(href: string, label: string, fallbackHtml: string) {
   const source = remote ? ` src="${escapeAttribute(safeHref(href))}"` : "";
   const fileLink = remote
     ? `href="${escapeAttribute(safeHref(href))}" target="_blank" rel="noopener noreferrer"`
-    : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}"`;
+    : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"`;
   // A block-level box: inside a sentence, an inline-block video left the rest
   // of the sentence floating beside its top edge. When the video cannot load
   // (a bare file name, a deleted file) the box is swapped for the hidden
   // inline fallback, so the sentence reads as if no player had been tried.
-  return `<span data-openwork-video="" class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a><span data-openwork-video-fallback="" hidden>${fallbackHtml}</span></span>`;
+  return `<span data-openwork-video="" class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a><span data-openwork-video-fallback="" hidden>${fallbackHtml}</span></span>`;
 }
 
 function renderLink(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
@@ -410,7 +413,9 @@ function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | 
     // A destination that is neither a web address nor a local file (`#top`,
     // `javascript:`, a network share) keeps its words but is not a link.
     if (isFilePath && (href.trim().startsWith("#") || !parseLocalPathReference(href, { decode: true }))) {
-      return `<span${titleAttr}>${text}</span>`;
+      const directory = directoryReference(href, true);
+      const context = directory ? ` data-openwork-directory-path="${escapeAttribute(directory)}"` : "";
+      return `<span${titleAttr}${context}>${text}</span>`;
     }
 
     if (isFilePath) {
@@ -439,7 +444,16 @@ function renderImage(profile: MarkdownProfile, href: string, title: string | nul
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
   if (profile.imagePresentation === "chat") {
-    return `<button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button>`;
+    const fallback = renderLinkHtml(profile, href, title, escapeHtml(text || href));
+    // A local file has no address the window can load: the chat reads it into the
+    // image once it can, and shows the file reference until then (or for good).
+    if (!/^https?:/i.test(href.trim())) {
+      if (!parseLocalPathReference(href, { decode: true })) return fallback;
+      return `<span data-openwork-image=""><span data-openwork-image-loaded="" hidden><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img data-openwork-image-path="${escapeAttribute(href)}" data-openwork-path-decode="true" alt="${escapeAttribute(text)}"${titleAttr} decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button></span><span data-openwork-image-fallback="">${fallback}</span></span>`;
+    }
+    // An image that cannot load (a page URL, a dead or blocked link) falls
+    // back to its plain link instead of an empty broken-image box.
+    return `<span data-openwork-image=""><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button><span data-openwork-image-fallback="" hidden>${fallback}</span></span>`;
   }
 
   return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-[18px] border border-dls-border/70">`;
@@ -516,7 +530,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
           : "";
         const pathClassName = path ? " cursor-pointer transition-colors hover:bg-gray-3/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : "";
         const html = `<code${pathAttributes} class="${profile.codeSpanClassName}${pathClassName}">${escapeHtml(text)}</code>`;
-        return (path ? renderVideo(path, path, html) : null) ?? html;
+        return (path ? renderVideo(path, path, html, false) : null) ?? html;
       },
       del({ raw, tokens }) {
         if (!raw.startsWith("~~")) {

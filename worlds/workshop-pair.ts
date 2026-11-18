@@ -23,7 +23,7 @@ import { trackResource } from "../packages/world/src/ledger.ts";
 import { output, secret } from "../packages/world/src/outputs.ts";
 import type { WorldOutput } from "../packages/world/src/outputs.ts";
 import { targetFromEnv } from "../packages/world/src/target.ts";
-import { configureWorkshop, WORKSHOP_MAX_ATTENDEES } from "./lib/workshop-setup.ts";
+import { configureWorkshop, WORKSHOP_DEFAULT_ALLOWANCE_USD, WORKSHOP_MAX_ALLOWANCE_USD, WORKSHOP_MAX_ATTENDEES, WORKSHOP_PROVIDERS, type WorkshopProvider } from "./lib/workshop-setup.ts";
 import { assertDaytonaCapacity } from "./lib/workshop-capacity.ts";
 import { pagedSnapshotListExec } from "./lib/workshop-snapshot.ts";
 import { grantOpenWorkWebAccess } from "../evals/packages/behaviors/src/workflows.ts";
@@ -47,6 +47,8 @@ export function parsePairOptions(argv: readonly string[]) {
   let concurrency = 10;
   let snapshot: string | undefined;
   let budgetUsd = 200;
+  let provider: WorkshopProvider = "openai";
+  let allowanceUsd = WORKSHOP_DEFAULT_ALLOWANCE_USD;
   const seen = new Set<string>();
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i];
@@ -58,19 +60,34 @@ export function parsePairOptions(argv: readonly string[]) {
     else if (flag === "--timezone" && /^[A-Za-z]+(?:\/[A-Za-z0-9_+-]+){1,2}$/.test(value) && Intl.supportedValuesOf("timeZone").includes(value)) timezone = value;
     else if (flag === "--seats" && /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= WORKSHOP_MAX_ATTENDEES) seats = Number(value);
     else if (flag === "--budget-usd" && /^\d+(\.\d+)?$/.test(value) && Number(value) > 0 && Number(value) <= 2000) budgetUsd = Number(value);
+    else if (flag === "--provider" && Object.hasOwn(WORKSHOP_PROVIDERS, value)) provider = value as WorkshopProvider;
+    else if (flag === "--allowance-usd" && /^\d+(\.\d{1,6})?$/.test(value) && Number(value) > 0 && Number(value) <= WORKSHOP_MAX_ALLOWANCE_USD) allowanceUsd = Number(value);
     else if (flag === "--concurrency" && /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 20) concurrency = Number(value);
     else if (flag === "--snapshot" && /^workshop-desktop-[a-z0-9-]{1,80}$/.test(value)) snapshot = value;
-    else throw new Error("Use --output-dir <private absolute path outside git>, optional --seats 1..99 (default 1), --budget-usd <infrastructure ceiling, default 200>, --snapshot workshop-desktop-<name> (clean, signed-out), --concurrency 1..20 (default 10), --lifetime 30..1440 (minutes, default 240) and --timezone <IANA zone, default America/Los_Angeles>.");
+    else throw new Error("Use --output-dir <private absolute path outside git>, optional --seats 1..99 (default 1), --budget-usd <infrastructure ceiling, default 200>, --snapshot workshop-desktop-<name> (clean, signed-out), --concurrency 1..20 (default 10), --lifetime 30..1440 (minutes, default 240), --timezone <IANA zone, default America/Los_Angeles>, --provider openai|anthropic (default openai; its key comes from OPENAI_API_KEY or ANTHROPIC_API_KEY) and --allowance-usd <per attendee, default 5, at most ${WORKSHOP_MAX_ALLOWANCE_USD}>.");
   }
   if (!outputDir) throw new Error("Pair requires --output-dir outside git (it holds a member test login and a private viewer link).");
   const rel = relative(REPO_ROOT, outputDir);
   if (rel !== ".." && !rel.startsWith(`..${sep}`)) throw new Error("Pair output directory must be outside this checkout.");
-  return { lifetimeMinutes, outputDir, timezone, seats, concurrency, snapshot, budgetUsd };
+  return { lifetimeMinutes, outputDir, timezone, seats, concurrency, snapshot, budgetUsd, provider, allowanceUsd };
 }
 
 export function seatKey(index: number): string {
   if (!Number.isSafeInteger(index) || index < 1 || index > WORKSHOP_MAX_ATTENDEES) throw new Error(`Seat index must be 1..${WORKSHOP_MAX_ATTENDEES}.`);
   return `attendee${String(index).padStart(2, "0")}`;
+}
+
+/** True once the app accepted "Create a new task"; false if it stayed disabled for the whole wait. */
+export async function createTaskWhenEnabled(surface: Surface, timeoutMs: number, run: (surface: Surface, action: string) => Promise<unknown> = runControl): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { await run(surface, "session.create_task"); return true; }
+    catch (error) {
+      if (!/Action is disabled/i.test(error instanceof Error ? error.message : String(error))) throw error;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  }
 }
 
 export function isProviderThrottle(error: unknown): boolean {
@@ -148,8 +165,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const options = parsePairOptions(argv);
   const target = targetFromEnv();
   if (target.provider !== "daytona" || target.os !== "linux") throw new Error("Workshop pair supports only --place daytona --os linux.");
-  const upstreamKey = process.env.OPENAI_API_KEY;
-  if (!upstreamKey?.trim()) throw new Error("Fetch OPENAI_API_KEY into the controller environment before starting.");
+  const keyEnv = WORKSHOP_PROVIDERS[options.provider].keyEnv;
+  const upstreamKey = process.env[keyEnv];
+  if (!upstreamKey?.trim()) throw new Error(`Fetch ${keyEnv} into the controller environment before starting.`);
   const estimateUsd = pairInfrastructureUsd(options.lifetimeMinutes, options.seats);
   if (estimateUsd > options.budgetUsd) throw new Error(`Estimated infrastructure $${estimateUsd.toFixed(0)} exceeds --budget-usd ${options.budgetUsd}; shorten --lifetime, use fewer --seats, or raise --budget-usd deliberately.`);
   console.log(`Workshop: ${options.seats} seats for ${options.lifetimeMinutes} min, estimated infrastructure $${estimateUsd.toFixed(0)} (budget $${options.budgetUsd}).`);
@@ -212,6 +230,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           members: Object.fromEntries(keys.map((key, index) => [key, { email: `${key}-${runId}@workshop.test`, name: `Attendee ${String(index + 1).padStart(2, "0")}`, password: passwords[key] }])) },
           daytonaPrivate: true, daytonaSeedDemo: false, daytonaTtlMinutes: Math.floor(remaining() / 60), daytonaAutoStopMinutes: 0, daytonaPreviewExpirySeconds: remaining(),
           env: { OPENWORK_DEV_MODE: "0", OPENWORK_WORKSHOP_PRIVATE_COHOST: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", GATEWAY_ENABLED: "true", GATEWAY_PORT: "8791",
+            // Artifacts are GA: attendees find the Apps they build under Artifacts, as in production.
+            DEN_DASHBOARDS_ENABLED: "true",
             GATEWAY_EGRESS_ALLOWED_ORIGINS: "https://api.openai.com", DEN_DB_ENCRYPTION_KEY: randomBytes(32).toString("hex"), BETTER_AUTH_SECRET: randomBytes(32).toString("hex"),
             GATEWAY_WEBHOOK_SECRET: randomBytes(32).toString("hex"), DEN_DEMO_OWNER_EMAIL: hostEmail, DEN_DEMO_OWNER_PASSWORD: hostPassword,
             RESEND_API_KEY: "", SMTP_HOST: "", SMTP_USER: "", SMTP_PASS: "", EMAIL_FROM: "" } }));
@@ -229,7 +249,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       Object.assign(shared, { denSandbox: backend.id, denApiUrl: den.ref.apiUrl, denWebUrl: den.ref.webUrl });
     });
-    const setup = await stage(stages, "den", "models-and-connectors", () => configureWorkshop(den, { upstreamKey, allowanceUsd: 5, attendees: options.seats }));
+    const setup = await stage(stages, "den", "models-and-connectors", () => configureWorkshop(den, { upstreamKey, provider: options.provider, allowanceUsd: options.allowanceUsd, maxAllowanceUsd: options.allowanceUsd, attendees: options.seats }));
     Object.assign(shared, { orgId: setup.orgId, connections: setup.connections });
     // Automations need OpenWork Web access; a fictional workshop org gets the
     // complimentary grant from the Den's own bootstrap admin, not billing.
@@ -243,7 +263,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (!seatState || !member || !seatSetup) throw new Error(`Seat ${key} was not provisioned.`);
       const seatDir = join(options.outputDir, key);
       await privateDirectory(seatDir);
-      const control: Record<string, unknown> = { ...shared, member: key, memberId: seatSetup.memberId, modelId: seatSetup.modelId,
+      const control: Record<string, unknown> = { ...shared, member: key, memberId: seatSetup.memberId, modelId: seatSetup.modelId, allowanceUsd: options.allowanceUsd,
         memberLogin: { email: member.email, password: passwords[key], token: member.token, apiUrl: member.apiUrl, webUrl: member.webUrl } };
       const controlPath = join(seatDir, "control.json");
       const save = async () => {
@@ -256,7 +276,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       let diagnostic: Surface | undefined;
       const seatStage = <T>(name: string, run: () => Promise<T>) => stage(seatState.stages, key, name, run, () => diagnostic, seatDir);
       try {
-        await seatStage("member-budget", () => verifyMember(member, setup.orgId, seatSetup.memberId));
+        await seatStage("member-budget", () => verifyMember(member, setup.orgId, seatSetup.memberId, options.allowanceUsd));
         const desktopId = await seatStage("desktop-sandbox", async () => {
           // Spread the first wave out: ten simultaneous provider calls are throttled.
           await new Promise((resolve) => setTimeout(resolve, ((index - 1) % options.concurrency) * 1_500));
@@ -293,13 +313,23 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           return surface;
         });
         await seatStage("workshop-model-visible", async () => {
-          // A fresh desktop opens a draft with no session id; binding needs a task.
-          await runControl(desktop, "session.create_task");
-          control.modelVisibleWithoutRuntimeLink = await selectWorkshopModel(desktop, seatSetup.modelId).then(() => true, () => false);
-          if (!control.modelVisibleWithoutRuntimeLink) {
+          const linkRuntime = async () => {
             await linkWorkshopRuntime(desktop, member, setup.orgId, desktop.workspaceId);
             await desktop.client.send("Page.reload", { ignoreCache: true });
             await waitUntilInteractive(desktop, { timeoutMs: 90_000 });
+          };
+          // A fresh desktop opens a draft with no session id; binding needs a task.
+          // Until the managed model reaches this member's engine, the app keeps
+          // "Create a new task" disabled: link the runtime and wait, not fail.
+          let linked = false;
+          if (!await createTaskWhenEnabled(desktop, 20_000)) {
+            await linkRuntime();
+            linked = true;
+            if (!await createTaskWhenEnabled(desktop, 90_000)) throw new Error("Create a new task stayed disabled after linking the member runtime.");
+          }
+          control.modelVisibleWithoutRuntimeLink = !linked && await selectWorkshopModel(desktop, seatSetup.modelId).then(() => true, () => false);
+          if (!control.modelVisibleWithoutRuntimeLink) {
+            if (!linked) await linkRuntime();
             await selectWorkshopModel(desktop, seatSetup.modelId);
           }
           await save();

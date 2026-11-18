@@ -67,29 +67,89 @@ function initialArguments(binding: McpAppToolBinding, timeZone: string | undefin
   return properties.some((property) => typeof property === "object" && property !== null && "default" in property) ? null : {}
 }
 
-function withinBudget<T>(work: Promise<T>): Promise<T | null> {
+/** The work's result, or null when it fails or the budget runs out first; then `onOverrun` hears that it is still running. */
+function withinBudget<T>(work: Promise<T>, onOverrun: () => void): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | undefined
-  const expired = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), INITIAL_LOAD_BUDGET_MS) })
+  const expired = new Promise<null>((resolve) => { timer = setTimeout(() => { onOverrun(); resolve(null) }, INITIAL_LOAD_BUDGET_MS) })
   return Promise.race([work.catch(() => null), expired]).finally(() => clearTimeout(timer))
+}
+
+/** How long a held read that has finished still waits for the App's own call. */
+const HELD_READ_GRACE_MS = 10_000
+const MAX_HELD_READS = 256
+
+type HeldRead = {
+  binding: McpAppToolBinding
+  args: Record<string, unknown>
+  result: Promise<ExecuteCapabilityToolResult | null>
+}
+
+/** Launch reads in this process that ran past the budget, by caller and tool. */
+const heldReads = new Map<string, HeldRead>()
+
+/**
+ * Hands a launch read that ran past its budget to the App's own call for the
+ * same read, so the tool runs once per open rather than twice. The launch
+ * stops waiting, but the read keeps running in this process.
+ */
+export type LaunchReadHandoff = {
+  hold(binding: McpAppToolBinding, args: Record<string, unknown>, work: Promise<ExecuteCapabilityToolResult>): void
+  /** The held read of exactly this call, taken once, or else a new run. */
+  call(binding: McpAppToolBinding, args: Record<string, unknown>, run: () => Promise<ExecuteCapabilityToolResult>): Promise<ExecuteCapabilityToolResult>
+}
+
+/**
+ * `caller` names everything that decides what a call may return to this
+ * caller: member, teams, credential, scopes and App revision. A held read was
+ * authorized when it started, as any call still running was, and only the
+ * same binding and arguments can take it. A failed read is not handed over,
+ * so the App's call runs it again, and a finished read is dropped after a
+ * short grace.
+ */
+export function launchReadHandoff(caller: string, graceMs = HELD_READ_GRACE_MS): LaunchReadHandoff {
+  const keyOf = (binding: McpAppToolBinding) => JSON.stringify([caller, binding.name])
+  return {
+    hold(binding, args, work) {
+      const key = keyOf(binding)
+      const held: HeldRead = { binding, args, result: work.then((result) => result.isError ? null : result, () => null) }
+      heldReads.delete(key)
+      const oldest = heldReads.size >= MAX_HELD_READS ? heldReads.keys().next().value : undefined
+      if (oldest !== undefined) heldReads.delete(oldest)
+      heldReads.set(key, held)
+      void held.result.then(() => {
+        setTimeout(() => { if (heldReads.get(key) === held) heldReads.delete(key) }, graceMs).unref()
+      })
+    },
+    async call(binding, args, run) {
+      const key = keyOf(binding)
+      const held = heldReads.get(key)
+      if (!held || !isDeepStrictEqual(held.binding, binding) || !isDeepStrictEqual(held.args, args)) return run()
+      heldReads.delete(key)
+      return (await held.result) ?? run()
+    },
+  }
 }
 
 /**
  * What the App's read-only tools that need no input return as it opens. Each
- * runs through the same checked call as when the App calls it; one that fails,
- * needs approval, or runs past the budget is left for the App to call itself.
+ * runs through the same checked call as when the App calls it; one that fails
+ * or needs approval is left for the App to call itself, and one that runs past
+ * the budget is held for the App's call to take.
  */
 export async function loadInitialResults(input: {
   tools: McpAppToolBinding[]
   scopes: ReadonlySet<string>
   timeZone: string | undefined
   callTool: (binding: McpAppToolBinding, args: Record<string, unknown>) => Promise<ExecuteCapabilityToolResult>
+  handoff?: LaunchReadHandoff
 }): Promise<InitialResult[]> {
   const loads = input.tools.flatMap((binding) => {
     const args = loadsWithLaunch(binding) && input.scopes.has(requiredScope(binding)) ? initialArguments(binding, input.timeZone) : null
     return args ? [{ binding, args }] : []
   }).slice(0, MAX_INITIAL_LOADS)
   const settled = await Promise.all(loads.map(async ({ binding, args }): Promise<InitialResult | null> => {
-    const result = await withinBudget(input.callTool(binding, args))
+    const work = input.callTool(binding, args)
+    const result = await withinBudget(work, () => input.handoff?.hold(binding, args, work))
     if (!result || result.isError) return null
     return {
       name: binding.name,

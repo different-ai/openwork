@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 import { server as computerTools } from "./openwork-computer-use.js";
+import { ASK_FORM, ASK_WITHOUT_WAITING, askArgs, askDescription, askFormArgs, askFormDescription } from "./openwork-agent-questions.js";
 import { DRIVE_FILE_TOOLS } from "./drive-file-tools.js";
 import { addProviderSafeTool } from "./provider-safe-tool-schema.js";
 
@@ -19,7 +21,8 @@ type Tool = {
   options: { codemode: boolean };
   execute(input: unknown, context: ToolCall): Promise<z.infer<typeof browserResult>>;
 };
-type Context = CloudSkillContext & {
+type Context = Omit<CloudSkillContext, "session"> & {
+  session?: CloudSkillContext["session"] & { get?(input: { sessionID: string }): Promise<{ readonly parentID?: string; readonly title?: string } | undefined> };
   location?: { directory?: string };
   options: { url: string; token: string; browser?: { url: string; token: string } };
   tool: {
@@ -27,6 +30,13 @@ type Context = CloudSkillContext & {
     reload?(): Promise<void>;
   };
 };
+
+/** Why the host refused a call, so the model can correct the call instead of guessing from a status code. */
+async function refusalReason(response: Response): Promise<string> {
+  const body: unknown = await response.json().catch(() => null);
+  const reason = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error.trim() : "";
+  return reason ? `: ${reason.slice(0, 500)}` : "";
+}
 
 // Separate credentials authorize app reads, sidebar group changes, inert
 // automation proposals, Drive file transfers and Gmail or Outlook drafts the
@@ -49,40 +59,40 @@ export default {
       return { content: [{ type: "text" as const, text }] };
     };
     const browser = context.options.browser;
+    // A subagent's computer work belongs to the chat that started it: that chat's Stop, Take
+    // over, computer and output folder. The engine's session tree says which; model input never does.
+    // A subagent's cursor says who it is: its short description (the child session's
+    // title), or else its agent's name.
+    const roots = new Map<string, { rootSessionId: string; agentName?: string }>();
+    const rootOf = async (sessionID: string, agent?: string) => {
+      const known = roots.get(sessionID);
+      if (known) return known;
+      let id = sessionID;
+      let title: string | undefined;
+      for (let depth = 0; depth < 4; depth += 1) {
+        const session = await context.session?.get?.({ sessionID: id }).catch(() => undefined);
+        if (depth === 0 && typeof session?.title === "string") title = session.title.trim();
+        if (!session?.parentID) break;
+        id = session.parentID;
+      }
+      if (id === sessionID) return undefined;
+      const agentName = title || agent?.trim();
+      const chat = { rootSessionId: id, ...(agentName ? { agentName: agentName.slice(0, 200) } : {}) };
+      if (roots.size >= 500) roots.delete(roots.keys().next().value!);
+      roots.set(sessionID, chat);
+      return chat;
+    };
     const browserDefinitions = browser ? (await browserTools()).tool : undefined;
     const computerDefinitions = browser ? (await computerTools()).tool : undefined;
-    // Browser and computer tools share one bridge but are offered separately.
-    // Everything the model reads about a capability (tool descriptions and the
-    // rules folded into them) arrives only with that capability's tools, so a
-    // prompt never describes something this chat cannot use. Keep it that way:
-    // browser text must not point at computer_* tools, and new instructions
-    // that mention a gated capability belong in that capability's tools.
-    // Computer tools follow the desktop's `computerUse` feature, checked again
-    // before each prompt. Without a prompt hook and registry reload the choice
-    // could not change later, so they stay offered.
-    const gated = typeof context.tool.reload === "function" && context.session !== undefined;
-    const computerOffered = async (current: boolean) => {
-      if (!browser || !gated) return true;
-      try {
-        const response = await fetch(new URL("/computer", browser.url), {
-          redirect: "error", signal: AbortSignal.timeout(5_000), headers: { Authorization: `Bearer ${browser.token}` },
-        });
-        const body: unknown = response.ok ? await response.json() : undefined;
-        return body && typeof body === "object" && "offered" in body && typeof body.offered === "boolean" ? body.offered : current;
-      } catch {
-        return current;
-      }
-    };
-    let computerOn = await computerOffered(true);
     const registration = await context.tool.transform(editor => {
       for (const name of ["openwork_context", "openwork_query", "openwork_execute"]) {
         addProviderSafeTool(editor, {
           name,
           description: name === "openwork_context"
-            ? "Read OpenWork app context and available affordances. Use this to discover session.search and session.read for other conversations, session.group commands for sidebar groups, session.create and session.send to start or message other sessions, session.question.list and session.question.answer for questions another session is waiting on, and automation.propose for scheduled work."
+            ? "Read OpenWork app context and available affordances. Discover session.search/read, session.archive/pin/rename/set_model for existing conversations, session.group commands for sidebar groups, session.create/send to start or message sessions, session.question.list/answer for pending questions, and automation.propose for scheduled work."
             : name === "openwork_query"
               ? "Read an OpenWork affordance without changing the app or navigating. Use the exact id and arguments from openwork_context; session.read includes live background-agent activity."
-              : "Run an OpenWork command listed in openwork_context: change sidebar groups, create or message sessions, answer another session's pending question with the person's answers, or propose an Automation for the person to review and create. A proposal does not create, activate, or run anything. Use the exact id and arguments from openwork_context.",
+              : "Run an OpenWork command listed in openwork_context: archive/unarchive, pin/unpin, rename or change an idle session's model without opening it or starting inference; change sidebar groups; create or message sessions; answer pending questions with the person's answers; or propose an Automation. A proposal does not create, activate, or run anything. Use the exact discovered id, arguments and safety requirements.",
           input: name === "openwork_context" ? { type: "object", properties: {}, additionalProperties: false } : {
             type: "object", properties: { id: { type: "string" }, args: { type: "object", additionalProperties: true } },
             required: ["id"], additionalProperties: false,
@@ -101,14 +111,14 @@ export default {
                 } : {}),
               }),
             });
-            if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})`);
+            if (!response.ok) throw new Error(`OpenWork ${name === "openwork_execute" ? "command" : "read"} failed (${response.status})${await refusalReason(response)}`);
             return { content: [{ type: "text", text: await response.text() }] };
           },
         });
       }
       addProviderSafeTool(editor, {
         name: "openwork_drive_upload",
-        description: "Upload one workspace file to the member's Google Drive through OpenWork Cloud, outside model context. Use this when the user asks to put a local file in Drive; it does not need a separate Google sign-in. Bytes, basename and MIME type are preserved without Office conversion. path is workspace-relative or an absolute path under an authorized workspace root. folderId selects a Drive parent folder; connectionId (google-workspace or emc_...) selects a Google account and never falls back to another. The person approves each upload in the chat first; if they decline, do not upload it another way. Returns the Drive file id. Never retry an unconfirmed upload automatically.",
+        description: "Upload one workspace file to the member's Google Drive through OpenWork Cloud, outside model context. Use this when the user asks to put a local file in Drive; it does not need a separate Google sign-in. Bytes, basename and MIME type are preserved without Office conversion. path is workspace-relative or an absolute local file path, including outside the workspace. The person approves that exact file and Drive destination, not access to its folder. folderId selects a Drive parent folder; connectionId (google-workspace or emc_...) selects a Google account and never falls back to another. The person approves the upload in the chat first; Allow for session remembers only the same unchanged file, Drive folder and account in that chat. Other files or destinations need approval. Select connectionId for session approval; an unresolved default account always needs fresh approval. If they decline, do not upload it another way. Returns the Drive file id. Never retry an unconfirmed upload automatically.",
         input: { type: "object", properties: {
           path: { type: "string" }, folderId: { type: "string" }, connectionId: { type: "string", pattern: "^(google-workspace|emc_[A-Za-z0-9]+)$" },
         }, required: ["path"], additionalProperties: false },
@@ -145,17 +155,28 @@ export default {
           execute: (input, call) => driveCall(name, input, call, `${name} failed`),
         });
       }
-      const bridged = { ...browserDefinitions, ...(computerOn ? computerDefinitions : undefined) };
+      if (browser) addProviderSafeTool(editor, {
+        name: ASK_WITHOUT_WAITING, description: askDescription, input: z.toJSONSchema(askArgs),
+        options: { codemode: false },
+        execute: (input, call) => driveCall(ASK_WITHOUT_WAITING, input, call, "Asking failed"),
+      });
+      if (browser && process.env.OPENWORK_ASK_FORM === "1") addProviderSafeTool(editor, {
+        name: ASK_FORM, description: askFormDescription, input: z.toJSONSchema(askFormArgs),
+        options: { codemode: false },
+        execute: (input, call) => driveCall(ASK_FORM, input, call, "Asking failed"),
+      });
+      const bridged = { ...browserDefinitions, ...computerDefinitions };
       if (browser) for (const [name, definition] of Object.entries(bridged)) {
         addProviderSafeTool(editor, {
           name, description: definition.description,
           input: z.toJSONSchema(z.object(definition.args)),
           options: { codemode: false },
           async execute(input, call) {
-            const response = await fetch(browser.url, {
+            const chat = name.startsWith("computer_") ? await rootOf(call.sessionID, call.agent) : undefined;
+            const response = await approvalLoopbackFetch(browser.url, {
               method: "POST", redirect: "error", signal: call.signal,
               headers: { Authorization: `Bearer ${browser.token}`, "Content-Type": "application/json" },
-              body: JSON.stringify({ name, input, sessionId: call.sessionID }),
+              body: JSON.stringify({ name, input, sessionId: call.sessionID, ...chat }),
             });
             if (!response.ok) throw new Error(`${name.startsWith("computer_") ? "Computer" : "Browser"} request failed (${response.status})`);
             return browserResult.parse(await response.json());
@@ -163,13 +184,8 @@ export default {
         });
       }
     });
-    const promptHook = browser && gated && context.session ? await context.session.hook("prompt", async () => {
-      const next = await computerOffered(computerOn);
-      if (next === computerOn) return;
-      computerOn = next;
-      await context.tool.reload?.();
-    }) : undefined;
+
     const stopSkills = await registerCloudSkillDiscovery(context);
-    return async () => { await stopSkills(); await promptHook?.dispose(); await registration.dispose(); };
+    return async () => { await stopSkills(); await registration.dispose(); };
   },
 };

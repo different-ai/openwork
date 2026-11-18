@@ -1,8 +1,9 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { recordAudit } from "../audit.js";
 import { ApiError } from "../errors.js";
 import { FileSessionStore } from "../file-sessions.js";
@@ -30,6 +31,10 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const MAX_PATH_COMPONENT_BYTES = 255;
+// formData() holds the whole body in memory, so multipart uploads stay capped.
+// Raw uploads stream to disk and answer only to the inbox limit.
+const INBOX_MULTIPART_MAX_BYTES = 250_000_000;
+const INBOX_MULTIPART_FRAMING_BYTES = 1_000_000;
 const WINDOWS_RESERVED_PATH_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 
 type JsonResponse = (data: unknown, status?: number) => Response;
@@ -118,6 +123,37 @@ async function parseMultipartFormData(request: Request): Promise<FormData> {
   } catch {
     throw new ApiError(400, "invalid_payload", "Malformed multipart/form-data");
   }
+}
+
+function inboxFileTooLarge(maxBytes: number, size: number) {
+  return new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size });
+}
+
+/** Streams an upload to `dest`, so its size never has to fit in memory. */
+async function writeUploadToFile(body: ReadableStream<Uint8Array>, dest: string, maxBytes: number, signal: AbortSignal): Promise<number> {
+  let bytes = 0;
+  const limit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.byteLength;
+      callback(bytes > maxBytes ? inboxFileTooLarge(maxBytes, bytes) : null, chunk);
+    },
+  });
+  try {
+    // Read the body directly: Readable.fromWeb drops bytes from large bodies under
+    // Bun. Bun also never errors the body when a client disconnects, so the signal
+    // is what ends an abandoned upload, and cancelling the body makes Bun answer
+    // with an empty 200, so a refused upload leaves it uncancelled to send its error.
+    const source = async function* () {
+      for await (const chunk of body.values({ preventCancel: true })) yield chunk;
+    };
+    await pipeline(source, limit, createWriteStream(dest), { signal });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOSPC") {
+      throw new ApiError(507, "insufficient_storage", "Not enough disk space for this file");
+    }
+    throw error;
+  }
+  return bytes;
 }
 
 export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean {
@@ -799,27 +835,40 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     }
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
+    // Clients send the file as the raw body with its path in the query. Multipart
+    // stays for older clients and scripts.
     const contentType = ctx.request.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("multipart/form-data")) {
-      throw new ApiError(400, "invalid_payload", "Expected multipart/form-data");
-    }
-    const form = await parseMultipartFormData(ctx.request);
-    const file = form.get("file");
-    if (!(file instanceof File)) {
-      throw new ApiError(400, "file_required", "Form field 'file' is required");
+    const multipart = contentType.toLowerCase().includes("multipart/form-data");
+    const maxBytes = multipart ? Math.min(resolveInboxMaxBytes(), INBOX_MULTIPART_MAX_BYTES) : resolveInboxMaxBytes();
+    const declaredBytes = Number(ctx.request.headers.get("content-length"));
+    if (declaredBytes > maxBytes + (multipart ? INBOX_MULTIPART_FRAMING_BYTES : 0)) {
+      throw inboxFileTooLarge(maxBytes, declaredBytes);
     }
 
     const queryPath = ctx.url.searchParams.get("path") ?? "";
-    const formPath = typeof form.get("path") === "string" ? String(form.get("path") || "") : "";
-    const requestedPath = queryPath.trim() ? queryPath : formPath.trim() ? formPath : file.name;
+    let requestedPath = queryPath;
+    let body = ctx.request.body;
+    if (multipart) {
+      const form = await parseMultipartFormData(ctx.request);
+      const file = form.get("file");
+      if (!(file instanceof File)) {
+        throw new ApiError(400, "file_required", "Form field 'file' is required");
+      }
+      const formPath = typeof form.get("path") === "string" ? String(form.get("path") || "") : "";
+      requestedPath = queryPath.trim() ? queryPath : formPath.trim() ? formPath : file.name;
+      if (file.size > maxBytes) throw inboxFileTooLarge(maxBytes, file.size);
+      body = file.stream();
+    }
+    if (!body) {
+      throw new ApiError(400, "file_required", "Request body is required");
+    }
+    if (!requestedPath.trim()) {
+      throw new ApiError(400, "path_required", "Query parameter 'path' is required");
+    }
 
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
     const dest = resolveSafeChildPath(inboxRoot, relativePath);
-    const maxBytes = resolveInboxMaxBytes();
-    if (file.size > maxBytes) {
-      throw new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size: file.size });
-    }
 
     // Inbox uploads are exempt from host approval: the inbox is the designated
     // client drop area (path-constrained via resolveSafeChildPath, size-capped,
@@ -829,10 +878,15 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     // their own writes. All other write routes remain approval-gated.
 
     await ensureDir(dirname(dest));
-    const bytes = Buffer.from(await file.arrayBuffer());
     const tmp = join(dirname(dest), `.upload-${shortId()}.tmp`);
-    await writeFile(tmp, bytes);
-    await rename(tmp, dest);
+    let bytes: number;
+    try {
+      bytes = await writeUploadToFile(body, tmp, maxBytes, ctx.request.signal);
+      await rename(tmp, dest);
+    } catch (error) {
+      await rm(tmp, { force: true }).catch(() => undefined);
+      throw error;
+    }
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -844,7 +898,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       timestamp: Date.now(),
     });
 
-    return jsonResponse({ ok: true, path: relativePath, bytes: file.size });
+    return jsonResponse({ ok: true, path: relativePath, bytes });
   });
 
   addRoute(routes, "GET", "/workspace/:id/artifacts", "client", async (ctx) => {

@@ -7,7 +7,7 @@ import {
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../db.js"
-import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
+import { isSandboxSlackToken, SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 
 /**
  * Workbot messages a member in Slack from the Slack app's own bot identity: a DM in the app's Messages tab, which
@@ -44,7 +44,10 @@ export type WorkbotDirectMessageDeps = {
   /** The member's linked Slack user on one installation, when the assistant would still answer them as themselves. */
   linkedSlackUser: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; installation: ReadyInstallation }) => Promise<string | null>
   botToken: (connectionId: DenTypeId<"externalMcpConnection">) => Promise<string | null>
-  slack: (token: string) => SlackCall
+  /** `baseUrl` is given only for a sandbox's sample Slack app; without it the call goes to Slack. */
+  slack: (token: string, baseUrl?: string) => SlackCall
+  /** The sample Slack address of a sandbox's sample app, or null when it can't be used now (sandboxSlackApiBase). */
+  sandboxApiBase?: (connectionId: DenTypeId<"externalMcpConnection">) => Promise<string | null>
 }
 
 async function readyInstallations(organizationId: DenTypeId<"organization">): Promise<ReadyInstallation[]> {
@@ -83,7 +86,32 @@ async function botToken(connectionId: DenTypeId<"externalMcpConnection">) {
   return row?.botToken ?? null
 }
 
-export const defaultWorkbotDirectMessageDeps: WorkbotDirectMessageDeps = { installations: readyInstallations, linkedSlackUser, botToken, slack: slackClient }
+async function sandboxApiBase(connectionId: DenTypeId<"externalMcpConnection">) {
+  const { sandboxSlackApiBase } = await import("./sandbox-api.js")
+  return sandboxSlackApiBase(connectionId)
+}
+
+export const defaultWorkbotDirectMessageDeps: WorkbotDirectMessageDeps = {
+  installations: readyInstallations,
+  linkedSlackUser,
+  botToken,
+  slack: (token, baseUrl) => slackClient(token, fetch, baseUrl),
+  sandboxApiBase,
+}
+
+/**
+ * The Slack client for an installation's bot token. A real token calls Slack. A sandbox's sample token calls that
+ * sandbox's sample Slack, or nothing (null) when the sandbox ended or its sample Slack is off.
+ */
+export async function workbotSlackCall(
+  connectionId: DenTypeId<"externalMcpConnection">,
+  token: string,
+  deps: Pick<WorkbotDirectMessageDeps, "slack" | "sandboxApiBase">,
+): Promise<SlackCall | null> {
+  if (!isSandboxSlackToken(token)) return deps.slack(token)
+  const baseUrl = await (deps.sandboxApiBase ?? sandboxApiBase)(connectionId)
+  return baseUrl ? deps.slack(token, baseUrl) : null
+}
 
 /** True when the organization has the Slack app installed and on: Workbot has a bot to DM members from. */
 export async function workbotSlackAppReady(organizationId: string, deps: Pick<WorkbotDirectMessageDeps, "installations"> = defaultWorkbotDirectMessageDeps) {
@@ -116,6 +144,72 @@ export async function sendWorkbotDirectMessage(
   return sendWorkbotDirectMessageTo(target, input, deps)
 }
 
+/** One message of the member's DM with Workbot: theirs, or the app's (Workbot's replies and their agent's messages). */
+export type WorkbotDirectMessageTurn = { at: number; from: "agent" | "member"; text: string }
+
+const historyMessageSchema = z.object({
+  ts: z.string(),
+  text: z.string().optional(),
+  user: z.string().optional(),
+  bot_id: z.string().optional(),
+  subtype: z.string().optional(),
+  reply_count: z.number().optional(),
+})
+const historySchema = z.object({ messages: z.array(z.unknown()).default([]) })
+
+function turnsOf(raw: readonly unknown[], slackUserId: string, skipTs?: string): WorkbotDirectMessageTurn[] {
+  return raw.flatMap((entry) => {
+    const message = historyMessageSchema.safeParse(entry)
+    if (!message.success || message.data.ts === skipTs || !message.data.text?.trim()) return []
+    // Joins, edits announced as their own message and other housekeeping aren't conversation.
+    if (message.data.subtype && message.data.subtype !== "bot_message" && message.data.subtype !== "thread_broadcast") return []
+    const at = Math.round(Number(message.data.ts) * 1000)
+    if (!Number.isFinite(at)) return []
+    const from: WorkbotDirectMessageTurn["from"] = !message.data.bot_id && message.data.user === slackUserId ? "member" : "agent"
+    return [{ at, from, text: message.data.text }]
+  })
+}
+
+/**
+ * The member's recent conversation with Workbot in their DM with the app (`workbotAgentBrief`): the newest `limit`
+ * messages since `since`, including replies in the newest few threads, oldest first. Read with the app's bot token
+ * (`im:history`, already granted), from the DM the agent's messages go to, so "I'll handle it after lunch" is seen.
+ * Null when the DM can't be read (no app, not linked, Slack refused). Den keeps none of it.
+ */
+export async function readWorkbotDirectMessages(
+  input: { organizationId: string; userId: string; since: number; limit?: number; threads?: number },
+  deps: WorkbotDirectMessageDeps = defaultWorkbotDirectMessageDeps,
+): Promise<WorkbotDirectMessageTurn[] | null> {
+  const target = await resolveWorkbotDirectMessageTarget(input, deps)
+  if (!target.ok) return null
+  const token = await deps.botToken(target.connectionId)
+  if (!token) return null
+  const slack = await workbotSlackCall(target.connectionId, token, deps)
+  if (!slack) return null
+  const limit = input.limit ?? 20
+  try {
+    const opened = z.object({ channel: z.object({ id: z.string() }) }).safeParse(await slack("conversations.open", { users: target.slackUserId }))
+    if (!opened.success) return null
+    const channel = opened.data.channel.id
+    const history = historySchema.parse(await slack("conversations.history", { channel, limit, oldest: String(Math.floor(input.since / 1000)) }))
+    const turns = turnsOf(history.messages, target.slackUserId)
+    const threaded = history.messages
+      .flatMap((entry) => {
+        const message = historyMessageSchema.safeParse(entry)
+        return message.success && (message.data.reply_count ?? 0) > 0 ? [message.data.ts] : []
+      })
+      .sort((left, right) => Number(right) - Number(left))
+      .slice(0, input.threads ?? 3)
+    for (const ts of threaded) {
+      const replies = historySchema.safeParse(await slack("conversations.replies", { channel, ts, limit: 10 }).catch(() => null))
+      if (replies.success) turns.push(...turnsOf(replies.data.messages, target.slackUserId, ts))
+    }
+    return turns.filter((turn) => turn.at >= input.since).sort((left, right) => left.at - right.at).slice(-limit)
+  } catch {
+    return null
+  }
+}
+
 /** A Slack message link Den may show the member: https on a Slack host only. */
 function slackPermalink(value: unknown): string | null {
   const parsed = z.object({ permalink: z.string() }).safeParse(value)
@@ -135,11 +229,12 @@ function slackPermalink(value: unknown): string | null {
 export async function sendWorkbotDirectMessageTo(
   target: WorkbotSlackMember,
   message: { text: string; threadTs?: string; permalink?: boolean },
-  deps: Pick<WorkbotDirectMessageDeps, "botToken" | "slack"> = defaultWorkbotDirectMessageDeps,
+  deps: Pick<WorkbotDirectMessageDeps, "botToken" | "slack" | "sandboxApiBase"> = defaultWorkbotDirectMessageDeps,
 ): Promise<WorkbotDirectMessageResult> {
   const token = await deps.botToken(target.connectionId)
   if (!token) return { ok: false, reason: "slack_app_not_installed" }
-  const slack = deps.slack(token)
+  const slack = await workbotSlackCall(target.connectionId, token, deps)
+  if (!slack) return { ok: false, reason: "slack_error", code: "sandbox_slack_unavailable" }
   try {
     const opened = z.object({ channel: z.object({ id: z.string() }) }).safeParse(await slack("conversations.open", { users: target.slackUserId }))
     if (!opened.success) return { ok: false, reason: "slack_error", code: "dm_unavailable" }

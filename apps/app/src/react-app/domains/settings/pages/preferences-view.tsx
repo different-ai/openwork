@@ -10,8 +10,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
-import { isElectronRuntime } from "@/app/utils";
-import { isLinkOpenDestination, type LinkOpenDestination } from "@/react-app/kernel/local-preferences-storage";
+import { isElectronRuntime, isMacPlatform } from "@/app/utils";
+import { isFollowUpDefault, isLinkOpenDestination, type FollowUpDefault, type LinkOpenDestination } from "@/react-app/kernel/local-preferences-storage";
 import {
   DESKTOP_NOTIFICATION_PREFERENCE_VALUES,
   isDesktopNotificationPreference,
@@ -30,11 +30,6 @@ import {
   LayoutStack,
 } from "../settings-layout";
 import { DesktopIntegrationSection } from "../desktop-integration-section";
-import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
-import {
-  AUTO_SETTLE_DAY_OPTIONS,
-  useSessionManagementStore,
-} from "@/react-app/domains/session/sidebar/session-management-store";
 
 export type PreferencesViewProps = {
   busy: boolean;
@@ -45,6 +40,8 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  followUpDefault: FollowUpDefault;
+  onFollowUpDefaultChange: (value: FollowUpDefault) => void;
   keepAwake: boolean;
   onToggleKeepAwake: () => void;
   desktopNotifications: DesktopNotificationPreference;
@@ -64,60 +61,16 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
   }
 }
 
-function autoSettleLabel(days: number) {
-  return days === 0 ? t("settings.auto_settle.never") : t("settings.auto_settle.days", { count: days });
-}
-
-/** Idle sessions move to their workspace's Settled row after this long. */
-function AutoSettleSettings() {
-  return useDesktopFeature("settledSessions") ? <AutoSettleSection /> : null;
-}
-
-function AutoSettleSection() {
-  const autoSettleDays = useSessionManagementStore((state) => state.autoSettleDays);
-  const setAutoSettleDays = useSessionManagementStore((state) => state.setAutoSettleDays);
-  const items = AUTO_SETTLE_DAY_OPTIONS.map((days) => ({ value: String(days), label: autoSettleLabel(days) }));
-
-  return (
-    <LayoutSection>
-      <LayoutSectionHeader>
-        <LayoutSectionTitle>{t("settings.sessions_title")}</LayoutSectionTitle>
-      </LayoutSectionHeader>
-
-      <LayoutSectionItem>
-        <LayoutSectionItemHeader className="min-h-10 items-center">
-          <LayoutSectionItemTitle>{t("settings.auto_settle.title")}</LayoutSectionItemTitle>
-          <LayoutSectionItemHeaderActions className="self-center">
-            <Select
-              value={String(autoSettleDays)}
-              items={items}
-              onValueChange={(value) => {
-                if (typeof value === "string") setAutoSettleDays(Number(value));
-              }}
-            >
-              <SelectTrigger className="w-44" aria-label={t("settings.auto_settle.title")} data-auto-settle-select>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  {items.map(({ value, label }) => (
-                    <SelectItem key={value} value={value}>{label}</SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </LayoutSectionItemHeaderActions>
-        </LayoutSectionItemHeader>
-      </LayoutSectionItem>
-    </LayoutSection>
-  );
-}
-
 export function PreferencesView(props: PreferencesViewProps) {
   const linkDestinationItems = [
     { value: "openwork", label: "OpenWork" },
     { value: "external", label: t("settings.links.external") },
   ];
+  const followUpItems = [
+    { value: "queue", label: t("settings.follow_up.queue") },
+    { value: "steer", label: t("settings.follow_up.steer") },
+  ];
+  const followUpModifier = isMacPlatform() ? "⌘" : "Ctrl";
   const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
     value,
     label: desktopNotificationPreferenceLabel(value),
@@ -164,7 +117,40 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionItem>
       </LayoutSection>
 
-      <AutoSettleSettings />
+      <LayoutSection>
+        <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.follow_up.title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.follow_up.section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.follow_up.enter")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              {t(props.followUpDefault === "steer" ? "settings.follow_up.enter_desc_steer" : "settings.follow_up.enter_desc_queue", { modifier: followUpModifier })}
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Select
+                items={followUpItems}
+                value={props.followUpDefault}
+                onValueChange={(value) => {
+                  if (isFollowUpDefault(value)) props.onFollowUpDefaultChange(value);
+                }}
+              >
+                <SelectTrigger className="w-52" aria-label={t("settings.follow_up.enter")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {followUpItems.map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
 
       <LayoutSection>
         <LayoutSectionHeader>

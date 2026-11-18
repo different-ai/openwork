@@ -215,7 +215,7 @@ export async function probeAcmeGatewayDirect(admin: DenSession, world: AcmeGatew
   return { reply: ACME_REPLY, upstreamRequests: requests.length };
 }
 
-export async function seedAcmeGateway(admin: DenSession, upstream: { key: string; baseUrl: string }) {
+export async function seedAcmeGateway(admin: DenSession, upstream: { key: string; baseUrl: string; model?: string }) {
   const headers = { authorization: `Bearer ${admin.token}` };
   const orgs = await denFetch(admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;
@@ -224,7 +224,7 @@ export async function seedAcmeGateway(admin: DenSession, upstream: { key: string
   const orgHeaders = { ...headers, "x-openwork-org-id": orgId };
   const created = await denFetch(admin, "/v1/inference-providers", {
     method: "POST", headers: orgHeaders,
-    body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [ACME_MODEL],
+    body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [upstream.model ?? ACME_MODEL],
       credential: { kind: "api_key", secret: upstream.key }, settings: { upstreamBaseUrl: `${upstream.baseUrl}/v1` }, allMembers: true }),
   });
   const provider = record(created.body) && record(created.body.inferenceProvider) ? created.body.inferenceProvider : undefined;

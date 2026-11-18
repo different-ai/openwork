@@ -274,8 +274,10 @@ export default {
   async setup(context: Context) {
     const collector = createMcpResultsCollector();
     let rootSearch = false;
+    let toolIds = new Set<string>();
     const catalog = await context.tool.transform(editor => {
       rootSearch = editor.get("search") !== undefined;
+      toolIds = new Set(editor.list().map(info => info.id));
       // Wrap each tool so a Code Mode call publishes its start and its own
       // result while the script is still running, not only at completion.
       for (const info of editor.list()) {
@@ -307,7 +309,7 @@ export default {
     });
     const before = await context.tool.hook("execute.before", event => {
       if (!rootSearch && event.tool === "execute" && isRecord(event.input) && typeof event.input.code === "string") {
-        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code) };
+        event.input = { ...event.input, code: nativeDiscoveryCode(event.input.code, server => toolIds.has(mcpToolId(server, "search"))) };
       }
       collector.before(event);
     });

@@ -8,6 +8,7 @@ import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import { checkMemberPermission } from "../permissions/check.js"
+import { organizationPrivilegedSessionMaxAgeMs } from "../privileged-session.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
 import { requireUserMiddleware, requireUserSessionMiddleware } from "./current-user.js"
@@ -191,7 +192,9 @@ async function enforceOrgPermission(c: RouteAccessContext, key: PermissionKey): 
     ?? await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
   c.set("memberPermissions", permissions)
 
-  const check = checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key)
+  const check = checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, {
+    maxAgeMs: organizationPrivilegedSessionMaxAgeMs(payload),
+  })
   if (check.ok) return undefined
   if (check.response.error === "forbidden") {
     c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)

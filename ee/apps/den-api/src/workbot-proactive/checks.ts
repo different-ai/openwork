@@ -40,6 +40,9 @@ const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
   no_destination: "failed",
   send_failed: "failed",
   agent_unavailable: "failed",
+  no_findings: "quiet",
+  findings_held: "quiet",
+  source_stopped: "failed",
 }
 
 const FIX_OF: Partial<Record<AgentCheckReason, AgentCheckFix>> = {
@@ -72,14 +75,16 @@ export function describeAgentCheck(input: {
   /** What a message drew on, or what couldn't be read (with the connection to fix). */
   sources?: readonly AgentMemberCheckSource[]
   limits: { startHour: number; endHour: number; dailyCap: number; quietWindow: AgentHourWindow | null }
+  /** `workbotAgentBrief`: how many messages one check sent (it may send a few on the first check of the day). */
+  messages?: number
 }): AgentCheckDescription {
   const topic = about(input.responsibilities ?? [])
   const from = names(input.sources ?? [])
   const subject = topic ? ` about ${topic}` : from ? ` from ${from}` : ""
   const held = subject ? ` Held a message${subject}.` : ""
-  const unread = input.reason === "source_disconnected" ? from || "a source" : ""
+  const unread = input.reason === "source_disconnected" || input.reason === "source_stopped" ? from || "a source" : ""
   const summaries: Record<AgentCheckReason, string> = {
-    sent: `Sent you a message${subject}.`,
+    sent: `Sent you ${(input.messages ?? 1) > 1 ? `${input.messages} messages` : "a message"}${subject}.`,
     nothing_new: "Stayed quiet: nothing new.",
     already_told: "Stayed quiet: nothing you hadn't heard.",
     unreadable_reply: "Stayed quiet: nothing it could send.",
@@ -95,6 +100,9 @@ export function describeAgentCheck(input: {
     no_destination: "Couldn't reach you: your admin hasn't chosen where messages go.",
     send_failed: "Couldn't send the message in Slack.",
     agent_unavailable: "Couldn't run the check: trying again in 15 minutes.",
+    no_findings: "Stayed quiet: nothing needed you.",
+    findings_held: "Stayed quiet: found something that can wait for a later check.",
+    source_stopped: `Stopped reading ${unread}: no longer on for your agent.`,
   }
   return { outcome: OUTCOME_OF[input.reason], summary: summaries[input.reason] }
 }

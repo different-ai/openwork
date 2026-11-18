@@ -12,6 +12,7 @@ import { remoteHelperDraft, remoteHelperOrigin, saveRemoteHelperDraft, type Remo
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteThreadTranscriptBody } from "./remote-thread-panel"
 import { answerRemoteThread, stopRemoteThread } from "./remote-thread-actions"
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
 import { RemoteThreadAnswerCard } from "./remote-thread-answer-card"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
@@ -122,6 +123,7 @@ export function RemoteSessionSurface({ threadKey, navigation }: { threadKey: str
 }
 
 function RemoteSessionConversation({ entry, origin, navigation }: { entry: RemoteThreadEntry; origin: RemoteHelperOrigin; navigation: RemoteHelperNavigation }) {
+  const questionMinimizeEnabled = useDesktopFeature("questionMinimize")
   const threadKey = entry.start.key
   const conversation = useRemoteThreadConversation(entry, { initialDraft: remoteHelperDraft(threadKey), foldTask: true })
   const { view } = conversation
@@ -169,7 +171,7 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
       {/* The task's question or permission, answered from here. */}
       {view.waitingFor && conversation.page?.pending?.kind === view.waitingFor ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-3" data-remote-session-question-slot="">
-          <RemoteThreadAnswerCard pending={conversation.page.pending} computer={view.computer} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
+          <RemoteThreadAnswerCard pending={conversation.page.pending} computer={view.computer} collapsible={questionMinimizeEnabled} onAnswer={(answer) => answerRemoteThread(entry, answer)} />
         </div>
       ) : view.waitingFor ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-5 py-2 text-xs text-amber-11" data-remote-thread-waiting={view.waitingFor}>

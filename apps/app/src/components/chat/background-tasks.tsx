@@ -18,7 +18,8 @@ import type { BackgroundShell } from "@/react-app/domains/session/status/backgro
 
 const COMMAND_PREVIEW_LENGTH = 80
 
-function commandPreview(command: string): string {
+/** One line of a command, cut to fit a row. */
+export function commandPreview(command: string): string {
   const oneLine = command.replace(/\s+/g, " ").trim()
   return oneLine.length > COMMAND_PREVIEW_LENGTH ? `${oneLine.slice(0, COMMAND_PREVIEW_LENGTH - 1)}…` : oneLine
 }
@@ -97,7 +98,7 @@ export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message
           type="button"
           data-subagent-notice={notice.outcome}
           className={cn(rowClassName, "group cursor-pointer transition-colors hover:text-foreground")}
-          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. Open sub-agent chat`}
+          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. ${notice.linkedSession ? "Open session" : "Open sub-agent chat"}`}
           onClick={() => onOpenSubagentSession(notice.childSessionId)}
         >
           {content}

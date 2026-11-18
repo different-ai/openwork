@@ -11,7 +11,10 @@ const execute = promisify(execFile);
 const failure = (code, error) => Object.assign(new Error(error), { code });
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
 
-/** One member-owned VM, one input lease, and the existing browser and computer contracts. */
+/**
+ * One member-owned VM, one input lease, and the existing browser and computer contracts.
+ * Programs always run standard JavaScript under the same VM authority checks.
+ */
 export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   let owner = null;
@@ -65,7 +68,6 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
   async function authorize() {
     const allowed = !closed && await enabled().catch(() => false);
     verified = allowed;
-    await control.setFeatureEnabled(allowed);
     await control.setRemoteEnabled(allowed);
     if (!allowed) {
       authoritySuspended = true;
@@ -102,6 +104,8 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
           if (!["computer", "browser"].includes(body.surface) || typeof body.code !== "string" || body.code.length > 32_000
             || body.timeoutMs !== undefined && (!Number.isInteger(body.timeoutMs) || body.timeoutMs < 1000 || body.timeoutMs > 60_000)) throw failure("invalid_arguments", "Provide a surface, bounded code and a timeout from 1000 to 60000 milliseconds.");
           const { runComputerProgram } = await import("@openwork/computer-use/runtime");
+          // The organization picks the interpreter; nothing in the request body can. Unreadable means the original.
+          assertActive();
           const signal = current.signal;
           return await runComputerProgram(body, {
             computer: async (name, args, signal) => {
@@ -111,13 +115,13 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
             },
             browser: async (operation, args, signal) => {
               assertActive();
-              const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal });
+              const result = await browser.request({ sessionId: body.sessionId, operation, args }, { signal, recovery: body.browserRecovery === true });
               assertActive(); return result;
             },
           }, signal);
         }
         if (path === "/browser/task") {
-          const result = await browser.request(body, { signal: current.signal });
+          const result = await browser.request(body, { signal: current.signal, recovery: body.browserRecovery === true });
           assertActive();
           return result;
         }

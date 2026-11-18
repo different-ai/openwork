@@ -13,6 +13,15 @@ final class ObservationListingTests: XCTestCase {
         XCTAssertEqual(refs.assign(["result", "two", "one"], window: 7), ["e4", "e3", "e5"])
         // Another window starts over without reusing any ref from this session.
         XCTAssertEqual(refs.assign(["clear"], window: 8), ["e6"])
+        // Back from that window (a dialog closing): the first window's controls keep their refs.
+        XCTAssertEqual(refs.assign(["result", "two", "one"], window: 7), ["e4", "e3", "e5"])
+    }
+
+    func testOnlyTheLastFewWindowsKeepTheirRefs() {
+        var refs = StableRefs<String>(hash: { $0.hashValue }, same: { $0 == $1 })
+        XCTAssertEqual(refs.assign(["a"], window: 1), ["e1"])
+        for window in 2...UInt32(StableRefs<String>.windowsRemembered + 2) { _ = refs.assign(["x"], window: window) }
+        XCTAssertNotEqual(refs.assign(["a"], window: 1), ["e1"], "a long-forgotten window starts over with new refs")
     }
 
     func testTwoReadsOfTheSameIdentityNeverShareARef() {

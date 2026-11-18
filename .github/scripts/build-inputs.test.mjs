@@ -113,9 +113,9 @@ test("each job watches its own script, workflow and shared declaration inputs", 
   assert.equal(isBuildAffected("desktop-smoke", ["docs/enterprise/outbound-access.json"]), false);
 });
 
-test("an unrelated dev run cannot replace pending core verification", () => {
-  const workflow = readFileSync(join(root, ".github/workflows/ci-tests.yml"), "utf8");
-  assert.match(workflow, /group: openwork-tests-.*github\.event\.pull_request\.number \|\| github\.run_id/);
+test("a dev push never cancels another commit's quick check", () => {
+  const workflow = readFileSync(join(root, ".github/workflows/quick-check.yml"), "utf8");
+  assert.match(workflow, /group: quick-check-.*github\.event\.pull_request\.number \|\| github\.run_id/);
   assert.match(workflow, /cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}/);
 });
 

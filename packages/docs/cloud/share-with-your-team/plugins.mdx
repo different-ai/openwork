@@ -1,0 +1,123 @@
+---
+title: "Manage plugins"
+sidebarTitle: "Plugins"
+description: "Create plugins in Manage › Plugins, import them from GitHub, choose who can use them, and group them into Collections."
+keywords: ["plugins", "Manage Plugins", "create a plugin", "import from GitHub", "share plugin", "who can use it", "collections", "skills", "commands", "connectors"]
+---
+
+A plugin gives your team's AI the same playbook for one kind of work. It bundles
+**skills** (the steps, in plain words), **commands** (shortcuts like
+`/follow-up`), and **connectors** (the apps those steps need). You share it with
+the people who need it, and it shows up in their Library. The AI uses a skill
+whenever a request matches it.
+
+Not sure whether you need a connector, a skill or a plugin? See
+[Connectors, skills, and plugins](/start-here/do-work-with-it/skills-plugins-and-mcp).
+
+## Where to find it
+
+In OpenWork Cloud, open **Manage › Plugins**. The list shows every plugin you
+can see and whether it's **Private** or **Shared**.
+
+- Search by name, or use **Team** to see what a team can use and **Owner** to see
+  who made what.
+- Each row's **⋯** menu has **Open**, and **Share** for a plugin only its owner
+  can use.
+
+Any member can create a plugin. Only you can use it until you share it.
+
+## Create a plugin
+
+<Steps>
+  <Step title="Start">
+    Click **Create a plugin**.
+  </Step>
+  <Step title="Name it">
+    Fill in **Plugin name** and **Description** (what it helps people do).
+  </Step>
+  <Step title="Add what's inside">
+    Under **What's inside**, add one or more of:
+    - **Skill**: name it, say when the AI should use it, and write the steps in
+      plain words or Markdown.
+    - **Command**: name it, like `/follow-up`, and write what should happen when
+      someone runs it.
+    - **Connector**: pick one you already added in
+      [Connectors](/cloud/share-with-your-team/connectors). No connectors yet?
+      Click **Add one first**.
+  </Step>
+  <Step title="Create it">
+    Click **Create plugin**. Its page opens. Nobody else gets it until you
+    choose who can use it.
+  </Step>
+</Steps>
+
+To add more skills later, open the plugin and use its **⋯** menu: **Edit
+contents**. For tips on writing a good skill, see
+[Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill#1-create-the-skill).
+
+## Import a plugin from GitHub
+
+Start from a plugin someone already wrote instead of from scratch. This copies
+it once; to keep a plugin in step with a repository, use
+[GitHub Sources](/cloud/share-with-your-team/github-sources) instead.
+
+Importing needs the **Import plugins from GitHub** permission. Organization
+owners and admins have it by default. You'll find **Import from GitHub** when you
+add a plugin to a [Collection](/cloud/share-with-your-team/collections#add-plugins).
+
+1. Click **Import from GitHub**.
+2. Paste the **GitHub plugin URL** and click **Preview**. Only public GitHub
+   repositories work. OpenWork reads Claude-compatible plugins and
+   [Agent Plugins](/model-context-protocol/agent-plugins#import-agent-plugins-into-openwork-library).
+3. Choose the skills and MCP servers to include. Anything that can't come in
+   says why, for example **Desktop-only servers cannot be imported** or
+   **Static headers are not supported yet**.
+4. For MCP servers, choose **MCP authentication** (**OAuth** or **No
+   authentication**) and **Account type** (**Individual accounts** or **One
+   organization account**).
+5. Finish the plugin like any other, then click **Create plugin**.
+
+If an MCP server matches a connector you already have, OpenWork reuses it.
+
+## Choose who can use it
+
+Open the plugin from **Manage › Plugins**. Under **Who can use it**:
+
+- Turn on **Everyone in the organization**, or
+- Add people and teams.
+
+Changes save right away. A toast offers **Undo** if you change your mind.
+People you add find the plugin in their Library, in OpenWork Cloud and in the
+desktop app.
+
+The owner, a plugin manager, or anyone with **Manage everything shared** can
+change who can use a plugin. Others see **Only a plugin manager or organization
+admin can edit or remove it.**
+
+## Group plugins into Collections
+
+When several plugins go to the same people, put them in a Collection so one
+access change covers the whole set. Open **Settings › Advanced** and select the
+**Collections** tab. See [Collections](/cloud/share-with-your-team/collections).
+
+A person gets a plugin if any route gives it to them: shared directly, through a
+Collection, or with everyone.
+
+## Remove a plugin
+
+Open the plugin and choose **Remove** from its **⋯** menu. Nobody can use it
+anymore.
+
+## Agents, hooks and more from GitHub
+
+Plugins you bring in from a connected GitHub repository can also include
+**agents** and **hooks**, which you can't write in OpenWork Cloud. See
+[Agents, commands, and hooks](/cloud/share-with-your-team/plugin-agents-commands-hooks).
+
+## Related
+
+- [GitHub Sources](/cloud/share-with-your-team/github-sources)
+- [Agents, commands, and hooks](/cloud/share-with-your-team/plugin-agents-commands-hooks)
+- [Collections](/cloud/share-with-your-team/collections)
+- [Connectors](/cloud/share-with-your-team/connectors)
+- [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill)

@@ -70,6 +70,8 @@ export function remoteComputerAdapters(env = process.env) {
     adapters.push(createRemoteComputerAdapter({
       id: "freestyle-vm",
       label: env.OPENWORK_COMPUTER_FREESTYLE_LABEL?.trim() || "Freestyle VM",
+      // Named in the organization's devices list; the key stays here.
+      device: { provider: "freestyle", externalId: freestyleVm },
       driver: createX11Driver({
         display,
         machine: sandboxMachine(async () => {
@@ -87,6 +89,7 @@ export function remoteComputerAdapters(env = process.env) {
     adapters.push(createRemoteComputerAdapter({
       id: "daytona-sandbox",
       label: env.OPENWORK_COMPUTER_DAYTONA_LABEL?.trim() || "Daytona sandbox",
+      device: { provider: "daytona", externalId: daytonaSandbox },
       driver: createX11Driver({
         display,
         machine: sandboxMachine(async () => {

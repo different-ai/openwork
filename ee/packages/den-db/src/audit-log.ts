@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm"
+import { and, eq, isNull, sql } from "drizzle-orm"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
 import { auditEventEnvelopeSchema, type AuditActor, type AuditCategory, type AuditEventEnvelope, type AuditPolicy } from "@openwork/types/den/audit"
@@ -516,17 +516,23 @@ export type AuditUsageRefreshSummary = { organizations: number; refreshedAt: str
  * Run on a schedule (den-api POST /internal/audit/usage/refresh); the append
  * path never touches audit_state. Plain aggregate reads, one upsert per
  * organization, no transaction and no row locks held across statements.
+ *
+ * Event and byte totals sum the per-operation counters that every append
+ * increments in the same transaction as its event insert, so they equal a
+ * count over audit_event without reading its envelope rows (which made the
+ * refresh take minutes for large organizations).
  */
 export async function refreshAuditUsageCounts(database: AuditDatabase, options: { organizationIds?: readonly string[] } = {}): Promise<AuditUsageRefreshSummary> {
   const organizationIds = options.organizationIds
     ? options.organizationIds.map((id) => normalizeDenTypeId("organization", id))
     : (await database.select({ id: AuditPolicyTable.organization_id }).from(AuditPolicyTable)).map((row) => row.id)
   for (const organizationId of organizationIds) {
-    const [operations] = await database.select({ value: sql<number>`count(*)`.mapWith(Number) }).from(AuditOperationTable)
-      .where(and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.retention_state, "retained")))
-    const [events] = await database.select({ count: sql<number>`count(*)`.mapWith(Number), bytes: sql<number>`coalesce(sum(${AuditEventTable.logical_bytes}), 0)`.mapWith(Number) }).from(AuditEventTable)
-      .where(and(eq(AuditEventTable.org_id, organizationId), isNotNull(AuditEventTable.envelope), isNotNull(AuditEventTable.operation_id)))
-    const totals = { retained_operations: operations?.value ?? 0, event_count: events?.count ?? 0, logical_bytes: events?.bytes ?? 0 }
+    const [usage] = await database.select({
+      retainedOperations: sql<number>`coalesce(sum(${AuditOperationTable.retention_state} = 'retained'), 0)`.mapWith(Number),
+      eventCount: sql<number>`coalesce(sum(${AuditOperationTable.event_count}), 0)`.mapWith(Number),
+      logicalBytes: sql<number>`coalesce(sum(${AuditOperationTable.logical_bytes}), 0)`.mapWith(Number),
+    }).from(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
+    const totals = { retained_operations: usage?.retainedOperations ?? 0, event_count: usage?.eventCount ?? 0, logical_bytes: usage?.logicalBytes ?? 0 }
     if (!Object.values(totals).every((value) => Number.isSafeInteger(value) && value >= 0)) throw new AuditLogError("audit_counter_overflow")
     const updatedAt = new Date()
     await database.insert(AuditStateTable).values({ organization_id: organizationId, ...totals, updated_at: updatedAt })

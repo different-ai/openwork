@@ -25,6 +25,8 @@ export type OpenTarget = {
   confidence: number;
   reason: string;
   exists?: boolean;
+  /** Unverified exact candidates from a directory preceding this reference. */
+  pathHints?: string[];
   /** Absolute path on the owning server, not necessarily this computer. */
   resolvedPath?: string;
   /** Pins subsequent file operations to the root that resolved this target. */
@@ -421,6 +423,35 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
   }
   variants.set(key, extracted);
   return extracted;
+}
+
+/** Exact structured paths touched by completed tools, including reads. These are
+ * resolution hints, not sidebar artifacts or proof that the files still exist. */
+export function deriveSessionFileEvidence(messages: UIMessage[]): OpenTarget[] {
+  const targets = new Map<string, OpenTarget>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool" || part.state !== "output-available" || isDiscoveryTool(part.toolName)) continue;
+      const metadata = part.callProviderMetadata?.openwork;
+      const mcpResult = metadata?.mcpResult;
+      const failed = (isObject(part.output) && (part.output.error || part.output.isError === true || part.output.ok === false))
+        || (isObject(mcpResult) && mcpResult.isError === true);
+      if (failed) continue;
+      const destinations = Array.isArray(metadata?.workspacePaths)
+        ? metadata.workspacePaths.flatMap((entry) => isObject(entry) && typeof entry.resolved === "string" ? [entry.resolved] : [])
+        : typeof metadata?.fileDestination === "string" ? [metadata.fileDestination] : [];
+      const values = destinations.length ? destinations
+        : [...[part.input, part.output].flatMap(collectNestedFileMetadataValues), ...collectPatchFileValues(part.input)];
+      for (const value of values) {
+        const reference = parseLocalPathReference(value);
+        const target = reference && targetFromFile(reference.path, 95, "session tool metadata");
+        // Unlike legacy artifact discovery, evidence must keep literal prefixes
+        // and case: workspaces/foo/report.md can be a real filesystem location.
+        if (target && reference) addTarget(targets, { ...target, id: `file:${reference.path}`, value: reference.path });
+      }
+    }
+  }
+  return Array.from(targets.values());
 }
 
 export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTargetsOptions = {}): OpenTarget[] {

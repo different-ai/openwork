@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { desktopRestrictionNotice } from "../../../../app/cloud/desktop-app-restrictions";
+import { OpencodeConnectionsImport, type OpencodeConnectionsImportSource } from "../../connections/opencode-connections-import";
 import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
@@ -261,6 +262,8 @@ export type McpViewProps = {
   /** OpenCode plugin management, shown under the Plugins category. */
   pluginsContent?: ReactNode;
   onOpenCloudAccount?: () => void;
+  /** Offers the connections set up in the person's own OpenCode config. Absent while the feature is off. */
+  opencodeImport?: OpencodeConnectionsImportSource;
 };
 
 const builtInExtensionDisabledReason = () => t("extensions.disabled_by_organization");
@@ -684,7 +687,34 @@ export function McpView(props: McpViewProps) {
     return props.createLibraryItem(kind, input);
   };
 
+  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections;
+
+  /** A member's own connector, as My Library adds it on the web; it opens sign-in straight away. */
+  const createPersonalConnection = async (input: CreateLibraryItemInput) => {
+    const authType = input.connection?.authType === "none" ? "none" : "oauth";
+    const name = input.name.trim();
+    const connectionId = await cloudSession.client.createPersonalMcpConnection(activeOrganizationId, {
+      name,
+      url: input.instructions.trim(),
+      authType,
+    });
+    setScreen({ kind: "list" });
+    setFilter("all");
+    refreshLibrary();
+    toast.success(t("extensions.toast_added_title"), { description: t("extensions.toast_added_detail") });
+    // The connections hook opens sign-in and keeps checking until Den has it, so the row turns Ready.
+    if (authType === "oauth") {
+      if (props.connectOrgMcp) props.connectOrgMcp(connectionId);
+      else startConnectionSignIn(connectionId);
+    }
+    return name;
+  };
+
   const handleCreateLibraryItem = async (kind: LibraryAuthorableKind, input: CreateLibraryItemInput) => {
+    if (kind === "mcp" && addsPersonalConnection) {
+      await createPersonalConnection(input);
+      return;
+    }
     const pluginId = await createLibraryItem(kind, input);
     finishCreate(pluginId, { name: input.name.trim(), description: input.description.trim(), connector: kind === "mcp" });
     if (kind === "mcp" && input.connection?.authType === "oauth") {
@@ -1957,6 +1987,7 @@ export function McpView(props: McpViewProps) {
         busy={props.busy}
         cloud={cloudSession.isSignedIn}
         canConfigureMcpConnections={canManageCloudConnections}
+        addsPersonalConnection={addsPersonalConnection}
         connectorPresets={connectorPresets}
         checkMcpServer={libraryAddOptions.cloudSignedIn
           ? (url) => cloudSession.client.discoverMcpConnectionRequirements(activeOrganizationId, url)
@@ -2088,6 +2119,18 @@ export function McpView(props: McpViewProps) {
           {props.builtInExtensionsDisabled ? <p className="mt-2">{t("extensions.builtins_disabled_notice")}</p> : null}
         </div>
       )}
+
+      {props.opencodeImport && props.allowManageExtensions ? (
+        <OpencodeConnectionsImport
+          source={props.opencodeImport}
+          stateOf={(name) => {
+            const server = props.mcpServers.find((entry) => entry.name === name);
+            if (!server) return null;
+            const status = resolveStatus(server);
+            return { label: friendlyStatus(status), ready: status === "connected" };
+          }}
+        />
+      ) : null}
 
       <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
         {extensionInventoryFilters.map((f) => {

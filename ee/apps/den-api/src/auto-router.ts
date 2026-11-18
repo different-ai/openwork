@@ -39,7 +39,7 @@ type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 type TeamId = DenTypeId<"team">
 type AutoRouterId = DenTypeId<"autoRouter">
-type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
+type Database = typeof db | typeof db.$primary | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -172,9 +172,11 @@ async function readRouters(database: Database, organizationId: OrganizationId): 
 }
 
 /** Every Smart Router of the organization, oldest first, and every task by name. */
-export async function listAutoRouters(organizationId: OrganizationId): Promise<{ routers: AutoRouter[]; tasks: string[] }> {
-  const routers = await readRouters(db, organizationId)
-  const tasks = await db.select({ name: AutoRouterTaskTable.name }).from(AutoRouterTaskTable)
+/** `primary` reads the routers a save or delete just wrote. */
+export async function listAutoRouters(organizationId: OrganizationId, options: { primary?: boolean } = {}): Promise<{ routers: AutoRouter[]; tasks: string[] }> {
+  const reader = options.primary ? db.$primary : db
+  const routers = await readRouters(reader, organizationId)
+  const tasks = await reader.select({ name: AutoRouterTaskTable.name }).from(AutoRouterTaskTable)
     .where(eq(AutoRouterTaskTable.organizationId, organizationId))
     .orderBy(asc(AutoRouterTaskTable.name))
   return { routers, tasks: tasks.map((task) => task.name) }
@@ -281,6 +283,8 @@ export async function saveAutoRouter(input: {
   memberId: MemberId
   routerId?: string
   write: AutoRouterWrite
+  /** For a create: use this id (a config-blob import reusing its source id); the caller checked it is free. */
+  createId?: AutoRouterId
 }): Promise<AutoRouterId | null> {
   return db.transaction(async (tx) => {
     await lockOrganization(tx, input.organizationId)
@@ -294,7 +298,7 @@ export async function saveAutoRouter(input: {
       await tx.update(AutoRouterTable).set({ name: input.write.name, updatedByOrgMemberId: input.memberId }).where(eq(AutoRouterTable.id, routerId))
       await deleteRouterModels(tx, routerId)
     } else {
-      routerId = createDenTypeId("autoRouter")
+      routerId = input.createId ?? createDenTypeId("autoRouter")
       await tx.insert(AutoRouterTable).values({
         id: routerId,
         organizationId: input.organizationId,

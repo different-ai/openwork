@@ -99,7 +99,15 @@ export async function bootDemoWorkspace(stack: AsyncDisposableStack, den: Den): 
   return startDemoScript(stack, den, WORKSPACE_SCRIPT);
 }
 
-/** Adds each demo server to the org as a shared connection every member can use, with its tools exposed directly. */
-export async function connectDemoWorkspace(den: Den, workspace: DemoWorkspace): Promise<void> {
-  for (const service of DEMO_WORKSPACE_SERVICES) await connectDemoServer(den, service.key, service.name, `${workspace.baseUrl}/${service.key}/mcp`);
+export type DemoWorkspaceService = (typeof DEMO_WORKSPACE_SERVICES)[number]["key"];
+
+/**
+ * Adds each demo server (or only `only`) to the org as a shared connection every member can use, with its tools
+ * exposed directly.
+ */
+export async function connectDemoWorkspace(den: Den, workspace: DemoWorkspace, only?: readonly DemoWorkspaceService[]): Promise<void> {
+  for (const service of DEMO_WORKSPACE_SERVICES) {
+    if (only && !only.includes(service.key)) continue;
+    await connectDemoServer(den, service.key, service.name, `${workspace.baseUrl}/${service.key}/mcp`);
+  }
 }

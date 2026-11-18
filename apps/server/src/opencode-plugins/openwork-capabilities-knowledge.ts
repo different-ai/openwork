@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
 import { correctWorkspaceRoot, workspaceFileGuidance, workspaceFileHooks } from "./workspace-file-destinations.js";
+import { questionToolDefinition } from "./openwork-agent-questions.js";
 import { automationRuntimeKnowledge } from "../automation-runtime-knowledge.js";
 
 /**
@@ -47,6 +48,10 @@ Here is what you can help users with:
 ## Other sessions
 - For questions about another chat (what was said, decided, or done), use the session affordances described under OpenWork app context; match by ID, title, workspace, or topic words, ask a short clarifying question if several sessions match, and answer only from the returned transcript — say so when it is limited or missing older context.
 - Sidebar groups (such as Done or In progress) are listed with session.group.list and changed with session.group.create, session.group.move or session.group.remove; never search code or files for them.
+
+## Showing images in chat
+- Chat displays Markdown images. When the user asks to see something, or an image you found would answer better than a description, embed it with \`![short description](https://...)\` and keep a link to its source page for credit.
+- Use the direct image file URL (for example an \`upload.wikimedia.org\` link or the page's \`og:image\`), not the page that shows it. If search only returned the page, fetch it to find the image URL.
 
 ## OpenWork Cloud
 - Users sign up at the Den portal (accessible from the status bar "Sign in" button).
@@ -184,8 +189,14 @@ function excerpt(content: string, query: string): string {
   return content.slice(from, from + 500).replace(/\s+/g, " ").trim();
 }
 
-export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof workspaceFileHooks>[0]) => ({
-  ...workspaceFileHooks(context),
+export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof workspaceFileHooks>[0]) => {
+  const fileHooks = workspaceFileHooks(context);
+  return {
+  ...fileHooks,
+  "tool.definition": async (input: { toolID: string }, output: { description: string; jsonSchema?: unknown }) => {
+    await fileHooks["tool.definition"](input, output);
+    questionToolDefinition(input, output);
+  },
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
     if (context?.directory) correctWorkspaceRoot(output.system, context.directory);
     appendAgentInstructions(output.system,
@@ -227,4 +238,5 @@ export const OpenWorkCapabilitiesKnowledge = async (context?: Parameters<typeof 
       },
     },
   },
-});
+  };
+};
