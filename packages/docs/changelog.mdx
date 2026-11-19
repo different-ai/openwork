@@ -3,6 +3,18 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 19th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.69](https://github.com/different-ai/openwork/compare/v0.18.68...v0.18.69): Chat and connected work handle more situations reliably
+
+  - **Chat works with more models and network setups.** Requests no longer fail just because a model allows less output than OpenWork asked for, and the agent now honors proxy settings when your model provider is reachable only through a proxy. One-time Automations proposed from chat also accept date strings on the first try.
+  - **Desktop work stays in the right place.** Files and file links open the correct panel, including from split chat, and the chat's running-agent count now matches the Agents list. Long agent questions use the full card width, can include a short paragraph, and keep their details readable in the conversation.
+  - **Computer use and Workbot do more.** Mac computer use can open your own browser when you ask and handle larger Chrome pages without exposing password fields. Where browser teaching is enabled, Workbot can open its teaching window from chat, group repeated teaching steps, and let you try and edit a saved skill.
+  - **For admins and self-hosters: deployments and oversight are clearer.** AWS sign-in can let AWS choose the role and offers a direct installer route if approval hits a blank 400 page. Admins can inspect cloud computer state and runner memory, while TrueFoundry models show reasoning efforts and usage-cost controls. Enterprise installs no longer send product analytics or error reports to OpenWork.
+  - **The desktop app is more complete in French.** French translation coverage now includes all of the app's translation keys.
+
+</Update>
+
 <Update label="November 18th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.68](https://github.com/different-ai/openwork/compare/v0.18.67...v0.18.68): Chat and cloud work recover more reliably
