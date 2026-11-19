@@ -75,7 +75,9 @@ import {
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ActionMenuItems } from "@/components/ui/action-menu-items";
 import type { MenuAction } from "@/components/ui/action-menu-model";
-import { buildSessionMenuActions } from "./session-menu-actions";
+import { buildSelectedSessionsMenuActions, buildSessionMenuActions } from "./session-menu-actions";
+import { markFeatureUsed } from "../../../../app/lib/den";
+import { sessionSelectionKey, useSessionSelectionStore, visibleSessionRowOrder, type SessionSelectionRef } from "./session-selection-store";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -408,6 +410,7 @@ function useSessionMenuActions({
   const { groups, assignments } = useWorkspaceGroups(workspaceId);
   const store = useSessionManagementStore;
   const assignedGroupId = assignments[sessionId] ?? null;
+  const selectedActions = useSelectedSessionsMenuActions({ workspaceId, sessionId }, groups);
 
   // Sidebar rows are the vertical tabs: any session can be opened beside the
   // primary session, including one owned by another workspace.
@@ -432,6 +435,7 @@ function useSessionMenuActions({
   };
   const closeSplitView = () => useWorkbenchStore.getState().setSplit(null);
 
+  if (selectedActions) return selectedActions;
   return buildSessionMenuActions({
     isPinned, isArchived,
     groups, assignedGroupId,
@@ -444,6 +448,106 @@ function useSessionMenuActions({
     onArchive: ctx.onArchiveSession && !ctx.archiveDisabledReason ? () => ctx.onArchiveSession?.(sessionId, !isArchived, workspaceId) : undefined,
     onDelete: ctx.onOpenDeleteSession ? () => ctx.onOpenDeleteSession?.(sessionId, workspaceId) : undefined,
   });
+}
+
+function useRowSelection(row: SessionSelectionRef): SessionSelectionRef[] | null {
+  const ctx = useSidebarContext();
+  const selected = useSessionSelectionStore((state) => state.selected);
+  if (!ctx.multiSelectEnabled || selected.length < 2) return null;
+  const key = sessionSelectionKey(row);
+  return selected.some((ref) => sessionSelectionKey(ref) === key) ? selected : null;
+}
+
+function useSelectedSessionsMenuActions(row: SessionSelectionRef, workspaceGroups: readonly { id: string; label: string }[]): MenuAction[] | null {
+  const ctx = useSidebarContext();
+  const selection = useRowSelection(row);
+  const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
+  if (!selection) return null;
+  const clear = () => useSessionSelectionStore.getState().clear();
+  const archived = selection.filter((ref) => ctx.isSessionArchived(ref.workspaceId, ref.sessionId));
+  const pinned = selection.filter((ref) => pinnedIds.includes(ref.sessionId));
+  const sameWorkspace = selection.every((ref) => ref.workspaceId === row.workspaceId);
+  const onArchiveSessions = ctx.onArchiveSessions;
+  return buildSelectedSessionsMenuActions({
+    count: selection.length,
+    archivedCount: archived.length,
+    pinnedCount: pinned.length,
+    onArchive: onArchiveSessions && !ctx.archiveDisabledReason ? (archive) => {
+      const changing = selection.filter((ref) => ctx.isSessionArchived(ref.workspaceId, ref.sessionId) !== archive);
+      clear();
+      onArchiveSessions(changing, archive);
+    } : undefined,
+    onPin: (pin) => {
+      const store = useSessionManagementStore.getState();
+      for (const ref of selection) if (store.pinnedIds.includes(ref.sessionId) !== pin) store.togglePin(ref.sessionId);
+      clear();
+    },
+    group: sameWorkspace ? {
+      groups: workspaceGroups,
+      onAssignGroup: (groupId) => {
+        const store = useSessionManagementStore.getState();
+        for (const ref of selection) store.assignGroup(ref.workspaceId, ref.sessionId, groupId);
+        clear();
+      },
+    } : undefined,
+    onClear: clear,
+  });
+}
+
+function SessionSelectionBar() {
+  const ctx = useSidebarContext();
+  const selected = useSessionSelectionStore((state) => state.selected);
+  if (!ctx.multiSelectEnabled || selected.length < 2) return null;
+  const count = selected.length;
+  const clear = () => useSessionSelectionStore.getState().clear();
+  const unarchived = selected.filter((ref) => !ctx.isSessionArchived(ref.workspaceId, ref.sessionId));
+  const archive = unarchived.length > 0;
+  const changing = archive ? unarchived : selected;
+  const onArchiveSessions = ctx.onArchiveSessions;
+  const canArchive = Boolean(onArchiveSessions) && !ctx.archiveDisabledReason;
+  const archiveLabel = archive
+    ? t("session_management.archive_sessions", { count: changing.length })
+    : t("session_management.unarchive_sessions", { count: changing.length });
+  return (
+    <div
+      data-session-selection-bar
+      role="toolbar"
+      aria-label={t("session_management.sessions_selected", { count })}
+      className={cn("flex h-9 shrink-0 items-center gap-1 border-t border-sidebar-border/60", SIDEBAR_SECTION_LANE)}
+    >
+      <span className="min-w-0 flex-1 truncate text-xs text-sidebar-foreground/70" aria-live="polite">
+        {t("session_management.sessions_selected", { count })}
+      </span>
+      {canArchive ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-session-selection-bar-archive
+          className="h-7 gap-1.5 px-2 text-xs"
+          onClick={() => {
+            clear();
+            onArchiveSessions?.(changing, archive);
+          }}
+        >
+          {archive ? <Archive className="size-3.5" /> : <ArchiveRestore className="size-3.5" />}
+          {archiveLabel}
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        data-session-selection-bar-clear
+        className="size-7"
+        aria-label={t("session_management.clear_selection")}
+        title={t("session_management.clear_selection")}
+        onClick={clear}
+      >
+        <X className="size-3.5" />
+      </Button>
+    </div>
+  );
 }
 
 /** One quiet More menu in a fixed trailing slot: visible on hover, keyboard focus, touch, or while open. */
@@ -575,6 +679,7 @@ export type AppSidebarProps = {
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
   /** List side chats and sessions the agent started under the session they came from. */
   sessionTreeEnabled?: boolean;
+  sessionMultiSelectEnabled?: boolean;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -586,6 +691,7 @@ export type AppSidebarProps = {
   onOpenRenameSession?: (sessionId: string, workspaceId: string) => void;
   onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
+  onArchiveSessions?: (sessions: SessionSelectionRef[], archived: boolean) => void;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
@@ -697,6 +803,15 @@ export function AppSidebar(props: AppSidebarProps) {
     [sessionTrees],
   );
 
+  const multiSelectEnabled = props.sessionMultiSelectEnabled === true;
+  const archivedSessionKeys = React.useMemo(() => new Set(props.workspaceSessionGroups.flatMap((group) =>
+    group.sessions.filter(isSessionArchived).map((session) => sessionSelectionKey({ workspaceId: group.workspace.id, sessionId: session.id })))),
+  [props.workspaceSessionGroups]);
+  const isSelectedSessionArchived = React.useCallback(
+    (workspaceId: string, sessionId: string) => archivedSessionKeys.has(sessionSelectionKey({ workspaceId, sessionId })),
+    [archivedSessionKeys],
+  );
+
   const contextValue: SidebarContextValue = {
     draftScope: props.draftScope,
     selectedWorkspaceId: props.selectedWorkspaceId,
@@ -718,6 +833,9 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
+    onArchiveSessions: props.onArchiveSessions,
+    multiSelectEnabled,
+    isSessionArchived: isSelectedSessionArchived,
     archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
@@ -840,6 +958,7 @@ export function AppSidebar(props: AppSidebarProps) {
             data-slot="sidebar-content"
             data-sidebar="content"
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
+            data-session-multi-select={multiSelectEnabled ? "on" : undefined}
             className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [overflow-anchor:none] [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
             <SidebarLayoutAnimationGate />
@@ -902,6 +1021,7 @@ export function AppSidebar(props: AppSidebarProps) {
             ) : null}
           </m.div>
           {feed ? <FeedShelfDock feed={feed} archived={archivedSessions} groups={props.workspaceSessionGroups} /> : null}
+          <SessionSelectionBar />
         </SidebarReorderScope>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
@@ -2368,7 +2488,21 @@ export function SessionMenuItem({
     ? undefined
     : sessionNumberAriaKeyShortcut(ctx.sessionNumberShortcutOs, shortcutDigit);
 
-  const openSession = () => {
+  const rowRef = { workspaceId, sessionId: session.id };
+  const isMultiSelected = useSessionSelectionStore((state) => ctx.multiSelectEnabled && state.selected.length > 1
+    && state.selected.some((ref) => ref.workspaceId === workspaceId && ref.sessionId === session.id));
+  const openSession = (event: React.MouseEvent<HTMLElement>) => {
+    const selection = useSessionSelectionStore.getState();
+    const mode = event.shiftKey ? "range" : event.metaKey || event.ctrlKey ? "toggle" : null;
+    if (ctx.multiSelectEnabled && mode) {
+      event.preventDefault();
+      markFeatureUsed("sessionMultiSelect");
+      const root = event.currentTarget.closest("[data-sidebar=content]") ?? event.currentTarget.ownerDocument;
+      const open = ctx.selectedSessionId ? { workspaceId: ctx.selectedWorkspaceId, sessionId: ctx.selectedSessionId } : null;
+      selection.click({ target: rowRef, mode, order: visibleSessionRowOrder(root), open });
+      return;
+    }
+    selection.clear();
     commitPrefetch();
     useSessionManagementStore.getState().clearUnread(session.id);
     ctx.onOpenSession(workspaceId, session.id);
@@ -2400,7 +2534,8 @@ export function SessionMenuItem({
         : isUnread
           ? `${displayTitle}, ${t("workspace_list.session_unread")}`
           : itemTitle;
-  const accessibleState = nested ? `${ownState}, ${sessionTreeKindLabel(nested.kind)}` : ownState;
+  const treeState = nested ? `${ownState}, ${sessionTreeKindLabel(nested.kind)}` : ownState;
+  const accessibleState = isMultiSelected ? `${treeState}, ${t("session_management.selected_chat")}` : treeState;
 
   const rowButtonStyle = { paddingInlineStart: sidebarRowPaddingInlineStart(nested?.depth ?? 0) };
   const waitingKind = isNeedsAttentionSessionStatus(sessionActivityStatus) ? ctx.sessionAttentionKindById?.[session.id] : undefined;
@@ -2478,6 +2613,7 @@ export function SessionMenuItem({
             data-testid={`sidebar-session-${session.id}`}
             data-session-tab-active={isSelected ? "true" : undefined}
             data-session-row-layout={feedRow ? "feed" : "list"}
+            data-session-multi-selected={isMultiSelected ? "true" : undefined}
             onClick={openSession}
             onPointerEnter={handlePointerEnter}
             onPointerLeave={() => setIsTitleHovered(false)}
@@ -2489,6 +2625,7 @@ export function SessionMenuItem({
             className={cn(
               SESSION_ROW_BUTTON_CLASS,
               "w-full text-start",
+              isMultiSelected && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent",
               // Calm Feed: 48px two-line row, 12px × 6px padding, every lane fixed.
               feedRow && "h-12 translate-x-0 items-start gap-2 rounded-md px-3 pe-3 py-1.5 rtl:translate-x-0",
             )}

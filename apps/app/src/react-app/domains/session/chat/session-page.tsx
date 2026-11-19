@@ -317,6 +317,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => Promise<void> | void;
+  onArchiveSessions?: (sessions: { workspaceId: string; sessionId: string }[], archived: boolean) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -694,6 +695,7 @@ export function SessionPage(props: SessionPageProps) {
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const sessionMultiSelectEnabled = useDesktopFeature("sessionMultiSelect");
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = isElectronRuntime();
@@ -1542,6 +1544,7 @@ export function SessionPage(props: SessionPageProps) {
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
           sessionTreeEnabled={sessionTreeEnabled}
+          sessionMultiSelectEnabled={sessionMultiSelectEnabled}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1555,6 +1558,9 @@ export function SessionPage(props: SessionPageProps) {
           onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
           onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
             void props.onArchiveSession?.(sessionId, archived, workspaceId);
+          } : undefined}
+          onArchiveSessions={props.onArchiveSessions ? (sessions, archived) => {
+            void props.onArchiveSessions?.(sessions, archived);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={openCreateGroupModal}
