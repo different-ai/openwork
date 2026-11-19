@@ -98,6 +98,7 @@ import { isFilesRailActive, openFileTabId, type EmptyPanelView } from "../panel/
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
 import { useBrowserPresentationController } from "../panel/use-browser-presentation";
 import { useBrowserAgentTurns } from "../panel/agent-viewport";
+import { personBrowserPanelWidth } from "../panel/browser-panel-width";
 import { BrowserPresentationSurfaces, BrowserRailButton } from "../panel/browser-presentation";
 import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
@@ -700,6 +701,26 @@ export function SessionPage(props: SessionPageProps) {
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
   useBrowserAgentTurns(props.sidebar.sessionStatusById);
 
+  const {
+    leftSidebarResizing,
+    leftSidebarWidth,
+    rightSidebarExpandedWidth: browserPanelWidth,
+    setRightSidebarExpandedWidth: setBrowserPanelWidth,
+    startLeftSidebarResize,
+  } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+    minRightWidth: 320,
+  });
+  const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
+  const panelGroupRef = useRef<HTMLDivElement | null>(null);
+  const widenBrowserPanelForPerson = useEffectEvent((ownerSessionId: string | null | undefined) => {
+    if (isMobile || (ownerSessionId != null && getSidePanelSessionKey(ownerSessionId) !== sidePanelSessionKey)) return;
+    const width = personBrowserPanelWidth(browserPanelWidth, panelGroupRef.current?.clientWidth ?? window.innerWidth);
+    if (width === browserPanelWidth) return;
+    setBrowserPanelDefaultWidth(width);
+    browserPanelRef.current?.resize(`${width}px`);
+  });
+
   // Open the side panel of the conversation that owns a browser event. For the
   // conversation on screen that is the visible panel; for a background
   // conversation only its own panel state is marked open, so its tabs are
@@ -730,6 +751,7 @@ export function SessionPage(props: SessionPageProps) {
         // active. Passive title/loading updates still preserve that artifact.
         openTab(ownerSessionId, payload.tab);
       }
+      if (payload?.forPerson) widenBrowserPanelForPerson(payload.ownerSessionId);
       if (placeOpenedBrowser(payload?.ownerSessionId)) return;
       openOwnerSidePanel(payload?.ownerSessionId);
     });
@@ -745,17 +767,6 @@ export function SessionPage(props: SessionPageProps) {
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
   }, [browserIsPoppedOut, handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, panelSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
-  const {
-    leftSidebarResizing,
-    leftSidebarWidth,
-    rightSidebarExpandedWidth: browserPanelWidth,
-    setRightSidebarExpandedWidth: setBrowserPanelWidth,
-    startLeftSidebarResize,
-  } = useWorkspaceShellLayout({
-    expandedRightWidth: 520,
-    minRightWidth: 320,
-  });
-  const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth}px`,
   };
@@ -1806,6 +1817,7 @@ export function SessionPage(props: SessionPageProps) {
           <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
+            elementRef={panelGroupRef}
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
             className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && "lg:rounded-[14px]")}
           >

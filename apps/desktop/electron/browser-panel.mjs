@@ -801,7 +801,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         await checkBrowserPolicy({ url: request.url, external });
         if (!isCurrent()) return;
         if (!external) {
-          createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
+          createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false, forPerson: true });
         } else {
           const result = await openExternalUrl(request.url);
           // A slow browser is still opening the link; only a real failure needs a dialog.
@@ -1260,6 +1260,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendToRenderer("openwork:browser:panel-opened", {
         ownerSessionId: registry.ownerOf(tabId),
         tab: browserTabToPanelTab(tabId, tab),
+        // A page the person opened is for reading, so the panel opens wide enough for it.
+        ...(forPerson ? { forPerson: true } : {}),
       });
     }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
