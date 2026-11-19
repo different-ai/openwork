@@ -289,17 +289,20 @@ export async function enableGatewayGroupModels(tx: GatewayTx, provider: GatewayP
 }
 
 export async function writeGatewayGroup(tx: GatewayTx, provider: GatewayProvider, input: GatewayModelGroupPatch, groupId?: typeof GatewayModelGroupTable.$inferSelect.id, options: { createId?: typeof GatewayModelGroupTable.$inferSelect.id } = {}) {
+  const { allModels, modelIds } = input
+  if (allModels && modelIds !== undefined) throw new GatewayWriteError(400, "invalid_request", "Specify either modelIds or allModels, not both.")
   const [existing] = groupId ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, groupId), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []
   if (groupId && !existing) throw new GatewayWriteError(404, "model_group_not_found")
   const name = input.name ?? existing?.name
   if (!name) throw new GatewayWriteError(400, "invalid_request")
-  const models = input.modelIds === undefined ? null : await tx.select().from(GatewayProviderModelTable)
-    .where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
-  const selected = models?.filter((row) => input.modelIds?.includes(row.model_id)
+  const models = allModels === true || modelIds !== undefined
+    ? await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
+    : null
+  const selected = models === null ? null : models.filter((row) => (allModels === true || modelIds?.includes(row.model_id))
     && (!provider.model_ids.length || provider.model_ids.includes(row.model_id))
     && !gatewayModelConfigurationError(provider.provider_config, [row.model_config]))
-  if (input.modelIds && selected?.length !== new Set(input.modelIds).size) throw new GatewayWriteError(404, "model_not_found", "Groups accept configured catalog model IDs from this provider only.")
+  if (modelIds !== undefined && selected?.length !== new Set(modelIds).size) throw new GatewayWriteError(404, "model_not_found", "Groups accept configured catalog model IDs from this provider only.")
   const id = existing?.id ?? options.createId ?? createDenTypeId("gatewayModelGroup")
   // The caller holds the provider fence; callbacks recheck active group/set grants after access changes.
   const values = { name, description: input.description === undefined ? existing?.description ?? null : input.description, status: input.status ?? existing?.status ?? "active", updated_at: new Date() }

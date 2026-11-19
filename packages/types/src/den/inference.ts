@@ -630,3 +630,44 @@ export function parseInferenceProviderSecret(
       return { kind, awsSso: inferenceAwsSsoSecretSchema.parse(parseJsonSecret(raw)) };
   }
 }
+
+function isGatewayJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Rejects catalog values that still carry unresolved env/template placeholders. */
+export function hasUnresolvedGatewayTemplate(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasUnresolvedGatewayTemplate);
+  if (isGatewayJsonRecord(value)) return Object.values(value).some(hasUnresolvedGatewayTemplate);
+  if (typeof value !== "string") return false;
+  let decoded = value;
+  for (let pass = 0; pass < 4; pass++) {
+    if (/[{}]|\$\(|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z_][A-Z0-9_]*>|%[A-Z_][A-Z0-9_]*%|process\.env\./.test(decoded)) return true;
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return false;
+      decoded = next;
+    } catch { return true; }
+  }
+  // Do not accept deeply encoded substitutions we could not inspect completely.
+  return /%|[{}]|\$/.test(decoded);
+}
+
+/**
+ * Shared compatibility predicate used by both den-api and den-web: rejects models
+ * that override the provider's SDK package (e.g. third-party models under Vertex)
+ * or require unresolved template variables.
+ */
+export function gatewayModelConfigurationError(config: Record<string, unknown>, models: Record<string, unknown>[]): string | null {
+  const npm = typeof config.npm === "string" && config.npm.trim() ? config.npm : null;
+  for (const model of models) {
+    const provider = isGatewayJsonRecord(model.provider) ? model.provider : {};
+    if ([model.npm, provider.npm].some((override) => override !== undefined && override !== npm)) {
+      return "Selected models override the provider SDK. Use a separate gateway provider with the matching SDK.";
+    }
+    if (hasUnresolvedGatewayTemplate({ provider, options: model.options })) {
+      return "Model configuration contains unresolved environment/template dependencies.";
+    }
+  }
+  return null;
+}

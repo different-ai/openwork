@@ -78,7 +78,24 @@ const oauthFields = {
   oauthTenantId: z.string().trim().max(64).optional().describe("Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Empty string clears."),
   awsSso: gatewayAwsSsoSettingsSchema.nullable().optional().describe("Amazon Bedrock member sets: IAM Identity Center access portal URL, its region, the AWS account ID and the permission set name members get. null clears."),
 }
-const groupWrite = z.object({ name: nameSchema, description: z.string().max(10000).nullable().optional(), modelIds: modelIdsSchema, status: z.enum(GATEWAY_PROVIDER_STATUSES).optional() }).strict()
+const groupWriteFields = {
+  name: nameSchema,
+  description: z.string().max(10000).nullable().optional(),
+  status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(),
+}
+const groupMembershipWriteFields = { modelIds: modelIdsSchema.optional(), allModels: z.literal(true).optional() }
+function exclusiveGroupMembership(input: { modelIds?: string[]; allModels?: true }, ctx: z.RefinementCtx) {
+  if (input.modelIds !== undefined && input.allModels === true) {
+    ctx.addIssue({ code: "custom", message: "Specify either modelIds or allModels, not both." })
+  }
+}
+const groupCreateWrite = z.object({ ...groupWriteFields, ...groupMembershipWriteFields }).strict().superRefine((input, ctx) => {
+  exclusiveGroupMembership(input, ctx)
+  if (input.modelIds === undefined && input.allModels !== true) {
+    ctx.addIssue({ code: "custom", message: "Specify modelIds or allModels: true." })
+  }
+})
+const groupPatchWrite = z.object({ ...groupWriteFields, name: nameSchema.optional(), ...groupMembershipWriteFields }).strict().superRefine(exclusiveGroupMembership)
 const setWrite = z.object({ name: nameSchema, credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, status: z.enum(GATEWAY_PROVIDER_STATUSES).optional() }).strict()
 const audienceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("organization") }).strict(),
@@ -113,7 +130,7 @@ function singleCredential(input: { credential?: unknown; apiKeys?: unknown; reus
   }
 }
 
-const groupSchema = groupWrite.extend({ id: denTypeIdSchema("gatewayModelGroup"), description: z.string().nullable(), status: z.enum(GATEWAY_PROVIDER_STATUSES) })
+const groupSchema = z.object({ name: nameSchema, description: z.string().nullable(), modelIds: modelIdsSchema, status: z.enum(GATEWAY_PROVIDER_STATUSES), id: denTypeIdSchema("gatewayModelGroup") }).strict()
 const credentialStatus = z.enum(["ready", "member_auth_required", "org_credential_missing"])
 const setSchema = z.object({ id: denTypeIdSchema("gatewayCredentialSet"), name: z.string(), createdAt: z.string().datetime().optional(), createdBy: z.object({ id: denTypeIdSchema("member"), name: z.string().nullable(), email: z.string().nullable() }).nullable().optional().describe("Who created the set. Omitted unless the caller holds Manage Gateway providers."), credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES), status: z.enum(GATEWAY_PROVIDER_STATUSES), configured: z.boolean(), credentialStatus, oauthClientId: z.string().nullable().optional(), hasOauthClientSecret: z.boolean().optional(), oauthTenantId: z.string().nullable().optional(), awsSso: gatewayAwsSsoSettingsSchema.nullable().optional() })
 const grantSchema = grantWrite.extend({ id: denTypeIdSchema("inferenceProviderAccess") })
@@ -750,7 +767,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroups: details.modelGroups })
     } catch (error) { return respond(c, error) }
   })
-  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates and returns a model group using supported catalog model IDs from this provider; creating a group alone grants no access. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupWrite), async (c) => {
+  app.post("/v1/inference-providers/:inferenceProviderId/model-groups", route("Create gateway model group", "Creates a model group from explicit modelIds or allModels: true, which links every configured supported catalog model on the provider. Creating a group alone grants no access. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema }), 201), orgMemberRoute(), managementWrite, paramValidator(paramsSchema), jsonValidator(groupCreateWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
       await refreshGatewayCatalog(await getProvider(db, actor, c.req.valid("param").inferenceProviderId), providerAuditRequests.get(c.req.raw)?.capture ?? null)
@@ -765,7 +782,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       return c.json({ modelGroup }, 201)
     } catch (error) { return respond(c, error) }
   })
-  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", "Partially updates a group's name, description, status or model membership. Supplied modelIds replaces membership; omitted modelIds preserves it. IDs must belong to the provider's supported catalog universe. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupWrite.partial()), async (c) => {
+  app.patch("/v1/inference-providers/:inferenceProviderId/model-groups/:groupId", route("Update gateway model group", "Partially updates a group's name, description, status or model membership. Explicit modelIds replaces membership; allModels: true links every configured supported catalog model on the provider. Omitting both preserves membership. Requires the Manage Gateway providers permission and enabled Gateway management; session callers must recently reauthenticate.", z.object({ modelGroup: groupSchema })), orgMemberRoute(), managementWrite, paramValidator(groupParams), jsonValidator(groupPatchWrite), async (c) => {
     try {
       const actor = c.get("organizationContext")
       const params = c.req.valid("param")
