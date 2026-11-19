@@ -40,7 +40,7 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
     expect(bars).toBe(0);
   });
 
-  await step("after: Ctrl-click adds a session to the open one and Shift-click extends it to a range of three", async () => {
+  await step("after: Shift-click selects a range of three from the open session, and Ctrl-click toggles a fourth in and out", async () => {
     await world.turnOnMultiSelect();
     await user.reload();
     await user.see(row(offsite.sessionId), { timeoutMs: 60_000 });
@@ -51,14 +51,16 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
     await probe.eventually(() => probe.hash(), {
       within: 15_000, label: "the starting session opens", until: hash => hash.includes(summarize.sessionId),
     });
-    await user.click(row(compare.sessionId), { modifiers: ["Control"] });
-    await probe.eventually(() => selectedIds(), { within: 10_000, label: "two rows are selected", until: count => count === 2 });
     await user.click(row(draft.sessionId), { modifiers: ["Shift"] });
-    const count = await probe.eventually(() => selectedIds(), { within: 10_000, label: "the range holds three rows", until: value => value === 3 });
+    await probe.eventually(() => selectedIds(), { within: 10_000, label: "the range holds three rows", until: value => value === 3 });
+    await user.click(row(offsite.sessionId), { modifiers: ["Control"] });
+    await probe.eventually(() => selectedIds(), { within: 10_000, label: "Ctrl-click adds a fourth row", until: value => value === 4 });
+    await user.click(row(offsite.sessionId), { modifiers: ["Control"] });
+    const count = await probe.eventually(() => selectedIds(), { within: 10_000, label: "Ctrl-click takes it out again", until: value => value === 3 });
     const text = await barText();
     const offsiteSelected = (await probe.dom(`${selectedRows}[data-session-tab-id="${offsite.sessionId}"]`)).elements.length;
     evidence.recordAssertionEvidence(
-      "Ctrl-click then Shift-click select exactly the three sessions to clean up",
+      "Shift-click then Ctrl-click leave exactly the three sessions to clean up selected",
       `selected rows=${count}; untouched row selected=${offsiteSelected}; bar="${text}"`,
       count === 3 && offsiteSelected === 0 && text.includes("3 selected") && text.includes("Archive 3 sessions"),
     );
