@@ -101,6 +101,9 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const filediff = toolName === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
   const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
     ? { added: filediff.additions, removed: filediff.deletions } : null;
+  const questionAnswers = part.tool === "question" && Array.isArray(stateMetadata.answers)
+    && stateMetadata.answers.every((answer) => Array.isArray(answer) && answer.every((value) => typeof value === "string"))
+    ? stateMetadata.answers as string[][] : null;
   const openwork = {
     ...(stateMetadata.sandbox === true || part.metadata?.sandbox === true ? { sandbox: true } : {}),
     ...(toolName !== part.tool ? { sandboxTool: true, sourceToolName: part.tool } : {}),
@@ -108,6 +111,7 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     ...(fileDestination ? { fileDestination } : {}),
     ...(workspacePaths ? { workspacePaths } : {}),
     ...(diffStats ? { diffStats } : {}),
+    ...(questionAnswers ? { questionAnswers } : {}),
     ...(part.id !== part.callID ? { sourcePartId: part.id } : {}),
     ...(mcpResult ? { mcpResult } : {}),
     ...(childSessionId ? { childSessionId } : {}),
