@@ -18,6 +18,8 @@ Both off is the default and is the behavior without the feature. A sandbox failu
 computer instead. This is agent-tool confinement, not an OS jail for the trusted engine process. Authorized live
 read-write folders intentionally let the sandbox change their files.
 
+Packaged verification, screenshots and timings: [modes-verification.md](modes-verification.md).
+
 ## Control it
 
 Settings -> Permissions shows both switches for a single user. In Den, member/team agent permissions let an
