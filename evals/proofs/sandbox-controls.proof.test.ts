@@ -198,7 +198,7 @@ signedOut("a signed-out person keeps a local Force choice until they turn off th
     await user.click({ testId: "sandbox-force-switch" });
     await switches(user, probe, true, false, false, false);
     await user.click({ testId: "sandbox-use-switch" });
-    const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), { within: 30_000, label: "the sandbox is off", until: result => JSON.stringify(result.body).includes('"useSandbox":false') });
+    const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), { within: 30_000, label: "the sandbox is off and the change has applied", until: result => JSON.stringify(result.body).includes('"useSandbox":false') && JSON.stringify(result.body).includes('"pending":false') });
     expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveAllowHostExecution: true, managedForce: false });
     evidence.recordAssertionEvidence("An explicit local choice restores ordinary tools", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":true'));
     await user.screenshot();
