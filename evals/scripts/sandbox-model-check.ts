@@ -26,7 +26,6 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { parseArgs, promisify } from "node:util";
 import { createManagedOpencodeV2Server, installOpencodeV2Binary, type ManagedOpencodeV2Server, type OpencodeV2ProviderSpec } from "../../apps/server/src/managed-opencode-v2.js";
@@ -61,11 +60,10 @@ const PROFILES: Record<ModelKey, Profile> = {
     ],
   },
   sol: {
-    key: "sol", modelId: "gpt-6.1-sol", providerId: "modelcheck_openai", providerName: "Model check (OpenAI)",
+    key: "sol", modelId: "gpt-6.2-sol", providerId: "modelcheck_openai", providerName: "Model check (OpenAI)",
     package: "@opencode/ai/providers/openai", upstream: "https://api.openai.com", keyEnv: "OPENAI_API_KEY",
     tuning: [
       { label: "reasoning.effort=low + service_tier=priority", apply: (body, path) => { applyOpenAiEffort(body, path); body.service_tier = "priority"; } },
-      { label: "reasoning.effort=low", apply: applyOpenAiEffort },
     ],
   },
 };
@@ -200,19 +198,21 @@ async function startInferenceProxy(profile: Profile, realKey: string, state: { p
         const body = structuredClone(parsed);
         tuning.apply(body, path);
         attempts.push({ label: tuning.label, body: JSON.stringify(body) });
+        if (profile.key === "sol") attempts.push({ label: `${tuning.label}; model=gpt-6.2-sol-fast`, body: JSON.stringify({ ...body, model: "gpt-6.2-sol-fast" }) });
       }
     }
-    attempts.push({ label: null, body: raw });
+    if (profile.key !== "sol" || !inference) attempts.push({ label: null, body: raw });
 
     let upstream: Response | undefined;
-    for (const attempt of attempts) {
+    for (const [index, attempt] of attempts.entries()) {
       upstream = await fetch(`${profile.upstream}${path}`, {
         method: request.method, headers,
         ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: attempt.body }),
       });
-      if (upstream.status === 400 && attempt.label !== null) {
+      const canTryAlternate = profile.key === "sol" ? [400, 403, 404, 422].includes(upstream.status) : upstream.status === 400;
+      if (canTryAlternate && attempt.label !== null && index + 1 < attempts.length) {
         const message = await upstream.text();
-        entry.tuningRejected.push({ label: attempt.label, status: 400, message: scrub(message, [realKey]).slice(0, 300) });
+        entry.tuningRejected.push({ label: attempt.label, status: upstream.status, message: scrub(message, [realKey]).slice(0, 300) });
         continue;
       }
       entry.tuningApplied = attempt.label;
@@ -229,10 +229,16 @@ async function startInferenceProxy(profile: Profile, realKey: string, state: { p
     let seen = "";
     if (upstream.body) {
       const decoder = new TextDecoder();
-      for await (const chunk of Readable.fromWeb(upstream.body as import("node:stream/web").ReadableStream<Uint8Array>)) {
-        if (seen.length < 8_000_000) seen += decoder.decode(chunk, { stream: true });
-        response.write(chunk);
-      }
+      const reader = upstream.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (seen.length < 8_000_000) seen += decoder.decode(value, { stream: true });
+          response.write(value);
+        }
+      } finally { reader.releaseLock(); }
+      seen += decoder.decode();
     }
     response.end();
     if (inference) {
@@ -404,9 +410,9 @@ async function main() {
     /** Diagnosis only: load engine plugins from this directory instead of the product source. */
     "plugin-dir": { type: "string" },
   } });
-  const modelKey = (values.model ?? process.env.SANDBOX_MODEL_CHECK_MODEL ?? "") as ModelKey;
+  const modelKey = values.model ?? process.env.SANDBOX_MODEL_CHECK_MODEL;
+  if (modelKey !== "fable" && modelKey !== "sol") throw new Error("Usage: sandbox-model-check.ts --model fable|sol [--evidence-dir <dir>] [--engine-cache <dir>] [--keep-root]");
   const profile = PROFILES[modelKey];
-  if (!profile) throw new Error("Usage: sandbox-model-check.ts --model fable|sol [--evidence-dir <dir>] [--engine-cache <dir>] [--keep-root]");
   const evidenceDir = values["evidence-dir"] ?? process.env.SANDBOX_MODEL_CHECK_EVIDENCE_DIR ?? join(tmpdir(), "opencode", "sandbox-model-check");
   const engineCache = values["engine-cache"] ?? join(tmpdir(), "opencode", "sandbox-model-check-engine");
   const turnTimeoutMs = Number(values["turn-timeout-seconds"]) * 1_000;
@@ -483,8 +489,8 @@ async function main() {
   let leftoverProcesses: string[] = [];
 
   try {
-    // The member's own "Run tools on this computer" off, in the server's real store: sandbox-only.
-    await writeSandboxSettings(config, { allowHostExecution: false });
+    // The member's own Force choice in the server's real store.
+    await writeSandboxSettings(config, { useSandbox: true, forceSandbox: true });
     await writeGlobalRuntimeOpencodeConfig(config, current => ({ ...current, permission: { external_directory: { [`${paths.authorized}/*`]: "allow" } } }));
 
     proxy = await startInferenceProxy(profile, realKey, state);
@@ -543,6 +549,8 @@ async function main() {
     const guestInference = proxy.records.filter(entry => entry.phase === "guest-tools");
     check("guest turn: real inference requests reached the provider", guestInference.length > 0 && guestInference.some(entry => entry.status === 200),
       JSON.stringify(guestInference.map(entry => ({ status: entry.status, rejected: entry.tuningRejected }))));
+    check("guest turn: the provider returned the requested model", guestInference.filter(entry => entry.status === 200).every(entry => entry.responseModel?.startsWith(profile.modelId)), JSON.stringify(guestInference.map(entry => entry.responseModel)));
+    if (profile.key === "sol") check("guest turn: the provider returned the fast service tier", guestInference.filter(entry => entry.status === 200).every(entry => ["priority", "fast"].includes(entry.serviceTier ?? "")), JSON.stringify(guestInference.map(entry => entry.serviceTier)));
     const guestForm = catalogForm(guestInference);
     catalogForms.guestTools = guestForm;
     const staleCatalog = [...new Set(guestInference.flatMap(entry => JSON.stringify(entry.offeredTools) === JSON.stringify(GUEST_TOOLS) ? [...entry.codeModeTools, ...entry.codeModeNamespaces] : []))];

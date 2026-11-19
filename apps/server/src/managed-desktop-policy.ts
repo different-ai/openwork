@@ -406,6 +406,8 @@ class ManagedDesktopPolicy {
   private sandboxRulesRestrictive = false;
   private lastSandboxFeatureEnabled = false;
   private sandboxVerification: SandboxVerification = "checking";
+  private sandboxRetryDelayMs = 0;
+  private sandboxRetryAt = 0;
   private sandboxDesktopRead: { generation: number; promise: Promise<DesktopConfig> } | undefined;
   private sandboxDesktopSentAt = -Infinity;
   private sandboxRead: { generation: number; revision: number; promise: Promise<SandboxAccess> } | undefined;
@@ -418,6 +420,8 @@ class ManagedDesktopPolicy {
     this.sandboxRulesRestrictive = false;
     this.lastSandboxFeatureEnabled = false;
     this.sandboxVerification = "checking";
+    this.sandboxRetryDelayMs = 0;
+    this.sandboxRetryAt = 0;
     this.sandboxFresh = undefined;
     this.sandboxDesktopSentAt = -Infinity;
   }
@@ -485,10 +489,15 @@ class ManagedDesktopPolicy {
     const [local, applied, access] = await Promise.all([readSandboxSettings(this.config), readAppliedSandboxSettings(this.config), this.localSandboxAccess()]);
     return this.settingsResponse(local, applied, access, this.sandboxVerification);
   }
+  refreshSandboxSettingsInBackground(): void {
+    if (performance.now() < this.sandboxRetryAt) return;
+    void this.localSandboxAccess().catch(() => undefined);
+  }
   /** For Settings UI only. Report the last rollout, never using it as admission authority. */
   sandboxSettingsSnapshot(local: SandboxSettings, applied: SandboxSettings): SandboxSettingsSnapshot {
-    const verification = this.sandboxVerification === "verified" && !this.freshSandboxAccess(sandboxSettingsRevision(this.config))
-      ? "checking" : this.sandboxVerification;
+    const checking = this.sandboxRead?.generation === this.generation
+      || (this.sandboxVerification === "verified" && !this.freshSandboxAccess(sandboxSettingsRevision(this.config)));
+    const verification = checking ? "checking" : this.sandboxVerification;
     return this.settingsResponse(local, applied, {
       ...this.sandboxAuthority(), scope: "unverified", featureEnabled: this.lastSandboxFeatureEnabled,
       enabled: this.lastSandboxFeatureEnabled && this.sandboxVerification !== "unavailable" && !this.sandboxRulesRestrictive,
@@ -553,11 +562,15 @@ class ManagedDesktopPolicy {
       const access = { ...this.sandboxAuthority(), featureEnabled, enabled: featureEnabled && !this.sandboxRulesRestrictive, scope };
       this.lastSandboxFeatureEnabled = featureEnabled;
       this.sandboxVerification = "verified";
+      this.sandboxRetryDelayMs = 0;
+      this.sandboxRetryAt = 0;
       this.sandboxFresh = { revision, until: rolloutSentAt + this.sandboxFreshnessMs, access };
       return access;
     } catch {
       this.identityChanged(generation);
       this.sandboxVerification = "unavailable";
+      this.sandboxRetryDelayMs = Math.min(30_000, this.sandboxRetryDelayMs ? 2 * this.sandboxRetryDelayMs : 2_000);
+      this.sandboxRetryAt = performance.now() + this.sandboxRetryDelayMs;
       return { ...this.sandboxAuthority(), enabled: false, featureEnabled: this.lastSandboxFeatureEnabled, scope: "unverified" };
     }
   }

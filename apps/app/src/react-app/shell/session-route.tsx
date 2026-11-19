@@ -4266,7 +4266,10 @@ export function SessionRoute() {
             const link = sideChatLinkFor(destination.parent, workspaceId);
             if (link) markFeatureUsed("sessionTree");
             return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined, link);
-          }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
+          }, (created) => {
+            const current = usePendingConversationStore.getState().conversations[pending.id];
+            if (current) publishCreatedConversation(current, created, agent, workspace?.displayNameResolved);
+          });
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),

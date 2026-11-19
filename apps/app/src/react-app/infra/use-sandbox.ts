@@ -1,8 +1,16 @@
+import { useState } from "react";
+import type { OpenworkSandboxSettingsResponse } from "@/app/lib/openwork-server";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
 
 type SandboxConnection = { client: OpenworkServerClient | null; workspaceId: string | null };
+
+export function sandboxSettingsPollInterval(settings: Pick<OpenworkSandboxSettingsResponse, "verification" | "pending"> | null | undefined, mountedMs: number): number | false {
+  if (settings?.verification === "checking") return 1_000;
+  if (settings?.verification === "unavailable") return mountedMs < 120_000 ? 5_000 : false;
+  return settings?.pending ? 1_000 : false;
+}
 
 export function sandboxSettingsQuery({ client, workspaceId }: SandboxConnection) {
   return queryOptions({
@@ -22,13 +30,17 @@ export function sandboxSettingsQuery({ client, workspaceId }: SandboxConnection)
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     refetchIntervalInBackground: false,
-    refetchInterval: ({ state }) => state.data?.verification === "checking" || state.data?.pending ? 1_000 : false,
   });
 }
 
 export function useSandboxSettings(connection: SandboxConnection) {
+  const [mountedAt] = useState(() => Date.now());
   const options = sandboxSettingsQuery(connection);
-  return { settings: useQuery(options), queryKey: options.queryKey };
+  const settings = useQuery({
+    ...options,
+    refetchInterval: ({ state }) => state.status === "error" ? false : sandboxSettingsPollInterval(state.data, Date.now() - mountedAt),
+  });
+  return { settings, queryKey: options.queryKey };
 }
 
 export function useSandboxStatus({ client, workspaceId }: SandboxConnection, observe: boolean) {

@@ -1,6 +1,6 @@
 import { startupPhase } from "./startup-phase.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
-import { assertSandboxEngineIdle } from "./sandbox-engine-transition.js";
+import { assertSandboxEngineIdle, sandboxPolicyPending } from "./sandbox-engine-transition.js";
 import { localSandboxRuntime } from "./local-sandbox-runtime.js";
 import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
@@ -997,9 +997,6 @@ export function createEngineV2Preview(options: {
         || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
       effectiveAllowHostExecution: !policy.projectIsolationTransition() && (sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox),
     };
-  }
-  function sandboxPolicyPending() {
-    return new ApiError(409, "sandbox_engine_policy_pending", "Your sandbox setting is saved and applies when current tasks finish. Send this again then.");
   }
   function handleIsolationError(error: unknown, deferBusy = false): void {
     if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) {

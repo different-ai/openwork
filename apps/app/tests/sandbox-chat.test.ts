@@ -4,7 +4,7 @@ import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } f
 import { sandboxRunningToolStep } from "@/lib/tool-activity";
 import { sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { sandboxToolRenderer } from "@/lib/build-in-tools";
-import { sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
+import { sandboxSendDisposition, sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
 import { parseDynamicToolUIPart } from "@/react-app/domains/session/sync/parse-tool-parts";
 import { describeTaskCreateFailure } from "@/react-app/shell/route-workspaces";
 
@@ -62,10 +62,12 @@ test.each(["sandbox_engine_busy", "sandbox_engine_policy_pending", "sandbox_engi
   expect(sandboxTransitionNote({ code, status: 400 })).toBeNull();
 });
 
-test("keeps the new plain server message and scopes temporary 503s to a Force transition", () => {
+test("keeps the plain server message and only defers recognized transition errors", () => {
   const message = "Your sandbox setting is saved and applies when current tasks finish. Send this again then.";
   expect(sandboxTransitionNote({ status: 409, code: "sandbox_engine_policy_pending", message })).toBe(message);
   expect(sandboxTransitionNote({ status: 503, error: "engine_v2_preview_not_running" }, true)).toBe("Applying your sandbox setting…");
-  expect(sandboxTransitionNote({ status: 503, error: "engine_v2_preview_not_running" })).toBeNull();
+  expect(sandboxSendDisposition(new Error('{"code":"engine_v2_preview_not_running"}'))).toEqual({ kind: "deferred", note: "Applying your sandbox setting…" });
+  expect(sandboxSendDisposition({ status: 409, code: "sandbox_engine_policy_pending", message })).toEqual({ kind: "deferred", note: message });
+  expect(sandboxSendDisposition({ status: 409, code: "unrelated" })).toEqual({ kind: "failed" });
   expect(sandboxTransitionNote({ status: 503, error: "unrelated" }, true)).toBeNull();
 });

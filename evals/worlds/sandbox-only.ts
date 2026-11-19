@@ -48,12 +48,11 @@ async function controlsWorld(seed: Seed, enabled: boolean) {
   // The native renderer supplies the real managed-policy host handoff. A
   // non-directory runtime home prevents preparation from launching a microVM.
   const member = await seed.desktop({ name: "sandbox-controls-member", den: world.den, as: "riley", env: { MSB_HOME: "/dev/null" } });
-  const staff = enabled ? await seed.desktop({ name: "sandbox-controls-staff", den: world.den, as: "morgan", env: { MSB_HOME: "/dev/null" } }) : null;
   const web = await seed.web({ den: world.den, signedInAs: world.den.admin,
     startPath: `/dashboard/members/teams/${world.teamId}?tab=agents`,
     headless: true, viewport: { width: 1440, height: 1200 },
   });
-  return { ...world, web, member, staff,
+  return { ...world, web, member,
     memberSettings: `/workspace/${encodeURIComponent(member.workspaceId)}/sandbox-settings`,
     // A member's actual HTTP request is the witness; probe.api only permits reads.
     tryMemberPolicyWrite: () => denFetch(world.riley, world.teamPath, {

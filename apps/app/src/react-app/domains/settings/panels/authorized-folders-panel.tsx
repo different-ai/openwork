@@ -17,8 +17,8 @@ import { t } from "@/i18n";
 import type {
   OpenworkServerCapabilities,
   OpenworkServerClient,
-  OpenworkServerStatus,
 } from "../../../../app/lib/openwork-server";
+import type { SettingsWorkspaceState } from "../state/workspace-discovery";
 import { pickDirectory } from "../../../../app/lib/desktop";
 import {
   safeStringify,
@@ -42,9 +42,9 @@ import {
 } from "../settings-layout";
 
 export type AuthorizedFoldersPanelProps = {
-  connecting: boolean;
+  workspaceState: SettingsWorkspaceState;
+  onRetryDiscovery: () => void;
   openworkServerClient: OpenworkServerClient | null;
-  openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
@@ -136,7 +136,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "status", value });
   const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "error", value });
 
-  const openworkServerReady = props.openworkServerStatus === "connected";
+  const openworkServerReady = props.workspaceState === "connected";
   const openworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
   const canReadConfig =
     openworkServerReady &&
@@ -148,12 +148,13 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     (props.openworkServerCapabilities?.config?.write ?? false);
 
   const authorizedFoldersHint = useMemo(() => {
-    if (!openworkServerReady) return t("context_panel.server_disconnected");
+    if (props.workspaceState === "disconnected") return t("context_panel.server_disconnected");
+    if (props.workspaceState === "missing") return t("context_panel.no_server_workspace");
     if (!openworkServerWorkspaceReady) return t("context_panel.no_server_workspace");
     if (!canReadConfig) return t("context_panel.config_access_unavailable");
     if (!canWriteConfig) return t("context_panel.config_read_only");
     return null;
-  }, [canReadConfig, canWriteConfig, openworkServerReady, openworkServerWorkspaceReady]);
+  }, [canReadConfig, canWriteConfig, props.workspaceState, openworkServerWorkspaceReady]);
 
   const canUseNativeFilePicker = platform.capabilities.nativeFilePicker;
   const canPickAuthorizedFolder =
@@ -274,9 +275,9 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
 
   const loadedCurrent = loaded?.client === props.openworkServerClient
     && loaded.workspaceId === props.runtimeWorkspaceId && loaded.attempt === loadAttempt;
-  const loading = props.connecting || (canReadConfig && (!loadedCurrent || authorizedFoldersLoading));
+  const loading = props.workspaceState === "discovering" || (canReadConfig && (!loadedCurrent || authorizedFoldersLoading));
   const loadFailed = loadedCurrent && !loaded.success;
-  const ready = !loading && !loadFailed;
+  const ready = canReadConfig && !loading && !loadFailed;
   const marked = useRef(false);
   const markReady = useCallback((element: HTMLElement | null) => {
     if (!element || !ready || marked.current) return;
@@ -307,7 +308,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         ) : null}
       </LayoutSectionItemHeader>
 
-      {loading ? <Skeleton className="h-12 w-full" /> : loadFailed ? (
+      {loading ? <Skeleton className="h-12 w-full" /> : props.workspaceState === "timed-out" || props.workspaceState === "disconnected" ? (
+        <SettingsNotice>
+          {props.workspaceState === "timed-out" ? t("settings.permissions_discovery_timeout") : authorizedFoldersHint} <Button variant="link" size="sm" className="h-auto px-1" onClick={props.onRetryDiscovery}>{t("common.retry")}</Button>
+        </SettingsNotice>
+      ) : loadFailed ? (
         <SettingsNotice tone="error">
           {t("sandbox.folders_error")} <Button variant="link" size="sm" className="h-auto px-1" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t("common.retry")}</Button>
         </SettingsNotice>

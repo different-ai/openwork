@@ -27,6 +27,16 @@ export function sandboxTransitionNote(error: unknown, transitioning = false): st
     if (message && /^Your sandbox setting (?:is saved and )?applies when current tasks finish\. Send this again then\.$/.test(message)) return message;
     return t("sandbox.send_pending");
   }
-  if ((status === null || status === 503) && code === "engine_v2_preview_not_running" && transitioning) return t("sandbox.applying");
+  if (status === null || status === 503) {
+    if (code === "engine_v2_preview_not_running" || code === "sandbox_engine_refresh_in_progress") return t("sandbox.applying");
+    if (code === "sandbox_engine_refresh_failed" && transitioning) return t("sandbox.applying");
+  }
   return null;
+}
+
+export function sandboxSendDisposition(error: unknown, transitioning = false) {
+  const note = sandboxTransitionNote(error, transitioning);
+  return note
+    ? { kind: "deferred", note } satisfies { kind: "deferred"; note: string }
+    : { kind: "failed" } satisfies { kind: "failed" };
 }

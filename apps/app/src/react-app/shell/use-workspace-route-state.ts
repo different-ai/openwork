@@ -1386,7 +1386,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [modernRouteSessionLoadKey, selectedSessionId, selectedSessionKnown, selectedWorkspaceId]);
   const routeNotFoundMessage = (() => {
     if (loading) return null;
-    if (routeWorkspaceId && !selectedWorkspace) {
+    if (client && !connectionPending && !routeError && routeWorkspaceId && !selectedWorkspace) {
       return "Workspace was not found. Select a new workspace from the sidebar.";
     }
     if (selectedSessionId && !selectedSessionKnown && activeModernRouteSessionResolution?.status === "not-found") {

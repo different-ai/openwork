@@ -119,6 +119,7 @@ import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import { sandboxPolicyPending } from "./sandbox-engine-transition.js";
 import { readAppliedSandboxSettings, readSandboxSettings, sandboxSettingsUpdateSchema, updateSandboxSettings } from "./sandbox-settings-store.js";
 import { closeLocalSandboxRuntime, localSandboxRuntime } from "./local-sandbox-runtime.js";
 import { registerSandboxStatusRoutes } from "./routes/sandbox-status.js";
@@ -989,6 +990,7 @@ export async function startServer(
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
+          await assertSandboxSendReady(config, request.method, mount.restPath);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
@@ -1045,10 +1047,13 @@ export async function startServer(
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
-          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
-          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const currentTaskAccess = isV2CurrentTaskRequest(request.method, mount.restPath);
+          if (request.method === "POST" && /^\/opencode2\/api\/session\/[^/]+\/command\/?$/.test(mount.restPath)) {
+            await engineV2Preview.assertProjectConfigReady();
+          }
+          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           if (!currentTaskAccess) await engineV2Preview.ensureProjectIsolation();
           if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
             await engineV2Preview.assertSandboxReady(workspace.path);
@@ -1056,7 +1061,7 @@ export async function startServer(
           // Isolation may have replaced the process and its credentials.
           const connection = engineV2Preview.connection();
           if (!connection) {
-            return finalize(jsonResponse({ error: "engine_v2_preview_not_running" }, 503));
+            throw new ApiError(503, "engine_v2_preview_not_running", "The engine is restarting. Try again in a moment.");
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
@@ -1166,6 +1171,7 @@ export async function startServer(
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           await validateEngineRequestBody(request);
+          await assertSandboxSendReady(config, request.method, url.pathname);
           await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
           await anonymousInference.assertTaskAccess(request, url.pathname);
           proxyService = "opencode";
@@ -1447,6 +1453,13 @@ async function resolveV2SessionExecutionDirectory(
   } catch {
     return null;
   }
+}
+
+async function assertSandboxSendReady(config: ServerConfig, method: string, path: string): Promise<void> {
+  const route = decodeURIComponent(path).replace(/^\/opencode2?(?=\/|$)/, "").replace(/\/+$/, "");
+  if (method !== "POST" || !/^\/(?:api\/)?session(?:\/[^/]+\/(?:prompt(?:_async)?|message|command|generate))?$/.test(route)) return;
+  const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+  if (desired.forceSandbox !== applied.forceSandbox || managedDesktopPolicy(config).projectIsolationTransition()) throw sandboxPolicyPending();
 }
 
 function isV2CurrentTaskRequest(method: string, path: string): boolean {
@@ -2057,17 +2070,23 @@ export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpenc
   // All v1 mounts (including background/recovery sends) converge here. Check
   // before forwarding or acquiring a mutation lease; local engine config cannot
   // weaken the verified organization policy. v2 keeps its native/plugin checks.
-  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname);
+  const path = decodeURIComponent(input.proxyPath ?? input.url.pathname);
+  const assertSendReady = () => assertSandboxSendReady(input.config, input.request.method, path);
+  await assertSendReady();
+  await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, path);
   if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeRequest(input);
   const release = await enterEngineMutation(input.config, "v1", input.request.signal);
   try {
-    const path = decodeURIComponent(input.proxyPath ?? input.url.pathname);
+    await assertSendReady();
     const chatMutation = /\/(?:session|experimental\/session)(?:\/|$)/.test(path)
       && !/\/session\/[^/]+\/abort\/?$/.test(path);
     if (chatMutation && !hasExternalOpencode(input.config) && await originalHistoryUsesV2(input.config)) {
       throw new ApiError(409, "engine_v1_history_adopted", "This history is owned by OpenCode v2. Continue the chat on v2 so new messages stay readable.");
     }
-    return await forwardOpencodeRequest(input, () => managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname));
+    return await forwardOpencodeRequest(input, async () => {
+      await assertSendReady();
+      await managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, path);
+    });
   } finally { await release(); }
 }
 
@@ -3438,7 +3457,7 @@ function createRoutes(
     const timing = settingsTiming();
     await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     timing.mark("workspace");
-    void managedDesktopPolicy(config).localSandboxAccess().catch(() => undefined);
+    managedDesktopPolicy(config).refreshSandboxSettingsInBackground();
     return sandboxSettingsResponse(timing);
   });
   addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {

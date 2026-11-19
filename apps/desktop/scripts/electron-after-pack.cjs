@@ -237,7 +237,11 @@ async function signMicrosandboxRuntime(context, { spawn = spawnSync } = {}) {
   }
   if (!identity && process.env.MACOS_NOTARIZE === "true") throw new Error("A Developer ID identity is required to sign the microsandbox runtime.");
   identity ||= "-";
-  const args = ["--force", "--options", "runtime", "--entitlements", path.resolve(__dirname, "../build/entitlements.microsandbox.mac.plist"), "--sign", identity];
+  // An ad-hoc signature has no Team ID, so the hardened runtime refuses to load
+  // the runtime's own firmware library ("different Team IDs") and no sandbox
+  // can start. Developer ID builds share one team and keep library validation.
+  const entitlements = identity === "-" ? "entitlements.microsandbox.adhoc.mac.plist" : "entitlements.microsandbox.mac.plist";
+  const args = ["--force", "--options", "runtime", "--entitlements", path.resolve(__dirname, "../build", entitlements), "--sign", identity];
   if (keychain) args.push("--keychain", keychain);
   if (identity !== "-") args.push("--timestamp");
   args.push(executable);

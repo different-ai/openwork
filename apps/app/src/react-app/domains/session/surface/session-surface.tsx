@@ -15,7 +15,7 @@ import { Check, CircleAlert, LoaderCircle, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { SandboxActivityContext } from "@/components/chat/current-tool-lifecycle-context";
 import { Badge } from "@/components/ui/badge";
-import { sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
+import { sandboxSendDisposition } from "@/react-app/kernel/sandbox-transition";
 import { useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
 import { sandboxCurrentStepText, sandboxEffectiveMode, sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -2541,12 +2541,24 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return result;
     } catch (nextError) {
-      const transition = sandboxTransitionNote(nextError, sandboxPending || sandboxMode === "force");
-      if (transition && getQueuedSendGeneration(props.sessionId) === generation) {
+      const disposition = sandboxSendDisposition(isPromptAdmissionUnknown(nextError) ? promptAdmissionFailure(nextError) : nextError, sandboxPending || sandboxMode === "force");
+      if (disposition.kind === "deferred" && getQueuedSendGeneration(props.sessionId) === generation) {
         dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
         if (activeSessionOwnerRef.current === sessionOwner) {
-          setSandboxSendNotice({ owner: sessionOwner, message: transition });
+          setSandboxSendNotice({ owner: sessionOwner, message: disposition.note });
           setAwaitingAssistantBaseline(null);
+          const state = useComposerStateStore.getState();
+          if (!onPrepared && !composerSessionHasContent(state.sessions[props.sessionId])) {
+            useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: {
+              draft: nextDraft.text,
+              attachments: nextDraft.attachments,
+              mentions: {},
+              pasteParts: nextDraft.parts.filter((part) => part.type === "paste"),
+              revertMessageId: null,
+            } } });
+            props.onDraftChange(nextDraft);
+            if (options.consumeQueuedItem) removeQueuedDraftFromStore(props.sessionId, itemId);
+          }
         }
         throw nextError;
       }

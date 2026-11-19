@@ -72,14 +72,14 @@ controls("an owner requires a sandbox for Contractors without removing another m
     evidence.recordAssertionEvidence("Only Use is managed", `${state}; ${managedText}`, state.includes("Use on (locked)"));
     await member.screenshot();
   });
-  await step("after: a staff member outside Contractors still controls both switches", async () => {
-    if (!world.staff) throw new Error("Missing staff desktop");
-    const staff = user.on(world.staff);
-    await agent.on(world.staff).run("route.settings.authorized_folders");
-    const state = await switches(staff, probe.on(world.staff), false, false, false, false);
-    await staff.notSee({ text: managedText });
-    evidence.recordAssertionEvidence("A different member receives no team lock", state, state.includes("Use off (editable)"));
-    await staff.screenshot();
+  await step("after: a staff member outside Contractors receives neither sandbox requirement", async () => {
+    await admin.see({ testId: "sandbox-use-requirement" });
+    const staff = await probe.api(world.morgan, configPath, { headers: sandboxHeaders });
+    const rules = deniedModes(staff.body);
+    evidence.recordAssertionEvidence("The staff member's own desktop configuration carries neither lock", `HTTP ${staff.response.status}; sandbox requirements: ${JSON.stringify(rules)}`, staff.response.status === 200 && rules.length === 0);
+    expect(staff.response.status).toBe(200);
+    expect(rules).toEqual([]);
+    await admin.screenshot();
   });
   await step("when the member chooses Force locally under a Use requirement", async () => {
     await member.click({ testId: "sandbox-force-switch" });

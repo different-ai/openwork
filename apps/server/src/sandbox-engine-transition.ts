@@ -2,6 +2,10 @@ import { ApiError } from "./errors.js";
 import type { ManagedOpencodeV2Server } from "./managed-opencode-v2.js";
 import { isRecord } from "./workspace-kv-store.js";
 
+export function sandboxPolicyPending() {
+  return new ApiError(409, "sandbox_engine_policy_pending", "Your sandbox setting is saved and applies when current tasks finish. Send this again then.");
+}
+
 /** Pinned v2 global APIs: no location query and no target-workspace plugin
  * initialization. Include background shell/subagent/image work, not just drains. */
 export async function assertSandboxEngineIdle(active: Pick<ManagedOpencodeV2Server, "fetchJson">): Promise<void> {

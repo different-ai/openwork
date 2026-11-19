@@ -14,10 +14,12 @@ import { sandboxSettingsQuery, useSandboxSettings, useSandboxStatus } from "@/re
 import { LayoutSectionItem, LayoutSectionItemDescription, LayoutSectionItemFootnote, LayoutSectionItemHeader, LayoutSectionItemHeaderActions, LayoutSectionItemTitle, LayoutSectionTitle } from "../settings-layout";
 import { sandboxEditableToggleUpdate, sandboxPanelState, sandboxPanelVisibility, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate, type SandboxToggle } from "./sandbox-panel-state";
 
+import type { SettingsWorkspaceState } from "../state/workspace-discovery";
+
 type SandboxPanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
-  connecting: boolean;
+  workspaceState: SettingsWorkspaceState;
   rollout: boolean | undefined;
   onUpdated: () => void;
 };
@@ -57,12 +59,14 @@ function Retry({ onClick, disabled, testId }: { onClick: () => void; disabled?: 
   return <Button variant="link" size="sm" className="h-auto px-1" data-testid={testId} disabled={disabled} onClick={onClick}>{t("common.retry")}</Button>;
 }
 
-export function SandboxPanel({ client, workspaceId, connecting, rollout, onUpdated }: SandboxPanelProps) {
+export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceState, rollout, onUpdated }: SandboxPanelProps) {
   const queryClient = useQueryClient();
+  const client = workspaceState === "connected" ? workspaceClient : null;
   const connection = { client, workspaceId };
   const { settings, queryKey } = useSandboxSettings(connection);
-  const loading = settings.data === undefined && (connecting || (Boolean(client && workspaceId) && settings.isPending));
-  const { visible, ready } = sandboxPanelVisibility(rollout, settings.isError ? "error" : loading ? "loading" : "settled", settings.data);
+  const loading = settings.data === undefined && (workspaceState === "discovering" || (Boolean(client && workspaceId) && settings.isPending));
+  const { visible, ready: settled } = sandboxPanelVisibility(rollout, settings.isError ? "error" : loading ? "loading" : "settled", settings.data);
+  const ready = workspaceState === "connected" && settled && (!visible || Boolean(settings.data));
   const observeStatus = visible && (settings.data?.pending === true || sandboxEffectiveMode(settings.data) !== "off");
   const { status, queryKey: statusKey } = useSandboxStatus(connection, observeStatus);
   const settingsSaved = (reconciled: boolean) => {

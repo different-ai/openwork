@@ -606,6 +606,57 @@ test("settings and folder GETs stay local while Den hangs, then report verified 
   } finally { release.resolve(); await app.stop(); await den.stop(); await f.cleanup(); }
 });
 
+test("sandbox settings GET backs off failed rollout verification and recovers without losing Force authority", async () => {
+  const f = await fixture();
+  f.config.engineAutoUpgrade = false;
+  const now = performance.now.bind(performance);
+  let offset = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + offset);
+  let reads = 0;
+  let release = Promise.withResolvers<void>();
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
+    if (new URL(request.url).pathname === "/v1/me/desktop-config") {
+      return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] } });
+    }
+    const round = ++reads;
+    await release.promise;
+    return round <= 2 ? new Response(null, { status: 403 }) : Response.json({ features: { sandboxTools: true } });
+  } });
+  const policy = managedDesktopPolicy(f.config);
+  const { startServer } = await import("../src/server.js");
+  const app = await startServer(f.config, { deferManagedEngineStartup: true });
+  const read = async () => (await fetch(`http://127.0.0.1:${app.port}/workspace/ws_sandbox/sandbox-settings`, {
+    headers: { authorization: `Bearer ${f.config.token}` },
+  })).json();
+  const restrictive = { managedForce: true, effectiveForceSandbox: true };
+  try {
+    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "fixture", token: "fixture" });
+    await policy.current();
+    const finish = async () => {
+      const inFlight = policy.localSandboxAccess();
+      release.resolve();
+      const result = await inFlight;
+      expect(result).toMatchObject({ hostDenied: true, hostPolicyVerified: true });
+      release = Promise.withResolvers<void>();
+    };
+    expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
+    await finish();
+    expect(await read()).toMatchObject({ verification: "unavailable", featureEnabled: false, ...restrictive });
+    expect(reads).toBe(1);
+    offset += 2_000;
+    expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
+    await finish();
+    offset += 2_000;
+    expect(await read()).toMatchObject({ verification: "unavailable", ...restrictive });
+    expect(reads).toBe(2);
+    offset += 2_000;
+    expect(await read()).toMatchObject({ verification: "checking", ...restrictive });
+    await finish();
+    expect(await read()).toMatchObject({ verification: "verified", featureEnabled: true, ...restrictive });
+    expect(reads).toBe(3);
+  } finally { release.resolve(); clock.mockRestore(); await app.stop(); await den.stop(); await f.cleanup(); }
+});
+
 test("settings route requires approval before engine-global writes and leaves workspace files alone", async () => {
   const f = await fixture();
   f.config.approval = { mode: "manual", timeoutMs: 10_000 };
@@ -690,6 +741,7 @@ test("Force-off stays restrictive during a held and failed replacement; settings
   const releaseStart = Promise.withResolvers<void>();
   const native = await import("../src/managed-opencode-v2.js");
   let starts = 0;
+  let running = true;
   const nativeStart = vi.spyOn(native, "createManagedOpencodeV2Server").mockImplementation(async options => {
     if (++starts > 1) {
       expect(await options.isolateProjectConfig?.()).toBe(false);
@@ -701,7 +753,7 @@ test("Force-off stays restrictive during a held and failed replacement; settings
     return {
       url: "http://127.0.0.1:1", username: "fixture", password: "fixture", childPid: 1, exitCode: null, stdout: "", stderr: "",
       projectConfigDisabled: true, health: async () => ({ healthy: true, version: "2.2.6", pid: 1 }),
-      fetchJson: async path => ({ status: 200, json: { data: path === "/api/model" ? models : path.startsWith("/api/experimental/job") ? [] : {} } }),
+      fetchJson: async path => ({ status: 200, json: { data: path === "/api/model" ? models : path.startsWith("/api/experimental/job") ? [] : path === "/api/session/active" && running ? { ses_busy: { type: "running" } } : {} } }),
       async setProviders(specs) { models = specs.flatMap(spec => spec.models.map(model => ({ providerID: spec.id, id: model.id }))); },
       async injectProvider() {}, async setSkills() {}, async refreshConfig() {}, async close() {},
     };
@@ -723,6 +775,15 @@ test("Force-off stays restrictive during a held and failed replacement; settings
     expect(performance.now() - before).toBeLessThan(200);
     expect(put.status).toBe(200);
     expect(await put.json()).toMatchObject({ forceSandbox: false, pending: true, effectiveForceSandbox: true });
+    for (const path of [
+      "opencode2/api/session", "opencode2/api/session/ses_busy/prompt", "opencode2/api/session/ses_busy/command",
+      "opencode/session", "opencode/session/ses_busy/prompt_async", "opencode/session/ses_busy/command",
+    ]) {
+      const response = await fetch(`http://127.0.0.1:${app.port}/workspace/ws_sandbox/${path}`, { method: "POST", headers, body: "{}" });
+      expect(response.status, path).toBe(409);
+      expect(await response.json(), path).toMatchObject({ code: "sandbox_engine_policy_pending", message: "Your sandbox setting is saved and applies when current tasks finish. Send this again then." });
+    }
+    running = false;
     await entered.promise;
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
     expect(await policy.computerRules()).toContainEqual(expect.objectContaining({ effect: "deny" }));

@@ -473,6 +473,7 @@ export default {
   "sandbox.pending_sandbox": "Current tasks stay in the sandbox.",
   "sandbox.checking": "Checking your organization's settings…",
   "sandbox.verification_unavailable": "Couldn't check your organization's settings. Using the last known ones.",
+  "settings.permissions_discovery_timeout": "Couldn’t load your workspace in time.",
   "sandbox.settings_error": "Couldn't load sandbox settings.",
   "sandbox.status_error": "Couldn't check the sandbox status.",
   "sandbox.save_error": "Couldn't save your sandbox setting.",

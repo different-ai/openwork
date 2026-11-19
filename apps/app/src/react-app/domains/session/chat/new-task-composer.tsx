@@ -85,6 +85,7 @@ export type NewTaskComposerContext = {
 
 export type NewTaskComposerProps = {
   flush?: boolean;
+  initialComposer?: ComposerSessionState;
   draft: string;
   onDraftChange: (value: string) => void;
   /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
@@ -139,7 +140,7 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
 export function NewTaskComposer(props: NewTaskComposerProps) {
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
-  const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
+  const [initialState] = useState(() => props.initialComposer ?? (context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined));
   const [mentions, setMentions] = useState<Record<string, ComposerMentionKind>>(initialState?.mentions ?? {});
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(initialState?.attachments ?? []);
   const [skills, setSkills] = useState<SkillCard[]>([]);
