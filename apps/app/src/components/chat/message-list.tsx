@@ -755,7 +755,6 @@ AssistantMessage.displayName = "AssistantMessage"
 
 type UserMessageProps = {
   message: UIMessage
-  isStreaming: boolean
 }
 
 function fileBytes(part: FileUIPart) {
@@ -976,7 +975,7 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
 }
 
 const UserMessage = React.memo(
-  ({ message, isStreaming }: UserMessageProps) => {
+  ({ message }: UserMessageProps) => {
     const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
     const wall = messageAutoAccessWall(message.metadata)
@@ -1066,7 +1065,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && !wall && (
+                {!wall && (
                   <MessageActions
                     className="flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
                   >
@@ -1161,10 +1160,7 @@ const MessageComponent = React.memo(
     }
 
     return (
-      <UserMessage
-        message={message}
-        isStreaming={isStreaming}
-      />
+      <UserMessage message={message} />
     )
   }
 )
