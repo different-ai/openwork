@@ -9,6 +9,7 @@
  */
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { Client, ModelRef } from "../types";
+import { isOpencodeV2Client } from "./opencode-v2-adapter";
 import { unwrap } from "./opencode";
 
 export type AbortSessionLogContext = {
@@ -146,42 +147,43 @@ export async function setSessionArchived(
 }
 
 /**
- * Compact/summarize a long session to reduce context size.
- * Uses `session.summarize` when available and falls back to `/compact` command.
+ * Set the exact model bound to an existing session without sending a prompt.
+ *
+ * OpenCode v2 persists this through the canonical `/api/session/:id/model`
+ * endpoint, so future sends and reopened sessions use the replacement binding.
+ * Older clients have no equivalent standalone mutation and fail closed.
  */
-export async function compactSession(
+export async function setSessionModel(
   client: Client,
   sessionID: string,
   model: ModelRef,
-  options?: { directory?: string },
+  variant?: string | null,
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
-  const session = client.session as { summarize?: (input: {
-    sessionID: string;
-    directory?: string;
-    providerID: string;
-    modelID: string;
-  }) => Promise<unknown> };
-
-  if (typeof session.summarize === "function") {
-    const result = await session.summarize({
-      sessionID,
-      directory: options?.directory,
-      providerID: model.providerID,
-      modelID: model.modelID,
-    });
-    assertNoClientError(result);
-    return;
+  if (!isOpencodeV2Client(client)) {
+    throw new Error("Session model reassignment requires the OpenCode v2 session API.");
   }
-
-  const modelString = `${model.providerID}/${model.modelID}`;
-  const result = await client.session.command({
+  const response = await client.session.setModel({
     sessionID,
-    command: "compact",
-    arguments: "",
-    model: modelString,
-    directory: options?.directory,
-  });
-  assertNoClientError(result);
+    model: { providerID: model.providerID, modelID: model.modelID },
+    ...(variant === undefined ? {} : { variant }),
+  }, options);
+  if (!response.request.url.endsWith(`/api/session/${encodeURIComponent(sessionID)}/model`)) {
+    throw new Error("Session model reassignment requires a direct v2 session model endpoint.");
+  }
+  if (!response.response.ok) {
+    let message = `Failed to update session model (${response.response.status}).`;
+    const payload = response.error;
+    if (payload && typeof payload === "object") {
+      const candidate = "message" in payload && typeof payload.message === "string"
+        ? payload.message
+        : "error" in payload && typeof payload.error === "object" && payload.error && "message" in payload.error && typeof payload.error.message === "string"
+          ? payload.error.message
+          : null;
+      if (candidate) message = candidate;
+    }
+    throw new Error(message);
+  }
 }
 
 // ---------------------------------------------------------------------------

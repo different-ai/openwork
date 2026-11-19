@@ -17,6 +17,7 @@ release-assets.githubusercontent.com
 objects.githubusercontent.com
 registry.npmjs.org
 models.openworklabs.com
+inference.openworklabs.com
 ```
 
 Common misses:
@@ -29,27 +30,32 @@ Common misses:
 
 | Host | Requirement | Why it is reached | What breaks when blocked |
 | --- | --- | --- | --- |
-| `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls through `/api/den/...`. | Cloud sign-in, org settings, Collections, and remote workspace flows cannot load. |
+| `app.openworklabs.com` | Required for OpenWork Cloud | Hosted Cloud web origin. The desktop uses one base URL and derives Den API/MCP calls through `/api/den/...`. | Cloud sign-in, org settings, and Collections cannot load. |
 | `api.app.openworklabs.com` | Required for hosted install and OpenWork Connect | Hosted public API and OpenWork Connect MCP endpoint used by install and external-client flows. | Hosted install checks and public OpenWork Connect fail. |
 | `app.openwork.software`, `api.openwork.software` | Required only for legacy hosted configurations | Older desktop configurations may still derive Cloud and OpenWork Connect traffic from these legacy hosted origins. | Legacy configurations cannot reconcile OpenWork Connect or native MCP Apps until moved to the current hosted origins. |
 | Your self-hosted Den web origin | Required for self-hosted desktop | Replaces `app.openworklabs.com` for signed-in desktop traffic. In the single-origin shape, API and MCP use `/api/den/...` on the same origin. | The desktop cannot sign in or reach Den. |
 | Your separate Den API origin, if configured | Required only for that topology | Used by one-time install-link exchange and external MCP clients when `DEN_API_PUBLIC_URL` points at a separate origin. | Install-link handoff or external MCP clients cannot complete. |
-| `github.com` | Required in practice unless mirrored | Installer/updater release URLs, GitHub issue links, and GitHub plugin source URLs. | Install/update downloads cannot start; GitHub links may not open. |
+| `github.com` | Required in practice unless mirrored | Installer/updater release URLs and GitHub issue links. | Install/update downloads cannot start; GitHub links may not open. |
 | `release-assets.githubusercontent.com` | Required in practice unless mirrored | Current GitHub release-asset redirect target. | Downloads start from `github.com` and fail partway through. |
 | `objects.githubusercontent.com` | Required in practice for legacy/rollback | Legacy GitHub release-asset redirect target. | Older clients or rollback downloads can fail partway through. |
 | `registry.npmjs.org` | Required in practice unless npm is mirrored | `npx` package resolution for `openwork-ui-mcp` and development-only helper commands. | OpenWork UI-control MCP is unavailable. |
 | `models.openworklabs.com` | Required in practice unless mirrored | Default OpenCode model catalog passed as `OPENCODE_MODELS_URL`. | Model selection can be stale, incomplete, or unavailable. |
+| `inference.openworklabs.com` | Required for Auto | The OpenWork Gateway that serves Auto, the free starting model, before and after sign-in. | Auto is unavailable; connected providers still work. |
 | `cdn.simpleicons.org` | Optional | Provider icons when no local icon exists. | Some icons are missing. |
 | `www.google.com` | Optional | Favicon image service and embedded browser new-tab page. | Favicons or the browser panel new tab may not load. |
 | `accounts.google.com` | Opt-in, browser sign-in | Google authorization opened by the Cloud connection flow. | Google Workspace sign-in cannot complete. |
-| `us.i.posthog.com` | Optional | Product analytics when analytics are enabled. | Analytics are dropped silently. |
-| `openworklabs.com`, `openwork.dev`, `discord.gg`, `ollama.com`, `opencode.ai`, `linear.app`, `mail.google.com` | Optional or link-only | Docs, feedback, community, provider help, local model links, sample links, and generated Gmail links. | Links do not open; core app behavior is unaffected. |
+| `us.i.posthog.com` | Optional | Product analytics when analytics are enabled. Never contacted by OpenWork Enterprise. | Analytics are dropped silently. |
+| `openworklabs.com`, `openwork.dev`, `ollama.com`, `opencode.ai`, `linear.app`, `mail.google.com` | Optional or link-only | Docs, feedback, community, provider help, local model links, sample links, and generated Gmail links. | Links do not open; core app behavior is unaffected. |
 
 `code.claude.com` and `schemas.agentskills.io` appear in source or schema metadata. They are findable in the manifest, but OpenWork does not fetch them for normal runtime behavior.
 
 ### Before enterprise activation
 
-An OpenWork Enterprise install that has not yet been linked to your organization makes no request outside the machine. Until the person enters the workspace address, the desktop does not probe `app.openworklabs.com` for runtime configuration, does not send analytics to `us.i.posthog.com`, does not check `github.com` for updates or downloads (the one exception is an install whose architecture does not match the machine, which looks up the correct download), does not fetch OpenWork Cloud inventory, and on Windows and Linux does not download the Chromium spellchecker dictionary from `redirector.gvt1.com`. The first outbound request goes to the workspace address that was entered. Analytics and update checks start only after activation completes and your desktop policy has been read once.
+An OpenWork Enterprise install that has not yet been linked to your organization makes no request outside the machine. Until the person enters the workspace address, the desktop does not probe `app.openworklabs.com` for runtime configuration, does not send analytics to `us.i.posthog.com`, does not check `github.com` for updates or downloads (the one exception is an install whose architecture does not match the machine, which looks up the correct download), does not fetch OpenWork Cloud inventory, and on Windows and Linux does not download the Chromium spellchecker dictionary from `redirector.gvt1.com`. The first outbound request goes to the workspace address that was entered. Update checks start only after activation completes.
+
+### Analytics and error reports on your own deployment
+
+OpenWork Enterprise does not send product analytics to `us.i.posthog.com` or error reports to Sentry, before or after activation. Usage shown in your own dashboard is sent only to your organization server.
 
 ## Den runtime destinations
 
@@ -86,10 +92,10 @@ These hosts are only needed when the corresponding feature, provider, connection
 
 | Feature group | Hostnames | What breaks when blocked |
 | --- | --- | --- |
+| Remote computer use with Daytona | `app.daytona.io` or the configured Daytona API host, plus the provider's sandbox connection host | The configured Daytona computer cannot connect; local computer use is unaffected. |
 | OpenAI direct features | `api.openai.com` | Direct OpenAI Realtime voice and image-generation features fail for users who configured OpenAI. |
 | Google Workspace through Cloud | Browser: `accounts.google.com`, `mail.google.com`. Den: `oauth2.googleapis.com`, `www.googleapis.com`, `gmail.googleapis.com`. | Browser sign-in and Gmail links, or Cloud token refresh and Workspace actions, fail on the component where access is blocked. |
 | Built-in MCP presets | `mcp.notion.com`, `mcp.linear.app`, `mcp.sentry.dev`, `mcp.stripe.com`, `mcp.context7.com`, `mcp.slack.com` | That specific MCP preset cannot connect. |
 | Example or custom MCP URLs | `api.githubcopilot.com` or the customer-configured MCP URL | Only the connection that points at that URL fails. |
-| GitHub plugin import | `api.github.com`, `raw.githubusercontent.com`, and optionally `github.com` links | GitHub plugin import cannot preview or download plugin contents. |
 
 The JSON manifest remains the ownership point for exact host metadata, requirement level, override name, and blocked effect. Use this page for review conversations and the JSON file for automation.

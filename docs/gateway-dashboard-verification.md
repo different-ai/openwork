@@ -1,5 +1,12 @@
 # Gateway dashboard opt-in verification
 
+> Superseded organization opt-in: the `gatewayDashboard` flag and platform-admin
+> grant described below are retired. Gateway is GA for every organization's admins
+> when configured; the old API input is a deprecated no-op and responses return
+> constant `true` for compatibility. Stored `false` is ignored; no migration or
+> backfill is required. Deployment configuration and authorization still apply.
+> The original evidence below is preserved, not current enablement guidance.
+
 > Historical implementation receipt, not final-tree evidence. Later combined
 > validation and repairs are recorded in [Independent integrated Gateway validation](gateway-independent-validation.md)
 > and [Gateway publication validation](gateway-publication-validation.md).

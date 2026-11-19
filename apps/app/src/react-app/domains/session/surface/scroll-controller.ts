@@ -1,6 +1,7 @@
-import { useCallback, useLayoutEffect, useRef, type RefObject, type UIEventHandler } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type RefObject, type UIEventHandler } from "react";
 
 import { flushSessionScrollState, getSessionScrollState, sessionScrollKey, useSessionScrollStore, type SessionScrollAnchor, type SessionHistoryPagePosition } from "./scroll-store";
+import { mobileTurnSpace } from "./mobile-turn-space";
 
 const EXACT_BOTTOM_GAP_PX = 1;
 const SCROLL_GESTURE_WINDOW_MS = 600;
@@ -87,6 +88,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
   const { selectedSessionId, geometryOwner, viewOwner, containerRef, contentRef } = options;
   const scrollKey = selectedSessionId ? sessionScrollKey(selectedSessionId, geometryOwner) : null;
   const controllerRef = useRef<ScrollController | null>(null);
+  const [mobileTurnFullyVisible, setMobileTurnFullyVisible] = useState(false);
   const optionsRef = useRef(options);
   optionsRef.current = options;
   // Consumed (including cancelled) submissions survive session effect recreation.
@@ -107,6 +109,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pendingRestore = true;
     let pendingReadingAnchor = false;
     let pendingSubmittedMessageId: string | null = null;
+    let mobileTurnId: string | null = null;
+    let mobileTurnPinned = false;
+    // User turns already on screen when the latest message was submitted; any other is that message.
+    let userTurnIdsAtSubmit = new Set<string>();
+    let turnSpace = 0;
+    const previousPaddingBottom = content.style.paddingBottom;
     let cancelledWhileLoading = false;
     let smoothJump = false;
     let activePointerId: number | null = null;
@@ -118,10 +126,19 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pageAnchor: SessionScrollAnchor | undefined;
     let restoredPageAnchorId: string | undefined;
     let pagePending = false;
+    let viewportFillVersion: { version: unknown } | null = null;
     let pendingHistoryDemand: "older" | "newer" | null = null;
+    let visibleGapDemand: { version: unknown; direction: "older" | "newer" } | undefined;
     let pendingTop: ((completed: boolean) => void) | null = null;
     let topLoadReady = false;
     const cancelTop = () => { pendingTop?.(false); pendingTop = null; };
+    const cancelRestoration = () => {
+      cancelTop();
+      optionsRef.current.historyPages?.cancelRestore?.();
+      pageAnchor = undefined;
+      pendingHistoryDemand = null;
+      pendingReadingAnchor = false;
+    };
     const frames = new Set<number>();
     const hasScrollGesture = () => activePointerId !== null || Date.now() - lastGestureAt < SCROLL_GESTURE_WINDOW_MS;
     const scheduleFrame = (callback: () => void) => {
@@ -143,13 +160,26 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         return rect.bottom > viewport.top && rect.top < viewport.bottom;
       });
     };
+    const transcriptMeasurable = () => {
+      if (container.clientHeight <= 0 || container.getBoundingClientRect().width <= 0 || content.querySelector("[data-thread-loading]")) return false;
+      const transcript = content.querySelector("[data-thread-history-complete], [data-message-id]");
+      return transcript ? transcript.getBoundingClientRect().width > 0
+        : Array.isArray(optionsRef.current.renderedMessages) && optionsRef.current.renderedMessages.length === 0;
+    };
+    const reserveLoadingGeometry = () => {
+      const saved = readState();
+      if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
+        container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
+        lastKnownScrollTop = container.scrollTop;
+      }
+    };
     const currentReadingAnchor = () => {
       const anchor = readingAnchor(container, restoredPageAnchorId);
       if (anchor?.messageId !== restoredPageAnchorId) restoredPageAnchorId = undefined;
       return anchor;
     };
     const rememberGeometry = () => {
-      if (!geometryOwner || !scrollKey || !historyReady || pendingRestore || cancelledWhileLoading
+      if (!geometryOwner || !scrollKey || !historyReady || !transcriptMeasurable() || pendingRestore || cancelledWhileLoading
         || container.clientWidth <= 0 || container.clientHeight <= 0 || hasPendingPlaceholders()
         || !content.querySelector('[data-thread-history-complete="true"]') && !optionsRef.current.windowReady) return;
       const viewport = container.getBoundingClientRect();
@@ -193,10 +223,25 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       });
     };
     const refreshTopClippedMessage = () => {
-      if (active && historyReady) store.setTopClippedMessageId(scrollKey, latestMessageTopClippedId(container));
+      const measurable = active && historyReady && transcriptMeasurable();
+      if (measurable) store.setTopClippedMessageId(scrollKey, latestMessageTopClippedId(container));
+      // Manual mode also represents our mobile turn anchor, not just a reader
+      // who scrolled away. Ignore reserved blank space only for that anchor.
+      const viewport = container.getBoundingClientRect();
+      const turn = mobileTurnId ? messageElementById(container, mobileTurnId) : null;
+      setMobileTurnFullyVisible(Boolean(measurable && mobileTurnPinned && turn
+        && window.matchMedia("(max-width: 1023px)").matches
+        && !optionsRef.current.historyPages?.hasNewer && !hasPendingPlaceholders()
+        && turn.getBoundingClientRect().top >= viewport.top - EXACT_BOTTOM_GAP_PX
+        && content.getBoundingClientRect().bottom - turnSpace <= viewport.bottom + EXACT_BOTTOM_GAP_PX));
     };
     const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
       if (!active) return;
+      mobileTurnPinned = false;
+      setMobileTurnFullyVisible(false);
+      mobileTurnId = null;
+      turnSpace = 0;
+      content.style.paddingBottom = previousPaddingBottom;
       restoredPageAnchorId = undefined;
       cancelTop();
       cancelFrames();
@@ -209,6 +254,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       container.scrollTo({ top: container.scrollHeight, behavior });
       lastKnownScrollTop = container.scrollTop;
       if (behavior === "auto") scheduleFrame(() => {
+        if (!transcriptMeasurable()) { reconcile(); return; }
         container.scrollTop = container.scrollHeight;
         lastKnownScrollTop = container.scrollTop;
         refreshTopClippedMessage();
@@ -216,12 +262,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const anchorTop = (anchor: SessionScrollAnchor) => {
       const message = messageElementById(container, anchor.messageId);
-      return message ? container.scrollTop + message.getBoundingClientRect().top
+      const rect = message?.getBoundingClientRect();
+      return rect && rect.height > 0 ? container.scrollTop + rect.top
         - container.getBoundingClientRect().top - anchor.offset : null;
     };
     const demandHistory = (direction?: "older" | "newer") => {
       const pages = optionsRef.current.historyPages;
-      if (!active || !historyReady || !pages || pages.loading || pages.failed || pagePending || pendingRestore) return;
+      if (!active || !historyReady || !transcriptMeasurable() || !pages || pages.loading || pages.failed || pagePending || pendingRestore) return;
       const messages = [...content.querySelectorAll<HTMLElement>("[data-message-id]")];
       const first = messages[0];
       const last = messages.at(-1);
@@ -242,10 +289,73 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       pendingHistoryDemand = null;
       pageAnchor = currentReadingAnchor();
       pagePending = true;
-      void pages.load(next).catch(() => undefined).finally(() => { pagePending = false; });
+      void pages.load(next).catch(() => undefined).finally(() => {
+        pagePending = false;
+        if (active) scheduleFrame(reconcile);
+      });
+      return true;
+    };
+    const demandVisibleHistory = () => {
+      const pages = optionsRef.current.historyPages;
+      if (!pages || !transcriptMeasurable()) return;
+      const viewport = container.getBoundingClientRect();
+      // Native keyboard/focus scrolling need not pass through this container's
+      // input listeners. Missing history on screen still needs data, not another
+      // gesture. Recheck after each page, without claiming navigation or follow.
+      for (const direction of ["older", "newer"] as const) {
+        if (!(direction === "older" ? pages.hasOlder : pages.hasNewer)) continue;
+        const gap = content.querySelector<HTMLElement>(`[data-thread-placeholder="history-${direction === "older" ? "prefix" : "suffix"}"]`);
+        const rect = gap?.getBoundingClientRect();
+        if (!rect || rect.height <= 0 || rect.bottom <= viewport.top || rect.top >= viewport.bottom) continue;
+        // A successful no-op must not turn reconciliation into an endless read.
+        if (visibleGapDemand && visibleGapDemand.version === pages.version && visibleGapDemand.direction === direction) return;
+        if (demandHistory(direction)) visibleGapDemand = { version: pages.version, direction };
+        return;
+      }
     };
     const reconcile = () => {
-      if (!active || container.clientHeight === 0) return;
+      if (!active) return;
+      if (!transcriptMeasurable()) {
+        pendingRestore ||= !cancelledWhileLoading;
+        cancelFrames();
+        reserveLoadingGeometry();
+        return;
+      }
+      const mobile = window.matchMedia("(max-width: 1023px)").matches;
+      if (pendingSubmittedMessageId && mobile) {
+        mobileTurnId = pendingSubmittedMessageId;
+        mobileTurnPinned = true;
+      }
+      let turn = mobileTurnId ? messageElementById(container, mobileTurnId) : null;
+      if (mobile && mobileTurnId && !turn) {
+        // OpenCode v2 gives the sent message its own ID: the submitted ID never renders, or its optimistic row
+        // is replaced. Follow the newest user turn that was not already on screen when it was sent.
+        const users = [...container.querySelectorAll<HTMLElement>('[data-message-role="user"][data-message-id]')];
+        const latest = users.at(-1);
+        const latestId = latest ? messageIdForElement(latest) : null;
+        if (latest && latestId && !userTurnIdsAtSubmit.has(latestId)) {
+          turn = latest;
+          mobileTurnId = latestId;
+          if (pendingSubmittedMessageId) pendingSubmittedMessageId = latestId;
+        }
+      }
+      // Reserve only the unfilled part of this turn. The same observer that
+      // handles transcript growth also consumes this space and follows keyboard
+      // resize; no second scrolling owner or timeout is needed.
+      const nextSpace = mobile && turn
+        ? mobileTurnSpace(container.clientHeight, content.getBoundingClientRect().bottom - turnSpace - turn.getBoundingClientRect().top)
+        : 0;
+      if (nextSpace !== turnSpace) {
+        turnSpace = nextSpace;
+        content.style.paddingBottom = `${turnSpace}px`;
+      }
+      if (mobile && mobileTurnPinned && mobileTurnId && !pendingSubmittedMessageId && !hasScrollGesture()) {
+        const top = anchorTop({ messageId: mobileTurnId, offset: 0 });
+        if (top !== null) {
+          container.scrollTop = top;
+          lastKnownScrollTop = container.scrollTop;
+        }
+      }
       if (pendingTop) {
         if (!topLoadReady || !optionsRef.current.historyComplete) return;
         container.scrollTo({ top: 0, behavior: "instant" });
@@ -281,7 +391,8 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         const top = anchorTop({ messageId: pendingSubmittedMessageId, offset: 0 });
         if (top === null) return;
         // Sending is explicit navigation, even while history loads. Align an
-        // oversized prompt's start; a short prompt clamps to the bottom.
+        // oversized prompt's start; desktop short prompts clamp to the bottom.
+        // Mobile has reserved answer space, so both begin at the same anchor.
         pendingSubmittedMessageId = null;
         restoredPageAnchorId = undefined;
         pendingRestore = false;
@@ -293,20 +404,13 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         container.scrollTop = top;
         lastKnownScrollTop = container.scrollTop;
         const clipped = latestMessageTopClippedId(container);
-        if (isExactlyAtBottom(container)) store.setStickyBottom(scrollKey, clipped);
+        if (mobile && mobileTurnPinned && mobileTurnId) store.setManualScroll(scrollKey, container.scrollTop, clipped, { messageId: mobileTurnId, offset: 0 });
+        else if (isExactlyAtBottom(container)) store.setStickyBottom(scrollKey, clipped);
         else store.setManualScroll(scrollKey, container.scrollTop, clipped, readingAnchor(container));
+        refreshTopClippedMessage();
         return;
       }
-      if (!historyReady) {
-        // Reserve the last known extent while Suspense owns the transcript,
-        // without overwriting the real reading position with a loading clamp.
-        const saved = readState();
-        if (pendingRestore && saved.geometry && saved.geometry.owner === geometryOwner && content.querySelector("[data-thread-loading]")) {
-          container.scrollTop = saved.mode === "manual" ? saved.scrollTop : container.scrollHeight;
-          lastKnownScrollTop = container.scrollTop;
-        }
-        return;
-      }
+      if (!historyReady) return;
       const saved = readState();
       if (pendingRestore) {
         if (saved.mode === "manual") {
@@ -325,8 +429,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
           scrollToBottom();
         }
       } else if (!cancelledWhileLoading) {
-        if (saved.mode === "stickyBottom") {
-          if (!hasScrollGesture() && !isExactlyAtBottom(container)) scrollToBottom();
+        if (saved.mode === "stickyBottom" && !hasScrollGesture()) {
+          if (!isExactlyAtBottom(container)) scrollToBottom();
+          // The transcript shrank and the browser already clamped the view to its end. That
+          // clamp's scroll event can arrive after a card grew again (a computer step swapping
+          // its picture or prompt), and must not read as the reader leaving the latest message.
+          else lastKnownScrollTop = container.scrollTop;
         }
       }
       refreshTopClippedMessage();
@@ -338,6 +446,15 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         }
       }
       rememberGeometry();
+      demandVisibleHistory();
+      const pages = optionsRef.current.historyPages;
+      if (pages?.hasOlder && !pages.hasNewer && !pages.loading && !pages.failed && !pagePending
+        && !pendingRestore && optionsRef.current.windowReady && readState().mode === "stickyBottom"
+        && !hasScrollGesture() && container.clientWidth > 0 && container.scrollHeight <= container.clientHeight
+        && !hasPendingPlaceholders() && (viewportFillVersion === null || viewportFillVersion.version !== pages.version)) {
+        viewportFillVersion = { version: pages.version };
+        demandHistory("older");
+      }
       if (pendingHistoryDemand) {
         const direction = pendingHistoryDemand;
         pendingHistoryDemand = null;
@@ -346,25 +463,27 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const scrollToTop = async () => {
       if (!active) return false;
+      mobileTurnPinned = false;
+      setMobileTurnFullyVisible(false);
       restoredPageAnchorId = undefined;
-      cancelTop();
+      cancelRestoration();
       cancelFrames();
-      optionsRef.current.historyPages?.cancelRestore?.();
       container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
       pendingRestore = false;
       pendingSubmittedMessageId = null;
-      pageAnchor = undefined;
       lastGestureAt = -Infinity;
       topLoadReady = false;
-      const position = new Promise<boolean>((resolve) => { pendingTop = resolve; });
+      let finish = (_completed: boolean) => {};
+      const position = new Promise<boolean>((resolve) => { finish = resolve; pendingTop = resolve; });
       try {
         await optionsRef.current.ensureFullHistory?.();
+        if (!active || pendingTop !== finish) return false;
         topLoadReady = true;
         reconcile();
         return await position;
       } catch (error) {
+        if (!active || pendingTop !== finish) return false;
         cancelTop();
-        if (!active) return false;
         throw error;
       }
     };
@@ -372,12 +491,14 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       if (!active) return;
       const nested = target instanceof Element ? target.closest("[data-scrollable]") : null;
       if (nested && nested !== container) return;
+      mobileTurnPinned = false;
       cancelTop();
+      setMobileTurnFullyVisible(false);
       container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
-      optionsRef.current.historyPages?.cancelRestore?.();
       // Pointer presses may just be clicks. Defer cancelling restoration until
       // they actually scroll; release without scrolling resumes pending follow.
       if (activePointerId === null) {
+        optionsRef.current.historyPages?.cancelRestore?.();
         restoredPageAnchorId = undefined;
         cancelledWhileLoading ||= pendingRestore;
         pendingRestore = false;
@@ -395,19 +516,28 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     };
     const handleScroll: UIEventHandler<HTMLDivElement> = () => {
       if (!active) return;
+      const measurable = transcriptMeasurable();
       // Layout clamping and our own anchoring also dispatch scroll events. Only
       // actual input may replace the saved reading position or change its mode.
       if (hasScrollGesture() && container.scrollTop !== lastKnownScrollTop) {
+        mobileTurnPinned = false;
+        setMobileTurnFullyVisible(false);
         // Trackpad momentum can outlast the original wheel/touch event.
         lastGestureAt = Date.now();
         if (activePointerId !== null) {
+          if (!pointerScrolled) {
+            cancelTop();
+            optionsRef.current.historyPages?.cancelRestore?.();
+            container.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
+          }
           pointerScrolled = true;
           restoredPageAnchorId = undefined;
         }
         pendingRestore = false;
         pendingSubmittedMessageId = null;
-        if (!historyReady) {
+        if (!historyReady || !measurable) {
           cancelledWhileLoading = true;
+          cancelFrames();
           lastKnownScrollTop = container.scrollTop;
           return;
         }
@@ -423,6 +553,12 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         if (pagePending || pageAnchor) pageAnchor = currentReadingAnchor();
         demandHistory(container.scrollTop > lastKnownScrollTop ? "newer" : "older");
       } else {
+        if (!measurable) {
+          pendingRestore ||= !cancelledWhileLoading;
+          cancelFrames();
+          lastKnownScrollTop = container.scrollTop;
+          return;
+        }
         const saved = readState();
         if (!pendingRestore && historyReady && container.scrollTop !== lastKnownScrollTop) {
           // Native anchoring can move scrollTop when a diagram/image expands
@@ -444,6 +580,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       }
       lastKnownScrollTop = container.scrollTop;
       rememberGeometry();
+      demandVisibleHistory();
     };
     const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
       if (!active) return;
@@ -453,6 +590,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       restoredPageAnchorId = undefined;
       const top = anchorTop(anchor);
       if (top === null) return;
+      cancelRestoration();
       cancelFrames();
       pendingRestore = false;
       pendingSubmittedMessageId = null;
@@ -516,8 +654,10 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
           const key = JSON.stringify([scrollKey, messageId]);
           if (!submittedMessagesRef.current.has(key)) {
             submittedMessagesRef.current.add(key);
-            cancelTop();
+            cancelRestoration();
             pendingSubmittedMessageId = messageId;
+            userTurnIdsAtSubmit = new Set([...container.querySelectorAll<HTMLElement>('[data-message-role="user"][data-message-id]')]
+              .flatMap((element) => { const id = messageIdForElement(element); return id && id !== messageId ? [id] : []; }));
             cancelFrames();
           }
         }
@@ -525,13 +665,20 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       },
       handleScroll,
       markScrollGesture,
-      scrollToBottom,
+      scrollToBottom: (behavior) => {
+        if (!active) return;
+        cancelRestoration();
+        const pages = optionsRef.current.historyPages;
+        if (pages?.hasNewer) void pages.load("latest").catch(() => undefined);
+        scrollToBottom(behavior);
+      },
       scrollToTop,
       jumpToStartOfMessage,
     };
 
     return () => {
       active = false;
+      setMobileTurnFullyVisible(false);
       cancelTop();
       cancelFrames();
       if (smoothJump) container.scrollTo({ top: container.scrollTop, behavior: "instant" });
@@ -544,6 +691,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
       window.removeEventListener("pagehide", flushSessionScrollState);
       document.removeEventListener("visibilitychange", handleVisibility);
       container.style.overflowAnchor = previousOverflowAnchor;
+      content.style.paddingBottom = previousPaddingBottom;
       controllerRef.current = null;
       flushSessionScrollState();
     };
@@ -551,7 +699,7 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
 
   useLayoutEffect(() => {
     controllerRef.current?.update(options.historyReady, options.submittedMessageId);
-  }, [scrollKey, viewOwner, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages, options.historyComplete, options.historyPages?.version]);
+  }, [scrollKey, viewOwner, containerRef, contentRef, options.historyReady, options.submittedMessageId, options.renderedMessages, options.historyComplete, options.historyPages?.version, options.historyPages?.loading]);
 
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>((event) => {
     if (controllerRef.current?.sessionId === scrollKey) controllerRef.current.handleScroll(event);
@@ -562,8 +710,6 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     if (controllerRef.current?.sessionId === scrollKey) {
       containerRef.current?.dispatchEvent(new Event(SESSION_SCROLL_NAVIGATION_EVENT));
-      const pages = optionsRef.current.historyPages;
-      if (pages?.hasNewer) void pages.load("latest").catch(() => undefined);
       controllerRef.current.scrollToBottom(behavior);
     }
   }, [scrollKey, containerRef]);
@@ -583,5 +729,5 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     }
   }, [scrollKey, options.historyReady, options.submittedMessageId]);
 
-  return { handleScroll, markScrollGesture, scrollToBottom, scrollToTop, jumpToLatest, jumpToStartOfMessage, refresh };
+  return { handleScroll, markScrollGesture, scrollToBottom, scrollToTop, jumpToLatest, jumpToStartOfMessage, refresh, mobileTurnFullyVisible };
 }

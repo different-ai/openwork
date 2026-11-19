@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { promisify } from "node:util";
 import { createAndSelectWorkspace, quitDesktop, signInDesktopAs } from "@openwork/behaviors";
@@ -48,6 +48,8 @@ export interface ReleasedLaunch extends AsyncDisposable {
   rootText(): Promise<string>;
   state(): Promise<AppStateProbe>;
   exceptions(): RendererException[];
+  /** Renderer console warnings, errors and exceptions seen so far, for evidence. */
+  consoleLines(): string[];
   /** Ask Chromium to close the browser the way a quit does, then make sure the process is gone. */
   quit(): Promise<void>;
 }
@@ -75,11 +77,14 @@ function exceptionFrom(params: unknown): RendererException | null {
  * second session on the same page target. Enabling the Runtime domain replays
  * exceptions recorded before the session attached.
  */
-async function observeRendererExceptions(surface: AttachedSurface) {
+export async function observeRendererExceptions(surface: AttachedSurface) {
   const debuggerUrl = surface.client.webSocketDebuggerUrl;
   if (!debuggerUrl) throw new Error("Renderer exception witness needs a page debugger URL");
   const socket = new WebSocket(debuggerUrl);
   const exceptions: RendererException[] = [];
+  // Renderer warnings and errors, kept as evidence: a swallowed failure (for
+  // example a workspace create that never lands) only ever reaches the console.
+  const consoleLines: string[] = [];
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("Renderer exception witness did not attach")), 15_000);
     socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} })));
@@ -95,17 +100,33 @@ async function observeRendererExceptions(surface: AttachedSurface) {
         if (message.error) reject(new Error("Runtime.enable failed for the exception witness"));
         else resolve();
       }
+      if (message.method === "Runtime.consoleAPICalled") {
+        const line = consoleLineFrom(message.params);
+        if (line) consoleLines.push(line);
+        return;
+      }
       if (message.method !== "Runtime.exceptionThrown") return;
       const exception = exceptionFrom(message.params);
-      if (exception) exceptions.push(exception);
+      if (exception) {
+        exceptions.push(exception);
+        consoleLines.push(`[${new Date().toISOString()}] exception ${exception.text} ${exception.description}`);
+      }
     });
   });
   return {
     exceptions,
+    consoleLines,
     close() {
       socket.close();
     },
   };
+}
+
+function consoleLineFrom(params: unknown): string | null {
+  if (!isRecord(params) || (params.type !== "error" && params.type !== "warning")) return null;
+  const args = Array.isArray(params.args) ? params.args : [];
+  const text = args.map((arg) => (isRecord(arg) ? readString(arg.description) || readString(arg.value) || String(arg.value ?? "") : "")).join(" ");
+  return `[${new Date().toISOString()}] ${params.type} ${text}`;
 }
 
 function pidIsAlive(pid: number): boolean {
@@ -117,7 +138,7 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
-async function waitUntilGone(pid: number, timeoutMs: number): Promise<boolean> {
+export async function waitUntilGone(pid: number, timeoutMs: number): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!pidIsAlive(pid)) return true;
@@ -138,12 +159,36 @@ function parseActivation(value: unknown): { activatedAt: string; denBaseUrl: str
   return activatedAt && denBaseUrl ? { activatedAt, denBaseUrl } : null;
 }
 
+/** Version of the executable that is actually running, from its main process. */
+export async function readBuildInfo(surface: AttachedSurface): Promise<AppBuildInfo | null> {
+  return parseBuildInfo(await evaluateOnSurface(surface, async (): Promise<unknown> => {
+    const electron: unknown = Reflect.get(window, "__OPENWORK_ELECTRON__");
+    if (typeof electron !== "object" || electron === null) return null;
+    const invoke: unknown = Reflect.get(electron, "invokeDesktop");
+    if (typeof invoke !== "function") return null;
+    return invoke("appBuildInfo");
+  }, { awaitPromise: true, timeoutMs: 15_000 }));
+}
+
+/** Activation stamp the renderer received through the desktop bootstrap. */
+export async function readActivation(surface: AttachedSurface): Promise<{ activatedAt: string; denBaseUrl: string } | null> {
+  return parseActivation(await evaluateOnSurface(surface, (): unknown => {
+    const electron: unknown = Reflect.get(window, "__OPENWORK_ELECTRON__");
+    if (typeof electron !== "object" || electron === null) return null;
+    const meta: unknown = Reflect.get(electron, "meta");
+    if (typeof meta !== "object" || meta === null) return null;
+    const bootstrap: unknown = Reflect.get(meta, "desktopBootstrap");
+    if (typeof bootstrap !== "object" || bootstrap === null) return null;
+    return Reflect.get(bootstrap, "enterpriseActivation");
+  }));
+}
+
 /**
  * The local host resolves the executable from the ambient
  * OPENWORK_EVAL_ELECTRON_BINARY at spawn time; an update scenario needs two
  * executables in one test, so the override is scoped to one spawn here.
  */
-async function withElectronBinary<T>(binary: string, run: () => Promise<T>): Promise<T> {
+export async function withElectronBinary<T>(binary: string, run: () => Promise<T>): Promise<T> {
   const previous = process.env.OPENWORK_EVAL_ELECTRON_BINARY;
   process.env.OPENWORK_EVAL_ELECTRON_BINARY = binary;
   try {
@@ -155,7 +200,7 @@ async function withElectronBinary<T>(binary: string, run: () => Promise<T>): Pro
 }
 
 /** The bundle electron-updater replaces in place: the nearest `.app` ancestor of the executable. */
-function appBundleOf(binary: string): string | null {
+export function appBundleOf(binary: string): string | null {
   for (let dir = dirname(binary); dir !== dirname(dir); dir = dirname(dir)) {
     if (dir.endsWith(".app")) return dir;
   }
@@ -172,7 +217,7 @@ function appBundleOf(binary: string): string | null {
  * clones through APFS clonefile(2), so a 250 MB bundle costs neither time nor
  * disk; on other volumes cp falls back to a regular copy.
  */
-async function pristineCopy(binary: string, root: string): Promise<string> {
+export async function pristineCopy(binary: string, root: string): Promise<string> {
   const bundle = appBundleOf(binary);
   if (!bundle) return binary;
   await mkdir(root, { recursive: true });
@@ -199,7 +244,7 @@ async function shipItIsRunning(): Promise<boolean> {
   }
 }
 
-async function waitForShipItIdle(timeoutMs: number): Promise<void> {
+export async function waitForShipItIdle(timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline && await shipItIsRunning()) {
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -268,25 +313,12 @@ async function launchReleased(host: Host, name: string, den: Den, activatedAt: s
       const flavor: unknown = Reflect.get(distribution, "flavor");
       return flavor === "public" || flavor === "cloud" || flavor === "enterprise" ? flavor : null;
     }),
-    buildInfo: async () => parseBuildInfo(await evaluateOnSurface(attached, async (): Promise<unknown> => {
-      const electron: unknown = Reflect.get(window, "__OPENWORK_ELECTRON__");
-      if (typeof electron !== "object" || electron === null) return null;
-      const invoke: unknown = Reflect.get(electron, "invokeDesktop");
-      if (typeof invoke !== "function") return null;
-      return invoke("appBuildInfo");
-    }, { awaitPromise: true, timeoutMs: 15_000 })),
-    activation: async () => parseActivation(await evaluateOnSurface(attached, (): unknown => {
-      const electron: unknown = Reflect.get(window, "__OPENWORK_ELECTRON__");
-      if (typeof electron !== "object" || electron === null) return null;
-      const meta: unknown = Reflect.get(electron, "meta");
-      if (typeof meta !== "object" || meta === null) return null;
-      const bootstrap: unknown = Reflect.get(meta, "desktopBootstrap");
-      if (typeof bootstrap !== "object" || bootstrap === null) return null;
-      return Reflect.get(bootstrap, "enterpriseActivation");
-    })),
+    buildInfo: () => readBuildInfo(attached),
+    activation: () => readActivation(attached),
     rootText: () => evaluateOnSurface(attached, () => document.getElementById("root")?.innerText ?? ""),
     state: () => probeAppStateOnSurface(attached, { timeoutMs: 8_000 }),
     exceptions: () => [...observed.exceptions],
+    consoleLines: () => [...observed.consoleLines],
     async quit() {
       if (stopped) return;
       // Browser.close runs Chromium's normal shutdown, which flushes renderer
@@ -322,7 +354,8 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
     newProfileDir(label: string): string {
       const root = seed.tmpPath(`released-${label}`);
       ownedProfiles.push(root);
-      return join(root, "profile");
+      // Named after the label: the local host keeps each log as <profile dir name>-electron.log.
+      return join(root, label);
     },
     async launch(options: LaunchOptions): Promise<ReleasedLaunch> {
       launchIndex += 1;
@@ -342,7 +375,7 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
       return createAndSelectWorkspace(launch.app, { path: workspacePath });
     },
     [Symbol.asyncDispose]: async () => {
-      for (const launch of launches.reverse()) {
+      for (const launch of [...launches].reverse()) {
         try {
           await launch[Symbol.asyncDispose]();
         } catch {
@@ -350,6 +383,17 @@ export async function releasedEnterpriseActivatedWorld(seed: Seed) {
         }
       }
       await waitForShipItIdle(60_000);
+      // The local host keeps each electron.log in OPENWORK_EVAL_SURFACE_LOGS_DIR;
+      // the renderer side only reaches the console, so keep that beside it. A
+      // swallowed failure (a workspace create that never lands) shows up here.
+      const keptLogs = process.env.OPENWORK_EVAL_SURFACE_LOGS_DIR?.trim();
+      if (keptLogs) {
+        await mkdir(keptLogs, { recursive: true }).catch(() => undefined);
+        for (const launch of launches) {
+          const lines = [`--- ${basename(launch.binary)} on ${basename(dirname(launch.profileDir))}`, ...launch.consoleLines()].join("\n");
+          await appendFile(join(keptLogs, "renderer.log"), `${lines}\n`).catch(() => undefined);
+        }
+      }
       for (const profile of ownedProfiles) await rm(profile, { recursive: true, force: true }).catch(() => undefined);
     },
   };

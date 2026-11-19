@@ -1,0 +1,218 @@
+{
+  "compactifai": {
+    "id": "compactifai",
+    "env": [
+      "COMPACTIFAI_API_KEY"
+    ],
+    "npm": "@ai-sdk/openai-compatible",
+    "api": "https://api.compactif.ai/v1",
+    "name": "CompactifAI",
+    "doc": "https://docs.compactif.ai/pricing/",
+    "models": {
+      "glm-5-3": {
+        "id": "glm-5-3",
+        "name": "GLM 5.3",
+        "description": "Compressed GLM 5.3 chat model published by zai-org with tool calling, structured output, prompt caching, and always-on reasoning",
+        "family": "glm",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "high",
+              "max"
+            ]
+          }
+        ],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-08-29",
+        "last_updated": "2026-10-29",
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "limit": {
+          "context": 1000000,
+          "output": 128000
+        },
+        "cost": {
+          "input": 0.2,
+          "output": 0.64,
+          "cache_read": 0.018
+        }
+      },
+      "glm-5-2": {
+        "id": "glm-5-2",
+        "name": "GLM 5.2",
+        "description": "Compressed GLM 5.2 chat model published by zai-org with tool calling, structured output, prompt caching, and toggleable reasoning",
+        "family": "glm",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "none",
+              "high",
+              "xhigh"
+            ]
+          }
+        ],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-07-15",
+        "last_updated": "2026-10-29",
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "limit": {
+          "context": 1000000,
+          "output": 128000
+        },
+        "cost": {
+          "input": 0.17,
+          "output": 0.54,
+          "cache_read": 0.0153
+        }
+      },
+      "quasar-1-2-358b": {
+        "id": "quasar-1-2-358b",
+        "name": "Quasar 1.2 358B",
+        "description": "Compressed 358B-parameter GLM-based chat model from Multiverse Computing with tool calling, structured output, prompt caching, and always-on reasoning",
+        "family": "quasar",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "high",
+              "max"
+            ]
+          }
+        ],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-10-07",
+        "last_updated": "2026-10-29",
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "limit": {
+          "context": 1000000,
+          "output": 128000
+        },
+        "cost": {
+          "input": 0.11,
+          "output": 0.33,
+          "cache_read": 0.0099
+        }
+      },
+      "carina-60b": {
+        "id": "carina-60b",
+        "name": "Carina 60B",
+        "description": "Compressed 60B-parameter chat model (GPT-OSS architecture) from Multiverse Computing that handles complex tasks at very low cost, with always-on reasoning",
+        "family": "carina",
+        "attachment": false,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "effort",
+            "values": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        ],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-07-15",
+        "last_updated": "2026-10-29",
+        "modalities": {
+          "input": [
+            "text"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "limit": {
+          "context": 131072,
+          "output": 32768
+        },
+        "cost": {
+          "input": 0.022,
+          "output": 0.085
+        }
+      },
+      "qwen-3-8-27b": {
+        "id": "qwen-3-8-27b",
+        "name": "Qwen 3.8 27B",
+        "description": "Compressed multimodal Qwen 3.8 27B chat model accepting image and video input, with tool calling, structured output, prompt caching, and toggleable reasoning",
+        "family": "qwen",
+        "attachment": true,
+        "reasoning": true,
+        "reasoning_options": [
+          {
+            "type": "toggle"
+          },
+          {
+            "type": "effort",
+            "values": [
+              "none",
+              "low",
+              "medium",
+              "xhigh"
+            ]
+          }
+        ],
+        "tool_call": true,
+        "structured_output": true,
+        "temperature": true,
+        "release_date": "2026-08-17",
+        "last_updated": "2026-10-29",
+        "modalities": {
+          "input": [
+            "text",
+            "image",
+            "video"
+          ],
+          "output": [
+            "text"
+          ]
+        },
+        "limit": {
+          "context": 131072,
+          "output": 32768
+        },
+        "cost": {
+          "input": 0.09,
+          "output": 0.44,
+          "cache_read": 0.0171
+        }
+      }
+    }
+  }
+}

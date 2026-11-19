@@ -3,9 +3,12 @@ import { findMarketplaceByExternalKey } from "./store.js"
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
+import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { OrgRouteVariables } from "../shared.js"
 import {
   accessGrantListResponseSchema,
@@ -110,13 +113,18 @@ import {
   pluginMutationResponseSchema,
   pluginParamsSchema,
   pluginUpdateSchema,
+  configObjectExternalKeySchema,
+  resolvedPluginsQuerySchema,
+  resolvedPluginsResponseSchema,
   resourceAccessGrantWriteSchema,
   teamParamsSchema,
   teamPluginAccessListResponseSchema,
 } from "./schemas.js"
-import { isPluginArchOrgAdmin, requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
+import { pluginArchHasPermission, requirePluginArchCapability, type PluginArchActorContext, PluginArchAuthorizationError } from "./access.js"
 import { pluginArchRoutePaths } from "./contracts.js"
-import { ensureOrganizationAdmin, orgAccessFailureStatus } from "../shared.js"
+import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "../shared.js"
+import { ensureFreshPrivilegedSession } from "../../../privileged-session.js"
+import { primaryReadsMiddleware } from "../../../read-routing.js"
 import { isAgentOAuthClientConnection, listMemberUsableConnectionFacts } from "../mcp-connections.js"
 import { listWorkflowLibraryItems } from "../../../workflow-library.js"
 import {
@@ -163,6 +171,7 @@ import {
   listMeLibraryPluginItems,
   listMeEffectivePluginAccess,
   listPluginMemberships,
+  listResolvedPlugins,
   listPlugins,
   listResourceAccess,
   listTeamEffectivePluginAccess,
@@ -182,6 +191,7 @@ import {
   removePluginMembership,
   retryConnectorSyncEvent,
   syncConnectorInstanceNow,
+  setConfigObjectExternalKey,
   setConfigObjectLifecycle,
   setConnectorInstanceLifecycle,
   setMarketplaceLifecycle,
@@ -197,6 +207,11 @@ import {
 
 type OrgContext = Context<{ Variables: OrgRouteVariables }>
 type PluginCreateBody = z.infer<typeof pluginCreateSchema>
+
+const externalKeyConflictSchema = z.object({
+  error: z.string(),
+  message: z.string().optional(),
+}).meta({ ref: "PluginArchExternalKeyConflictError" })
 
 const marketplaceConflictSchema = z.object({
   error: z.string(),
@@ -225,12 +240,26 @@ function actorContext(c: OrgContext): PluginArchActorContext {
     throw new PluginArchRouteFailure(404, "organization_not_found", "Organization context not found.")
   }
 
+  const memberPermissions = c.get("memberPermissions")
   return {
     ...(c.get("apiKey") ? { apiKey: true } : {}),
+    ...(memberPermissions ? { memberPermissions } : {}),
     memberTeams: c.get("memberTeams") ?? [],
     organizationContext,
     session: c.get("session"),
   }
+}
+
+/**
+ * A non-sensitive permission plus today's recent sign-in requirement for this
+ * specific action (the key itself does not require one everywhere it is used).
+ */
+async function requirePermissionWithFreshSession(c: OrgContext, key: PermissionKey) {
+  const permission = await requirePermission(c, key)
+  if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
+  const fresh = ensureFreshPrivilegedSession(c)
+  if (!fresh.ok) return c.json(fresh.response, 403)
+  return null
 }
 
 function routeErrorResponse(c: OrgContext, error: unknown) {
@@ -252,9 +281,11 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
     if (isAgentPluginMcpSecretSetup({ apiKey: body.apiKey, oauthClient: body.oauthClient, sessionId: c.get("session")?.id })) {
       return c.json({ error: "invalid_request", message: "Plugin MCP credentials cannot be set from the agent. Add them in the OpenWork Cloud dashboard under Connections." }, 400)
     }
-    const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can configure plugin MCP requirements.")
-    if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
-    return c.json({ ok: true, item: await configureMarketplacePluginMcpRequirement({
+    const denied = await requirePermissionWithFreshSession(c, "connections.manage")
+    if (denied) return denied
+    if (c.get("apiKey") && body.apiKey) return c.json(SECURE_ENTRY_REQUIRED, 400)
+    const { awaitingKey, connectionRow, ...item } = await configureMarketplacePluginMcpRequirement({
+      awaitKey: true,
       authType: body.authType,
       apiKey: body.apiKey,
       configObjectId: body.configObjectId,
@@ -263,7 +294,9 @@ async function configurePluginMcpConnectionResponse(c: OrgContext) {
       oauthClient: body.oauthClient,
       pluginId: normalizeDenTypeId("plugin", params.pluginId),
       serverName: body.serverName,
-    }) })
+    })
+    const prompt = awaitingKey ? pluginConnectionKeyPrompt({ pluginId: item.binding.pluginId, configObjectId: item.binding.configObjectId, serverName: item.binding.serverName, connection: connectionRow }) : null
+    return c.json({ ok: true, item, ...(prompt ? credentialPromptResponseFields(prompt) : {}) })
   } catch (error) {
     return routeErrorResponse(c, error)
   }
@@ -281,7 +314,10 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
-  routeApp[method](path, orgMemberRoute(), ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
+  // A write route reads back what it wrote (often through shared helpers), so
+  // all of its reads go to the primary instead of a lagging replica.
+  const readScope = method === "get" ? [] : [primaryReadsMiddleware]
+  routeApp[method](path, orgMemberRoute(), ...readScope, ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -393,7 +429,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     async (c: OrgContext) => {
       try {
         const context = actorContext(c)
-        await requirePluginArchCapability(context, "config_object.create", false)
+        await requirePluginArchCapability(context, "config_object.create")
         const body = validJson<any>(c)
         const item = await createConfigObject({
           context,
@@ -480,6 +516,29 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
+  // Registered before :versionId so "latest" is not validated as a version id.
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
+    paramValidator(configObjectParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Get latest config object version",
+      description: "Returns the latest config object version by created_at and id ordering.",
+      responses: {
+        200: jsonResponse("Latest config object version returned successfully.", configObjectVersionDetailResponseSchema),
+        400: jsonResponse("The latest-version path parameters were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
+        404: jsonResponse("The config object version could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        return c.json({ item: await getLatestConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c) }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectVersion,
     paramValidator(configObjectVersionParamsSchema),
     describeRoute({
@@ -502,23 +561,27 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
+  withPluginArchOrgContext(app, "put", pluginArchRoutePaths.configObjectKey,
     paramValidator(configObjectParamsSchema),
+    jsonValidator(configObjectExternalKeySchema),
     describeRoute({
       tags: ["Config Objects"],
-      summary: "Get latest config object version",
-      description: "Returns the latest config object version by created_at and id ordering.",
+      summary: "Set config object key",
+      description: "Sets or clears the stable key a configuration import finds this config object by. The key is unique per organization and never follows the title.",
       responses: {
-        200: jsonResponse("Latest config object version returned successfully.", configObjectVersionDetailResponseSchema),
-        400: jsonResponse("The latest-version path parameters were invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to view config object versions.", unauthorizedSchema),
-        404: jsonResponse("The config object version could not be found.", notFoundSchema),
+        200: jsonResponse("Config object key updated successfully.", configObjectMutationResponseSchema),
+        400: jsonResponse("The key was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to manage config objects.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to manage this config object.", forbiddenSchema),
+        404: jsonResponse("The config object could not be found.", notFoundSchema),
+        409: jsonResponse("Another config object in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
-        return c.json({ item: await getLatestConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c) }) })
+        const body = validJson<any>(c)
+        return c.json({ ok: true, item: await setConfigObjectExternalKey({ configObjectId: params.configObjectId, context: actorContext(c), externalKey: body.externalKey }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -706,7 +769,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       const query = validQuery<any>(c)
-      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, limit: query.limit, q: query.q, status: query.status }))
+      return c.json(await listPlugins({ context: actorContext(c), cursor: query.cursor, includeAccess: query.includeAccess, includeTotal: query.includeTotal, includeFacets: query.includeFacets, limit: query.limit, q: query.q, name: query.name, status: query.status, teamId: query.teamId, memberId: query.memberId, ownerId: query.ownerId }))
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.plugins,
@@ -714,7 +777,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Create plugin",
-      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.",
+      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately. Connection setup is for owners and admins; other members may reference only a connection they added themselves.",
       responses: {
         201: jsonResponse("Plugin created successfully.", pluginMutationResponseSchema),
         400: jsonResponse("The plugin creation request was invalid.", invalidRequestSchema),
@@ -727,12 +790,12 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       try {
         const context = actorContext(c)
         const body = validJson<PluginCreateBody>(c)
-        await requirePluginArchCapability(context, "plugin.create", body.orgWide === true || Boolean(body.marketplaceId))
-        if (body.orgWide === true && !isPluginArchOrgAdmin(context)) {
+        await requirePluginArchCapability(context, "plugin.create")
+        if (body.orgWide === true && !(await pluginArchHasPermission(context, "sharing.share_org_wide"))) {
           throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
         }
         if ((body.components?.length ?? 0) > 0) {
-          await requirePluginArchCapability(context, "config_object.create", false)
+          await requirePluginArchCapability(context, "config_object.create")
         }
         const sessionId = c.get("session")?.id
         if (body.components?.some((component) => component.connection && isAgentPluginMcpSecretSetup({
@@ -794,13 +857,14 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         401: jsonResponse("The caller must be signed in to update plugins.", unauthorizedSchema),
         403: jsonResponse("The caller lacks permission to edit this plugin.", forbiddenSchema),
         404: jsonResponse("The plugin could not be found.", notFoundSchema),
+        409: jsonResponse("Another plugin in the organization already has this key (external_key_taken).", externalKeyConflictSchema),
       },
     }),
     async (c: OrgContext) => {
       try {
         const params = validParam<any>(c)
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, name: body.name, pluginId: params.pluginId }) })
+        return c.json({ ok: true, item: await updatePlugin({ context: actorContext(c), description: body.description, externalKey: body.externalKey, name: body.name, pluginId: params.pluginId }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -907,7 +971,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Get resolved plugin",
-      description: "Lists active plugin memberships with the current config object projection for each item.",
+      description: "Lists active plugin memberships with the current config object projection for each item. Not recorded in organization audit logs: clients call it once per plugin on every load and sync, so it is excluded from audit capture as a high-volume read.",
       responses: {
         200: jsonResponse("Resolved plugin returned successfully.", pluginMembershipListResponseSchema),
         400: jsonResponse("The plugin path parameters were invalid.", invalidRequestSchema),
@@ -928,6 +992,23 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       } catch (error) {
         return routeErrorResponse(c, error)
       }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.resolvedPlugins,
+    queryValidator(resolvedPluginsQuerySchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Get resolved plugins",
+      description: "Returns GET /v1/plugins/:pluginId/resolved for up to 100 plugins in one request, so a client loading every plugin's contents makes one call instead of one per plugin. Each visible plugin's body is the one the single-plugin route returns; plugins the caller cannot view or that do not exist are listed under failures with that route's error. Not recorded in organization audit logs, like the single-plugin route.",
+      responses: {
+        200: jsonResponse("Resolved plugins returned successfully.", resolvedPluginsResponseSchema),
+        400: jsonResponse("The plugin ids were invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to view resolved plugins.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      const query = validQuery<z.infer<typeof resolvedPluginsQuerySchema>>(c)
+      return c.json(await listResolvedPlugins({ context: actorContext(c), pluginIds: query.pluginIds }))
     })
 
   withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginMcpConnections,
@@ -965,7 +1046,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const body = validJson<{
           githubUrl: string
         }>(c)
-        return c.json({ ok: true, item: await previewGithubPluginMcpImport({ githubUrl: body.githubUrl }) })
+        return c.json({ ok: true, item: await previewGithubPluginMcpImport({ context: actorContext(c), githubUrl: body.githubUrl }) })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -1181,8 +1262,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     }),
     async (c: OrgContext) => {
       try {
-        const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
-        if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        const denied = await requirePermissionWithFreshSession(c, "marketplaces.manage")
+        if (denied) return denied
         if (c.req.header("If-Match") || c.req.header("If-None-Match")) return c.json({ error: "unsupported_precondition" }, 400)
         const context = actorContext(c)
         const { externalKey } = validParam<z.infer<typeof externalKeyParamsSchema>>(c)
@@ -1215,8 +1296,8 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) } }),
     async (c: OrgContext) => {
       try {
-        const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
-        if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        const denied = await requirePermissionWithFreshSession(c, "marketplaces.manage")
+        if (denied) return denied
         const context = actorContext(c)
         const { externalKey } = validParam<z.infer<typeof externalKeyParamsSchema>>(c)
         const existing = await findMarketplaceByExternalKey(context, externalKey)

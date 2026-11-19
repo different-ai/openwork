@@ -16,6 +16,7 @@ import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, safeStringify } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { useUpdateCheckRequestStore } from "./update-check-request";
+import { updateAnalytics } from "../../../../app/lib/analytics";
 
 export type SettingsUpdateStatus = {
   state: "idle" | "checking" | "available" | "blocked" | "downloading" | "ready" | "error";
@@ -56,7 +57,7 @@ type UseElectronUpdaterStateOptions = {
   updateAutoCheck: boolean;
   updateAutoDownload: boolean;
   /** False until the organization's update policy can be honoured (activation done, desktop config resolved). */
-  updatePolicyKnown: boolean;
+  allowedVersionsKnown: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   refreshDesktopConfig: () => Promise<DenDesktopConfig>;
   setError: (message: string | null) => void;
@@ -162,7 +163,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     onReleaseChannelChange,
     updateAutoCheck,
     updateAutoDownload,
-    updatePolicyKnown,
+    allowedVersionsKnown,
     desktopConfig,
     refreshDesktopConfig,
     setError,
@@ -250,10 +251,12 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       .getChannel()
       .then(async (state) => {
         if (cancelled) return;
+        updateAnalytics.launched(state.currentVersion ?? null);
         dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== policyReleaseChannel && bridge.setChannel) {
           const nextState = await bridge.setChannel(policyReleaseChannel);
           if (cancelled) return;
+          updateAnalytics.launched(nextState.currentVersion ?? null);
           dispatchEnvState({ type: "app-version", appVersion: nextState.currentVersion ?? null });
           if (nextState.channel && nextState.channel !== policyReleaseChannel) {
             onReleaseChannelChange(nextState.channel);
@@ -296,6 +299,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.download) {
       const message = "Electron updater downloads are available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "download");
       setUpdateStatus({ state: "error", message, failedAction: "download" });
       setError(message);
       return;
@@ -310,6 +314,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     ).catch((error: unknown) => {
       if (isCurrentReleaseChannel()) {
         const message = describeError(error);
+        updateAnalytics.failed(appVersion, "download");
         setUpdateStatus({
           state: "error",
           message,
@@ -357,6 +362,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
         const message = result?.reason ?? "Update download failed.";
+        updateAnalytics.failed(appVersion, "download");
         setUpdateStatus({
           state: "error",
           message,
@@ -378,6 +384,8 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }
       availableReleaseChannelRef.current = null;
       downloadedReleaseChannelRef.current = releaseChannelResolution.channel;
+      // An install waiting on this download reads readiness before the next render.
+      if (updateStatusRef.current) updateStatusRef.current = { ...updateStatusRef.current, state: "ready" };
       setUpdateStatus((current) => ({
         ...(current ?? {}),
         state: "ready",
@@ -385,6 +393,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
       const message = describeError(error);
+      updateAnalytics.failed(appVersion, "download");
       setUpdateStatus({
         state: "error",
         message,
@@ -395,6 +404,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       unsubProgress?.();
     }
   }, [
+    appVersion,
     onReleaseChannelChange,
     releaseChannel,
     resolvePolicyReleaseChannel,
@@ -414,6 +424,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.check) {
       const message = "Electron update checks are available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({ state: "error", message, failedAction: "check" });
       setError(message);
       return;
@@ -473,6 +484,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
 
       let result = await bridge.check(activeReleaseChannel, targetVersion);
       if (!isCurrentRequest()) return;
+      updateAnalytics.launched(result.currentVersion ?? null);
       dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
       let checkedReleaseChannel = result.channel ?? activeReleaseChannel;
       if (
@@ -497,6 +509,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           targetVersion = fallbackTargetVersion;
           result = await bridge.check(checkedReleaseChannel, targetVersion);
           if (!isCurrentRequest()) return;
+          updateAnalytics.launched(result.currentVersion ?? null);
           dispatchEnvState({ type: "app-version", appVersion: result.currentVersion ?? null });
           checkedReleaseChannel = result.channel ?? checkedReleaseChannel;
         }
@@ -509,6 +522,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         return;
       }
       if (result.reason) {
+        updateAnalytics.failed(appVersion, "check");
         setUpdateStatus({
           state: "error",
           message: result.reason,
@@ -553,12 +567,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         ? checkedReleaseChannel
         : null;
       downloadedReleaseChannelRef.current = null;
+      if (checkedUpdateState === "available") updateAnalytics.offered(result.currentVersion ?? appVersion, result.latestVersion ?? undefined);
       setUpdateStatus(nextStatus);
       if (availableAllowed && updateAutoDownload && !suppressAutoDownload) {
         await downloadUpdate(checkedReleaseChannel);
       }
     } catch (error) {
       if (!isCurrentRequest()) return;
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({
         state: "error",
         message: describeError(error),
@@ -566,6 +582,65 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       });
     }
   }, [appVersion, downloadUpdate, onReleaseChannelChange, refreshDesktopConfig, releaseChannel, resolvePolicyReleaseChannel, setError, updateAutoDownload]);
+
+  // Ask the feed whether an allowed build newer than the staged one has shipped,
+  // without disturbing the staged download. Resolves null once superseded.
+  const findNewerThanStaged = useCallback(async (
+    stagedVersion: string | undefined,
+    isCurrentRequest: () => boolean,
+  ): Promise<{ lost: true } | { lost: false; newest: boolean; candidate?: NonNullable<Exclude<SettingsUpdateStatus, null>["candidate"]> } | null> => {
+    const bridge = electronUpdaterBridge();
+    if (!bridge?.check) throw new Error(t("updates.bridge_unavailable"));
+    const channel = downloadedReleaseChannelRef.current ?? releaseChannel;
+    let targetVersion: string | undefined;
+    if (channel === "stable") {
+      const channelState = await bridge.getChannel?.();
+      if (!isCurrentRequest()) return null;
+      const currentVersion = channelState?.currentVersion ?? appVersion;
+      if (!currentVersion) throw new Error(t("updates.installed_version_unknown"));
+      const selection = await resolveFreshStableDesktopUpdate({ currentVersion, refreshDesktopConfig });
+      if (!isCurrentRequest()) return null;
+      if (!selection) throw new Error(t("updates.release_inventory_invalid"));
+      if (selection.kind === "update") targetVersion = selection.targetVersion;
+    }
+    const result = await bridge.check(channel, targetVersion, { preserveStaged: true });
+    if (!isCurrentRequest()) return null;
+    if (!stagedVersion || result.stagedVersion !== stagedVersion) return { lost: true };
+    if (result.reason) throw new Error(result.reason);
+    const comparison = result.latestVersion
+      ? compareVersions(result.latestVersion, stagedVersion)
+      : null;
+    const allowed = result.available && result.latestVersion && comparison === 1
+      ? channel === "stable"
+        ? result.latestVersion === targetVersion
+        : await isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current, appVersion)
+      : false;
+    if (!isCurrentRequest()) return null;
+    if (allowed) updateAnalytics.offered(appVersion, result.latestVersion ?? undefined);
+    return {
+      lost: false,
+      newest: comparison === 0,
+      candidate: allowed && result.latestVersion ? {
+        version: result.latestVersion,
+        totalBytes: result.totalBytes ?? null,
+        date: result.releaseDate ?? undefined,
+        notes: releaseNotesToText(result.releaseNotes),
+        channel,
+      } : undefined,
+    };
+  }, [appVersion, refreshDesktopConfig, releaseChannel]);
+
+  const markStagedUpdateLost = useCallback(() => {
+    stagedUpdateRevisionRef.current += 1;
+    downloadedReleaseChannelRef.current = null;
+    availableReleaseChannelRef.current = null;
+    readyCheckCooldownRef.current = 0;
+    updateAnalytics.failed(appVersion, "check");
+    const message = t("updates.staged_unavailable");
+    const nextStatus: SettingsUpdateStatus = { state: "error", failedAction: "check", message, checkError: message };
+    updateStatusRef.current = nextStatus;
+    setUpdateStatus(nextStatus);
+  }, [appVersion]);
 
   const checkWhileReady = useCallback(async () => {
     const staged = updateStatusRef.current;
@@ -584,60 +659,24 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       checkCooldownUntil: readyCheckCooldownRef.current,
     });
     try {
-      const bridge = electronUpdaterBridge();
-      if (!bridge?.check) throw new Error(t("updates.bridge_unavailable"));
-      const channel = downloadedReleaseChannelRef.current ?? releaseChannel;
-      let targetVersion: string | undefined;
-      if (channel === "stable") {
-        const channelState = await bridge.getChannel?.();
-        if (!isCurrentRequest()) return;
-        const currentVersion = channelState?.currentVersion ?? appVersion;
-        if (!currentVersion) throw new Error(t("updates.installed_version_unknown"));
-        const selection = await resolveFreshStableDesktopUpdate({ currentVersion, refreshDesktopConfig });
-        if (!isCurrentRequest()) return;
-        if (!selection) throw new Error(t("updates.release_inventory_invalid"));
-        if (selection.kind === "update") targetVersion = selection.targetVersion;
-      }
-      const result = await bridge.check(channel, targetVersion, { preserveStaged: true });
-      if (!isCurrentRequest()) return;
-      if (!staged.version || result.stagedVersion !== staged.version) {
-        stagedUpdateRevisionRef.current += 1;
-        downloadedReleaseChannelRef.current = null;
-        availableReleaseChannelRef.current = null;
-        readyCheckCooldownRef.current = 0;
-        const message = t("updates.staged_unavailable");
-        const nextStatus: SettingsUpdateStatus = { state: "error", failedAction: "check", message, checkError: message };
-        updateStatusRef.current = nextStatus;
-        setUpdateStatus(nextStatus);
+      const found = await findNewerThanStaged(staged.version, isCurrentRequest);
+      if (!found) return;
+      if (found.lost) {
+        markStagedUpdateLost();
         return;
       }
-      if (result.reason) throw new Error(result.reason);
-      const comparison = result.latestVersion
-        ? compareVersions(result.latestVersion, staged.version)
-        : null;
-      const allowed = result.available && result.latestVersion && comparison === 1
-        ? channel === "stable"
-          ? result.latestVersion === targetVersion
-          : await isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current, appVersion)
-        : false;
-      if (!isCurrentRequest()) return;
       setUpdateStatus({
         ...staged,
         checkingForNewer: false,
         checkError: undefined,
         checkCooldownUntil: readyCheckCooldownRef.current > Date.now() ? readyCheckCooldownRef.current : undefined,
-        newest: comparison === 0,
-        candidate: allowed && result.latestVersion ? {
-          version: result.latestVersion,
-          totalBytes: result.totalBytes ?? null,
-          date: result.releaseDate ?? undefined,
-          notes: releaseNotesToText(result.releaseNotes),
-          channel,
-        } : undefined,
+        newest: found.newest,
+        candidate: found.candidate,
       });
     } catch (error) {
       if (!isCurrentRequest()) return;
       readyCheckCooldownRef.current = 0;
+      updateAnalytics.failed(appVersion, "check");
       setUpdateStatus({
         ...staged,
         checkingForNewer: false,
@@ -649,7 +688,50 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     } finally {
       if (readyCheckInFlightRef.current === requestId) readyCheckInFlightRef.current = null;
     }
-  }, [appVersion, refreshDesktopConfig, releaseChannel]);
+  }, [appVersion, findNewerThanStaged, markStagedUpdateLost]);
+
+  // A release can ship after an update was downloaded. Replace the staged build
+  // with the newest allowed one so a single restart lands on it, instead of a
+  // second "Restart to update" right after the first. A failed lookup keeps the
+  // staged build; at install time so does an unconfirmed stage, which the
+  // install's own update-not-downloaded recovery handles. Resolves whether an
+  // update is still ready to install.
+  const refreshStagedUpdate = useCallback(async (mode: "background" | "install") => {
+    const staged = updateStatusRef.current;
+    if (staged?.state !== "ready") return false;
+    if (readyCheckInFlightRef.current !== null) return true;
+    const requestId = ++checkRequestRef.current;
+    readyCheckInFlightRef.current = requestId;
+    const isCurrentRequest = () => checkRequestRef.current === requestId &&
+      updateStatusRef.current?.state === "ready" && updateStatusRef.current.version === staged.version;
+    let candidate = false;
+    try {
+      const found = await findNewerThanStaged(staged.version, isCurrentRequest);
+      if (!found) return updateStatusRef.current?.state === "ready";
+      if (found.lost) {
+        if (mode === "install") return true;
+        markStagedUpdateLost();
+        return false;
+      }
+      if (mode === "install" && !found.candidate) return true;
+      const nextStatus: SettingsUpdateStatus = {
+        ...updateStatusRef.current,
+        state: "ready",
+        checkError: undefined,
+        newest: found.newest,
+        candidate: found.candidate,
+      };
+      updateStatusRef.current = nextStatus;
+      setUpdateStatus(nextStatus);
+      candidate = Boolean(found.candidate);
+    } catch {
+      return updateStatusRef.current?.state === "ready";
+    } finally {
+      if (readyCheckInFlightRef.current === requestId) readyCheckInFlightRef.current = null;
+    }
+    if (candidate && (mode === "install" || updateAutoDownload)) await downloadUpdate();
+    return updateStatusRef.current?.state === "ready";
+  }, [downloadUpdate, findNewerThanStaged, markStagedUpdateLost, updateAutoDownload]);
 
   const checkCooldownUntil = updateStatus?.checkCooldownUntil;
   useEffect(() => {
@@ -677,14 +759,14 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   );
 
   useEffect(() => {
-    if (!updatePolicyKnown || !updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
+    if (!allowedVersionsKnown || !updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
     const key = `${policyReleaseChannel}:${appVersion}`;
     const interval = 15 * 60 * 1000;
     const check = () => {
       const status = updateStatusRef.current;
       const state = status?.state;
-      if (autoCheckInFlightRef.current || state === "checking" || state === "downloading" || state === "ready") return;
-      if (status?.checkError) return;
+      if (autoCheckInFlightRef.current || state === "checking" || state === "downloading") return;
+      if (state !== "ready" && status?.checkError) return;
       // A failed install needs the person: the update was already downloaded,
       // so a background re-check would only re-download it and re-offer the
       // same restart. Keep the failure (and Settings' Check now) until they retry.
@@ -693,7 +775,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       autoCheckKeyRef.current = key;
       lastAutoCheckAtRef.current = Date.now();
       autoCheckInFlightRef.current = true;
-      void runCheckForUpdates(undefined, false).finally(() => {
+      const run = state === "ready"
+        ? refreshStagedUpdate("background")
+        : runCheckForUpdates(undefined, false);
+      void run.finally(() => {
         autoCheckInFlightRef.current = false;
       });
     };
@@ -709,18 +794,21 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       window.removeEventListener("online", check);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, updatePolicyKnown]);
+  }, [appVersion, policyReleaseChannel, refreshStagedUpdate, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, allowedVersionsKnown]);
 
   // Run a check when the native "Check for Updates..." menu item was used.
   // A request made before the policy is known stays queued until it is.
   const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
   useEffect(() => {
-    if (!updatePolicyKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
+    if (!allowedVersionsKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
     useUpdateCheckRequestStore.getState().clearUpdateCheckRequest();
     void checkForUpdates();
-  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, updatePolicyKnown]);
+  }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, allowedVersionsKnown]);
 
   const installUpdateAndRestart = useCallback(async () => {
+    // Restart onto the newest allowed build, fetching it first if one shipped
+    // after the staged download.
+    if (!(await refreshStagedUpdate("install"))) return;
     const releaseChannelRequestId = releaseChannelRequestRef.current;
     const stagedUpdateRevision = stagedUpdateRevisionRef.current;
     const isCurrentReleaseChannel = () =>
@@ -729,6 +817,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const bridge = electronUpdaterBridge();
     if (!bridge?.installAndRestart) {
       const message = "Electron update install is available only in the Electron desktop app.";
+      updateAnalytics.failed(appVersion, "install");
       setUpdateStatus({ state: "error", message, failedAction: "install" });
       setError(message);
       return;
@@ -775,12 +864,15 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           return;
         }
       }
+      updateAnalytics.installing(appVersion, downloadedVersion);
       const result = await bridge.installAndRestart();
+      if (!result?.ok) updateAnalytics.cancelInstall();
       if (!isCurrentReleaseChannel()) return;
       if (!result?.ok) {
         const message = result?.reason ?? "Update install failed.";
         setError(message);
         if (result?.reason === "update-not-downloaded") {
+          updateAnalytics.failed(appVersion, "install");
           // The main-side staged download was invalidated; re-check so the UI
           // returns to a working stable-targeted download/install flow.
           downloadedReleaseChannelRef.current = null;
@@ -788,6 +880,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           await runCheckForUpdates(undefined, true);
           return;
         }
+        updateAnalytics.failed(appVersion, "install");
         setUpdateStatus({
           state: "error",
           message,
@@ -795,8 +888,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         });
       }
     } catch (error) {
+      updateAnalytics.cancelInstall();
       if (!isCurrentReleaseChannel()) return;
       const message = describeError(error);
+      updateAnalytics.failed(appVersion, "install");
       setUpdateStatus({
         state: "error",
         message,
@@ -804,7 +899,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       });
       setError(message);
     }
-  }, [appVersion, onReleaseChannelChange, refreshDesktopConfig, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
+  }, [appVersion, onReleaseChannelChange, refreshDesktopConfig, refreshStagedUpdate, resolvePolicyReleaseChannel, runCheckForUpdates, setError]);
 
   const setReleaseChannel = useCallback(
     async (next: ReleaseChannel) => {
@@ -820,6 +915,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         if (!bridge?.setChannel) return;
         const state = await bridge.setChannel(allowedReleaseChannel);
         if (releaseChannelRequestRef.current !== requestId) return;
+        updateAnalytics.launched(state.currentVersion ?? null);
         dispatchEnvState({ type: "app-version", appVersion: state.currentVersion ?? null });
         if (state.channel && state.channel !== allowedReleaseChannel) {
           onReleaseChannelChange(state.channel);
@@ -827,6 +923,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         await checkForUpdates(state.channel ?? allowedReleaseChannel);
       } catch (error) {
         if (releaseChannelRequestRef.current !== requestId) return;
+        updateAnalytics.failed(appVersion, "check");
         setUpdateStatus({
           state: "error",
           message: describeError(error),
@@ -834,7 +931,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         });
       }
     },
-    [checkForUpdates, onReleaseChannelChange, resolvePolicyReleaseChannel],
+    [appVersion, checkForUpdates, onReleaseChannelChange, resolvePolicyReleaseChannel],
   );
 
   return {

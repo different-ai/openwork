@@ -47,6 +47,45 @@ export function inferenceEgressAllowedOrigins(value = process.env.GATEWAY_EGRESS
   return origins
 }
 
+// Shared by Den configuration validation and Gateway tests/inference. Multi-region
+// endpoints use a different host from ordinary regions and keep location eu/us.
+export function vertexHost(location: string) {
+  if (location === "eu" || location === "us") return `aiplatform.${location}.rep.googleapis.com`
+  return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
+}
+
+/** True only for hosts vertexHost can produce: global, regional and eu/us multi-region. */
+export function isVertexHost(hostname: string): boolean {
+  return hostname === "aiplatform.googleapis.com"
+    || /^aiplatform\.(?:eu|us)\.rep\.googleapis\.com$/.test(hostname)
+    || /^[a-z]+(?:-[a-z]+)*[0-9]+-aiplatform\.googleapis\.com$/.test(hostname)
+}
+
+export function vertexPublisherBase(settings: Record<string, unknown>, publisher: "google" | "anthropic") {
+  const project = settings.project
+  const location = settings.location
+  if (typeof project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(project)
+    || typeof location !== "string" || !/^(?:global|eu|us|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(location)) return null
+  return `https://${vertexHost(location)}/v1/projects/${project}/locations/${location}/publishers/${publisher}`
+}
+
+/** AWS region codes such as us-east-1, eu-central-2 or us-gov-west-1; never a hostname fragment. */
+export function isAwsRegion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value)
+}
+
+/** The only upstream host a Bedrock provider may reach; derived from a validated region. */
+export function bedrockRuntimeHost(region: string): string {
+  if (!isAwsRegion(region)) throw new InferenceEgressError()
+  return `bedrock-runtime.${region}.amazonaws.com`
+}
+
+/** The only upstream host a Bedrock Mantle (OpenAI-compatible) provider may reach. */
+export function bedrockMantleHost(region: string): string {
+  if (!isAwsRegion(region)) throw new InferenceEgressError()
+  return `bedrock-mantle.${region}.api.aws`
+}
+
 /** Structural check only. DNS safety requires createInferenceEgressFetch. */
 export function validateInferenceUrl(input: string | URL, options: { base?: boolean; allowedOrigins?: ReadonlySet<string> } = {}): URL {
   let url: URL
@@ -88,6 +127,16 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
     const headers = new Headers(request.headers)
     for (const name of ["host", "connection", "transfer-encoding", "content-length"]) headers.delete(name)
     headers.set("accept-encoding", "identity")
+    // Vertex rawPredict rejects a chunked request body with HTTP 400, so a body the
+    // caller already holds in full is sent to Vertex with its exact Content-Length.
+    // Node chunks only POST, PUT and PATCH bodies; any other method (TrueFoundry's
+    // DELETE …/revoke/all) would send its body with no length, read upstream as a
+    // malformed next request, so it gets a Content-Length too. Every other upstream,
+    // and any caller-supplied stream, stays chunked.
+    const needsLength = isVertexHost(url.hostname) || !["POST", "PUT", "PATCH"].includes(request.method)
+    const fixedBody = needsLength && request.body && init?.body != null && !(init.body instanceof ReadableStream)
+      ? new Uint8Array(await request.arrayBuffer()) : null
+    if (fixedBody) headers.set("content-length", String(fixedBody.byteLength))
     return new Promise<Response>((resolve, reject) => {
       const outgoing = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
         method: request.method,
@@ -127,7 +176,8 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
         resolve(new Response(body, { status, headers: responseHeaders }))
       })
       outgoing.on("error", () => reject(new Error("Inference upstream transport failed")))
-      if (!request.body) outgoing.end()
+      if (fixedBody) outgoing.end(fixedBody)
+      else if (!request.body) outgoing.end()
       else {
         const reader = request.body.getReader()
         outgoing.on("close", () => { void reader.cancel().catch(() => {}) })

@@ -3,6 +3,16 @@ import { readGatewayUsageScope, subscribeGatewayUsageScope } from "@/app/lib/gat
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { gatewayUsageQueryPrefix } from "./gateway-usage-state";
 
+export async function refreshGatewayUsageAfterCloudSync(scope: ReturnType<typeof readGatewayUsageScope>) {
+  if (scope !== readGatewayUsageScope() || !scope.token || !scope.organizationId) return;
+  try {
+    await getReactQueryClient().invalidateQueries({
+      queryKey: [...gatewayUsageQueryPrefix, scope.generation, scope.organizationId],
+      type: "active",
+    }, { cancelRefetch: false });
+  } catch { }
+}
+
 export const gatewayUsageSettlementDelays = [2000, 5000, 10_000, 20_000];
 
 export function gatewayUsageNeedsSettlement(coverage: GatewayUsageStatus["coverage"]): boolean {

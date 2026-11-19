@@ -8,6 +8,10 @@ import {
   CloudCog,
   Cog,
   FolderLock,
+  Gauge,
+  HardDriveDownload,
+  Keyboard,
+  Monitor,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -43,6 +47,7 @@ import { t } from "../../../../i18n";
 import { isSettingsTabAllowed } from "../../../../app/cloud/desktop-app-restrictions";
 import type { PlatformCapabilities } from "../../../../app/lib/platform-capabilities";
 import type { SettingsTab } from "../../../../app/types";
+import { isElectronRuntime } from "../../../../app/utils";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
@@ -70,6 +75,8 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return FolderLock;
     case "cloud-account":
       return UserCircle;
+    case "usage":
+      return Gauge;
     case "connect":
       return Cable;
     case "cloud-marketplaces":
@@ -84,8 +91,15 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return Terminal;
     case "advanced":
       return Wrench;
+    case "import":
+      return HardDriveDownload;
     case "appearance":
       return Paintbrush;
+    case "shortcuts":
+      return Keyboard;
+    case "computer":
+    case "devices":
+      return Monitor;
     case "updates":
       return RefreshCcw;
     case "recovery":
@@ -109,6 +123,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Permissions";
     case "cloud-account":
       return t("settings.tab_cloud_account");
+    case "usage":
+      return "Usage";
     case "connect":
       return t("settings.tab_connect");
     case "cloud-marketplaces":
@@ -123,8 +139,16 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_environment");
     case "advanced":
       return t("settings.tab_advanced");
+    case "import":
+      return t("settings.tab_import");
     case "appearance":
       return t("settings.tab_appearance");
+    case "shortcuts":
+      return "Keyboard shortcuts";
+    case "computer":
+      return "Computer use";
+    case "devices":
+      return "Devices";
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -141,7 +165,7 @@ export function getSettingsTabLabel(tab: SettingsTab) {
 export function getSettingsTabDescription(tab: SettingsTab) {
   switch (tab) {
     case "ai":
-      return "Connect services that provide AI models";
+      return "Connect OpenAI, Anthropic, local models and more";
     case "ollama":
       return "Connect to Ollama and manage local models";
     case "preferences":
@@ -150,6 +174,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Authorized folders and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
+    case "usage":
+      return "How much of your limits is left";
     case "connect":
       return t("settings.tab_description_connect");
     case "cloud-marketplaces":
@@ -164,8 +190,16 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_environment");
     case "advanced":
       return t("settings.tab_description_advanced");
+    case "import":
+      return t("settings.tab_description_import");
     case "appearance":
       return t("settings.tab_description_appearance");
+    case "shortcuts":
+      return "Keys that switch to the models you use most";
+    case "computer":
+      return "Let the agent use apps on this computer";
+    case "devices":
+      return "Your desktops and cloud computers";
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -180,14 +214,17 @@ export function getSettingsTabDescription(tab: SettingsTab) {
 }
 
 export function getWorkspaceSettingsTabs(): SettingsTab[] {
-  return ["preferences", "permissions", "extensions", "advanced"];
+  return ["preferences", "permissions", "extensions", "import", "advanced"];
 }
 
 export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
+  options: { desktop?: boolean } = {},
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "environment"];
+  // Ollama opens from a button on AI Providers, not from the sidebar.
+  const tabs: SettingsTab[] = ["ai", "appearance", "shortcuts", "environment"];
+  if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;
@@ -195,6 +232,7 @@ export function getGlobalSettingsTabs(
 
 export const CLOUD_SETTINGS_TABS: SettingsTab[] = [
   "cloud-account",
+  "usage",
 ];
 
 export function isSettingsTabBeta(_tab: SettingsTab) {
@@ -202,6 +240,8 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
 }
 
 export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
+  // The Ollama page is reached from AI Providers, which stays highlighted there.
+  if (activeTab === "ollama") return tab === "ai";
   return activeTab === tab;
 }
 
@@ -248,8 +288,8 @@ export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups 
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities)),
-    cloud: allowed(CLOUD_SETTINGS_TABS),
+    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
+    cloud: allowed([...CLOUD_SETTINGS_TABS, "devices"]),
   };
 }
 
@@ -399,7 +439,7 @@ export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "acti
   return (
     <SettingsPanelHeading>
       <SettingsPanelTitle>{getSettingsTabLabel(activeTab)}</SettingsPanelTitle>
-      <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription>
+      {activeTab !== "devices" ? <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription> : null}
     </SettingsPanelHeading>
   );
 }
@@ -407,7 +447,7 @@ export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "acti
 export function SettingsPage(props: SettingsPageProps) {
   return (
     <SettingsContent>
-      {props.activeTab !== "extensions" ? <SettingsPanel>
+      {props.activeTab !== "extensions" && props.activeTab !== "ai" ? <SettingsPanel>
         <SettingsPageHeading activeTab={props.activeTab} />
 
         {props.showUpdateToolbar && props.activeTab === "general" ? (

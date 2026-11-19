@@ -1,3 +1,7 @@
+export * from "./target.ts";
+export * from "./support.ts";
+export * from "./source.ts";
+export * from "./seed.ts";
 export * from "./loader.ts";
 export * from "./store.ts";
 export * from "./stage.ts";
@@ -11,5 +15,7 @@ export * from "./headless-web.ts";
 export * from "./standalone-cli.ts";
 export * from "./events.ts";
 export * from "./preflight.ts";
+export * from "./catalog.ts";
+export * from "./drift.ts";
 export * from "./view.ts";
 export * from "./outputs.ts";

@@ -1,5 +1,6 @@
-import { index, json, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, timestamps } from "../columns"
+import { bigint, char, index, json, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { compatJsonColumn, denTypeIdColumn, timestamps } from "../columns"
+import type { AuditEventEnvelope } from "../audit-log"
 
 export const WorkerDestination = ["local", "cloud"] as const
 export const WorkerStatus = ["provisioning", "healthy", "failed", "stopped"] as const
@@ -126,10 +127,22 @@ export const AuditEventTable = mysqlTable(
     id: denTypeIdColumn("auditEvent", "id").notNull().primaryKey(),
     org_id: denTypeIdColumn("org", "org_id").notNull(),
     worker_id: denTypeIdColumn("worker", "worker_id"),
-    actor_user_id: denTypeIdColumn("user", "actor_user_id").notNull(),
+    actor_user_id: denTypeIdColumn("user", "actor_user_id"),
     action: varchar("action", { length: 128 }).notNull(),
     payload: json("payload"),
+    operation_id: denTypeIdColumn("auditOperation", "operation_id"),
+    sequence: bigint("sequence", { mode: "number", unsigned: true }),
+    envelope: compatJsonColumn<AuditEventEnvelope>("envelope"),
+    logical_bytes: bigint("logical_bytes", { mode: "number", unsigned: true }),
+    idempotency_key: char("idempotency_key", { length: 64 }),
+    content_hash: char("content_hash", { length: 64 }),
     created_at: timestamps.created_at,
   },
-  (table) => [index("audit_event_org_id").on(table.org_id), index("audit_event_worker_id").on(table.worker_id)],
+  (table) => [
+    index("audit_event_org_id").on(table.org_id),
+    index("audit_event_worker_id").on(table.worker_id),
+    uniqueIndex("audit_event_org_sequence").on(table.org_id, table.sequence),
+    uniqueIndex("audit_event_idempotency").on(table.org_id, table.operation_id, table.idempotency_key),
+    index("audit_event_operation_sequence").on(table.org_id, table.operation_id, table.sequence),
+  ],
 )

@@ -7,7 +7,8 @@ This zero-dependency Node.js example reconciles OpenWork Cloud per-member LLM cr
 Set these environment variables:
 
 - `OPENWORK_DEN_API_URL`: Den API base URL
-- `OPENWORK_DEN_TOKEN`: organization owner or admin bearer token
+- `OPENWORK_DEN_API_KEY`: an organization API key whose owner has the Manage people's provider keys permission (preferred for unattended runs; sent as `x-api-key`)
+- `OPENWORK_DEN_TOKEN`: alternatively, a signed-in owner or admin bearer token
 - `OPENWORK_ORG_ID`: organization ID sent as `x-openwork-org-id`
 - `OPENWORK_LLM_PROVIDER_ID`: the per-member LLM provider ID
 - `LITELLM_BASE_URL`: LiteLLM base URL, with or without `/v1`
@@ -31,7 +32,7 @@ After metadata is synchronized, the script lists Den member credential states, m
 From the repository root, launch a signed-in Desktop, an isolated Den organization, and a database-backed LiteLLM gateway with the provider and member keys already reconciled:
 
 ```bash
-pnpm world up ./worlds/litellm-per-member.ts
+pnpm world up ./examples/litellm-per-member-keys/world.ts
 ```
 
 The command prints the Den URLs, LiteLLM URL, synchronized model limits, Den provider record ID, and Desktop CDP URL. Keep it running while testing and press Ctrl-C to tear down the world. Docker, local MySQL, and local Redis are required. The gateway uses a deterministic local OpenAI-compatible witness and does not read or require `OPENAI_API_KEY`.

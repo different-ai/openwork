@@ -16,6 +16,38 @@ config:
   openworkDevMode: "0"
   # Passed to the den-api Node.js process as NODE_OPTIONS at container startup.
   denApiNodeOptions: ""
+  # Which product this install is. Only OpenWork Cloud sets "cloud"; features
+  # declared unavailable for self-hosted cannot be turned on here. Renders DEN_DEPLOYMENT.
+  deployment: self_hosted
+  # BEGIN GENERATED features (pnpm features:sync; source: packages/features/src/flags)
+  # Operator locks for this install. Each key renders DEN_FEATURE_<KEY>.
+  #   ""      follow /admin: on or off for everyone, plus per-organization overrides
+  #   "true"  on for everyone; /admin shows "Set by deployment config"
+  #   "false" off for everyone; /admin shows "Set by deployment config"
+  # The /admin kill switch still turns a feature off, even when locked on.
+  # The published chart lists every key here with its default and description
+  # (`helm show values oci://ghcr.io/different-ai/charts/openwork-ee`). In a
+  # checkout the keys are the file names under packages/features/src/flags, in
+  # lowerCamelCase; `node scripts/features-sync.mjs --chart` writes them here.
+  features: {}
+  # END GENERATED features
+  administratorRecovery:
+    # Processed only with config.features.administratorRecovery on. Flag off is a
+    # silent recovery no-op; normal database upgrades remain unchanged.
+    # Flag on defaults to read-only check. Use apply only for the chosen team;
+    # the normal application/database upgrade must already have completed.
+    mode: check
+    # Optional active roster count. Mismatch refuses before any recovery writes.
+    # Count does not detect a same-size swap; exact roster binding is still pending.
+    expectedMembers: null
+    # Organization ID or exact slug. May be empty only when exactly one org exists.
+    organization: ""
+    # Existing designated non-SCIM Admin team ID or exact name. Check prints its ID;
+    # pin that ID for apply, because names can be renamed. No roster fingerprint yet.
+    team: ""
+    # Alternative batch/legacy form: organization ID or slug -> team ID or exact name.
+    # Use this map OR organization/team above, never both. Apply needs the feature on.
+    teams: {}
   tenancy:
     mode: single_org
     singleOrgName: OpenWork
@@ -23,8 +55,27 @@ config:
     ownerEmails: ""
     allowPublicSignup: "false"
     requireEmailVerification: "false"
+  audit:
+    # Grant availability without a Cloud plan. Never turns org capture on by itself.
+    selfHostedEnabled: "false"
+    # Rollout gates; org admins separately control capture on their initialized policy.
+    # Default-on deployment switches; explicit false disables globally.
+    # Also requires the auditLogs feature per org (/admin or config.features) plus entitlement.
+    # Ready orgs auto-provision 6M retained operations, capture ON, no cap enforcement.
+    # Existing policy values and explicit capture OFF choices are preserved.
+    captureEnabled: "true"
+    visibilityEnabled: "true"
   auth:
     passwordBreachScreeningEnabled: "false"
+    # Requests per minute each API key may make. Blank keeps the default of 600.
+    # Applies to keys created after the change; existing keys keep their limit.
+    # Renders DEN_API_KEY_RATE_LIMIT_MAX.
+    apiKeyRateLimitMax: ""
+  email:
+    # Where replies to invitation emails and their "Report abuse" link go, such as
+    # your IT help desk. Leave blank to send replies to the person who invited them.
+    # Renders EMAIL_SUPPORT_ADDRESS.
+    supportAddress: ""
   githubConnector:
     appId: ""
     clientId: ""
@@ -49,9 +100,9 @@ config:
     betterAuthTrustedOrigins: ""
     webAppHosts: ""
     bootstrapAdminEmails: ""
-    installLinksGatingEnabled: "false"
-    # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
-    automationsEnabled: "false"
+    # Automations are on. Organization admins turn Desktop or Cloud Automations
+    # off in Settings; set "false" to turn them off for the whole install.
+    automationsEnabled: "true"
     # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
     dashboardsEnabled: "false"
     # OpenWork Web is hosted-only by default. OpenWork Cloud enables it explicitly.
@@ -61,9 +112,7 @@ config:
     automationsRuntimeEnabled: "true"
     # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
-    connectLinkMode: exchange
-    connectLinkKeyId: ""
-    openworkAppConnectUrl: ""
+    appMcpServersEnabled: "true"
     openworkWebUrl: ""
     installerReleaseTag: ""
     installerReleaseRepo: ""
@@ -106,13 +155,6 @@ config:
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
     healthcheckTimeoutMs: ""
-  polar:
-    featureGateEnabled: "false"
-    apiBase: ""
-    productId: ""
-    benefitId: ""
-    successUrl: ""
-    returnUrl: ""
   inference:
     openRouterWorkspaceId: ""
     stripeInferencePriceId: ""
@@ -176,7 +218,6 @@ secret:
     betterAuthSecret: BETTER_AUTH_SECRET
     denDbEncryptionKey: DEN_DB_ENCRYPTION_KEY
     daytonaApiKey: DAYTONA_API_KEY
-    polarAccessToken: POLAR_ACCESS_TOKEN
     openRouterManagementApiKey: OPENROUTER_MANAGEMENT_API_KEY
     inferenceAdminToken: INFERENCE_ADMIN_TOKEN
     inferenceWebhookSecret: INFERENCE_WEBHOOK_SECRET
@@ -189,8 +230,9 @@ secret:
     githubConnectorAppClientSecret: GITHUB_CONNECTOR_APP_CLIENT_SECRET
     githubConnectorAppPrivateKey: GITHUB_CONNECTOR_APP_PRIVATE_KEY
     githubConnectorAppWebhookSecret: GITHUB_CONNECTOR_APP_WEBHOOK_SECRET
-    connectLinkPrivateKey: DEN_CONNECT_LINK_PRIVATE_KEY
     initialAdminBootstrapCode: DEN_INITIAL_ADMIN_BOOTSTRAP_CODE
+    maintenanceToken: DEN_MAINTENANCE_TOKEN
+    typesafeApiKey: TYPESAFE_API_KEY
   values:
     databaseUrl: mysql://openwork:change-me@mysql:3306/openwork_den
     databaseHost: ""
@@ -200,7 +242,6 @@ secret:
     betterAuthSecret: CHANGE_ME_32_CHARS_MINIMUM_BETTER_AUTH
     denDbEncryptionKey: CHANGE_ME_32_CHARS_MINIMUM_DB_ENCRYPTION
     daytonaApiKey: ""
-    polarAccessToken: ""
     openRouterManagementApiKey: ""
     inferenceAdminToken: ""
     inferenceWebhookSecret: ""
@@ -213,8 +254,14 @@ secret:
     githubConnectorAppClientSecret: ""
     githubConnectorAppPrivateKey: ""
     githubConnectorAppWebhookSecret: ""
-    connectLinkPrivateKey: ""
     initialAdminBootstrapCode: ""
+    # 24+ characters. Only rendered when set; used by denApi.auditUsage and
+    # denApi.githubReconcile.
+    maintenanceToken: ""
+    # TypeSafe API key for Jev, which picks the model for each Smart request
+    # (AI Gateway Smart Model Router). Only rendered when set; without it
+    # Smart is off.
+    typesafeApiKey: ""
 
 installerArtifacts:
   enabled: false
@@ -234,6 +281,31 @@ denApi:
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
   containerPort: 8788
+  # Daily audit usage refresh. Audit writes never update an organization's usage
+  # totals (retained operations, events, bytes); this CronJob recomputes them by
+  # calling den-api POST /internal/audit/usage/refresh. Same pattern as
+  # inference.retention. Needs a maintenance token: set secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey to read it from your own Secret. The token is also given
+  # to den-api as DEN_MAINTENANCE_TOKEN. Without it, audit usage keeps its last totals.
+  auditUsage:
+    enabled: false
+    schedule: "30 3 * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
+  # GitHub connector reconcile. Checks due GitHub connector targets for new
+  # commits and queues a resync, by calling den-api POST /internal/github/reconcile/run
+  # every few minutes. Each run reads due targets in small pages, so it never loads
+  # every target at once. Push webhooks still sync without it; it is the backstop
+  # for webhooks that never arrived, and nothing else runs the check.
+  # Uses the same maintenance token as auditUsage: secret.values.maintenanceToken,
+  # or tokenSecret/tokenKey (here or under auditUsage; if both are set they must match).
+  githubReconcile:
+    enabled: false
+    schedule: "*/5 * * * *"
+    timeZone: "Etc/UTC"
+    tokenSecret: ""
+    tokenKey: DEN_MAINTENANCE_TOKEN
   env: {}
   podAnnotations: {}
   podLabels: {}
@@ -289,10 +361,16 @@ inference:
   enabled: false
   # Opt-in after applying the accounting migration. This is product retention,
   # not a member Automation. Non-Helm deployments must supply their own caller.
+  # Hourly, like the hosted deployment: each run folds closed request-log hours
+  # into usage rollups and deletes the folded rows. One run handles up to
+  # maxBucketsPerRun hours x maxSourceRowsPerBucket rows (Gateway limits:
+  # 1-1000 and 1-5000); a larger hour finishes over the next runs.
   retention:
     enabled: false
-    schedule: "0 3 * * *"
+    schedule: "5 * * * *"
     timeZone: "Etc/UTC"
+    maxBucketsPerRun: 48
+    maxSourceRowsPerBucket: 5000
     adminTokenSecret: ""
     adminTokenKey: "INFERENCE_ADMIN_TOKEN"
   replicaCount: 1
@@ -328,6 +406,12 @@ migrations:
   # lack the database name needed for the committed-migration phase).
   enabled: true
   hook: true
+  # Recovery uses this normal policy in both Secret modes; no retention override.
+  # Capture the result DURING the upgrade in a second terminal as the Job appears:
+  # kubectl --namespace my-openwork get jobs -w
+  # kubectl --namespace my-openwork logs -f job/<name-ending-in-migrate> > recovery.log
+  # Keep recovery.log privately. With this default policy, a refused/failed Job
+  # stays available with its log until the next upgrade.
   hookDeletePolicy: before-hook-creation,hook-succeeded
   writersStoppedFor0097: false
   backoffLimit: 2

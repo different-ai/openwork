@@ -13,13 +13,14 @@ import {
 import { safeStringify } from "../../app/utils";
 import { recordInspectorEvent } from "../../app/lib/app-inspector";
 import type { BootPhaseId } from "./boot-state";
+import { captureOnboardingEvent } from "../../app/lib/analytics";
 
 type LocalWorkspaceLike = {
   id: string;
   name?: string | null;
   displayNameResolved?: string | null;
   path?: string | null;
-  workspaceType?: "local" | "remote" | string | null;
+  workspaceType?: string | null;
 };
 
 type EnsureDesktopLocalOpenworkOptions = {
@@ -58,8 +59,7 @@ export function openworkServerSettingsChanged(
   return previous.urlOverride !== next.urlOverride
     || previous.portOverride !== next.portOverride
     || previous.token !== next.token
-    || previous.hostToken !== next.hostToken
-    || (previous.remoteAccessEnabled === true) !== (next.remoteAccessEnabled === true);
+    || previous.hostToken !== next.hostToken;
 }
 
 /**
@@ -158,11 +158,16 @@ export async function ensureDesktopLocalOpenworkConnection(
     const engine = await engineInfo().catch(() => null) as EngineInfo | null;
     let startedEngine = false;
     if (!engine?.running || !engine.baseUrl) {
-      await engineStart(workspaceRoot, {
-        runtime: "direct",
-        workspacePaths,
-        openworkRemoteAccess: readOpenworkServerSettings().remoteAccessEnabled === true,
-      });
+      captureOnboardingEvent("onboarding_engine_start_requested");
+      try {
+        await engineStart(workspaceRoot, {
+          runtime: "direct",
+          workspacePaths,
+        });
+      } catch (error) {
+        captureOnboardingEvent("onboarding_engine_failed", { reason: "start_failed" });
+        throw error;
+      }
       startedEngine = true;
     }
 
@@ -171,6 +176,7 @@ export async function ensureDesktopLocalOpenworkConnection(
     // of failing on the first empty answer.
     const info = await waitForReadyLocalOpenworkServerInfo();
     if (!isReadyLocalOpenworkServerInfo(info) || !info.baseUrl) {
+      captureOnboardingEvent("onboarding_engine_failed", { reason: "readiness_timeout" });
       throw new Error("OpenWork server did not become ready after activation.");
     }
 
@@ -180,7 +186,6 @@ export async function ensureDesktopLocalOpenworkConnection(
       token: info.ownerToken?.trim() || info.clientToken?.trim() || undefined,
       hostToken: info.hostToken?.trim() || undefined,
       portOverride: info.port ?? undefined,
-      remoteAccessEnabled: info.remoteAccessEnabled === true,
     });
     if (startedEngine || openworkServerSettingsChanged(previousSettings, nextSettings)) {
       emitOpenworkSettingsChanged();
@@ -193,6 +198,7 @@ export async function ensureDesktopLocalOpenworkConnection(
       baseUrl: info.baseUrl,
     });
 
+    captureOnboardingEvent("onboarding_engine_ready", { started_engine: startedEngine });
     return info;
   } catch (error) {
     const message = describeError(error);

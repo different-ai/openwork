@@ -1,0 +1,78 @@
+name: Warm dev evidence worlds
+
+# Keeps the e2e/preview world warm on Freestyle and on Daytona, so PRs can use
+# either (OPENWORK_EVIDENCE_PROVIDER). On every dev push this makes sure that:
+#   1. the warm image exists: system tools plus a full pnpm install at dev. It is
+#      keyed by dependencies, so most pushes reuse it in seconds;
+#   2. dev's world exists: the image, built and booted at this commit. PRs whose
+#      runtime code matches dev then start in about 2 seconds.
+# PR worlds start from the image, check out their commit, run an incremental
+# pnpm install, build and boot.
+# It also saves the pnpm store for the PR core job's slim install: GitHub only
+# shares caches saved on dev with every PR.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Queue instead of cancel: a cancelled run would leave a builder holding the
+# shared build lock. GitHub keeps only the newest pending run, which debounces bursts.
+concurrency:
+  group: freestyle-warm-dev
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    # Provider keys are in this job: manual runs only on the default branch too.
+    if: github.repository == 'different-ai/openwork' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Same runner family as the PR core job, so its pnpm store cache is shared.
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - id: store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+      # Same key and install as the core job in pr-proof.yml.
+      - name: Cache the pnpm store for PR core jobs
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: ${{ runner.os }}-pnpm-core-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-core-
+      - name: Install only the test tools
+        run: |
+          pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
+      # Only the provider PRs use (the repository variable) fails this workflow;
+      # the other is kept warm as a fallback.
+      - name: Warm the image and dev's world on Freestyle
+        continue-on-error: ${{ (vars.OPENWORK_EVIDENCE_PROVIDER || 'freestyle') != 'freestyle' }}
+        env:
+          OPENWORK_EVIDENCE_PROVIDER: freestyle
+          FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.sha }}
+          OPENWORK_EVIDENCE_IMAGE_SHA: ${{ github.sha }}
+        run: node scripts/prepare-evidence-web.ts
+      - name: Warm the image and dev's world on Daytona
+        if: always()
+        continue-on-error: ${{ (vars.OPENWORK_EVIDENCE_PROVIDER || 'freestyle') != 'daytona' }}
+        env:
+          OPENWORK_EVIDENCE_PROVIDER: daytona
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENWORK_PREVIEW_GITHUB_TOKEN: ${{ github.token }}
+          OPENWORK_EVIDENCE_SOURCE_SHA: ${{ github.sha }}
+          OPENWORK_EVIDENCE_IMAGE_SHA: ${{ github.sha }}
+        run: node scripts/prepare-evidence-web.ts

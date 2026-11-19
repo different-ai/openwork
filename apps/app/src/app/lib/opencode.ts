@@ -47,6 +47,10 @@ const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
 // Bound the acceptance handshake, not the task. A timeout leaves admission
 // unknown, so the transport must never automatically resend the prompt.
 const PROMPT_ASYNC_REQUEST_TIMEOUT_MS = 30_000;
+// The first native v2 write also opens its location and reconciles the org's
+// providers, connections and skills. This can exceed the ordinary read budget.
+const V2_SESSION_WRITE_TIMEOUT_MS = 60_000;
+const V2_SESSION_WRITE_URL_RE = /\/opencode2\/api\/session(?:\/[^/?#]+\/prompt)?\/?(?:[?#]|$)/;
 const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|summarize)(?:[?#]|$)/;
 const SESSION_PROMPT_ASYNC_URL_RE = /\/session\/[^/?#]+\/prompt_async(?:[?#]|$)/;
 
@@ -100,8 +104,11 @@ function getRequestUrl(input: RequestInfo | URL): string {
   return String(input);
 }
 
-function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): number {
+function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number, method: string): number {
   const url = getRequestUrl(input);
+  if (method.toUpperCase() === "POST" && V2_SESSION_WRITE_URL_RE.test(url)) {
+    return Math.max(fallbackMs, V2_SESSION_WRITE_TIMEOUT_MS);
+  }
   if (SESSION_LONG_RUNNING_URL_RE.test(url)) {
     return 0;
   }
@@ -198,7 +205,8 @@ async function fetchWithTimeout(
   timeoutMs: number,
   cancelPermissionReply = false,
 ) {
-  const effectiveTimeoutMs = cancelPermissionReply ? timeoutMs : resolveRequestTimeoutMs(input, timeoutMs);
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const effectiveTimeoutMs = cancelPermissionReply ? timeoutMs : resolveRequestTimeoutMs(input, timeoutMs, method);
   if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
     return fetchImpl(input, init);
   }

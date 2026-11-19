@@ -1,63 +1,70 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, Eye, FolderOpen, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent } from "@/components/ui/popover";
 
 import type { DesktopApplication } from "@/app/lib/desktop";
-import { getDesktopApplicationsForFile, openDesktopWithApp } from "@/app/lib/desktop";
+import { getCachedDesktopHomeDir, getDesktopApplicationsForFile } from "@/app/lib/desktop";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
-import { localArtifactPath, nativeFileAction } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { filePathForCopy, nativeFileAction, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides", "image", "pdf", "html", "text"]);
 
 type LinkActionMenuProps = {
   target: OpenTarget;
-  anchorRect: DOMRect;
+  /** The link or chevron the menu was opened from. */
+  anchor: HTMLElement;
   onOpenTarget: (target: OpenTarget, options?: OpenTargetOptions) => void;
   onClose: () => void;
 };
 
-export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: LinkActionMenuProps) {
+export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkActionMenuProps) {
   const platform = usePlatform();
-  const menuRef = useRef<HTMLDivElement>(null);
   const [apps, setApps] = useState<DesktopApplication[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
-  const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
-  const { workspaceRoot, isLocalWorkspace } = useOpenTargets();
-  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
-    ? nativeFileAction(workspaceRoot, target.value) : null;
+  const { workspaceRoot, isLocalWorkspace, client, workspaceId, sessionId } = useOpenTargets();
+  // `~/` links name a file in the home folder; the menu can reveal them once it is known.
+  const [homeDir, setHomeDir] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (isLocalWorkspace) {
+      void getCachedDesktopHomeDir().then((home) => { if (!cancelled) setHomeDir(home); });
+    }
+    return () => { cancelled = true; };
+  }, [isLocalWorkspace]);
+  // A chat link may be relative to a project subfolder. Resolve it through the
+  // same workspace search the click path uses before offering native actions.
+  const [resolvedTarget, setResolvedTarget] = useState<OpenTarget | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedTarget(target.exists === true ? target : null);
+    if (target.kind !== "file" || target.exists === true || !client || !workspaceId) return;
+    void resolveCollectibleOpenTarget(client, workspaceId, target, sessionId, { search: true })
+      .then((found) => { if (!cancelled) setResolvedTarget(found); })
+      .catch(() => { if (!cancelled) setResolvedTarget(null); });
+    return () => { cancelled = true; };
+  }, [target, client, workspaceId, sessionId]);
+  const effectiveTarget = resolvedTarget ?? target;
+  const canOpenInPanel = effectiveTarget.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(effectiveTarget.preview);
+  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && effectiveTarget.kind === "file"
+    ? nativeFileAction(workspaceRoot, effectiveTarget.resolvedPath ?? effectiveTarget.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
-  const canLaunch = native?.action === "open";
+  // Named-app launches bypass the chat opener: offer them only for a file the
+  // owning workspace has verified, never a guessed root + bare filename.
+  const canLaunch = native?.action === "open" && effectiveTarget.exists === true;
   const nativePath = native?.path;
-  const copyPath = localArtifactPath(workspaceRoot, target.value) ?? target.value;
 
-  useEffect(() => {
-    const previous = document.activeElement;
-    menuRef.current?.querySelector("button")?.focus();
-    return () => {
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    };
-  }, []);
-
-  useEffect(() => {
-    function handleOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        onClose();
-      }
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
-    }
-    document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [onClose]);
+  // Follow the link while the chat scrolls; a streamed re-render can replace
+  // the link element, so keep its last position instead of jumping to 0,0.
+  const [openedRect] = useState(() => anchor.getBoundingClientRect());
+  const positionAnchor = useMemo(() => ({
+    contextElement: anchor,
+    getBoundingClientRect: () => (anchor.isConnected ? anchor.getBoundingClientRect() : openedRect),
+  }), [anchor, openedRect]);
 
   useEffect(() => {
     if (!canLaunch || !nativePath) return;
@@ -79,118 +86,134 @@ export function LinkActionMenu({ target, anchorRect, onOpenTarget, onClose }: Li
   }, [canLaunch, nativePath]);
 
   const handleOpenDefault = () => {
-    onOpenTarget(target, { external: true });
+    onOpenTarget(effectiveTarget, { external: true });
     onClose();
   };
 
   const handleOpenInPanel = () => {
-    onOpenTarget(target);
+    onOpenTarget(effectiveTarget);
     onClose();
   };
 
   const handleReveal = () => {
-    onOpenTarget(target, { external: true, reveal: true });
+    onOpenTarget(effectiveTarget, { external: true, reveal: true });
     onClose();
   };
 
   const handleCopyPath = async () => {
+    // If the person copies immediately, wait for the workspace search instead of
+    // copying the unresolved relative reference or a guessed workspace-root path.
+    let current = effectiveTarget;
+    if (current.exists !== true && client && workspaceId) {
+      try {
+        const found = await resolveCollectibleOpenTarget(client, workspaceId, target, sessionId, { search: true });
+        if (found) {
+          current = found;
+          setResolvedTarget(found);
+        }
+      } catch {
+        // Keep the reference as written when the workspace cannot answer.
+      }
+    }
     try {
-      await navigator.clipboard.writeText(copyPath);
+      await navigator.clipboard.writeText(filePathForCopy(current, {
+        origin: isLocalWorkspace ? "local" : "unknown",
+        workspaceRoot,
+        homeDir,
+      }));
       onClose();
     } catch {
       toast.error("Could not copy the path. Try again.");
     }
   };
 
-  const handleOpenWithApp = async (app: DesktopApplication) => {
-    if (!canLaunch || !nativePath || !workspaceRoot) return;
-    try {
-      await openDesktopWithApp(nativePath, app.appPath, workspaceRoot);
-      onClose();
-    } catch {
-      toast.error("Could not open this file. Try another app or reveal it in the file manager.");
-    }
+  const handleOpenWithApp = (app: DesktopApplication) => {
+    if (!canLaunch) return;
+    // Re-resolve on activation, just like default open/reveal. A verified menu
+    // snapshot may already be stale by the time a person chooses an app.
+    onOpenTarget(effectiveTarget, { external: true, appPath: app.appPath });
+    onClose();
   };
 
-  const top = anchorRect.bottom + 4;
-  const left = anchorRect.left;
-
   return (
-    <div
-      ref={menuRef}
-      className="fixed z-50 min-w-52 rounded-lg border border-border bg-popover/95 p-1 shadow-lg backdrop-blur-xl"
-      style={{ top, left }}
-    >
-      {target.kind === "file" ? (
-        <Button
-          variant="ghost"
-          onClick={() => void handleCopyPath()}
-          className="w-full justify-start gap-2.5 px-3 py-2 text-sm"
-        >
-          <Copy className="size-4 shrink-0" />
-          Copy path
-        </Button>
-      ) : null}
-      {canLaunch ? (
-        <button
-          type="button"
-          onClick={handleOpenDefault}
-          className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
-        >
-          <ExternalLink className="size-4 shrink-0" />
-          Open with default app
-        </button>
-      ) : null}
-      {canOpenInPanel ? (
-        <button
-          type="button"
-          onClick={handleOpenInPanel}
-          className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
-        >
-          <Eye className="size-4 shrink-0" />
-          Open in panel
-        </button>
-      ) : null}
-      {canOpenExternally ? (
-        <button
-          type="button"
-          onClick={handleReveal}
-          className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
-        >
-          <FolderOpen className="size-4 shrink-0" />
-          {platform.os === "macos" ? "Reveal in Finder" : "Show in folder"}
-        </button>
-      ) : null}
-      {canLaunch && apps && apps.length > 0 ? (
-        <>
-          <div className="my-1 h-px bg-foreground/5" />
-          <div className="max-h-48 overflow-y-auto">
-            {apps.map((app) => (
-              <button
-                key={app.appPath}
-                type="button"
-                onClick={() => void handleOpenWithApp(app)}
-                className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
-              >
-                {app.icon ? (
-                  <img src={app.icon} alt="" className="size-4 shrink-0 object-contain" />
-                ) : (
-                  <span className="size-4 shrink-0" />
-                )}
-                <span className="truncate">{app.name}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : appsLoading ? (
-        <>
-          <div className="my-1 h-px bg-foreground/5" />
-          <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground">
-            <Loader2 className="size-3.5 shrink-0 animate-spin" />
-            Loading apps…
-          </div>
-        </>
-      ) : null}
-    </div>
+    <Popover open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <PopoverContent
+        anchor={positionAnchor}
+        side="bottom"
+        align="start"
+        className="w-auto min-w-52 gap-0 rounded-lg p-1 data-open:animate-none data-closed:animate-none"
+      >
+        {target.kind === "file" ? (
+          <Button
+            variant="ghost"
+            onClick={() => void handleCopyPath()}
+            className="w-full justify-start gap-2.5 px-3 py-2 text-sm"
+          >
+            <Copy className="size-4 shrink-0" />
+            Copy path
+          </Button>
+        ) : null}
+        {canLaunch ? (
+          <button
+            type="button"
+            onClick={handleOpenDefault}
+            className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
+          >
+            <ExternalLink className="size-4 shrink-0" />
+            Open with default app
+          </button>
+        ) : null}
+        {canOpenInPanel ? (
+          <button
+            type="button"
+            onClick={handleOpenInPanel}
+            className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
+          >
+            <Eye className="size-4 shrink-0" />
+            Open in panel
+          </button>
+        ) : null}
+        {canOpenExternally ? (
+          <button
+            type="button"
+            onClick={handleReveal}
+            className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-foreground/10"
+          >
+            <FolderOpen className="size-4 shrink-0" />
+            {platform.os === "macos" ? "Reveal in Finder" : "Show in folder"}
+          </button>
+        ) : null}
+        {canLaunch && apps && apps.length > 0 ? (
+          <>
+            <div className="my-1 h-px bg-foreground/5" />
+            <div className="max-h-48 overflow-y-auto">
+              {apps.map((app) => (
+                <button
+                  key={app.appPath}
+                  type="button"
+                  onClick={() => void handleOpenWithApp(app)}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
+                >
+                  {app.icon ? (
+                    <img src={app.icon} alt="" className="size-4 shrink-0 object-contain" />
+                  ) : (
+                    <span className="size-4 shrink-0" />
+                  )}
+                  <span className="truncate">{app.name}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : appsLoading ? (
+          <>
+            <div className="my-1 h-px bg-foreground/5" />
+            <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              Loading apps…
+            </div>
+          </>
+        ) : null}
+      </PopoverContent>
+    </Popover>
   );
 }

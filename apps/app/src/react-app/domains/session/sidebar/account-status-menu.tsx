@@ -29,20 +29,23 @@ import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { isDenSessionRestoring, useDenAuth } from "../../cloud/den-auth-provider";
 import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
-import { GatewayUsageTrigger } from "../../cloud/gateway-usage-panel";
+import { GatewayUsageMenuItem } from "../../cloud/gateway-usage-panel";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
 import {
-  buildDenAuthUrl,
   clearDenSession,
   createDenClient,
-  readDenBootstrapConfig,
+  HOSTED_DEFAULT_DEN_BASE_URL,
   readDenSettings,
 } from "../../../../app/lib/den";
+import {
+  formatControlPlaneHost,
+  isDefaultControlPlaneUrl,
+} from "../../settings/cloud/control-plane-url";
 import { markDesktopSignInInitiated } from "../../../../app/lib/den-sign-in-intent";
-import { exchangeHandoffAndSignIn } from "../../../../app/lib/den-handoff";
-import { parseManualAuthInput } from "../../../../app/lib/manual-auth-input";
+import { useCloudSignIn, useRecordSignInReturnForPaste } from "../../cloud/sign-in-return";
+import { useManualSignInCode } from "../../cloud/use-manual-sign-in-code";
 import {
   openWorkConnectAttentionTitle,
   resolveOpenWorkConnectStatus,
@@ -200,6 +203,7 @@ export type AccountStatusMenuProps = {
   openWorkConnectState?: SessionCloudMcpMaintenanceState;
   showSettingsButton?: boolean;
   onOpenAccountSettings?: () => void;
+  onOpenDiagnostics?: () => void;
   onSendFeedback?: () => void;
 };
 
@@ -213,9 +217,12 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const navigate = useNavigate();
   const { config: shellConfig } = useShellConfig();
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const [pasteCode, setPasteCode] = useState("");
-  const [pasteBusy, setPasteBusy] = useState(false);
-  const [pasteError, setPasteError] = useState<string | null>(null);
+  const cloudSignIn = useCloudSignIn();
+  const recordSignInReturn = useRecordSignInReturnForPaste();
+  const manualCode = useManualSignInCode({ onBeforeExchange: recordSignInReturn });
+  const pasteCode = manualCode.code;
+  const pasteBusy = manualCode.busy;
+  const pasteError = manualCode.error;
   const [manualAuthOpen, setManualAuthOpen] = useState(false);
   const [initializing, setInitializing] = useState(
     () => Date.now() - BOOT_STARTED_AT < INITIALIZING_MS,
@@ -285,11 +292,18 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
     status: denAuth.status,
     hasUser: user !== null,
   });
+  // A self-hosted server is named by its host, as on the sign-in page.
+  const denBaseUrl = readDenSettings().baseUrl;
+  const serverLabel = isDefaultControlPlaneUrl(denBaseUrl, HOSTED_DEFAULT_DEN_BASE_URL)
+    ? "OpenWork Cloud"
+    : formatControlPlaneHost(denBaseUrl);
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
-    : restoringSession ? "OpenWork Cloud" : "Sign in";
+    : restoringSession ? serverLabel : "Sign in";
+  // The sidebar row shows the name only; the email stays inside the account
+  // menu so it is not permanently on screen (matches Claude Code and Codex).
   const accountDetail = signedIn
-    ? (user.name ? user.email : "OpenWork Cloud")
+    ? serverLabel
     : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
 
   const runtimeStatus = props.showConnectionStatus
@@ -311,32 +325,11 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const showStatus = shellConfig.statusBar && (runtimeStatus !== null || connectStatus !== null);
 
   const openSignIn = () => {
-    markDesktopSignInInitiated();
-    platform.openLink(buildDenAuthUrl(readDenBootstrapConfig().baseUrl, "sign-up"));
+    cloudSignIn();
   };
 
   const submitPastedCode = async () => {
-    const parsed = parseManualAuthInput(pasteCode);
-    if (!parsed) {
-      setPasteError(t("den.error_paste_valid_code"));
-      return;
-    }
-    setPasteBusy(true);
-    setPasteError(null);
-    markDesktopSignInInitiated();
-    const nextBaseUrl = parsed.baseUrl ?? readDenSettings().baseUrl;
-    const result = await exchangeHandoffAndSignIn(parsed.grant, {
-      baseUrl: nextBaseUrl,
-      desktopInitiated: true,
-      fallbackErrorMessage: t("den.error_no_token"),
-    });
-    setPasteBusy(false);
-    if (!result.ok) {
-      setPasteError(result.error);
-      return;
-    }
-    setPasteCode("");
-    void denAuth.refresh();
+    await manualCode.submit();
   };
 
   const logOut = () => {
@@ -366,7 +359,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             data-connect-state={connectStatus?.state}
             /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent max-lg:min-h-11"
-            aria-label={signedIn ? `${user.email} — account and status` : "Account and status"}
+            aria-label={signedIn ? `${accountLabel} — account and status` : "Account and status"}
             title={connectNeedsAttention
               ? openWorkConnectAttentionTitle(connectStatus.description)
               : connectStatus
@@ -398,11 +391,16 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
           </button>
         }
       />
-      {signedIn ? <GatewayUsageTrigger key={`${denAuth.verifiedIdentity?.organizationId}:${user.id}`} /> : null}
       <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Account menu"><MoreHorizontal size={14} /></Button>} />
       <DropdownMenuContent side="top" align="start" className="w-72">
         {signedIn ? (
           <div className="px-2 py-1.5 text-[11px] text-muted-foreground">{user.email}</div>
+        ) : null}
+        {signedIn ? (
+          <>
+            <GatewayUsageMenuItem key={`${denAuth.verifiedIdentity?.organizationId}:${user.id}`} />
+            <DropdownMenuSeparator />
+          </>
         ) : null}
 
         {showStatus ? (
@@ -467,7 +465,11 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         ) : null}
 
         {connectNeedsAttention && !controlSettingsBlocked ? (
-          <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
+          <DropdownMenuItem
+            onClick={() => props.onOpenDiagnostics
+              ? props.onOpenDiagnostics()
+              : navigate(props.developerMode ? "/settings/debug" : "/settings/advanced/agent-access")}
+          >
             <Stethoscope className="size-3.5" />
             Run diagnostics
           </DropdownMenuItem>
@@ -559,10 +561,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
                 <Input
                   id="account-paste-signin-code"
                   value={pasteCode}
-                  onChange={(event) => {
-                    setPasteCode(event.currentTarget.value);
-                    if (pasteError) setPasteError(null);
-                  }}
+                  onChange={(event) => manualCode.setCode(event.currentTarget.value)}
                   placeholder={t("den.signin_link_placeholder")}
                   className="h-11 text-base lg:h-9 lg:text-sm"
                   disabled={pasteBusy}

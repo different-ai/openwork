@@ -1,12 +1,12 @@
 "use memo";
 
-import { VisualizationTool } from "@/components/tools/visualization-tool"
+import { appBuildActivity, appBuildInProgress, appCreationRuns } from "@/react-app/domains/apps/app-creation-progress"
+import { BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
+import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
+import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
 import {
-  AlertTriangle,
   Check,
-  ChevronRight,
-  CirclePause,
   Copy,
   Download,
   FileIcon,
@@ -21,32 +21,41 @@ import {
 import {
   DynamicToolUIPart,
   isFileUIPart,
+  isToolUIPart,
   ToolUIPart,
   type FileUIPart,
   type UIMessage,
 } from "ai"
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
+import { openDesktopUrl } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
 import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
-import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
+import { TaskRecovery } from "./task-recovery"
+import { BackgroundTaskNotice, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
+import { messageAutoAccessWall } from "@/app/lib/inference-access"
+import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
+import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-card"
+import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
+import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
+import { replyModelLabel, replyModelProvider } from "@/react-app/domains/session/sync/reply-model"
+import { ProviderIcon } from "@/react-app/design-system/provider-icon"
+import { openAlternativeModelPicker } from "@/app/lib/inference-access"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
 import { EditTool } from "@/components/tools/edit"
-import { EnvVarRequestTool } from "@/components/tools/env-var-request"
 import { ReadFileTool, WriteFileTool } from "@/components/tools/file"
 import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
 import {
+  automationProposalCalls,
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { OpenWorkSessionCreateTool } from "@/components/tools/openwork-session-create"
 import { QuestionTool } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
@@ -78,6 +87,11 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
+import { AttachmentFileChip, ComposerBadgeChip, ComposerPillChip, PastedTextChip } from "@/components/chat/composer-pill"
+import { agentBadge, fileMentionBadge } from "@/react-app/domains/session/surface/composer/composer-chips"
+import { isChatAttachmentUrl } from "@/react-app/domains/session/sync/attachment-file-part"
+import { splitComposerPillText } from "@/react-app/domains/session/surface/composer/composer-pills"
+import { composerDraftFromSentParts, sentTextPartToken } from "@/react-app/domains/session/surface/composer/sent-message-tokens"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -87,11 +101,26 @@ import {
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
-import { CodeModeTool } from "@/components/chat/code-mode-tool"
+import { CodeModeTool, isSilentCodeModePart } from "@/components/chat/code-mode-tool"
+import { CreatedSkillCard, CreatedSkillsContext, useCreatedSkills, type CreatedSkillsContextValue } from "@/components/chat/created-skill-card"
+import { readCreatedSkillAccess } from "@/components/chat/created-skill-access"
+import { collectCreatedSkills, type ConfirmedSkillAccess, type CreatedSkillsModel } from "@/lib/created-skill"
+import { openWorkNativeFailure } from "@/lib/openwork-native-activity"
+import { TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
+import { ConnectionCard } from "@/components/chat/connection-card"
+import { CredentialPromptCard } from "@/components/chat/credential-prompt-card"
+import { credentialPromptCall } from "@/components/chat/credential-prompt"
+import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
+import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
-import { hasPreservedMcpAppResult, McpAppFrame } from "@/components/chat/mcp-app-frame"
+import { codeModeCallsWithResults, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
+import { dedupeRenderedTurnErrors, joinRecoveredReplies } from "@/react-app/domains/session/sync/transcript-reconcile"
+import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
-import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { SubagentRunLine, useRunningSubagentIds } from "@/components/chat/subagent-run-line"
+import { RemoteThreadRunLine } from "@/components/chat/remote-thread-run-line"
+import { isRemoteThreadStatusCheck, remoteThreadFromToolPart, type RemoteThreadStart } from "@/lib/remote-session-thread"
+import { useReviveRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
 import {
   CurrentToolLifecycleProvider,
@@ -101,7 +130,6 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
-  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
@@ -116,7 +144,8 @@ import {
   isWriteToolPart,
 } from "@/lib/build-in-tools"
 import type { ThreadStatus } from "@/lib/messages"
-import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
+import { useShallow } from "zustand/react/shallow"
+import { useSessionActivityStore, type SessionActivityStatus, type WaitInterval } from "@/react-app/domains/session/status/session-activity-store"
 import { activeDelegatedTasks, hasNoNewActivity, lastTaskProgressAt } from "@/react-app/domains/session/status/session-progress"
 import { revalidateWorkspaceSessionSync } from "@/react-app/domains/session/sync/session-sync"
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
@@ -127,16 +156,33 @@ import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
 import { cn } from "@/lib/utils"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
-import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
+import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, getRunStartedAt, getWaitedMs, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
+import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSessionHistory as ComputerHistory } from "@/lib/computer-session-history"
+import { ComputerSessionHistory, desktopSavedFileActions } from "./computer-session-history"
+import { ComputerCrewCard, useComputerCrew } from "./computer-crew"
+import { useComputerSessionHistoryStore } from "./computer-session-history-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
-/** Above this many step rows a finished turn folds into one summary line. */
-const COLLAPSED_STEP_RUN_MIN_ROWS = 4
+/** A finished turn with at least this many step rows folds into one summary line (T1). */
+const COLLAPSED_STEP_RUN_MIN_ROWS = 1
 
+const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
+/**
+ * While an App is being built, its panel is the one live
+ * thing in the chat: thinking and plain tool rows fold away and the panel
+ * shows the latest of them. Approvals, connection cards, questions and
+ * sub-agents still show.
+ */
+const AppPanelLiveContext = React.createContext(false)
+const AppPanelFoldContext = React.createContext(false)
+/** Remote task rows a folded turn shows below its fold; inside it they render nothing. */
+const NO_PINNED_REMOTE_THREADS: ReadonlySet<string> = new Set()
+const PinnedRemoteThreadsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_REMOTE_THREADS)
 const ParentRunActiveContext = React.createContext(true)
+const ComputerHistoryContext = React.createContext<ComputerHistory | null>(null)
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
   const created = getMessageCreated(message)
@@ -187,54 +233,109 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
   }
 }
 
+/**
+ * Tool calls in the current assistant turn that present as the native
+ * connection card. One card per connection: the latest report wins, and a
+ * pending native question pins the card to the call it is bound to. Earlier
+ * reports for the same connection stay quiet sentence lines.
+ */
+const ConnectionCardPartsContext = React.createContext<ReadonlySet<string>>(new Set())
+
+function connectionCardPartIds(
+  items: readonly UIMessageWithIndex[],
+  getConnectionDecision: ((toolCallId: string) => ChatConnectionDecisionBinding | null) | undefined,
+): Set<string> {
+  const latest = new Map<string, string>()
+  const bound = new Map<string, string>()
+  for (const item of items) {
+    if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
+    for (const part of item.message.parts) {
+      if (part.type !== "dynamic-tool" || (part.state !== "output-available" && part.state !== "output-error")) continue
+      const decision = getConnectionDecision?.(part.toolCallId) ?? null
+      const found = connectionFromChatToolPart(part, { allowDiscovery: decision !== null })
+      if (!found) continue
+      if (decision) bound.set(found.connection.connectionId, part.toolCallId)
+      else latest.set(found.connection.connectionId, part.toolCallId)
+    }
+  }
+  return new Set([...latest.entries()].map(([connectionId, toolCallId]) => bound.get(connectionId) ?? toolCallId).concat([...bound.values()]))
+}
+
+/** The reserved native connection question is answered through the card, never as a tool row. */
+function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart): boolean {
+  return part.type === "dynamic-tool" && /(?:^|_)question$/.test(part.toolName) && isReservedConnectionQuestion(part.input)
+}
+
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
-  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, onMcpRetry } = useMessageList()
+  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
+  const pinnedRemoteThreads = React.useContext(PinnedRemoteThreadsContext)
+  // The agent following up on a task the chat shows makes it run again.
+  useReviveRemoteThread(part.type === "dynamic-tool" ? part : null)
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
+  const connectionCardParts = React.useContext(ConnectionCardPartsContext)
+  const appCreationParts = React.useContext(AppCreationPartsContext)
+  const appPanelFold = React.useContext(AppPanelFoldContext)
+  if (appCreationParts.has(part.toolCallId)) return null
+  if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
+  const promptCall = credentialPromptCall(part)
+  const remoteStart = part.type === "dynamic-tool" ? remoteThreadFromToolPart(part) : null
+  const calls = part.type === "dynamic-tool" ? codeModeToolCalls(part) : null
+  const remoteStarts = calls && part.type === "dynamic-tool" ? (codeModeCallsWithResults(part) ?? []).flatMap((call) => {
+    const start = remoteThreadFromToolPart(call)
+    return start ? [{ start, call }] : []
+  }) : []
+  const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
+  const proposals = calls && part.type === "dynamic-tool" ? automationProposalCalls(part) : []
+  if (foldTool && !remoteStart && remoteStarts.length === 0 && proposals.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
 
+  // So does a task started on another computer: it reads as a sub-agent.
+  if (remoteStart && part.type === "dynamic-tool") {
+    return pinnedRemoteThreads.has(part.toolCallId) ? null : <RemoteThreadRunLine start={remoteStart} part={part} />
+  }
+
   if (part.type === "dynamic-tool") {
-    const calls = codeModeToolCalls(part)
-    if (calls) return <CodeModeTool part={part} calls={calls} lifecycle={lifecycle} connectors={connectorIdentities} />
+    if (calls && (remoteStarts.length > 0 || proposals.length > 0)) {
+      const started = new Set([...remoteStarts.map(({ call }) => call.toolCallId), ...proposals.map((call) => call.toolCallId)])
+      return (
+        <div className="flex min-w-0 flex-col gap-1">
+          {!foldTool && <CodeModeTool part={part} calls={calls.filter((call) => !started.has(call.toolCallId))} lifecycle={lifecycle} connectors={connectorIdentities} />}
+          {promptCall && <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />}
+          {proposals.map((call) => <OpenWorkAutomationProposalTool key={call.toolCallId} part={call} />)}
+          {remoteStarts.filter(({ call }) => !pinnedRemoteThreads.has(call.toolCallId))
+            .map(({ start, call }) => <RemoteThreadRunLine key={start.key} start={start} part={call} />)}
+        </div>
+      )
+    }
+    if (calls) {
+      const script = <CodeModeTool part={part} calls={calls} lifecycle={lifecycle} connectors={connectorIdentities} />
+      // A key the script's Den call asked for is entered in the host's private field.
+      return promptCall ? <>{script}<CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} /></> : script
+    }
   }
 
   if (lifecycle === "waiting") {
+    // Text-first: waiting on the person is one amber sentence; the decision itself sits above the composer (T4).
     return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-amber-7 bg-amber-2 px-3 py-2 text-sm text-amber-12"
-        data-tool-lifecycle="waiting"
-        role="status"
-      >
-        <CirclePause aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Waiting for your action</div>
-          <div className="text-xs text-amber-11">Choose an option or approve the request to continue.</div>
-        </div>
+      <div className="flex min-h-6.5 items-center text-sm" data-tool-lifecycle="waiting" role="status">
+        <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" />
       </div>
     )
   }
 
-  if (lifecycle === "interrupted") {
+  const statusUnknown = isToolPartInFlight(part) && (lifecycle === "interrupted" || (!lifecycle && !parentActive))
+  if (statusUnknown) {
     return (
-      <div
-        className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        data-tool-lifecycle="interrupted"
-        role="alert"
-      >
-        <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <div>
-          <div className="font-medium">Task interrupted</div>
-          <div className="text-xs text-destructive/80">This step stopped before it finished. Retry to continue.</div>
-        </div>
+      <div className="text-sm text-muted-foreground" data-tool-lifecycle="unknown">
+        {part.type === "dynamic-tool" ? (
+          <CapabilityCallLine part={part} connector={resolveConnectorToolIdentity(part, connectorIdentities)} statusUnknown />
+        ) : "Tool activity — status unavailable"}
       </div>
     )
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
-    return <VisualizationTool part={part} />
   }
 
   if (isBashToolPart(part)) {
@@ -289,16 +390,19 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return <QuestionTool part={part} />
   }
 
-  if (isEnvVarRequestToolPart(part)) {
-    return <EnvVarRequestTool part={part} />
-  }
-
-  if (part.type === "dynamic-tool" && part.toolName === "openwork_session_create") {
-    return <OpenWorkSessionCreateTool part={part} />
-  }
-
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
     return <OpenWorkAutomationProposalTool part={part} />
+  }
+
+  // OpenWork's own connection reports render as the native card: the host is
+  // the presentation; the Den App remains for external hosts.
+  if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
+    return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
+  }
+
+  // A key an agent asked for is entered in the host's private field, never in chat.
+  if (part.type === "dynamic-tool" && promptCall) {
+    return <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -308,9 +412,9 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       <CapabilityCallLine
         part={part}
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
+        shimmer={isToolPartInFlight(part)}
         onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
-        onRetry={onMcpRetry}
       />
     )
   }
@@ -320,12 +424,56 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       toolPart={part}
       onReconnect={onMcpReconnect}
       onReopenAuthorization={onMcpReopenAuthorization}
-      onRetry={onMcpRetry}
     />
   )
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
+
+/**
+ * A finished catalog lookup (what OpenWork offers, which Cloud capabilities
+ * exist) did no work the person asked for (T2), the same rule Code Mode
+ * scripts follow. A lookup that reports a connection to set up stays: that
+ * is something the person can act on.
+ */
+function isSilentAppLookup(part: DynamicToolUIPart): boolean {
+  if (part.state !== "output-available") return false
+  if (part.toolName === "openwork_context") return true
+  const catalogSearch = part.toolName === "search" || part.toolName.endsWith("search_capabilities")
+  return catalogSearch && connectionFromChatToolPart(part, { allowDiscovery: true }) === null
+}
+
+/**
+ * A finished turn folds only when nothing in it needs the person: a failed
+ * step stays inline with its fix (T2), and a key, connection or question the
+ * agent is waiting on is never hidden behind "Worked for…".
+ */
+function stepsNeedAttention(items: UIMessageWithIndex[], connectionCards: ReadonlySet<string>): boolean {
+  return items.some(({ message }) => message.role === "assistant" && !isSessionErrorMessage(message) && message.parts.some((part) => {
+    if (!isToolUIPart(part)) return false
+    if (part.state === "output-error") return true
+    if (part.type === "dynamic-tool") {
+      if (connectionCards.has(part.toolCallId) || credentialPromptCall(part)) return true
+      if (openWorkNativeFailure(part)) return true
+      if ((codeModeToolCalls(part) ?? []).some((call) => call.state === "output-error" || openWorkNativeFailure(call))) return true
+    }
+    return isQuestionToolPart(part) && isToolPartInFlight(part)
+  }))
+}
+
+function withoutSilentSteps(messages: UIMessage[]): UIMessage[] {
+  let changed = false
+  const next = messages.flatMap((message) => {
+    if (message.role !== "assistant") return [message]
+    // With tasks on other computers shown live, the agent's own checks on them are plumbing.
+    const parts = message.parts.filter((part) => !(part.type === "dynamic-tool"
+      && (isSilentCodeModePart(part) || isSilentAppLookup(part) || isRemoteThreadStatusCheck(part))))
+    if (parts.length === message.parts.length) return [message]
+    changed = true
+    return parts.length > 0 ? [{ ...message, parts }] : []
+  })
+  return changed ? next : messages
+}
 
 type RetryStatus = Extract<SessionStatus, { type: "retry" }>
 
@@ -346,10 +494,11 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const openArtifactPath = useOpenArtifactPath()
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
-  const downloadUrl = getSafeFileDownloadUrl(part)
   const revealPath = getSafeFileRevealPath(part)
-  const canReveal = isElectronRuntime() && Boolean(revealPath)
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url) && !revealPath
+  const downloadUrl = getSafeFileDownloadUrl(part)
+  const { isLocalWorkspace } = useOpenTargets()
+  const canReveal = isLocalWorkspace && isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
     if (!downloadUrl) return
@@ -364,8 +513,8 @@ function FileMessage({ part, tone }: FileMessageProps) {
 
   const handleReveal = React.useCallback(() => {
     if (!revealPath) return
-    void revealDesktopItemInDir(revealPath)
-  }, [revealPath])
+    openArtifactPath(revealPath, { external: true, reveal: true })
+  }, [openArtifactPath, revealPath])
 
   const fileContent = (
     <>
@@ -383,8 +532,59 @@ function FileMessage({ part, tone }: FileMessageProps) {
     </>
   )
 
-  if (isImage && tone === "user") {
+  const actions = downloadUrl || canReveal ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`More actions for ${title}`}
+          >
+            <MoreHorizontal />
+          </Button>
+        }
+      />
+      <DropdownMenuContent align="end" className="min-w-44">
+        {downloadUrl ? (
+          <DropdownMenuItem onClick={handleDownload}>
+            <Download />
+            Download
+          </DropdownMenuItem>
+        ) : null}
+        {canReveal ? (
+          <DropdownMenuItem onClick={handleReveal}>
+            <FolderOpen />
+            Reveal in Finder
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null
+
+  if (isImage && tone === "user" && !revealPath) {
     return <ImageAttachmentBadge src={part.url} alt={title} />
+  }
+
+  if (tone === "user" && revealPath && !isChatAttachmentUrl(part.url)) {
+    return (
+      <button type="button" className="inline rounded-lg align-middle" onClick={() => openArtifactPath(revealPath)} title={`Open ${title} in Artifacts`}>
+        <ComposerBadgeChip badge={fileMentionBadge(revealPath)} className="mx-0" />
+      </button>
+    )
+  }
+
+  if (tone === "user") {
+    return (
+      <AttachmentFileChip
+        filename={title}
+        mime={part.mediaType}
+        bytes={fileBytes(part)}
+        onOpen={revealPath ? () => openArtifactPath(revealPath) : undefined}
+        actions={actions}
+      />
+    )
   }
 
   if (isImage) {
@@ -415,36 +615,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
       ) : (
         <div className="flex min-w-0 items-center gap-2 pe-2">{fileContent}</div>
       )}
-      {downloadUrl || canReveal ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`More actions for ${title}`}
-              >
-                <MoreHorizontal />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="end" className="min-w-44">
-            {downloadUrl ? (
-              <DropdownMenuItem onClick={handleDownload}>
-                <Download />
-                Download
-              </DropdownMenuItem>
-            ) : null}
-            {canReveal ? (
-              <DropdownMenuItem onClick={handleReveal}>
-                <FolderOpen />
-                Reveal in Finder
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
+      {actions}
     </div>
   )
 }
@@ -501,12 +672,13 @@ type AssistantMessageProps = {
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
+    const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
-        const groups = getAssistantRenderGroups(message.parts, showThinking)
+        const groups = getAssistantRenderGroups(withoutComputerHistory(message.parts, computerHistory), showThinking)
         return hideReasoning ? groups.filter((group) => group.kind !== "reasoning") : groups
       },
-      [hideReasoning, message.parts, showThinking]
+      [hideReasoning, message.parts, showThinking, computerHistory]
     )
 
     return (
@@ -518,17 +690,23 @@ const AssistantMessage = React.memo(
         <div className="group flex w-full flex-col gap-0 space-y-2">
           {assistantRenderGroups.map((group, index) => {
             if (group.kind === "text") {
+              // The answer lines up with the activity rail: the same leading
+              // 20px lane the step rows and the "Worked for…" summary use, so
+              // the reply's text starts where their labels do instead of 28px
+              // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
-                <MessageContent
-                  key={`text-${index}`}
-                  className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
-                  markdown
-                  sessionReferences
-                  isStreaming={isStreaming}
-                  highlightQuery={highlightQuery}
-                >
-                  {group.text}
-                </MessageContent>
+                <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
+                  <MessageContent
+                    className="text-foreground prose w-full min-w-0 flex-1 rounded-lg bg-transparent p-0"
+                    markdown
+                    sessionReferences
+                    githubReferences
+                    isStreaming={isStreaming}
+                    highlightQuery={highlightQuery}
+                  >
+                    {group.text}
+                  </MessageContent>
+                </div>
               )
             }
 
@@ -539,6 +717,7 @@ const AssistantMessage = React.memo(
                   disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
                   isStreaming={group.isStreaming}
+                  durationMs={group.durationMs}
                 />
               )
             }
@@ -578,14 +757,26 @@ type UserMessageProps = {
   isStreaming: boolean
 }
 
-const USER_SKILL_TOKEN_RE = /(Load \[skill [^\]]+\] and follow its instructions\.|\[skill [^\]]+\])/
+function fileBytes(part: FileUIPart) {
+  const metadata = part.providerMetadata?.opencode
+  const bytes = metadata && typeof metadata === "object" && "bytes" in metadata ? metadata.bytes : undefined
+  return typeof bytes === "number" ? bytes : undefined
+}
 
-function UserSkillChip(props: { name: string }) {
-  return (
-    <span className="mx-0.5 inline-flex items-center rounded-full border border-violet-6/35 bg-violet-3/20 px-2.5 py-1 text-xs font-medium text-violet-11 align-middle" title={`Skill: ${props.name}`}>
-      {props.name}
-    </span>
-  )
+/** The chip a sent text part is drawn as: the same one the composer drew. */
+function renderSentTokenChip(part: UIMessage["parts"][number], key: string) {
+  const token = sentTextPartToken(part)
+  if (!token) return null
+  switch (token.kind) {
+    case "pill":
+      return <ComposerPillChip key={key} pill={token.pill} />
+    case "pasted":
+      return part.type === "text" ? <PastedTextChip key={key} text={part.text} /> : null
+    case "agent":
+      return <ComposerBadgeChip key={key} badge={agentBadge(token.name)} />
+    case "file":
+      return <ComposerBadgeChip key={key} badge={fileMentionBadge(token.path)} />
+  }
 }
 
 function renderPlainTextWithSearchHighlights(text: string, highlightQuery: string | undefined, keyPrefix: string) {
@@ -707,15 +898,18 @@ function renderPlainTextWithLinks(text: string, highlightQuery: string | undefin
   return nodes
 }
 
-function renderUserTextWithSkillChips(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
-  if (!USER_SKILL_TOKEN_RE.test(text)) return renderPlainTextWithLinks(text, highlightQuery, "text", references)
+function renderUserTextWithPills(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
+  const segments = splitComposerPillText(text)
+  if (segments.length === 1 && typeof segments[0] === "string") return renderPlainTextWithLinks(text, highlightQuery, "text", references)
   let offset = 0
-  return text.split(USER_SKILL_TOKEN_RE).map((segment) => {
-    const key = `${offset}:${segment}`
+  return segments.map((segment) => {
+    const key = `${offset}`
+    if (typeof segment !== "string") {
+      offset += 1
+      return <ComposerPillChip key={`pill:${key}`} pill={segment} />
+    }
     offset += segment.length
-    const skillMatch = segment.match(/^(?:Load )?\[skill ([^\]]+)\](?: and follow its instructions\.)?$/)
-    if (skillMatch?.[1]) return <UserSkillChip key={key} name={skillMatch[1]} />
-    return <React.Fragment key={key}>{renderPlainTextWithLinks(segment, highlightQuery, key, references)}</React.Fragment>
+    return <React.Fragment key={`text:${key}`}>{renderPlainTextWithLinks(segment, highlightQuery, key, references)}</React.Fragment>
   })
 }
 
@@ -737,21 +931,21 @@ function renderUserProse(text: string, highlightQuery: string | undefined, refer
     const exactId = Boolean(closing) && /^ses_[A-Za-z0-9][A-Za-z0-9_-]*$/.test(body)
     nodes.push(
       <React.Fragment key={`prose:${cursor}`}>
-        {renderUserTextWithSkillChips(text.slice(cursor, start), highlightQuery, references)}
+        {renderUserTextWithPills(text.slice(cursor, start), highlightQuery, references)}
       </React.Fragment>,
       <React.Fragment key={`inline-code:${start}`}>
-        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, exactId ? references : undefined)}
+        {renderUserTextWithPills(text.slice(start, end), highlightQuery, exactId ? references : undefined)}
       </React.Fragment>
     )
     cursor = end
     if (!closing) break
   }
-  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserTextWithSkillChips(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
+  nodes.push(<React.Fragment key={`prose:${cursor}`}>{renderUserTextWithPills(text.slice(cursor), highlightQuery, references)}</React.Fragment>)
   return nodes
 }
 
 function renderUserText(text: string, highlightQuery: string | undefined, references: SessionReferences | undefined) {
-  if (!references) return renderUserTextWithSkillChips(text, highlightQuery, undefined)
+  if (!references) return renderUserTextWithPills(text, highlightQuery, undefined)
   const nodes: React.ReactNode[] = []
   const blocks = /^(?:[ \t]*(?:>[ \t]*)*(?:(?:[-+*]|\d+[.)])[ \t]+)?(`{3,}|~{3,})[^\n]*(?:\n|$)|(?: {4}|\t)[^\n]*(?:\n|$))/gm
   let cursor = 0
@@ -771,7 +965,7 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
         {renderUserProse(text.slice(cursor, start), highlightQuery, references)}
       </React.Fragment>,
       <React.Fragment key={`code-block:${start}`}>
-        {renderUserTextWithSkillChips(text.slice(start, end), highlightQuery, undefined)}
+        {renderUserTextWithPills(text.slice(start, end), highlightQuery, undefined)}
       </React.Fragment>
     )
     cursor = end
@@ -782,9 +976,10 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
 
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
-    const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
+    const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
-    const branching = forkingMessageId === message.id
+    const wall = messageAutoAccessWall(message.metadata)
+    const { sessionId, workspaceId } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
@@ -795,18 +990,23 @@ const UserMessage = React.memo(
       onOpenTarget(target)
     }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
+    // Edit puts every chip back in the composer as the same chip.
+    const editMessage = () => {
+      const draft = composerDraftFromSentParts(message.parts)
+      onEditUserMessage(message.id, draft.text, draft)
+    }
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
       [message.parts],
     )
     const hasContent = inlineParts.length > 0
+    // Same actions, in the same order, as the buttons below the bubble.
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly, onSelect: () => onEditUserMessage(message.id, messageText) },
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: editMessage },
     )
-    menuActions.push(
-      { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
+    if (!wall) menuActions.push(
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
 
@@ -824,7 +1024,8 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className={cn("group flex w-full flex-col items-end gap-1 !select-text", wall && "opacity-50")}
+                data-unprocessed={wall ? "true" : undefined}
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
@@ -834,6 +1035,8 @@ const UserMessage = React.memo(
                     onClick={openLink}
                   >
                     {inlineParts.map((part, index) => {
+                      const chip = renderSentTokenChip(part, `chip-${index}`)
+                      if (chip) return chip
                       if (part.type === "text") {
                         return (
                           <span key={`text-${index}`} className="whitespace-pre-wrap">
@@ -862,12 +1065,9 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && (
+                {!isStreaming && !wall && (
                   <MessageActions
-                    className={cn(
-                      "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
-                      branching ? "opacity-100" : "opacity-0"
-                    )}
+                    className="flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
                   >
                     <MessageTimestamp message={message} className="mr-1.5" />
                     <CopyMessageButton messages={[message]} />
@@ -878,25 +1078,12 @@ const UserMessage = React.memo(
                           size="icon"
                           aria-label="Edit message"
                           disabled={readOnly}
-                          onClick={() => onEditUserMessage(message.id, messageText)}
+                          onClick={editMessage}
                         >
                           <Pencil />
                         </Button>
                       </MessageAction>
                     ) : null}
-                    <MessageAction tooltip={branching ? "Branching..." : "Branch in new chat"}>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={branching ? "Branching..." : "Branch in new chat"}
-                        aria-busy={branching || undefined}
-                        disabled={Boolean(forkingMessageId)}
-                        onClick={() => onForkAtMessage(message.id)}
-                      >
-                        {branching ? <LoaderCircle className="motion-safe:animate-spin" /> : <Split className="rotate-90" />}
-                      </Button>
-                    </MessageAction>
-                    {branching ? <span role="status" className="sr-only">Branching...</span> : null}
                     <MessageAction tooltip="Revert">
                       <Button
                         variant="ghost"
@@ -913,6 +1100,7 @@ const UserMessage = React.memo(
               </div>
             }
           />
+          {wall ? <div className="w-full"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} recovery={rejectedRecoveryFromMessage(message)} /></div> : null}
       </Message>
     )
   }
@@ -932,18 +1120,28 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
-      return (
+      if (presentation?.autoAccessWall) return <TranscriptAutoAccessNotice wall={presentation.autoAccessWall} />
+      const errorMessage = (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
           description={presentation?.description}
-          showDescriptionOnResume={presentation?.kind === "provider-incomplete"}
+          showDescriptionOnResume={presentation?.kind !== "aborted" && presentation?.kind !== "provider-timeout"}
           resumePrompt={presentation?.recoveryPrompt}
+          canRetry={isLastMessage && !isStreaming}
           technicalDetails={presentation?.technicalDetails}
-          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" ? presentation.connectUrl ?? null : undefined}
+          gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
+          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
       )
+      if (presentation?.openworkModelsLimit) return <TranscriptOpenWorkModelsLimit limit={presentation.openworkModelsLimit} />
+      return errorMessage
     }
+
+    const backgroundShellNotice = backgroundShellNoticeFromMessage(message)
+    if (backgroundShellNotice) return <BackgroundTaskNotice message={message} notice={backgroundShellNotice} />
+    const subagentNotice = subagentNoticeFromMessage(message)
+    if (subagentNotice) return <SubagentNoticeRow message={message} notice={subagentNotice} />
 
     if (isEmptyMessage(message)) {
       return null
@@ -970,15 +1168,58 @@ const MessageComponent = React.memo(
   }
 )
 
+/** The organization used its OpenWork Models allowance: one usage-limit card. */
+function TranscriptOpenWorkModelsLimit({ limit }: { limit: OpenWorkModelsLimit }) {
+  const { sessionId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 py-2 md:px-10"><OpenWorkModelsLimitCard limit={limit} sessionId={sessionId} /></div>
+}
+
+function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typeof messageAutoAccessWall>> }) {
+  const { sessionId, workspaceId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 md:px-10"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} /></div>
+}
+
 MessageComponent.displayName = "MessageComponent"
 
-const LoadingMessage = React.memo(({ elapsedSeconds, starting }: { elapsedSeconds: number; starting: boolean }) => (
+const NO_WAITS: WaitInterval[] = []
+
+type WorkingModel = { label: string; providerId?: string }
+
+const LoadingMessage = React.memo(({ elapsedSeconds, starting, model = null }: {
+  elapsedSeconds: number
+  starting: boolean
+  /** The model writing this turn, shown on hover after the timer. */
+  model?: WorkingModel | null
+}) => {
+  return (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
-      <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="py-1 text-sm text-muted-foreground">
-        <span className="ow-text-shimmer tabular-nums">{starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}</span>
+      <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="group/working py-1 text-sm text-muted-foreground">
+        {/* One shimmer sweeps the whole line, so Working and the count move as
+            one. A count the connection cannot confirm stays outside it, still. */}
+        <span className="ow-text-shimmer tabular-nums">
+          {starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}
+        </span>
+        {/* Hover the Working line to see which model is writing this turn. It
+            sits right after the timer, outside the shimmer, on the same line. */}
+        {model ? (
+          <span
+            data-working-model=""
+            className="opacity-0 transition-opacity duration-150 ease-out group-hover/working:opacity-100 pointer-coarse:opacity-100 motion-reduce:transition-none"
+          >
+            <span aria-hidden="true"> · </span>
+            <span className="sr-only">{t("session.reply_model_live_prefix")}</span>
+            {/* The name is plain text on the line's own baseline, level with
+                "Working"; only the logo is nudged, to sit centered on the
+                capitals. Boxing the pair took its baseline from the logo: the
+                name dropped a pixel and the line grew once the model was known. */}
+            {model.providerId ? <span aria-hidden="true" data-working-model-logo="" className="mr-1 inline-flex size-3 items-center justify-center align-[-0.125em]"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
+            {model.label}
+          </span>
+        ) : null}
       </div>
     </Message>
-))
+  )
+})
 
 LoadingMessage.displayName = "LoadingMessage"
 
@@ -1036,6 +1277,7 @@ interface ErrorMessageProps {
   showDescriptionOnResume?: boolean
   /** Set only for interrupted runs that can resume. */
   resumePrompt?: string | null
+  canRetry?: boolean
   /** Error type, status, provider, code, response body — for bug reports and support. */
   technicalDetails?: string | null
   /**
@@ -1045,167 +1287,40 @@ interface ErrorMessageProps {
    */
   gatewayConnectUrl?: string | null
   gatewaySelectionRequired?: boolean
+  changeModel?: boolean
 }
 
-/**
- * Details are worth a disclosure only when they say more than the card
- * already does. A bare string error yields "Message: <same text>", which
- * would open to nothing new.
- */
-function hasExtraTechnicalDetails(error: string | null, details: string | null | undefined): details is string {
-  const text = details?.trim()
-  if (!text) return false
-  if (text === error?.trim()) return false
-  return text.replace(/^Message:\s*/, "") !== error?.trim()
-}
-
-function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone: "card" | "line" }) {
-  const [open, setOpen] = React.useState(false)
-  const [copied, setCopied] = React.useState(false)
-  const onCopy = React.useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(details)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // ignore clipboard failures
-    }
-  }, [details])
-
-  return (
-    <div className={cn("flex min-w-0 w-full flex-col", tone === "card" && "border-t border-destructive/20 pt-1.5")}>
-      <button
-        type="button"
-        data-testid="session-error-details-toggle"
-        onClick={() => setOpen(!open)}
-        aria-expanded={open}
-        className="flex w-fit min-w-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ChevronRight
-          aria-hidden="true"
-          className={cn("size-3 shrink-0 transition-transform duration-150", open && "rotate-90")}
-        />
-        <span className="shrink-0">Technical details</span>
-      </button>
-      {open ? (
-        <div
-          data-testid="session-error-details"
-          className="mt-1.5 flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted p-2 text-xs"
-        >
-          <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-foreground/90">
-            {details}
-          </pre>
-          <button
-            type="button"
-            onClick={() => void onCopy()}
-            className="flex w-fit cursor-pointer items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-          >
-            {copied ? <Check aria-hidden="true" className="size-3" /> : <Copy aria-hidden="true" className="size-3" />}
-            {copied ? "Copied" : "Copy details"}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
+function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, changeModel }: ErrorMessageProps) {
+  const { onResumeInterrupted, dispatchAction, sessionId } = useMessageList()
   const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
   const displayError = selection?.title ?? error
   const displayDescription = selection?.description ?? description
-  const displayDetails = selection?.technicalDetails ?? technicalDetails
-  // Status codes, provider names, and response bodies are for developers,
-  // admins, and support — not the plain-language card end users see. They
-  // surface only with Developer mode (Settings → Advanced), like the
-  // session debug panel.
-  const details = developerMode && hasExtraTechnicalDetails(displayError, displayDetails) ? displayDetails : null
-
-  // A resumable interruption is a pause, not a failure: it renders as a
-  // quiet status line (like "Working 12s"), with Resume as the emphasis.
-  if (resumePrompt && onResumeInterrupted) {
-    return (
-      <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
-        <div
-          data-testid="session-error-interrupted"
-          className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
-        >
-          <CirclePause aria-hidden="true" className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{error}</span>
-          <span aria-hidden="true" className="text-muted-foreground/60">·</span>
-          <button
-            type="button"
-            data-testid="session-error-resume"
-            onClick={() => onResumeInterrupted(resumePrompt)}
-            className="shrink-0 cursor-pointer font-medium text-foreground underline-offset-2 transition-colors hover:underline"
-          >
-            {t("session.resume_interrupted")}
-          </button>
-        </div>
-        {showDescriptionOnResume && description ? (
-          <p data-testid="session-error-interruption-warning" className="text-sm text-muted-foreground whitespace-pre-wrap">
-            {description}
-          </p>
-        ) : null}
-        {details ? <SessionErrorTechnicalDetails details={details} tone="line" /> : null}
-      </Message>
-    )
-  }
-
+  const displayTechnicalDetails = selection?.technicalDetails ?? technicalDetails
+  const resumable = Boolean(resumePrompt && onResumeInterrupted)
   return (
-    <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
-      <div className="group flex w-full flex-col items-start gap-0">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-          <div className="flex flex-row items-start gap-2">
-            <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
-            <div className="flex flex-col gap-1">
-              <p className="whitespace-pre-wrap text-destructive">{displayError}</p>
-              {displayDescription && (!resumePrompt || showDescriptionOnResume) ? (
-                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{displayDescription}</p>
-              ) : null}
-            </div>
-          </div>
-          {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
-          {gatewaySelectionRequired || selection ? (
-            <Button variant="outline" size="sm" className="self-start" data-testid="session-error-gateway-selection"
-              onClick={() => window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId, initialTab: "available" } }))}>
-              Choose group and credential set
-            </Button>
-          ) : null}
-          {gatewayConnectUrl !== undefined ? (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="session-error-gateway-connect"
-              className="self-start"
-              onClick={() => {
-                dispatchAction({ target: "settings", action: "open", section: "providers" })
-              }}
-            >
-              Connect
-            </Button>
-          ) : null}
-        </div>
-      </div>
-    </Message>
+    <TaskRecovery title={displayError ?? "Task failed"} state={resumable ? "paused" : "failed"}
+      testId={resumable ? "session-error-interrupted" : undefined}
+      description={showDescriptionOnResume && displayDescription
+        ? <span data-testid="session-error-interruption-warning">{displayDescription}</span>
+        : !resumePrompt ? displayDescription : null}
+      technicalDetails={displayTechnicalDetails}
+      onRetry={canRetry && resumable && resumePrompt ? () => onResumeInterrupted?.(resumePrompt) : undefined}
+      retryTestId="session-error-resume"
+      actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
+        {gatewaySelectionRequired || selection ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-selection"
+          onClick={() => openAlternativeModelPicker(sessionId)}>
+          Choose group and credential set
+        </Button> : null}
+        {changeModel && !gatewaySelectionRequired && !selection ? <Button variant="ghost" size="xs"
+          onClick={() => openAlternativeModelPicker(sessionId)}>Change model</Button> : null}
+        {gatewayConnectUrl !== undefined ? <Button variant="ghost" size="xs" data-testid="session-error-gateway-connect"
+          onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect</Button> : null}
+      </> : null} />
   )
 }
 
 interface RetryMessageProps {
   status: RetryStatus
-}
-
-function RetryActionButton(props: { label: string; onClick: () => void }) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-7 border-amber-500/70 bg-amber-50 text-xs text-amber-950 hover:bg-amber-100"
-      onClick={props.onClick}
-    >
-      {props.label}
-    </Button>
-  )
 }
 
 const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
@@ -1230,43 +1345,22 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     : `Retrying · attempt ${status.attempt}`
   const action = status.action
   const freeModelLimit = action?.reason === "free_tier_limit"
+  const presentation = presentOpencodeSessionError({ name: "APIError", data: { message: status.message } })
+  // Transport failures are the engine reconnecting, not a failure yet: say so
+  // and show progress instead of echoing the raw fetch error.
+  const reconnecting = !freeModelLimit && !action
+    && ["network-unavailable", "provider-unreachable", "provider-connection-dropped"].includes(presentation.kind)
+  const progress = seconds > 0 ? `Attempt ${status.attempt}, next try in ${seconds}s` : `Attempt ${status.attempt}`
 
   return (
-    <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
-      <div className="group flex w-full flex-col items-start gap-0">
-        <div className="text-foreground flex min-w-0 flex-1 flex-col gap-2 rounded-lg border-2 border-amber-300 bg-amber-300/20 px-3 py-2">
-          <div className="flex items-start gap-2">
-            <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-amber-700" />
-            <div className="min-w-0 space-y-1">
-              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">
-                {freeModelLimit ? "The free starter model is busy right now" : status.message}
-              </p>
-              <p className="text-xs text-amber-800">{info}</p>
-            </div>
-          </div>
-          {action ? (
-            <div className="ml-6 space-y-1 border-t border-amber-400/60 pt-2">
-              <p className="text-xs font-medium text-amber-950">
-                {freeModelLimit ? "Free model limit reached" : action.title}
-              </p>
-              <p className="text-xs text-amber-900">
-                {freeModelLimit
-                  ? "OpenWork will keep retrying. To keep working now, connect your own model provider."
-                  : action.message}
-              </p>
-              {freeModelLimit ? (
-                <RetryActionButton
-                  label="Connect a model provider"
-                  onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}
-                />
-              ) : action.link ? (
-                <RetryActionButton label={action.label} onClick={openDesktopUrl.bind(null, action.link)} />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </Message>
+    <TaskRecovery state="retrying" testId="session-retrying"
+      title={reconnecting ? "Reconnecting to the model"
+        : `${(freeModelLimit ? "The free starter model is busy right now" : action?.title ?? presentation.title).replace(/[.!?…]+$/, "")}. Retrying…`}
+      description={freeModelLimit ? "To keep working now, connect your own model provider." : reconnecting ? progress : action?.message}
+      technicalDetails={[info, presentation.technicalDetails].join("\n")}
+      actions={freeModelLimit ? <Button variant="ghost" size="xs"
+        onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect a model provider</Button>
+        : action?.link ? <Button variant="ghost" size="xs" onClick={openDesktopUrl.bind(null, action.link)}>{action.label}</Button> : null} />
   )
 })
 
@@ -1289,32 +1383,91 @@ function getRenderableMessage(message: UIMessage) {
 }
 
 /**
+ * While a turn runs, the chat never gets shorter. When the
+ * live turn shrinks (a step folds its detail before the next row arrives) the
+ * room it gave up moves here, to the very end of the list, below the Working
+ * line; whatever arrives next fills it before anything moves. Nothing above is
+ * held open, so no gap can open between steps, and the scroll position stays.
+ * Measured from the last turn's top, so history placeholders swapping above
+ * do not count. A shrink the person causes (collapsing a row) is not held.
+ * Released when the turn ends, where the steps fold anyway.
+ *
+ * The reserve never empties the screen. A message the person sends starts a
+ * new last group with nothing held below it: inheriting the earlier turn's
+ * room pushed the new message up out of sight over blank space. And at most
+ * half the view is held, so the turn's latest row always stays on screen.
+ */
+function LiveTurnReserve({ active }: { active: boolean }) {
+  const ref = React.useRef<HTMLDivElement>(null)
+  React.useLayoutEffect(() => {
+    const spacer = ref.current
+    const list = spacer?.parentElement
+    if (!spacer || !list) return
+    spacer.style.height = ""
+    if (!active || typeof ResizeObserver === "undefined") return
+    let anchor: string | null = null
+    let tallest = 0
+    let releaseUntil = 0
+    const measure = () => {
+      const groups = list.querySelectorAll(":scope > [data-thread-group], :scope > [data-thread-placeholder]")
+      const last = groups[groups.length - 1]
+      // Scrolled far into history: the turn is not mounted, keep what is reserved.
+      if (!last || last.hasAttribute("data-thread-placeholder")) return
+      const box = spacer.getBoundingClientRect()
+      const span = box.top - last.getBoundingClientRect().top
+      // A new last group (a message just sent) starts with nothing held below
+      // it, so it lands at the bottom instead of rising over blank space. The
+      // same group remounting keeps its room.
+      const group = last.getAttribute("data-thread-group")
+      if (group !== anchor) {
+        tallest = span
+        anchor = group
+      }
+      tallest = performance.now() < releaseUntil ? span : Math.max(tallest, span)
+      const view = list.closest("[data-thread-scroll]")?.clientHeight || window.innerHeight
+      const reserve = Math.min(Math.max(0, tallest - span), view / 2)
+      if (Math.abs(reserve - box.height) > 0.5) spacer.style.height = reserve > 0 ? `${reserve}px` : ""
+    }
+    const release = () => { releaseUntil = performance.now() + 500 }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(list)
+    list.addEventListener("pointerdown", release)
+    list.addEventListener("keydown", release)
+    return () => {
+      observer.disconnect()
+      list.removeEventListener("pointerdown", release)
+      list.removeEventListener("keydown", release)
+      spacer.style.height = ""
+    }
+  }, [active])
+  // -mt-2 cancels the list's gap, so an empty reserve adds no space.
+  return <div ref={ref} aria-hidden="true" data-live-turn-reserve="" className="-mt-2 shrink-0" style={{ overflowAnchor: "none" }} />
+}
+
+/**
  * A finished turn's steps collapse to a single "Worked for 1m 19s" line
  * that expands back into the full run. Only live turns show their steps
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
+function CompletedStepRun({ label, count, children }: { label: string; count?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
+  // Text-first: "Worked for 43m 29s ›", no step count beside it.
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
-          className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+          className="group flex min-h-6 cursor-pointer items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          aria-label={`${label}${count ? `, ${count}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          data-testid="completed-work-rail"
         >
           <span>{label}</span>
-          <ChevronRight
-            aria-hidden="true"
-            className={cn(
-              "size-3.5 text-muted-foreground/70 transition-transform duration-150",
-              open && "rotate-90"
-            )}
-          />
+          <TrailingChevron open={open} />
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
         {children}
       </CollapsibleContent>
     </Collapsible>
@@ -1325,6 +1478,27 @@ interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
   isLastGroup: boolean
   isStreaming: boolean
+  /** Newline-joined tool call ids of each built App's newest card in the conversation. */
+  newestAppCallIds: string
+}
+
+function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
+  return part.type === "dynamic-tool"
+    && (part.state === "output-available" || part.state === "output-error")
+    && hasPreservedMcpAppResult(part)
+    && !isNativeConnectionAppLaunch(part)
+}
+
+/** Tasks a group's steps started on other computers, directly or from a script. */
+function collectRemoteThreadStarts(items: UIMessageWithIndex[]) {
+  const starts = new Map<string, { start: RemoteThreadStart; part: DynamicToolUIPart }>()
+  for (const item of items) {
+    if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
+    for (const found of remoteThreadStartsInParts(item.message.parts)) {
+      if (!starts.has(found.start.key)) starts.set(found.start.key, found)
+    }
+  }
+  return [...starts.values()]
 }
 
 function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
@@ -1332,37 +1506,100 @@ function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
   for (const item of items) {
     if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
     for (const part of item.message.parts) {
-      if (
-        part.type === "dynamic-tool"
-        && (part.state === "output-available" || part.state === "output-error")
-        && hasPreservedMcpAppResult(part)
-      ) {
-        parts.set(part.toolCallId, part)
-      }
+      if (isMcpAppFramePart(part)) parts.set(part.toolCallId, part)
     }
   }
   return [...parts.values()]
+}
+
+/**
+ * Every card of an App built in OpenWork opens the App's current revision, so
+ * only its newest card in the conversation stays live; earlier ones would load
+ * the same App again. A string keeps memoized groups stable while text streams.
+ */
+function newestBuiltAppCallIds(messages: UIMessage[]): string {
+  const newest = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role !== "assistant" || isSessionErrorMessage(message)) continue
+    for (const part of message.parts) {
+      if (!isMcpAppFramePart(part)) continue
+      const appId = builtMcpAppId(part)
+      if (appId) newest.set(appId, part.toolCallId)
+    }
+  }
+  return [...newest.values()].sort().join("\n")
 }
 
 function MessageGroup({
   items,
   isLastGroup,
   isStreaming,
+  newestAppCallIds,
 }: AssistantMessageGroupProps) {
-  const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly } = useMessageList()
+  const { onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName, sessionId } = useMessageList()
+  const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
+  const newestAppCalls = React.useMemo(() => new Set(newestAppCallIds.split("\n")), [newestAppCallIds])
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
-  const isLiveGroup = isStreaming && isLastGroup
+  const parentActive = React.useContext(ParentRunActiveContext)
+  const panelLive = React.useContext(AppPanelLiveContext) && isLastGroup
+  const creationLive = (parentActive || panelLive) && isLastGroup && !readOnly
+  const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message), creationLive), [items, creationLive])
+  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.executions ?? []).map(part => part.toolCallId), ...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.attempts ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
+  const isLiveGroup = (isStreaming || (creationLive && creationRuns.length > 0)) && isLastGroup
+  const panelActivity = React.useMemo(
+    () => panelLive ? appBuildActivity(items.map(item => item.message), creationParts, showThinking) : null,
+    [panelLive, items, creationParts, showThinking],
+  )
+  const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
+  const computerHistory = React.useMemo(() => collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }), [items, showThinking])
+  const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
+  // The newest turn's card lists the chat's agents on its computer; a row opens that agent's live view.
+  const crewMembers = useComputerCrew(sessionId, isLastGroup && isElectronRuntime() && !readOnly)
+  const crew = React.useMemo(() => crewMembers.length ? { members: crewMembers, onOpen: (member: { sessionId: string }) => {
+    const history = useComputerSessionHistoryStore.getState()
+    history.setAgent(sessionId, member.sessionId)
+    history.setWatching(sessionId, true)
+  } } : undefined, [crewMembers, sessionId])
+  const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
+  const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
+  // A running turn keeps its parts in arrival order (no
+  // steps/answer split until it finishes) and reserves room only at the list's
+  // end (LiveTurnReserve).
+  // The skill this turn produced stays in view as its result, even when the
+  // steps fold; later updates and shares change this card, not add another.
+  const { cards: createdSkillCards } = useCreatedSkills()
+  const groupSkillCards = React.useMemo(() => {
+    const ids = new Set(items.flatMap((item) => item.message.parts.flatMap((part) => part.type === "dynamic-tool" ? [part.toolCallId] : [])))
+    return createdSkillCards.filter((card) => ids.has(card.anchorToolCallId))
+  }, [items, createdSkillCards])
 
   if (!lastItem || isMessageEmptyGroup(items)) {
     return null;
   }
 
   const renderableItems = getRenderableMessages(items)
-  const lastTextMessage = getLastTextPart(lastItem.message)
+  const lastTextMessage = items.findLast(item => getLastTextPart(item.message))
+  // Same actions, in the same order, as the buttons below the reply, and only
+  // once those buttons show (a finished reply with text).
+  const replyText = getMessagesText(renderableItems.map((item) => item.message))
+  const replyMenuActions: MenuAction[] = []
+  if (lastTextMessage && !isStreaming) {
+    if (replyText) replyMenuActions.push(
+      { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(replyText) },
+    )
+    if (lastRealItem && onForkAtMessage) replyMenuActions.push(
+      { type: "item", id: "branch", label: forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(lastRealItem.message.id) },
+    )
+  }
+  // Native turns can end with a metadata-free completion marker. Keep the
+  // latest known model within this turn rather than losing the answer's name.
+  const replyModelMessage = items.findLast(item => item.message.role === "assistant" && replyModelLabel(item.message, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName))?.message
+  const resolvedReplyModel = replyModelMessage ? replyModelLabel(replyModelMessage, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
+  const replyModelProviderId = replyModelMessage ? replyModelProvider(replyModelMessage, autoRoutes) : undefined
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1377,14 +1614,28 @@ function MessageGroup({
   // OpenCode delivers a whole turn as one assistant message with steps and
   // the answer interleaved in its parts. Split the first prose message so
   // its leading steps fold with the rest instead of pinning the run open.
+  // While the turn runs, the split waits: it keys off
+  // the latest text, so every new text moved rows between the steps area and
+  // the answer and the chat jumped or kept a gap. The App panel keeps its fold.
   const firstProse = proseItems[0]
-  if (firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
+  const splitAtAnswer = !(isLiveGroup && !panelLive)
+  if (splitAtAnswer && firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
     const split = splitTurnAtAnswer(firstProse.message)
     if (split) {
       stepItems = [...stepItems, { index: firstProse.index, message: split.steps }]
       proseItems = [{ index: firstProse.index, message: split.answer }, ...proseItems.slice(1)]
     }
   }
+  const appFrame = (part: DynamicToolUIPart) => (
+    <Message
+      key={`mcp-app-${part.toolCallId}`}
+      className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
+    >
+      {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
+        ? <p className="mt-2 text-xs text-muted-foreground">This artifact has a newer version below.</p>
+        : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
+    </Message>
+  )
   // How long the turn spent working, from the first step to when the answer
   // finished (or started, for older history without a completed timestamp).
   // Server timestamps, so this survives a reload.
@@ -1397,7 +1648,7 @@ function MessageGroup({
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
         group.kind === "reasoning"
-          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming }]
+          ? [{ key: JSON.stringify(["reasoning", item.message.id, groupIndex]), text: group.text, isStreaming: group.isStreaming, durationMs: group.durationMs }]
           : []
       )
       : []
@@ -1409,7 +1660,7 @@ function MessageGroup({
       (total, item) =>
         total +
         (item.message.role === "assistant" && !isSessionErrorMessage(item.message)
-          ? getAssistantRenderGroups(item.message.parts, showThinking).reduce(
+          ? getAssistantRenderGroups(withoutComputerHistory(item.message.parts, computerHistory), showThinking).reduce(
             (rows, group) => rows + (group.kind === "tool-aggregate" ? group.parts.length + group.thoughts.length : 1),
             0
           )
@@ -1424,14 +1675,27 @@ function MessageGroup({
         : `${stepRowCount} steps`
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
-    !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+    !isLiveGroup && stepItems.length > 0 && stepRowCount >= COLLAPSED_STEP_RUN_MIN_ROWS
+    && !stepsNeedAttention(stepItems, connectionCardParts)
+  // A task on another computer outlives the turn that started it and may still
+  // need the person, so its row stays in view below a folded run.
+  const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
+  const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
+  const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
+  const stepCountLabel = stepRowCount ? `${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : null
+  const replyWorkedLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
+    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}`
+    : null
+  const replySummaryLabel = replyWorkedLabel
+    ? `${replyWorkedLabel}${stepCountLabel ? ` · ${stepCountLabel}` : ""}`
+    : stepRowCount ? stepRunLabel : ""
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
       <Message
         key={`folded-reasoning-${reasoning.key}`}
         className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10"
       >
-        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} />
+        <ReasoningBlock disclosureKey={reasoning.key} text={reasoning.text} isStreaming={reasoning.isStreaming} durationMs={reasoning.durationMs} />
       </Message>
     ))
     : []
@@ -1440,7 +1704,9 @@ function MessageGroup({
     const isLastMessage = isLastGroup && item.index === lastItem.index
 
     return (
-      <div key={item.message.id}>
+      // A message whose parts all render nothing (empty reasoning, step
+      // markers, hidden steps) must not take a slot in the list's spacing.
+      <div key={item.message.id} className="[&:not(:has(:is(span,p,img,svg,button,pre,a,li,iframe,video,canvas,input,textarea,hr,table)))]:hidden">
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
@@ -1460,6 +1726,11 @@ function MessageGroup({
     let run: { parts: AnyToolPart[]; key: string } | null = null
     const flush = () => {
       if (!run) return
+      // Plain command, read and search runs fold into the App panel while it is live.
+      if (panelLive) {
+        run = null
+        return
+      }
       nodes.push(
         <div key={`aggregate-${run.key}`}>
           <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
@@ -1470,6 +1741,8 @@ function MessageGroup({
       run = null
     }
     slice.forEach((item, sliceIndex) => {
+      if (computerHistory && item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+        && getAssistantRenderGroups(withoutComputerHistory(item.message.parts, computerHistory), showThinking).length === 0) return
       const aggregateParts =
         item.message.role === "assistant" && !isSessionErrorMessage(item.message)
           ? getAggregateOnlyParts(item.message, showThinking)
@@ -1488,13 +1761,33 @@ function MessageGroup({
 
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
-      <div className="flex flex-col gap-2 group/message-group">
+      <AppCreationPartsContext.Provider value={creationParts}>
+      <AppPanelFoldContext.Provider value={panelLive}>
+      <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
+      <ConnectionCardPartsContext.Provider value={connectionCardParts}>
+      <ComputerHistoryContext.Provider value={computerHistory}>
+      <ActionContextMenu
+        actions={replyMenuActions}
+        contentClassName="w-56"
+        // Override Trigger's select-none so replies stay selectable and copyable.
+        className="!select-text"
+        render={<div className="flex flex-col gap-2 group/message-group !select-text" style={{ userSelect: "text" }} />}
+      >
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
-      {stepItems.length > 0 ? (
+      {/* A finished turn kept open (it needs the person, T2) still reports its work duration. */}
+      {!isLiveGroup && resolvedReplyModel && !collapseSteps && replySummaryLabel ? <div data-testid="completed-work-rail" data-completed-work-rail="open" className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
+        <div className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
+          <span>{replyWorkedLabel ?? replySummaryLabel}</span>
+        </div>
+      </div> : null}
+      {stepItems.length > 0 && stepRowCount > 0 ? (
         collapseSteps ? (
-          <CompletedStepRun label={stepRunLabel}>
+          <CompletedStepRun
+            label={(resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel}
+            count={((resolvedReplyModel ? replyWorkedLabel : null) ?? stepRunLabel).startsWith("Worked for") ? stepCountLabel : null}
+          >
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
               {foldedReasoning}
@@ -1502,24 +1795,41 @@ function MessageGroup({
           </CompletedStepRun>
         ) : (
           <div data-live-steps="" className="flex flex-col gap-2">
-            {renderItems(stepItems, 0)}
+            {/* Do not hold folded tool content open. Scroll stabilization belongs
+                to LiveTurnReserve, below the Working line. */}
+            {renderItems(stepItems, 0, panelLive)}
           </div>
         )
       ) : null}
-      {mcpAppParts.map((part) => (
-        <Message
-          key={`mcp-app-${part.toolCallId}`}
-          className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
-        >
-          <McpAppFrame part={part} />
+      {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
+      {mcpAppParts.map(appFrame)}
+      {pinnedRemoteThreads.map(({ start, part }) => (
+        <Message key={`remote-thread-${start.key}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+          <RemoteThreadRunLine start={start} part={part} />
         </Message>
       ))}
-      {renderItems(proseItems, stepItems.length, collapseSteps)}
+      {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
+      {computerHistory ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
+          live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
+          fileActions={savedFileActions}
+          turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
+          turnStartedAt={getMessageCreated(items[0]!.message) ?? null}
+          crew={crew} />
+      </Message> : crew ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ComputerCrewCard members={crew.members} onOpen={crew.onOpen} />
+      </Message> : null}
+      {groupSkillCards.length > 0 ? (
+        <div data-created-skills="" className="mx-auto mt-1 flex w-full max-w-3xl flex-col gap-2 px-2 md:px-10">
+          {groupSkillCards.map((card) => <CreatedSkillCard key={card.kind === "ready" ? card.skillId : card.key} card={card} />)}
+        </div>
+      ) : null}
       {lastTextMessage && !isStreaming && (
-        <div className={cn("mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
-          <MessageActions className="flex gap-0">
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 md:px-8">
+          <div className={cn("flex items-center gap-2 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
+          <MessageActions data-testid="reply-actions" className="flex gap-0">
             <CopyMessageButton messages={renderableItems.map((item) => item.message)} />
-            {lastRealItem ? (
+            {lastRealItem && onForkAtMessage ? (
               <>
                 <MessageAction tooltip={forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat"}>
                   <Button
@@ -1534,25 +1844,32 @@ function MessageGroup({
                   </Button>
                 </MessageAction>
                 {forkingMessageId === lastRealItem.message.id ? <span role="status" className="sr-only">Branching...</span> : null}
-                <MessageAction tooltip="Revert">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Revert"
-                    disabled={readOnly}
-                    onClick={() => onRevertToUserMessage(lastRealItem.message.id)}
-                  >
-                    <Undo2 />
-                  </Button>
-                </MessageAction>
               </>
             ) : null}
           </MessageActions>
-          <MessageTimestamp message={lastItem.message} />
+           <MessageTimestamp message={lastItem.message} />
+          </div>
+          {/* Keep caption ink readable (DESIGN.md V1/V2); hierarchy comes from size,
+              not compounded opacity. Hidden actions retain their layout slot. */}
+          {!isLiveGroup && resolvedReplyModel ? <span
+            data-testid="reply-model"
+            className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground dark:text-foreground/70 opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100"
+          >
+            <span className="sr-only">Replied with </span>
+            <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center">
+              {replyModelProviderId ? <ProviderIcon providerId={replyModelProviderId} size={12} /> : null}
+            </span>
+            <span className="truncate">{resolvedReplyModel}</span>
+          </span> : null}
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
-      </div>
+      </ActionContextMenu>
+      </ComputerHistoryContext.Provider>
+      </ConnectionCardPartsContext.Provider>
+      </PinnedRemoteThreadsContext.Provider>
+      </AppPanelFoldContext.Provider>
+      </AppCreationPartsContext.Provider>
     </DevProfiler>
   )
 }
@@ -1560,6 +1877,7 @@ function MessageGroup({
 function sameMessageGroupProps(left: AssistantMessageGroupProps, right: AssistantMessageGroupProps): boolean {
   return left.isLastGroup === right.isLastGroup
     && left.isStreaming === right.isStreaming
+    && left.newestAppCallIds === right.newestAppCallIds
     && left.items.length === right.items.length
     && left.items.every((item, index) => (
       item.index === right.items[index]?.index
@@ -1598,14 +1916,18 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
   viewport?: MessageListViewport
+  /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
+  sessionErrorHandled?: boolean
 }
 
-export function shouldShowMessageListLoading(
-  status: ThreadStatus,
-  messageCount: number,
-  hasVisibleToolActivity = false,
-) {
-  if (hasVisibleToolActivity) return false
+/**
+ * The turn's "Working 12s" line stays on screen for the whole run, including
+ * while a tool row shows its own live step: the row says what is happening
+ * now, the line says the turn is still going and how long it has been working,
+ * including follow-ups sent mid-run. Hiding it between steps made the chat
+ * look finished.
+ */
+export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
   return status === "streaming" || (status === "submitted" && messageCount > 0)
 }
 
@@ -1614,10 +1936,33 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport }: MessageListProps) {
-  const { workspaceId, sessionId } = useMessageList()
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
+  const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
+  // Only this turn's reply: before it starts there is no model to show, never the previous turn's.
+  const workingModel = React.useMemo<WorkingModel | null>(() => {
+    const lastUser = messages.findLastIndex((message) => message.role === "user")
+    const reply = messages.slice(lastUser + 1).findLast((message) => message.role === "assistant")
+    const label = reply ? replyModelLabel(reply, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
+    if (!reply || !label) return null
+    const providerId = replyModelProvider(reply, autoRoutes)
+    return providerId ? { label, providerId } : { label }
+  }, [messages, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName])
+  const [stoppingBackground, setStoppingBackground] = React.useState(false)
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
+  const newestAppCallIds = React.useMemo(() => newestBuiltAppCallIds(messages), [messages])
+  const delegatedIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
+    .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
+  const runningHelperIds = useRunningSubagentIds(workspaceId, delegatedIds)
+  const backgroundCount = runningHelperIds.length
+  // The run is paused while it, or a helper it waits on, asks the person for
+  // an approval or answer. Background helpers do not hold up the run.
+  const foregroundHelperIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
+    .filter(isToolUIPart).filter(isTaskToolPart).filter(part => part.input?.background !== true)
+    .map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
+  const runWaits = useSessionActivityStore(useShallow(state => [sessionId, ...foregroundHelperIds]
+    .map(id => state.recordsByWorkspaceId[workspaceId]?.[id]?.waits ?? NO_WAITS)))
+
   const [observedAt] = React.useState(() => Date.now())
   const lastProgressAt = useSessionActivityStore((state) => {
     const records = state.recordsByWorkspaceId[workspaceId]
@@ -1632,22 +1977,18 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   }))
   const isStreaming = status === "streaming" || status === "retrying"
   const runActive = status === "streaming" || status === "retrying"
+  const appRunActive = runActive || activityStatus === "thinking" || activityStatus === "responding" || activityStatus === "compacting" || activityStatus === "waiting"
+  // The App panel replaces the Working line and the thinking rows while it builds.
+  const appPanelLive = React.useMemo(() => (appRunActive || status === "submitted") && appBuildInProgress(messages), [appRunActive, status, messages])
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
   // Anchor the counter to the user message that started the run (server
   // timestamp), so switching sessions and back doesn't reset it to 0 on
-  // remount. Optimistic messages without metadata fall back to first-mount
-  // wall clock.
-  const runStartedAt = React.useMemo(() => {
-    if (!runActive) return null
-    for (let index = messages.length - 1; index >= 0; index--) {
-      const message = messages[index]
-      if (message && message.role === "user") return getMessageCreated(message)
-    }
-    return null
-  }, [messages, runActive])
+  // remount, and a follow-up sent mid-run doesn't restart it. Optimistic
+  // messages without metadata fall back to first-mount wall clock.
+  const runStartedAt = React.useMemo(() => runActive ? getRunStartedAt(messages) : null, [messages, runActive])
   React.useEffect(() => {
     if (!activityActive) {
       runStartedAtRef.current = null
@@ -1661,32 +2002,43 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     // still happening. The anchor is kept, so a confirmed recovery resumes
     // the true task age instead of restarting at zero.
     if (syncDegraded) return
+    const waits = runWaits.flat()
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
-      if (startedAt !== null) setRunElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+      if (startedAt === null) return
+      // Time spent waiting for the person's approval or answer is not work.
+      const now = Date.now()
+      setRunElapsedSeconds(Math.max(0, Math.floor((now - startedAt - getWaitedMs(waits, startedAt, now)) / 1000)))
     }
     updateElapsed()
     const interval = window.setInterval(updateElapsed, 1000)
     return () => window.clearInterval(interval)
-  }, [activityActive, runStartedAt, syncDegraded])
+  }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
-  const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
+  // Steps that render nothing are removed before layout, so they leave no gap.
+  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(joinRecoveredReplies(withoutSilentSteps(messages))), [messages]);
+  const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
+  // groupMessages indexes the visible transcript. Comparing those positions
+  // with the unfiltered transcript marks the live turn historical as soon as
+  // a silent script or duplicate error is removed.
+  const lastVisibleIndex = visibleMessages.length - 1;
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   const latestAssistantToolParts = React.useMemo(
     () => collectLatestAssistantToolParts(messages),
     [messages],
   )
-  // Delegated task rows may be above newer messages; keep the run footer visible.
-  const hasVisibleToolActivity = latestAssistantToolParts.some((part) => !isTaskToolPart(part) && isToolPartInFlight(part))
   const waiting = activityStatus === "waiting" || activityStatus === "compacting" || childBlocked
   const showReconnecting = !waiting && !retryStatus && shouldShowRunReconnecting(status, syncDegraded)
   const noNewActivity = hasNoNewActivity({
     active: activityActive && activityStatus !== "error", waiting, retrying: status === "retrying" || Boolean(retryStatus),
     disconnected: syncDegraded, lastProgressAt, now: Date.now(),
   })
-  const showLoading = !waiting && !noNewActivity && !showReconnecting
-    && shouldShowMessageListLoading(status, messages.length, hasVisibleToolActivity)
+  // Silence alone never hides the line: a slow first token or a quiet tool is
+  // still a busy run. The effect below re-checks status in the background, and
+  // Reconnecting takes over only when the run can no longer be confirmed.
+  const showLoading = !waiting && !showReconnecting
+    && shouldShowMessageListLoading(status, messages.length)
   const baseUrl = workspace?.opencodeBaseUrl
   React.useEffect(() => {
     if (!noNewActivity || !baseUrl) return
@@ -1697,9 +2049,13 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     () => new Set(latestAssistantToolParts.map((part) => part.toolCallId)),
     [latestAssistantToolParts],
   )
+  const createdSkills = useCreatedSkillsModel(messages, appRunActive && !syncDegraded)
 
   return (
-    <ParentRunActiveContext.Provider value={runActive}>
+    <CreatedSkillsContext.Provider value={createdSkills}>
+    <ParentRunActiveContext.Provider value={appRunActive}>
+    <AppPanelLiveContext.Provider value={appPanelLive}>
+    <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
@@ -1719,15 +2075,16 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
             <MemoizedMessageGroup
               key={item.messages[0]?.message.id ?? "empty-assistant-group"}
               items={item.messages}
-              isLastGroup={item.messages.at(-1)?.index === messages.length - 1}
-              isStreaming={isStreaming && item.messages.at(-1)?.index === messages.length - 1}
+              isLastGroup={item.messages.at(-1)?.index === lastVisibleIndex}
+              isStreaming={isStreaming && item.messages.at(-1)?.index === lastVisibleIndex}
+              newestAppCallIds={newestAppCallIds}
             />
           )
         }
 
-        const isLastMessage = item.index === messages.length - 1
+        const isLastMessage = item.index === lastVisibleIndex
         const isLastStep =
-          !messages[item.index + 1] || messages[item.index + 1].role !== item.message.role
+          !visibleMessages[item.index + 1] || visibleMessages[item.index + 1].role !== item.message.role
 
         return (
           <StandaloneMessage
@@ -1740,12 +2097,79 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         )
         }}
       >
-        {showLoading && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} />}
+        {!runActive && backgroundCount > 0 && <div data-background-agents className="mx-auto flex w-full max-w-3xl items-center gap-3 px-2 py-2 text-sm text-muted-foreground md:px-10">
+          <span>{syncDegraded ? "Background activity — reconnecting…" : `${backgroundCount} ${backgroundCount === 1 ? "agent" : "agents"} running`}</span>
+          {/* Stops only the background helpers; the chat itself is already idle. */}
+          {onStopSubagentSession && !syncDegraded ? (
+            <button
+              type="button"
+              disabled={stoppingBackground}
+              className="cursor-pointer text-xs text-muted-foreground/70 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:cursor-default disabled:opacity-50"
+              onClick={() => {
+                setStoppingBackground(true)
+                void Promise.allSettled(runningHelperIds.map((id) => onStopSubagentSession(id)))
+                  .finally(() => setStoppingBackground(false))
+              }}
+            >
+              {stoppingBackground ? "Stopping…" : backgroundCount === 1 ? "Stop" : "Stop all"}
+            </button>
+          ) : null}
+        </div>}
+        {/* One rule for commands left running in the background: while the turn
+            runs, the count joins its Working line; otherwise it takes that
+            line's place on its own. One line either way, so the chat does not
+            move when the turn ends and the count stays. */}
+        {showLoading && !appPanelLive && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} model={workingModel} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
-        {error && !hasSessionErrorMessage ? <ErrorMessage error={error} /> : null}
+        {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
+        <LiveTurnReserve key={sessionId} active={runActive || status === "submitted"} />
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
+    </BuiltAppPreviewSync>
+    </AppPanelLiveContext.Provider>
     </ParentRunActiveContext.Provider>
+    </CreatedSkillsContext.Provider>
   )
+}
+
+/** Same model, same object: text streaming must not re-render every group's cards. */
+function sameCreatedSkills(left: CreatedSkillsModel, right: CreatedSkillsModel): boolean {
+  return JSON.stringify([left.cards, [...left.shareLabels], [...left.savedNames]])
+    === JSON.stringify([right.cards, [...right.shareLabels], [...right.savedNames]])
+}
+
+/**
+ * Created skills for the whole conversation, plus what the person learned by
+ * checking (read-only) after a share went unconfirmed.
+ */
+function useCreatedSkillsModel(messages: UIMessage[], live: boolean): CreatedSkillsContextValue {
+  const { onOpenLibraryDetail } = useMessageList()
+  const [checked, setChecked] = React.useState<ReadonlyMap<string, ConfirmedSkillAccess>>(() => new Map())
+  const next = React.useMemo(() => {
+    const collected = collectCreatedSkills(messages, { live })
+    return checked.size === 0 ? collected : {
+      ...collected,
+      cards: collected.cards.map((card) => {
+        const access = card.kind === "ready" ? checked.get(card.pluginId) : undefined
+        if (!access || card.kind !== "ready") return card
+        // A check answers an unconfirmed share; anything still running stays as it is.
+        return { ...card, access, pending: card.pending?.state === "unverified" ? null : card.pending }
+      }),
+    }
+  }, [messages, live, checked])
+  // Keep the previous object while nothing changed (derived state, not a ref).
+  const [stable, setStable] = React.useState<CreatedSkillsModel>(next)
+  const unchanged = stable === next || sameCreatedSkills(stable, next)
+  if (!unchanged) setStable(next)
+  const model = unchanged ? stable : next
+  const onCheckSharing = React.useCallback(async (pluginId: string) => {
+    try {
+      const access = await readCreatedSkillAccess(pluginId)
+      setChecked((current) => new Map(current).set(pluginId, access))
+    } catch (cause) {
+      console.warn("[created-skill] checking sharing failed", cause)
+    }
+  }, [])
+  return React.useMemo(() => ({ ...model, onOpenSkill: onOpenLibraryDetail, onCheckSharing }), [model, onOpenLibraryDetail, onCheckSharing])
 }

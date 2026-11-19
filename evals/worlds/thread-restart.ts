@@ -1,4 +1,7 @@
+import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { connect } from "node:net";
+import { promisify } from "node:util";
 import { evalIn, quitDesktop, readComposerState } from "@openwork/behaviors";
 import { addInitScript, browserScript } from "@openwork/cdp";
 import type { Surface } from "@openwork/cdp";
@@ -40,7 +43,7 @@ const providerId = "thread-restart-mock";
 const modelId = "thread-restart-model";
 export const restartedThreadModelName = "Thread restart model";
 
-async function portIsOpen(port: number): Promise<boolean> {
+export async function portIsOpen(port: number): Promise<boolean> {
   return new Promise((resolvePort) => {
     const socket = connect({ host: "127.0.0.1", port });
     const done = (open: boolean) => { socket.destroy(); resolvePort(open); };
@@ -50,7 +53,7 @@ async function portIsOpen(port: number): Promise<boolean> {
   });
 }
 
-async function waitUntil(label: string, predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
+export async function waitUntil(label: string, predicate: () => Promise<boolean>, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
@@ -59,83 +62,32 @@ async function waitUntil(label: string, predicate: () => Promise<boolean>, timeo
   throw new Error(`Timed out after ${timeoutMs}ms waiting for ${label}`);
 }
 
-function pidIsAlive(pid: number): boolean {
+export function pidIsAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
+
+/** Processes still in a process group after its leader exited (POSIX `ps`, same on macOS and Linux). */
+async function processGroupMembers(pgid: number): Promise<{ pid: number; args: string }[]> {
+  const { stdout } = await promisify(execFile)("ps", ["-A", "-o", "pid=,pgid=,args="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  return stdout.split("\n").flatMap((line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    return match && Number(match[2]) === pgid && Number(match[1]) !== process.pid ? [{ pid: Number(match[1]), args: match[3] ?? "" }] : [];
+  });
+}
+
+/**
+ * The dev desktop launches as `pnpm dev:electron`: one process group holding
+ * the Electron shell and the Vite server that serves the renderer origin. Vite
+ * is development tooling, not the product: a packaged app has none, and on
+ * Linux the dev launcher's teardown can leave it running after Electron quits.
+ * Anything else still alive after a quit is the product failing to stop.
+ */
+const RENDERER_DEV_TOOLING = /\bvite\b|dev:ui|@openwork\/app\b|\besbuild\b/;
 
 declare global {
   interface Window {
     __openworkSlowHistoryFault?: { state: { delayed: number; bounded: number }; dispose: () => void };
   }
-}
-
-/**
- * A cold engine after a restart can take longer than the renderer's request
- * timeout to return a long thread's complete history, while bounded reads
- * still answer quickly. Model exactly that from the renderer's first request
- * onwards (the caller reloads the document): every uncapped message read for
- * this thread is delayed past the timeout; reads with a limit pass untouched.
- */
-export async function slowUncappedHistoryReads(app: Surface, workspaceId: string, sessionId: string, delayMs: number) {
-  const script = await addInitScript(app.client, browserScript((workspaceId, sessionId, delayMs) => {
-    if (window.top !== window || window.__openworkSlowHistoryFault) return;
-    const paths = ["workspace", "w"].map((mount) =>
-      `/${mount}/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/message`);
-    const originalFetch = window.fetch;
-    const state = { delayed: 0, bounded: 0 };
-    const wrappedFetch: typeof window.fetch = async (...args) => {
-      const [input, init] = args;
-      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
-      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-      const port = localStorage.getItem("openwork.server.port");
-      const owned = Boolean(port) && url.origin === `http://127.0.0.1:${port}` && method === "GET" && paths.includes(url.pathname);
-      if (!owned) return originalFetch.apply(window, args);
-      if (url.searchParams.has("limit")) { state.bounded += 1; return originalFetch.apply(window, args); }
-      state.delayed += 1;
-      const signal = init?.signal !== undefined ? init.signal : input instanceof Request ? input.signal : undefined;
-      await new Promise<void>((resolveDelay, rejectDelay) => {
-        const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolveDelay(); }, delayMs);
-        const abort = () => { clearTimeout(timer); rejectDelay(signal?.reason ?? new DOMException("Aborted", "AbortError")); };
-        signal?.addEventListener("abort", abort, { once: true });
-        if (signal?.aborted) abort();
-      });
-      return originalFetch.apply(window, args);
-    };
-    window.fetch = wrappedFetch;
-    window.__openworkSlowHistoryFault = {
-      state,
-      dispose: () => { if (window.fetch === wrappedFetch) window.fetch = originalFetch; delete window.__openworkSlowHistoryFault; },
-    };
-  }, [workspaceId, sessionId, delayMs]));
-  return {
-    read: () => evalIn(app, () => {
-      const fault = window.__openworkSlowHistoryFault;
-      if (!fault) throw new Error("Slow history fault lost its document");
-      return { ...fault.state };
-    }),
-    async dispose() {
-      await script.dispose().catch(() => undefined);
-      await evalIn(app, () => { window.__openworkSlowHistoryFault?.dispose(); }).catch(() => undefined);
-    },
-  };
-}
-
-/** Reload the renderer document the way a render-crash recovery or Cmd+R does; the shell and engine stay up. */
-export async function reloadRenderer(app: Surface): Promise<void> {
-  await evalIn(app, () => { window.setTimeout(() => window.location.reload(), 50); return true; });
-  const deadline = Date.now() + 60_000;
-  let last: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const state = await readComposerState(app);
-      if (state.composerEditable) return;
-      last = state;
-    } catch (error) {
-      last = error;
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-  }
-  throw new Error(`The renderer did not come back after reload; last observed ${last instanceof Error ? last.message : JSON.stringify(last)}`);
 }
 
 /** Refuse to send unless the composer is bound to the model witness. */
@@ -166,7 +118,21 @@ export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
   ];
   // Booted directly so the witness outlives the desktop it serves.
   const mock: MockHandle = (await mcpMock({ agentWorkloads: workloads }).boot(ctx.place)).handle;
-  let app: Surface & { stop(): Promise<void> } = await seed.desktop({ name: "thread-restart", profileDir: seed.tmpPath("thread-restart-profile") });
+  // This signed-out continuity world has no Den. Keep deployment-policy reads
+  // on the fixture-owned origin too: hosted Den can otherwise force v2 while
+  // this world is explicitly exercising v1. Unavailable local features apply no
+  // force policy. Reuse these origins after relaunch as well.
+  // Native desktop bootstrap overrides Vite's defaults, so pin both to the
+  // same local origin instead of only changing the renderer build settings.
+  const bootstrapPath = seed.tmpPath("thread-restart-bootstrap.json");
+  await writeFile(bootstrapPath, JSON.stringify({ baseUrl: mock.url, apiBaseUrl: mock.url, requireSignin: false }));
+  const localOnlyEnv = {
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: bootstrapPath,
+    VITE_DEN_BASE_URL: mock.url, VITE_DEN_API_BASE_URL: mock.url,
+  };
+  let app: Surface & { stop(): Promise<void> } = await seed.desktop({
+    name: "thread-restart", profileDir: seed.tmpPath("thread-restart-profile"), env: localOnlyEnv,
+  });
   const profileDir = app.handle.profileDir;
   if (!profileDir) throw new Error("The desktop surface did not expose its profile directory.");
   const vitePort = app.handle.meta?.vitePort;
@@ -216,13 +182,26 @@ export async function restartedThreadWorld(seed: Seed, ctx: { place: Place }) {
       } else {
         try { process.kill(-pid, "SIGKILL"); } catch { process.kill(pid, "SIGKILL"); }
       }
-      await waitUntil("the desktop process group to exit", async () => !pidIsAlive(pid), 60_000);
-      await waitUntil(`renderer port ${vitePort} to be released`, async () => !(await portIsOpen(Number(vitePort))), 60_000);
+      // The launcher exits only after Electron itself has exited (and, for a
+      // quit, after the shell's own teardown ran).
+      await waitUntil("the desktop launcher to exit", async () => !pidIsAlive(pid), 60_000);
+      // Its children may still be finishing their own exit; only renderer dev
+      // tooling may outlive them.
+      let productLeftovers: { pid: number; args: string }[] = [];
+      await waitUntil("the desktop's own processes to exit", async () => {
+        productLeftovers = (await processGroupMembers(pid)).filter((member) => !RENDERER_DEV_TOOLING.test(member.args));
+        return productLeftovers.length === 0;
+      }, 30_000).catch(() => {
+        throw new Error(`The desktop ${mode === "quit" ? "quit" : "crash"} left processes running: ${productLeftovers.map((member) => `${member.pid} ${member.args.slice(0, 200)}`).join(" | ")}`);
+      });
+      // Stop the leftover renderer dev server, so the relaunch starts its own on
+      // the same origin, exactly as a fresh `pnpm dev:electron` would.
       await app.stop().catch(() => undefined);
+      await waitUntil(`renderer port ${vitePort} to be released`, async () => !(await portIsOpen(Number(vitePort))), 30_000);
       restarted = await launchDesktop({
         name: "thread-restart-relaunch",
         profileDir,
-        env: { PORT: vitePort, OPENWORK_ELECTRON_START_URL: rendererOrigin },
+        env: { ...localOnlyEnv, PORT: vitePort, OPENWORK_ELECTRON_START_URL: rendererOrigin },
         prepareSharedResources: false,
       });
       const origin = String(await evalIn(restarted, () => window.location.origin));

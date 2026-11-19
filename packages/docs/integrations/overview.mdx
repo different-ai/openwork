@@ -1,0 +1,45 @@
+---
+title: "Integrations"
+description: "Use OpenWork Connect in your existing AI client through MCP or a specialized client plugin."
+---
+
+OpenWork Connect is an AI Gateway, MCP Gateway, and Skills Gateway that lets organizations centrally manage models, tools, reusable skills, and access from one admin panel.
+
+Use them from the AI client you already have. The OpenWork desktop app is optional.
+
+## Two ways to connect
+
+<CardGroup cols={2}>
+  <Card title="MCP integration" icon="plug" href="/integrations/mcp">
+    Skills and connected tools in any MCP client. One URL, one sign-in.
+  </Card>
+  <Card title="Specialized client plugins" icon="terminal" href="/integrations/client-plugins">
+    Models plus skills and tools in one plugin. OpenCode is ready; Cursor and Codex are in progress.
+  </Card>
+</CardGroup>
+
+## What each gateway provides
+
+| Gateway | What your organization manages | How your client uses it |
+| --- | --- | --- |
+| AI Gateway | Approved models, provider credentials, usage, and supported spend limits | Model requests go through the AI Gateway |
+| MCP Gateway | Shared service connections and tool access | Your agent discovers and calls authorized tools |
+| Skills Gateway | Reusable skills assigned to people and teams | Your agent retrieves the skills it can use through OpenWork MCP |
+
+MCP carries tools and skills, not model calls. A client plugin connects both with one sign-in.
+
+## Client availability
+
+| Client | MCP integration | Specialized integration |
+| --- | --- | --- |
+| OpenCode | [Available](/model-context-protocol/opencode) | **Ready:** [install `opencode-openwork`](/model-context-protocol/opencode-plugin) |
+| Cursor | [Available](/model-context-protocol/cursor) | **In progress** |
+| Codex | [Available](/model-context-protocol/codex) | **In progress** |
+| Claude Code | [Available](/model-context-protocol/claude-code) | Use MCP |
+| Other compatible clients | [MCP setup guides](/start-here/connect-openwork-mcp) | Depends on the client |
+
+Every integration uses the signed-in person's access. Installing one doesn't grant anything extra.
+
+## Services OpenWork connects to
+
+Most apps reach OpenWork through MCP. Google Workspace and Microsoft 365 are built in, with no MCP server, and we build more on request for enterprise customers. See [Native integrations](/integrations/native-integrations).

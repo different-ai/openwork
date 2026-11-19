@@ -1,0 +1,6 @@
+// path: proofs/model-filters.proof.test.ts
+import { spec } from "@openwork/testkit";
+import { createManagedOpencodeV2Server } from "../../apps/server/src/managed-opencode-v2";
+import { core } from "../worlds/core-web.ts";
+const test = spec.world(core);
+test("a member hides a model", async ({ user }) => { createManagedOpencodeV2Server(); await user.see("composer"); });

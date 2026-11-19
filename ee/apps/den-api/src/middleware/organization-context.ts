@@ -1,7 +1,9 @@
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MiddlewareHandler } from "hono"
+import { beginAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
+import { findSsoAccessBlock, ssoRequiredErrorBody } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
@@ -95,6 +97,16 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
+  // an organization that requires SSO opens only from a
+  // session signed in through its SSO. API keys are issued from such a
+  // session (POST /v1/api-keys runs behind this check), so they are not re-checked.
+  if (!apiKey) {
+    const ssoBlock = await findSsoAccessBlock({ sessionId: session?.id ?? null, organizationId: normalizedOrganizationId })
+    if (ssoBlock) {
+      return c.json(ssoRequiredErrorBody(ssoBlock), 403) as never
+    }
+  }
+
   if (apiKey && !isScopedApiKeyForOrganization({ apiKey, organizationId: normalizedOrganizationId })) {
     return c.json({
       error: "forbidden",
@@ -112,5 +124,10 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   c.set("organizationContext", context)
   c.set("activeOrganizationId", context.organization.id)
   c.set("activeOrganizationSlug", context.organization.slug)
+  // Durable audit intent (when captured) before the handler; 503 if it cannot be recorded.
+  const auditBlocked = await beginAuditRequest(c)
+  if (auditBlocked) {
+    return auditBlocked as never
+  }
   await next()
 }

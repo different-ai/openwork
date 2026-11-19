@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { and, asc, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm"
 import {
+  GATEWAY_DEFAULT_USAGE_SCOPE,
   gatewaySafeMoney,
   gatewayUsagePeriod,
   gatewayUsageTimeframes,
-  gatewayWinningPolicies,
+  gatewayWinningPoliciesByScope,
+  type GatewayProviderUsage,
   type GatewayUsageLimitPolicy,
   type GatewayUsageStatus,
   type GatewayUsageProvenance,
 } from "@openwork/types/den/gateway-usage-limits"
 import type { createDenDb } from "./client"
 import { GatewayUsageError } from "./gateway-usage-errors"
+import { GatewayProviderTable } from "./schema/inference-providers"
 import { MemberTable } from "./schema/org"
 import { TeamMemberTable, TeamTable } from "./schema/teams"
 import {
@@ -41,10 +45,20 @@ export function usageFail(
   throw new GatewayUsageError(code, status, message)
 }
 
+/**
+ * The member row when it is active in the organization (optionally share-locked).
+ * Authorization is the caller's job: Den routes check the catalog permission
+ * (gateway_limits.view / gateway_limits.manage) before calling in, so a team
+ * permission set can grant usage-limit management without an admin role.
+ *
+ * Pass `lock` whenever the caller's membership gates organization-wide data
+ * (policies, assignments, other members, their usage and requests) or a write:
+ * the share lock keeps a concurrent removal of the caller from landing between
+ * this check and the read. Only a member reading their own data skips it.
+ */
 export async function activeUsageMember(
   tx: UsageReader,
   scope: GatewayUsageScope,
-  admin = false,
   lock = false,
 ) {
   const query = tx
@@ -60,29 +74,27 @@ export async function activeUsageMember(
     )
   const [member] = await (lock ? query.for("share") : query)
   if (!member) return usageFail("member_not_found", 404, "Current organization member not found.")
-  if (
-    admin &&
-    !member.role.split(",").some((role) => ["owner", "admin", "super-admin"].includes(role.trim()))
-  ) {
-    const teams = tx
-      .select({ id: TeamTable.id })
-      .from(TeamMemberTable)
-      .innerJoin(
-        TeamTable,
-        and(
-          eq(TeamTable.id, TeamMemberTable.teamId),
-          eq(TeamTable.organizationId, scope.organizationId),
-          eq(TeamTable.grantsOrganizationAdmin, true),
-        ),
-      )
-      .where(eq(TeamMemberTable.orgMembershipId, scope.memberId))
-    if (!(await (lock ? teams.for("share") : teams)).length)
-      return usageFail(
-        "forbidden",
-        403,
-        "Only workspace owners and admins can manage usage limits.",
-      )
-  }
+  return member
+}
+
+/**
+ * A member a limit can be assigned to directly: anyone still in the organization, joined or
+ * invited. An invited person's member row keeps its id when they accept, so what is assigned
+ * to it is enforced from their first request. A canceled invitation removes the row.
+ */
+export async function assignableUsageMember(tx: UsageReader, scope: GatewayUsageScope) {
+  const [member] = await tx
+    .select()
+    .from(MemberTable)
+    .where(
+      and(
+        eq(MemberTable.id, scope.memberId),
+        eq(MemberTable.organizationId, scope.organizationId),
+        isNull(MemberTable.removedAt),
+      ),
+    )
+    .for("share")
+  if (!member) return usageFail("member_not_found", 404, "Organization member not found.")
   return member
 }
 
@@ -102,21 +114,52 @@ export async function usagePolicies(
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), inArray(A.policyId, ids)))
+  // A provider limit whose provider was deleted applies to no requests; say so.
+  const existingProviders = await usageProviderNames(
+    tx,
+    organizationId,
+    rows.flatMap((row) => (row.inferenceProviderId ? [row.inferenceProviderId] : [])),
+  )
   return rows.map(
-    (row): GatewayUsageLimitPolicy => ({
+    ({ inferenceProviderId, ...row }): GatewayUsageLimitPolicy => ({
       ...row,
+      providerId: inferenceProviderId ?? null,
+      providerStatus: inferenceProviderId
+        ? existingProviders.has(inferenceProviderId)
+          ? "available"
+          : "removed"
+        : null,
       archivedAt: row.archivedAt?.toISOString() ?? null,
       limits: limits
         .filter((entry) => entry.policyId === row.id)
         .map(({ timeframe, costLimitMicroUsd }) => ({ timeframe, costLimitMicroUsd })),
       assignments: assignments
         .filter((entry) => entry.policyId === row.id)
-        .map(({ id, memberId, teamId }) => ({ id, memberId, teamId })),
+        .map(({ id, memberId, teamId, organization }) => ({
+          id,
+          memberId,
+          teamId,
+          organization: organization === true,
+        })),
     }),
   )
 }
 
+/** One scope's winners (the default scope unless `providerScope` is given). */
 export async function effectiveUsagePolicies(
+  tx: UsageReader,
+  scope: GatewayUsageScope,
+  lock = false,
+  providerScope: string = GATEWAY_DEFAULT_USAGE_SCOPE,
+) {
+  return (await effectiveUsagePolicyScopes(tx, scope, lock)).get(providerScope) ?? []
+}
+
+/**
+ * Winners for every scope the member has policies in, keyed by scope
+ * ('' = default, otherwise the Gateway provider id). Scopes never mix.
+ */
+export async function effectiveUsagePolicyScopes(
   tx: UsageReader,
   scope: GatewayUsageScope,
   lock = false,
@@ -146,6 +189,7 @@ export async function effectiveUsagePolicies(
       and(
         eq(A.organizationId, scope.organizationId),
         or(
+          eq(A.organization, true),
           eq(A.memberId, scope.memberId),
           teams.length
             ? inArray(
@@ -161,7 +205,14 @@ export async function effectiveUsagePolicies(
   for (const { assignment, policy, limit } of rows) {
     let entry = candidates.get(policy.id)
     if (!entry) {
-      entry = { ...policy, archivedAt: null, limits: [], assignments: [] }
+      const { inferenceProviderId, ...fields } = policy
+      entry = {
+        ...fields,
+        providerId: inferenceProviderId ?? null,
+        archivedAt: null,
+        limits: [],
+        assignments: [],
+      }
       candidates.set(policy.id, entry)
     }
     if (!entry.limits.some((item) => item.timeframe === limit.timeframe))
@@ -174,40 +225,70 @@ export async function effectiveUsagePolicies(
         id: assignment.id,
         memberId: assignment.memberId,
         teamId: assignment.teamId,
+        organization: assignment.organization === true,
       })
   }
-  return gatewayWinningPolicies([...candidates.values()]).map((winner) => ({
+  const byScope = new Map<string, UsageWinner[]>()
+  for (const [key, winners] of gatewayWinningPoliciesByScope([...candidates.values()]))
+    byScope.set(
+      key,
+      winners.map((winner) => withProvenance(winner, scope.memberId, names)),
+    )
+  return byScope
+}
+
+export type UsageWinner = ReturnType<typeof withProvenance>
+
+function withProvenance(
+  winner: { policy: GatewayUsageLimitPolicy; limit: GatewayUsageLimitPolicy["limits"][number] },
+  memberId: GatewayUsageScope["memberId"],
+  names: Map<string, string>,
+) {
+  return {
     ...winner,
     provenance: winner.policy.assignments
       .map(
         (assignment): GatewayUsageProvenance =>
-          assignment.teamId === null
+          assignment.organization
             ? {
-                kind: "direct",
-                assignmentId: assignment.id,
-                memberId: scope.memberId,
-                teamId: null,
-              }
-            : {
-                kind: "team",
+                kind: "organization",
                 assignmentId: assignment.id,
                 memberId: null,
-                teamId: assignment.teamId,
-                teamName: names.get(assignment.teamId) ?? "",
-              },
+                teamId: null,
+              }
+            : assignment.teamId === null
+              ? {
+                  kind: "direct",
+                  assignmentId: assignment.id,
+                  memberId,
+                  teamId: null,
+                }
+              : {
+                  kind: "team",
+                  assignmentId: assignment.id,
+                  memberId: null,
+                  teamId: assignment.teamId,
+                  teamName: names.get(assignment.teamId) ?? "",
+                },
       )
       .sort((a, b) => a.assignmentId.localeCompare(b.assignmentId)),
-  }))
+  }
 }
 
+/**
+ * One member's bucket for a timeframe window. `providerScope` null matches every
+ * scope (used to mark history for the member as a whole); '' is the default.
+ */
 export function bucketWindow(
   scope: GatewayUsageScope,
   timeframe: UsageBucket["timeframe"],
   start: Date,
+  providerScope: string | null = GATEWAY_DEFAULT_USAGE_SCOPE,
 ) {
   return and(
     eq(B.organizationId, scope.organizationId),
     eq(B.memberId, scope.memberId),
+    providerScope === null ? undefined : eq(B.providerScope, providerScope),
     eq(B.timeframe, timeframe),
     eq(B.startAt, start),
   )
@@ -217,16 +298,19 @@ export function projectedBucket(
   scope: GatewayUsageScope,
   timeframe: UsageBucket["timeframe"],
   now: Date,
+  providerScope: string = GATEWAY_DEFAULT_USAGE_SCOPE,
 ): UsageBucket {
   const period = gatewayUsagePeriod(timeframe, now)
   return {
+    // Default bucket ids keep their pre-provider shape.
     id: createHash("sha256")
       .update(
-        `${scope.organizationId}/${scope.memberId}/${timeframe}/${period.start.toISOString()}`,
+        `${scope.organizationId}/${scope.memberId}/${timeframe}/${period.start.toISOString()}${providerScope ? `/${providerScope}` : ""}`,
       )
       .digest("hex"),
     organizationId: scope.organizationId,
     memberId: scope.memberId,
+    providerScope,
     timeframe,
     startAt: period.start,
     resetAt: period.end,
@@ -251,14 +335,24 @@ export async function currentUsage(
   now: Date,
   lock = false,
   readUnlimitedCounters = true,
+  providerScope: string = GATEWAY_DEFAULT_USAGE_SCOPE,
+  knownWinners?: UsageWinner[],
 ) {
-  const winners = await effectiveUsagePolicies(tx, scope, lock)
-  const windows = gatewayUsageTimeframes.map((frame) => projectedBucket(scope, frame, now))
+  const winners = knownWinners ?? (await effectiveUsagePolicies(tx, scope, lock, providerScope))
+  const windows = gatewayUsageTimeframes.map((frame) =>
+    projectedBucket(scope, frame, now, providerScope),
+  )
   if (!winners.length && !readUnlimitedCounters) return { winners, buckets: windows, stored: [] }
   const query = tx
     .select()
     .from(B)
-    .where(or(...windows.map((bucket) => bucketWindow(scope, bucket.timeframe, bucket.startAt))))
+    .where(
+      or(
+        ...windows.map((bucket) =>
+          bucketWindow(scope, bucket.timeframe, bucket.startAt, providerScope),
+        ),
+      ),
+    )
   const stored = await (lock
     ? query.orderBy(asc(B.timeframe), asc(B.startAt)).for("update")
     : query)
@@ -312,14 +406,29 @@ export function usageSnapshot(
         historyUnknown,
         extensionMicroUsd,
         extensionUsed,
+        providerScope,
         ...bucket
       }) => ({
         ...bucket,
+        // Default snapshots stay identical to the pre-provider shape for older readers.
+        ...(providerScope ? { providerScope } : {}),
         startAt: bucket.startAt.toISOString(),
         resetAt: bucket.resetAt.toISOString(),
       }),
     ),
   }
+}
+
+export function usageState(
+  views: GatewayUsageStatus["buckets"],
+): GatewayUsageStatus["state"] {
+  return !views.length
+    ? "unlimited"
+    : views.some((b) => b.hardLimit && b.usedMicroUsd >= b.allowanceMicroUsd)
+      ? "blocked"
+      : views.some((b) => b.usedMicroUsd >= b.allowanceMicroUsd)
+        ? "over_limit"
+        : "within_limit"
 }
 
 export async function readUsageStatus(
@@ -328,9 +437,19 @@ export async function readUsageStatus(
   now: Date,
   lock = false,
   admission = false,
+  providerScope: string = GATEWAY_DEFAULT_USAGE_SCOPE,
+  knownWinners?: UsageWinner[],
 ) {
-  await activeUsageMember(tx, scope, false, lock)
-  const current = await currentUsage(tx, scope, now, lock, !admission)
+  await activeUsageMember(tx, scope, lock)
+  const current = await currentUsage(
+    tx,
+    scope,
+    now,
+    lock,
+    !admission,
+    providerScope,
+    knownWinners,
+  )
   const [tracking] = await tx
     .select()
     .from(T)
@@ -375,10 +494,10 @@ export async function readUsageStatus(
       canRequestReset:
         policy.allowRequestReset &&
         bucket.baseAllowanceMicroUsd > 0 &&
-        !bucket.extensionUsed &&
         bucket.usedMicroUsd >= allowanceMicroUsd &&
         requestStatus !== "pending",
       resetRequestStatus: requestStatus,
+      ...(providerScope ? { providerId: providerScope } : {}),
     })
   }
   const oldest = [...current.buckets].sort((a, b) => a.startAt.getTime() - b.startAt.getTime())[0]
@@ -396,13 +515,7 @@ export async function readUsageStatus(
     serverTime: now.toISOString(),
     organizationId: scope.organizationId,
     memberId: scope.memberId,
-    state: !views.length
-      ? "unlimited"
-      : views.some((b) => b.hardLimit && b.usedMicroUsd >= b.allowanceMicroUsd)
-        ? "blocked"
-        : views.some((b) => b.usedMicroUsd >= b.allowanceMicroUsd)
-          ? "over_limit"
-          : "within_limit",
+    state: usageState(views),
     coverage: {
       complete: historicalUnknownReason === null && incompleteRequests === 0 && settlementReady,
       unpricedRequests: oldest?.unpricedRequests ?? 0,
@@ -420,4 +533,66 @@ export async function readUsageStatus(
     buckets: views,
   }
   return { usage, snapshot: usageSnapshot(current.buckets, now, tracking?.epochVersion ?? 0) }
+}
+
+/** Display names for Gateway providers in one organization; removed providers are absent. */
+export async function usageProviderNames(
+  tx: UsageReader,
+  organizationId: GatewayUsageScope["organizationId"],
+  providerIds: string[],
+) {
+  const ids = [
+    ...new Set(providerIds.filter((id) => isDenTypeId("inferenceProvider", id))),
+  ]
+  if (!ids.length) return new Map<string, string>()
+  const rows = await tx
+    .select({ id: GatewayProviderTable.id, name: GatewayProviderTable.name })
+    .from(GatewayProviderTable)
+    .where(
+      and(
+        eq(GatewayProviderTable.organization_id, organizationId),
+        inArray(GatewayProviderTable.id, ids),
+      ),
+    )
+  return new Map<string, string>(rows.map((row) => [row.id, row.name]))
+}
+
+/**
+ * The member's default status plus one entry per provider limit that governs
+ * them. Provider limits are available on every deployment.
+ */
+export async function readUsageStatusWithProviders(
+  tx: UsageReader,
+  scope: GatewayUsageScope,
+  now: Date,
+  options: { lock?: boolean } = {},
+): Promise<GatewayUsageStatus> {
+  const lock = options.lock ?? false
+  const scopes = await effectiveUsagePolicyScopes(tx, scope, lock)
+  const { usage } = await readUsageStatus(
+    tx,
+    scope,
+    now,
+    lock,
+    false,
+    GATEWAY_DEFAULT_USAGE_SCOPE,
+    scopes.get(GATEWAY_DEFAULT_USAGE_SCOPE) ?? [],
+  )
+  const providerIds = [...scopes.keys()].filter((key) => key !== GATEWAY_DEFAULT_USAGE_SCOPE).sort()
+  const names = await usageProviderNames(tx, scope.organizationId, providerIds)
+  const providers: GatewayProviderUsage[] = []
+  for (const providerId of providerIds) {
+    const status = (
+      await readUsageStatus(tx, scope, now, lock, false, providerId, scopes.get(providerId))
+    ).usage
+    const state = status.state
+    if (state === "unlimited") continue
+    providers.push({
+      providerId,
+      providerName: names.get(providerId) ?? "Removed provider",
+      state,
+      buckets: status.buckets,
+    })
+  }
+  return { ...usage, providers }
 }

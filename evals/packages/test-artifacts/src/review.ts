@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
+  designReviewFileSchema,
   docShotReceiptSchema,
   reviewSchema,
   summarizeReview,
 } from "@openwork/review";
-import type { ReviewReport } from "@openwork/review";
+import type { DesignNote as ReviewDesignNote, ReviewReport } from "@openwork/review";
 import type { ReviewAsset } from "@openwork/review/storage";
 import { readTestRunDirectory } from "./scan.ts";
 
@@ -20,10 +21,58 @@ async function regularFile(path: string): Promise<Buffer> {
   return readFile(path);
 }
 
+/**
+ * Advisory notes from `design-review.json`, keyed by screenshot file name.
+ * A missing, malformed or other-commit file contributes nothing: design notes
+ * must never block publishing the evidence itself.
+ */
+async function readDesignNotes(directory: string, gitSha: string): Promise<Record<string, ReviewDesignNote[]>> {
+  try {
+    const parsed = designReviewFileSchema.safeParse(JSON.parse((await regularFile(join(directory, "design-review.json"))).toString("utf8")));
+    if (!parsed.success || (parsed.data.gitSha && parsed.data.gitSha.toLowerCase() !== gitSha.toLowerCase())) return {};
+    return parsed.data.notes;
+  } catch {
+    return {};
+  }
+}
+
+/** One design note as the PR's Evidence preview check lists it: the note plus where it was found. */
+export interface DesignDigestNote extends ReviewDesignNote {
+  spec: string | null;
+  step: string;
+}
+
+/**
+ * Every design note across the published runs, flattened for the PR. Same
+ * rules as the report: a missing, malformed or other-commit file adds nothing.
+ */
+export async function designDigest(testRunDirs: string[]): Promise<{ reviewed: number; notes: DesignDigestNote[] }> {
+  let reviewed = 0;
+  const notes: DesignDigestNote[] = [];
+  for (const directory of [...new Set(testRunDirs)]) {
+    const stored = await readTestRunDirectory(directory);
+    if (!stored?.testRun.gitSha) continue;
+    try {
+      const parsed = designReviewFileSchema.safeParse(JSON.parse((await regularFile(join(directory, "design-review.json"))).toString("utf8")));
+      if (!parsed.success || (parsed.data.gitSha && parsed.data.gitSha.toLowerCase() !== stored.testRun.gitSha.toLowerCase())) continue;
+      reviewed += 1;
+      const captions = new Map(stored.testRun.artifacts.map((artifact) => [artifact.fileName, artifact.caption]));
+      for (const [fileName, entries] of Object.entries(parsed.data.notes)) {
+        const step = parsed.data.screens?.[fileName]?.caption ?? captions.get(fileName) ?? fileName;
+        for (const note of entries) notes.push({ ...note, spec: parsed.data.specFile ?? stored.testRun.specFile ?? null, step });
+      }
+    } catch {
+      // No design review for this run; publishing the evidence never depends on it.
+    }
+  }
+  return { reviewed, notes };
+}
+
 export async function assembleReview(options: {
   testRunDirs: string[];
   docShots?: string[];
   title?: string;
+  notice?: string;
   gaps?: string[];
 }): Promise<{ report: ReviewReport; assets: ReviewAsset[] }> {
   const sources: ReviewReport["sources"] = [];
@@ -40,7 +89,10 @@ export async function assembleReview(options: {
       throw new Error(`Invalid PNG: ${basename(path)}`);
     const name = `${createHash("sha256").update(body).digest("hex")}.png`;
     assets.set(name, { name, body });
-    return name;
+    // IHDR is the first chunk: width and height follow the signature and chunk header.
+    const width = body.length >= 24 ? body.readUInt32BE(16) : 0;
+    const height = body.length >= 24 ? body.readUInt32BE(20) : 0;
+    return { name, ...(width > 0 && height > 0 ? { size: { width, height } } : {}) };
   }
   for (const directory of [...new Set(options.testRunDirs)]) {
     const stored = await readTestRunDirectory(directory);
@@ -59,6 +111,7 @@ export async function assembleReview(options: {
         ),
       ),
     });
+    const designNotes = await readDesignNotes(directory, stored.testRun.gitSha);
     sources.push({
       id: sourceId,
       kind: "test-run",
@@ -89,6 +142,7 @@ export async function assembleReview(options: {
           !artifact.fileName.endsWith(".png")
         )
           throw new Error("Invalid screenshot path.");
+        const stored = await image(join(directory, artifact.fileName));
         evidence.push({
           id,
           sourceId,
@@ -96,7 +150,17 @@ export async function assembleReview(options: {
           caption: artifact.caption,
           description: artifact.description,
           judgments,
-          asset: await image(join(directory, artifact.fileName)),
+          asset: stored.name,
+          ...(stored.size ? { size: stored.size } : {}),
+          ...(artifact.checkpoint ? { checkpoint: artifact.checkpoint } : {}),
+          ...(artifact.checkpointMatch ? { checkpointMatch: artifact.checkpointMatch } : {}),
+          ...(artifact.checkpointError ? { checkpointError: artifact.checkpointError } : {}),
+          ...(designNotes[artifact.fileName]?.length ? { designNotes: designNotes[artifact.fileName]?.slice(0, 20) } : {}),
+          ...(artifact.step === undefined ? {} : { step: artifact.step }),
+          ...(artifact.change ? { change: artifact.change } : {}),
+          ...(artifact.focus ? { focus: artifact.focus } : {}),
+          ...(artifact.settle ? { settled: artifact.settle.settled } : {}),
+          ...(artifact.failure ? { failure: true } : {}),
         });
       } else {
         if (judgments.length === 0) continue;
@@ -106,6 +170,7 @@ export async function assembleReview(options: {
           kind: "assertion",
           caption: artifact.caption,
           judgments,
+          ...(artifact.step === undefined ? {} : { step: artifact.step }),
         });
       }
       evidenceIds.push(id);
@@ -135,7 +200,7 @@ export async function assembleReview(options: {
       caption: shot.name,
       description: "Documentation reference",
       judgments: [],
-      asset: await image(join(dirname(path), shot.fileName)),
+      asset: (await image(join(dirname(path), shot.fileName))).name,
     });
     sections.push({
       id: sourceId,
@@ -149,6 +214,7 @@ export async function assembleReview(options: {
   const report = reviewSchema.parse({
     schemaVersion: 1,
     title: options.title ?? "Selected evidence",
+    notice: options.notice,
     gitSha: first.gitSha,
     createdAt: new Date().toISOString(),
     gaps: options.gaps ?? [],
@@ -171,10 +237,16 @@ export function renderReviewComment(
     `Commit \`${report.gitSha}\` · selected evidence`,
     "Required verification is reported separately by the current-head Required verification check.",
   ];
+  if (report.notice) lines.push("", report.notice);
   if (url) lines.push("", `[Open review report](${url})`);
   if (report.gaps.length > 0)
     lines.push("", `Coverage gaps: ${report.gaps.join("; ")}`);
   if (summary.pendingVisual > 0)
     lines.push("", `${summary.pendingVisual} visual judgment(s) pending.`);
+  const designNotes = report.evidence.flatMap((item) => item.kind === "image" ? item.designNotes ?? [] : []);
+  if (designNotes.length > 0) {
+    const medium = designNotes.filter((note) => note.severity === "medium").length;
+    lines.push("", `Design review (advisory): ${designNotes.length} note(s), ${medium} worth fixing before merge.`);
+  }
   return lines.join("\n");
 }

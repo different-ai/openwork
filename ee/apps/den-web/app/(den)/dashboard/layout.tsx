@@ -3,7 +3,9 @@ import { headers } from "next/headers";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { getManagedBrandIconUrl, parseOrgListPayload } from "../_lib/den-org";
+import { DenToastProvider } from "./_components/den-toast";
 import { OrgDashboardShell } from "./_components/org-dashboard-shell";
+import { FeatureIntroProvider } from "./_features/feature-intros/feature-intro-provider";
 import { OrgDashboardProvider } from "./_providers/org-dashboard-provider";
 import { DashboardQueryClientProvider } from "./_providers/query-client-provider";
 
@@ -53,7 +55,11 @@ export default function DashboardLayout({
   return (
     <DashboardQueryClientProvider>
       <OrgDashboardProvider>
-        <OrgDashboardShell>{children}</OrgDashboardShell>
+        <DenToastProvider>
+          <FeatureIntroProvider>
+            <OrgDashboardShell>{children}</OrgDashboardShell>
+          </FeatureIntroProvider>
+        </DenToastProvider>
       </OrgDashboardProvider>
     </DashboardQueryClientProvider>
   );

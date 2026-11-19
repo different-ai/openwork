@@ -13,13 +13,19 @@ import {
   parseCodemodeScriptPayload,
   validateCodemodeScriptInput,
   validateCodemodeScriptOutput,
+  type CodemodeLanguage,
   type CodemodeScriptInputIssue,
 } from "./codemode-script-object.js"
-import { firstUnattendedUnsafeCapability, restrictCodemodeToolTree, restrictReadOnlyCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { restrictCodemodeToolTree, type BuildCodemodeTools } from "./codemode-tools.js"
+import { codemodeRuntimeFor, runCodemodeScript } from "./codemode-run.js"
 import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
+
+/** The language new Workflow code is tested and saved in; old revisions retain their interpreter. */
+export async function newWorkflowLanguage(): Promise<CodemodeLanguage> {
+  return "ecmascript"
+}
 
 export type WorkflowExecutionResult =
   | {
@@ -71,7 +77,7 @@ export async function executeWorkflow(input: {
   scriptInput?: unknown
   readOnly?: boolean
   validateOutput?: boolean
-  buildTools: () => Promise<BuiltCodemodeTools>
+  buildTools: BuildCodemodeTools
 }): Promise<WorkflowExecutionResult> {
   const parsed = parseCodemodeScriptPayload(input.normalizedPayloadJson)
   if (!parsed.ok) return { ok: false, error: "unsupported", message: parsed.message }
@@ -117,30 +123,14 @@ export async function executeWorkflow(input: {
     }
   }
 
-  const built = await input.buildTools().catch(() => ({ tools: {}, manifest: [] }))
-  const unsafe = input.automationRunId
-    ? firstUnattendedUnsafeCapability(built, parsed.payload.requiredCapabilities)
-    : null
-  if (unsafe) {
-    const message = `Required capability ${unsafe.scriptPath} (${unsafe.capabilityName}) must be read-only and explicitly approved by an organization admin before it can run unattended in OpenWork Cloud.`
-    const receiptId = await recordPreflightFailure("CapabilityUnavailable", message)
-    return {
-      ok: false,
-      error: "capability_unavailable",
-      message,
-      providerCallAttempted: false,
-      missing: [unsafe],
-      receiptId,
-    }
-  }
-  const restricted = input.readOnly
-    ? restrictReadOnlyCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
-    : { ...restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities }), unsafe: [] }
-  if (restricted.unsafe.length > 0) {
-    const message = "Live apps may only call current Den-authorized read-only capabilities."
-    const receiptId = await recordPreflightFailure("CapabilityUnavailable", message)
-    return { ok: false, error: "capability_unavailable", message, providerCallAttempted: false, missing: restricted.unsafe, receiptId }
-  }
+  const runtime = codemodeRuntimeFor(parsed.payload.language)
+
+  // Like any workflow engine, a Workflow may call every capability its runner
+  // can currently use (Den actions and connection tools, reads and writes),
+  // whether it runs on demand, live in an App, or from an Automation. Each call
+  // is still authorized as the runner at dispatch time.
+  const built = await input.buildTools(parsed.payload.requiredCapabilities).catch(() => ({ tools: {}, manifest: [] }))
+  const restricted = restrictCodemodeToolTree({ built, requiredCapabilities: parsed.payload.requiredCapabilities })
   const firstMissing = restricted.missing[0]
   if (firstMissing) {
     const message = `Required capability ${firstMissing.scriptPath} (${firstMissing.capabilityName}) is unavailable or disabled for this organization.`
@@ -164,6 +154,7 @@ export async function executeWorkflow(input: {
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,
     maxOutputBytes: parsed.payload.limits?.maxOutputBytes,
+    runtime,
   })
   const finishedAt = new Date()
   if (!result.ok) {

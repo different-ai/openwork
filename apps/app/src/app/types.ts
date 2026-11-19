@@ -1,3 +1,4 @@
+import type { AgentForm } from "@openwork/types/agent-form";
 import type {
   Message,
   Part,
@@ -9,6 +10,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
+import type { SessionLink } from "@openwork/types/session-link";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -22,6 +24,8 @@ export type SidebarSessionItem = {
   state?: unknown;
   runStatus?: unknown;
   parentID?: string | null;
+  /** The session this one was started from, as a side chat or by its agent. */
+  openworkSessionLink?: SessionLink | null;
   time?: {
     updated?: number | null;
     created?: number | null;
@@ -99,10 +103,12 @@ export type ComposerPart =
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
   | { type: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
+  /** A connection picked from the composer `+` menu (`[connector …]` pill). */
+  | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
-  /** A macOS app targeted via Computer Use (composer "@App" mention). */
-  | { type: "app"; name: string }
   | { type: "computer"; target: "cloud" | "desktop" }
+  /** Another task picked from the composer `#` menu (`[session …]` pill). */
+  | { type: "session"; workspaceId: string; sessionId: string; title: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {
@@ -190,6 +196,7 @@ export const SETTINGS_TAB_VALUES = [
   "preferences",
   "permissions",
   "cloud-account",
+  "usage",
   "connect",
   "cloud-marketplaces",
   "cloud-providers",
@@ -197,7 +204,11 @@ export const SETTINGS_TAB_VALUES = [
   "extensions",
   "environment",
   "advanced",
+  "import",
   "appearance",
+  "shortcuts",
+  "computer",
+  "devices",
   "updates",
   "recovery",
   "debug",
@@ -401,6 +412,7 @@ export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  form?: AgentForm;
 };
 
 export type TodoItem = {
@@ -434,9 +446,13 @@ export type ModelOption = {
   behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
+  /** A free model of the engine's built-in OpenCode Zen provider that nobody configured: the silent fallback. */
+  zenFallback?: boolean;
   isRecommended?: boolean;
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
-  source?: "cloud";
+  source?: "cloud" | "gateway" | "local";
+  organizationPinOrder?: number;
+  gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };
 };
 
 export type SelectedSessionSnapshot = {

@@ -8,6 +8,13 @@ description: Search and use the skills, MCP connections, and connected services 
 Use the OpenWork MCP server when the user asks for an organizational skill,
 shared MCP tool, connected service, or OpenWork Cloud operation.
 
+## Skills
+
+1. Call `list_skills` to see every skill the member may use; no keywords are
+   needed. Pass `query` only to narrow a long catalog.
+2. Call `get_skill` with the skill's name or exact capability, read the whole
+   returned SKILL.md, then follow it.
+
 ## Workflow
 
 1. Call `search_capabilities` with a short description of the outcome unless

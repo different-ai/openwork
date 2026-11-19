@@ -85,9 +85,6 @@ type WorkspaceAttentionInputs = {
   statuses?: Readonly<Record<string, SessionActivityStatus>>;
   waiting?: Readonly<Record<string, SessionWaitingKind>>;
   childIds?: SessionChildIds;
-  serverStatuses?: Readonly<Record<string, SessionActivityStatus>>;
-  serverWaiting?: Readonly<Record<string, SessionWaitingKind>>;
-  serverChildIds?: SessionChildIds;
 };
 
 export function createWorkspaceSessionAttentionSelector() {
@@ -103,15 +100,12 @@ export function createWorkspaceSessionAttentionSelector() {
       && previous.locale === locale
       && previous.inputs.statuses === inputs.statuses
       && previous.inputs.waiting === inputs.waiting
-      && previous.inputs.childIds === inputs.childIds
-      && previous.inputs.serverStatuses === inputs.serverStatuses
-      && previous.inputs.serverWaiting === inputs.serverWaiting
-      && previous.inputs.serverChildIds === inputs.serverChildIds) return previous.attention;
+      && previous.inputs.childIds === inputs.childIds) return previous.attention;
     const attention = selectSessionAttention(
       sessions,
-      (id) => inputs.serverStatuses?.[id] ?? inputs.statuses?.[id],
-      (id) => inputs.serverWaiting?.[id] ?? inputs.waiting?.[id],
-      (id) => [...inputs.childIds?.[id] ?? [], ...inputs.serverChildIds?.[id] ?? []],
+      (id) => inputs.statuses?.[id],
+      (id) => inputs.waiting?.[id],
+      (id) => inputs.childIds?.[id] ?? [],
     );
     cache.set(sessions, { inputs, locale, attention });
     return attention;

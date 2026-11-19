@@ -1,6 +1,11 @@
-# Repository prerequisite: enable Settings → Actions → General →
-# "Allow GitHub Actions to create and approve pull requests", plus
-# Settings → General → Pull Requests → "Allow auto-merge".
+# Repository prerequisite: Settings → General → Pull Requests → "Allow
+# auto-merge". The approval comes from the automation App (AUTOMATION_APP_ID
+# and AUTOMATION_PRIVATE_KEY in the warden-clearance environment). Until that
+# App is configured it falls back to GITHUB_TOKEN, which needs Settings →
+# Actions → General → "Allow GitHub Actions to create and approve pull
+# requests"; turn that off once the App exists, so no workflow on a branch can
+# approve its own PR. Not diff-warden: Warden clearance withdraws diff-warden
+# approvals when its review flags a PR.
 # Merging uses the existing warden-clearance App credentials so the merge
 # triggers downstream push/release workflows. Required branch rules still apply.
 # The bot approval satisfies the "someone other than the last pusher" rule because
@@ -47,6 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     environment: warden-clearance
+    env:
+      HAS_AUTOMATION_APP: ${{ secrets.AUTOMATION_PRIVATE_KEY != '' }}
     steps:
       - name: Checkout trusted base (dev)
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -97,11 +104,21 @@ jobs:
           echo "reverted=$verified_reverted" >> "$GITHUB_OUTPUT"
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
+      - name: Mint approval token
+        id: approval-token
+        if: steps.verify.outputs.verdict == 'pass' && env.HAS_AUTOMATION_APP == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.AUTOMATION_PRIVATE_KEY }}
+          permission-pull-requests: write
+
       - name: Approve verified revert
         id: approve
         if: steps.verify.outputs.verdict == 'pass'
         env:
           GH_TOKEN: ${{ github.token }}
+          APPROVE_TOKEN: ${{ steps.approval-token.outputs.token || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REVERTED_SHA: ${{ steps.verify.outputs.reverted }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -122,7 +139,7 @@ jobs:
             exit 0
           fi
           body="Machine-verified at \`$HEAD_SHA\`: this PR's tree is the exact inverse of commit \`$REVERTED_SHA\`, which previously landed on protected \`dev\` via a reviewed PR. Auto-approval per the clean-revert fast-lane control, bound to the verified commit; any further push re-runs verification."
-          gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+          GH_TOKEN="$APPROVE_TOKEN" gh api -X POST "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
             -f commit_id="$HEAD_SHA" \
             -f event=APPROVE \
             -f body="$body" > /dev/null

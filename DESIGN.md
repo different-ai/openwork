@@ -2,8 +2,7 @@
 
 How OpenWork UI is designed. Agents read this before building or reviewing any
 user-facing surface (`apps/app`, `apps/desktop`, `ee/apps/den-web`, MCP Apps,
-generated artifact views). Warden's `design-spec-review` skill checks PRs
-against the numbered rules below and *warns* — it never blocks.
+generated artifact views).
 
 ## Who we design for
 
@@ -18,14 +17,17 @@ advanced options discoverable but quiet.
 - **P1 · Show state, don't explain the UI.** A surface reports what is true
   ("Verified 2 min ago", "Blocked by your team", "Not posted") instead of
   describing itself. Count the sentences in the first viewport; if a sentence
-  explains the interface rather than reporting state, delete it.
+  explains the interface rather than reporting state, delete it. Exception:
+  feature intros (I1–I10) explain what a feature is *for*.
 - **P2 · Title *or* description, never both.** Pages, cards, rows, dialogs,
   settings groups get one or the other. Detail lives in a tooltip, an
-  expandable row, or nowhere.
+  expandable row, or nowhere. Exception: feature intros (I3).
 - **P3 · Progressive disclosure.** Default surface = the decision the user is
   here to make. Advanced, rare, or diagnostic detail goes behind a labeled
   collapsed row ("Technical details", "Blocked patterns") — label only, no
-  preview of the contents.
+  preview of the contents. Tool-call rows instead use one quiet code icon in
+  a fixed trailing slot, shown on hover or focus (always on touch and on
+  failures), labelled for assistive tech and opening the raw details inline.
 - **P4 · Presence with a lock beats absence.** When policy or permissions
   remove a capability, keep the control visible, mark it blocked, and say
   *why* and *who can change it*. Never let features silently disappear.
@@ -45,6 +47,14 @@ advanced options discoverable but quiet.
   state line. No apologies, no "please".
 - **P10 · Evidence or it didn't ship.** New or changed UI needs a screenshot
   (or short recording) in the PR at the real size. No screenshot, no review.
+- **P11 · Continuity over lifecycle.** A person's action produces the object
+  they asked for; the system's internal steps to get there are not UI states.
+  Keep the user's object and layout on screen while work continues (their
+  message, row, or document stays put), and add a visible intermediate state
+  only when it needs a decision or recovery. Interstitials such as
+  "Creating…", "Preparing…", or setup screens invented from implementation
+  steps are defects. A feature intro is not an interstitial: it is the page's
+  empty state (I1).
 
 ## Structure
 
@@ -64,6 +74,18 @@ advanced options discoverable but quiet.
 - **S6** One action, one home: keyboard, palette, and visible control invoke
   the same command. Show keyboard chords for frequent actions (`⏎`, `⌘⏎`,
   `esc`).
+- **S7** Floating surfaces (menus, pickers, `/` and `@` suggestions,
+  popovers, hover cards) render through the `@/components/ui` Base UI
+  primitives: Popover, DropdownMenu, ContextMenu, Select, Tooltip, HoverCard,
+  Command. They portal out of the layout, anchor to their trigger (or an
+  `anchor` such as the editor), flip to the side with room, and cap to
+  `--available-height` / `--available-width`: long lists scroll vertically
+  inside and rows truncate; nothing scrolls sideways or is clipped by a panel.
+  They close on an outside press and `esc`, and return focus to where it came
+  from (suggestions keep it in the editor). Never position a panel by hand
+  (`absolute top-full` / `bottom-full`, fixed coordinates from
+  `getBoundingClientRect()`) or close one from a `document`/`window`
+  listener; `apps/app/tests/floating-surface-guard.test.ts` enforces this.
 
 ## Copy
 
@@ -84,13 +106,19 @@ advanced options discoverable but quiet.
 - **C7** Sentence case. No ALL-CAPS eyebrow labels, no middle-dot meta strings
   as decoration, no "→" appended to buttons.
 
+- **C8** Call an interactive view built in OpenWork an artifact. Use
+  “Artifacts” for the library and “MCP Apps” for the protocol or integrations
+  that use it.
+
 ## States
 
 Every data-bearing surface designs, and the PR shows, these states where they
 apply: loading (layout-matching skeleton, not "Loading…" text), empty,
 error, blocked/locked, offline or "couldn't verify" (show the last known
-state and when it was confirmed), and success. Never rely on model text alone
-to communicate system status.
+state and when it was confirmed), and success. In Den, the empty state of a
+page, sub-page or tab *is* its feature intro (I1). Never rely on model text alone
+to communicate system status. Loading preserves the destination layout: the
+object appears where it will live, then fills in.
 
 ## Visual system
 
@@ -126,6 +154,57 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
   `outline: none` without a replacement focus ring, gray text on colored
   backgrounds, decorative badges/chips soup.
 
+## Feature intros (onboarding and info)
+
+Every Den page, sub-page and tab explains itself while it has nothing set up.
+These rules apply only to feature intros, and override P1, P2 and P11 there.
+Everywhere else the normal rules hold.
+
+- **I1 · Required, and the default empty state.** Every sidebar page,
+  sub-page and tab ships with a feature intro. It replaces the page's empty
+  state; a page-local "No items yet" is a defect. An intro shows while its
+  feature is not set up and cannot be permanently hidden until it is.
+- **I2 · Size follows setup state.** Nothing in the section set up → full
+  screen. A tab or sub-page not set up while the section is → info box, max
+  600px wide, where the list would be. Page partly set up (e.g. providers but
+  no smart router) → banner at the top, max 300px tall, with the page below.
+  Fully set up → nothing, until the person asks with `?`.
+- **I3 · Fixed anatomy.** Full screen: icon, title, one-line value, short
+  paragraph (≤ 3 sentences) or ≤ 4 highlights, one primary action, "Read the
+  docs" (left); live example (right, ~40%). Box: title, one line, ≤ 3
+  highlights, action, docs link. Banner: one line, action, docs link,
+  dismiss. Title *and* description are allowed here.
+- **I4 · Explain value, not the interface.** Say what the feature does for
+  the person and their team ("Give your whole team models without sharing
+  keys"), never how to operate the screen ("Click the button below to…").
+- **I5 · One action that leads straight to the work.** The primary action
+  goes directly to the create form or the setup step ("Add your first AI
+  provider" → provider form). No intermediate pages, no "Learn more" as the
+  primary action. Verb-first (C1), no "→" (C7).
+- **I6 · The action reflects who and what.** Pick the action from the
+  person's permissions and what the org already has: first admin "Add your
+  first AI provider"; after someone else set it up "See your providers · Set
+  up by {name}"; no permission → locked, with why and who can change it (P4,
+  C5). Never offer an action the person cannot complete.
+- **I7 · Live example with sample data.** The graphic is a small, real,
+  non-interactive render of the feature built from our own components with
+  sample data, labelled "Example". No static illustrations, mascots, stock
+  art, screenshots or video. It follows V1–V7: flat (S1), tokens only, no
+  gradients or glass (V7), no sparkle/robot icons (V5), service logos for
+  services. Reduced motion: static.
+- **I8 · Always reachable, never pushed.** Every intro has "Read the docs".
+  The `?` button in the top bar reopens the current page's intro at any time.
+  Intros never open over another page, never auto-navigate (S5) and never
+  block the sidebar or top bar.
+- **I9 · Quiet unseen markers.** A tab or sidebar item whose intro the person
+  hasn't seen gets a small neutral dot (V2), not amber or red. Viewing it
+  clears the dot for 30 days; a set-up feature never shows one. A dismissed
+  banner stays hidden for 30 days.
+- **I10 · Registered and tracked.** Intros come from the shared registry
+  (keyed by route + tab) and record seen / dismissed / action clicked per
+  member, so they can be versioned and shown again. No one-off intro markup in
+  a page.
+
 ## Chat, tool calls and MCP Apps
 
 - **T1** A turn's steps read as one rail: leading slot (connector logo, file
@@ -133,7 +212,11 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
   Finished turns collapse to one line ("Worked for 1m 19s · 12 steps").
 - **T2** Failures stay inline with the fix: "Slack needs a fresh sign-in ·
   Reconnect", not a stack trace. Raw input/output lives under "Technical
-  details".
+  details". Never show engine ids, routing names, or raw provider text in
+  the row; a step that did no visible work (catalog lookups) is not shown.
+  A failed step keeps the ink of the other steps: the agent often recovers,
+  and "Couldn't…" already says it failed. Red is for the error that ends
+  the turn.
 - **T3** MCP Apps and generated views get a 40px header (source logo, title,
   explicit state such as "Ready" / "Draft" / "Not posted") and one icon
   action ("Open in panel"). Body is the app; footer holds ≤ 2 actions.
@@ -149,10 +232,18 @@ Tokens live in `apps/app/src/app/index.css`, `styles/colors.css`,
       states you touched (P10).
 - [ ] Every new control reuses a `@/components` primitive or justifies why not
       (P5).
-- [ ] No surface has both a title and a description (P2).
-- [ ] No explanatory sentences in the default viewport (P1).
+- [ ] Menus and popovers fit the window when opened near each edge and from
+      an empty chat, and close on an outside press and `esc` (S7).
+- [ ] No surface has both a title and a description (P2), except feature
+      intros (I3).
+- [ ] No explanatory sentences in the default viewport (P1), except feature
+      intros (I4).
+- [ ] New Den pages, sub-pages and tabs register a feature intro as their
+      empty state, with a live sample-data example and a docs link (I1–I10).
 - [ ] Blocked/locked states visible with reason and owner (P4, C5).
 - [ ] Company/service references use logos; no generic icons outside nav
       (V5).
 - [ ] Tokens only; no hex/px literals that duplicate a token (V2–V4).
 - [ ] Motion within V6; focus ring visible; reduced-motion respected.
+- [ ] Async flows keep the user's object and layout in place; no interstitial
+      built from an internal step (P11).

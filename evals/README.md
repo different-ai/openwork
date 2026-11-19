@@ -1,8 +1,69 @@
 # OpenWork tests and test evidence
 
-All executable coverage lives in [`specs/**/*.test.ts`](./specs) and imports
+E2E coverage is nine core journeys in [`core/`](./core), listed in
+[`journeys.ts`](./journeys.ts), plus one-off PR proofs in [`proofs/`](./proofs). Specs import
 `test` from `@openwork/testkit`. Tests that drive Electron, Den, or another app
-surface use `.e2e.test.ts`.
+surface use `.e2e.test.ts`. Unit tests of the eval packages themselves sit next
+to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
+`pr` project.
+
+## How CI works (start here)
+
+Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, under
+two minutes): static CI guards, the feature registry, a typecheck of the
+shipped code it changes, the desktop build, and the Den API auth tests when Den
+API code changes. It runs again on every dev push, and no alpha or release
+ships a commit it did not pass. Red here means a normal code problem. The rest:
+
+1. **Nightly regression** (`ci-tests.yml`, nightly and on demand):
+   test-framework checks, engine smoke tests, docs and model validation.
+2. **Core journeys** (`core-journeys.yml`, nightly and on demand), and
+   [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts) in the nightly
+   Freestyle world check. Proofs never run automatically.
+3. **The packaged desktop** ("Packaged desktop smoke") before every alpha release.
+
+PR evidence is on demand: `gh workflow run pr-proof.yml --ref <branch> -f
+pr=<number>` runs the PR's changed specs on its head and keeps their records as
+artifacts.
+
+### The world
+
+The app does not run on the CI runner. It runs in a **world**: a Freestyle VM
+snapshot holding all of OpenWork (web app, server, Den with a demo org, AI
+gateway with a fake model that answers "Acme AI Gateway is working.", and a
+signed-in Chrome). The runner only drives it, so the CI job stays small.
+
+Every push to `dev` keeps `dev`'s world ready ("Freestyle warm dev image"). A PR
+gets its world one of three ways; the job summary says which, and why:
+
+| Your PR changes | What happens | Time |
+| --- | --- | --- |
+| Nothing that runs (docs, tests, CI, website) | reuse `dev`'s world | ~2s |
+| App UI, Den web or Den API code | copy `dev`'s running world, check out, reload | ~15-25s |
+| Anything else | build from the warm image | ~3 min |
+
+The rules are `HOT_RULES` in
+[`packages/freestyle/src/evidence-builder.ts`](../packages/freestyle/src/evidence-builder.ts).
+If the fast path fails, the world is built in full instead: a PR can get
+slower, never red, because of it.
+
+### When it is red
+
+- **Unit tests or build:** read the failing step; it is your code.
+- **Core journey:** open the job. The "Freestyle world" table says which path
+  ran and how long each step took. A failed world prints the VM's own log under
+  "builder log". A failed journey prints what was on screen when it gave up.
+- **Evidence card says "needs attention":** open the report from the card; it
+  has a screenshot of every step.
+
+### Changing CI itself
+
+After touching the world, `HOT_RULES` or the warm image, run the world check:
+`node evals/scripts/check-freestyle-world.ts` (or the manual "Freestyle world
+check" workflow). It pushes throwaway docs, UI, Den API, Den web, server and
+gateway changes, builds each world, runs the core journey on it and prints a
+pass/fail table with timings. Add `--base <sha>` to test your branch as if it
+were `dev`.
 
 ## Paved path
 
@@ -10,10 +71,9 @@ Use the skills in this order:
 
 1. `write-a-spec`
 2. `run-tests`
-3. `diagnose-a-red-run` when the run fails
-4. `publish-evidence` for the existing ambient test evidence
+3. `open-a-pr`; CI runs the core journey and the changed specs on the PR head and publishes the evidence
 
-Demo-driven features start from a world script plus a spec in `evals/specs`.
+Demo-driven features start from a world script plus a core journey step or a proof.
 
 ## Experimental verification dictionary
 
@@ -51,14 +111,9 @@ Skills own mechanics; this README owns the map and vocabulary.
 
 | Task | Skill to load | When |
 | --- | --- | --- |
-| Author a spec | `write-a-spec` | Add executable coverage under `evals/specs`. |
+| Author a spec | `write-a-spec` | Add a step to a core journey in `evals/core`, or a proof in `evals/proofs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
-| Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
-| Publish evidence or declare a PR verdict | `publish-evidence` | Judge and publish an existing ambient evidence run. |
-| Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
-| Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
-| Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |
-| Demo artifacts | `record-a-demo` | Capture supplementary screenshots or recordings. |
+| Drive the app by hand over CDP | `drive-desktop-cdp` | Check a UI change in `dev-app-web --browser` (headless) or, when the desktop shell matters, a desktop window. |
 
 ## Install and run
 
@@ -68,8 +123,11 @@ installs or image builds.
 ```bash
 pnpm --dir evals install
 pnpm evals:pr
-pnpm evals:e2e app-smoke
+pnpm evals:e2e composer-draft-reload --local   # the app in headless Chrome
 ```
+
+`app-smoke` and other specs bound to the `desktop` surface open an Electron
+window when run with `--local`; run them on Daytona unless you want the window.
 
 `pnpm --dir evals typecheck` (also `pnpm evals:typecheck`) type-checks every
 spec, world, driver, script, and package under `evals/` and must exit 0 (run it
@@ -100,7 +158,6 @@ world's implementation, and selecting Electron for either case is rejected.
 
 ```bash
 pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01
-pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10
 ```
 
 A focused web case avoids legacy Den/Electron suite preparation, but still
@@ -126,30 +183,6 @@ run. A selected skip, unknown result, zero matches, or missing JSON report is
 incomplete; any non-selected case that executes is a contract failure.
 Daytona slot IDs and refs remain advanced environment configuration.
 
-### Bounded world migration
-
-The audited migration covers only `CONT-01` (`chatStreamContinuityWeb`) in
-`specs/streamed-markdown-answer.e2e.test.ts` and `SWITCH-10`
-(`sessionSwitchLatencyWeb`) in
-`specs/live-tool-visible-after-session-switch.e2e.test.ts`. Each binding declares
-`resources: { surfaces: ["appWeb"], services: ["mock"] }` and boots through
-`seed.appWeb`, whose default is `headless: true`. Neither world reads surface
-or headless environment selectors. CONT-01 tests ordinary app UI and has no
-native variant.
-
-Both cases assert the runtime user agent contains `HeadlessChrome`, that the
-Electron bridge is absent, and that the app origin, server health, and selected
-engine routes match the fixture. Source SHA metadata is recorded and checked
-when available (required on Daytona); this is not a full source receipt or
-proof of uncommitted source contents.
-
-The other cases and legacy worlds in these mixed files, including
-`streamedMarkdown`, `streamedToolHistory`, and the existing live-tool switching
-setup, are untouched and explicitly deferred. Shared `worlds/chat.ts` and the
-rest of the legacy world inventory are outside this bounded migration. Running
-an entire mixed file still includes its legacy setup; selecting a migrated case
-does not certify or migrate the other cases.
-
 | Exit | Named test | Unfiltered E2E suite | Publish |
 | --- | --- | --- | --- |
 | `0` | Passed | Passed, or incomplete with expected skips | Published |
@@ -158,42 +191,30 @@ does not certify or migrate the other cases.
 
 See `run-tests` for environment requirements and the cold-boot verdict check.
 
-Every `evals/specs/*.e2e.test.ts` file on disk runs in the E2E lane. To stop a
+Every `evals/core/*.e2e.test.ts` and `evals/proofs/*.proof.test.ts` file on disk runs in the E2E lane. To stop a
 spec from running, delete it; history keeps the removed test available.
-
-### Live lane
-
-Surface and substrate are independent axes:
-
-| Surface | Launched substrate (world-owned, hermetic) | Attached live substrate |
-| --- | --- | --- |
-| App-less | `<slug>.test.ts` | `<slug>.live.test.ts` |
-| App-driving | `<slug>.e2e.test.ts` | Not yet paved |
-
-Run a live spec only by exact name and with explicit consent and endpoint values:
-
-```bash
-OPENWORK_EVAL_LIVE=1 OPENWORK_EVAL_LIVE_DEN_API_URL=https://api.openworklabs.com OPENWORK_EVAL_SECRET_LIVE_MAILBOX_EMAIL=<mailbox> pnpm evals:pr specs/prod-den-signup-invites.live.test.ts
-```
-
-The live Den is attached and never deleted. Timestamped plus-addressed identities,
-organizations, and invitations launched onto it are owned by the spec; cleanup is
-asserted even on failure, and any residue (including an account without a
-self-service deletion endpoint) must be documented with exact identities.
 
 ## Authoring contract
 
-The spec boundary ratchet (`scripts/spec-boundary-ratchet.mjs`) rejects new
-files that import product source (`../../apps|packages|ee`) or that never cross
-a product boundary (`app()`, `chrome()`, `server()`, `spec.world()`, or a
-world import); a file with no boundary is also called out for `node:fs` and
-`node:child_process`. Its `specs/boundary-ratchet.baseline.json`
-grandfathers legacy files and only shrinks. Cleanup deletes them, moves unit
-tests next to their module, or folds their assertions into a journey spec.
+Two kinds of e2e test live here:
+
+- **Core journeys** (`core/*.e2e.test.ts`): the nine journeys in `journeys.ts`.
+  If one breaks, customers notice the same day. They run on every PR and nightly,
+  and are never weakened to make a PR green. Adding one is a review decision.
+- **Proofs** (`proofs/*.proof.test.ts`): one-off evals an agent writes to prove
+  one change on one PR. They run on that PR and are not maintained; if one keeps
+  mattering, fold its steps into a core journey.
+
+`evals/specs` is retired. Unit and integration tests live next to the module
+they test; security rules are API tests in `ee/apps/den-api/test/api`.
+`pnpm --dir evals lint:specs` (`scripts/spec-lint`) enforces three rules with no
+baseline, and each error says what to do instead: `allowed-files`,
+`real-product` (no product-source imports, mocks, filesystem/database access or
+reaching into the app) and `honest` (no skips, sleeps or self-graded evidence;
+every test asserts something a person or client observes).
 
 - Import `test` from `@openwork/testkit`.
-- Name app-driving files `<slug>.e2e.test.ts`; app-less tests use `<slug>.test.ts`.
-- Live specs use `<slug>.live.test.ts`, never run in PR/E2E suites, and require a consent environment variable.
+- Name core journeys `core/<slug>.e2e.test.ts` and proofs `proofs/<slug>.proof.test.ts`; app-less unit tests live next to their module.
 - Acquire resources in dependency order with `needs()` → `server()` → `app()`.
 - Drive user-visible behavior and assert observable outcomes. Backend, file,
   and process checks may witness side effects but do not replace the journey.
@@ -278,9 +299,7 @@ change the ordering state.
 `seed.evalIn()` (`[seed:raw]`) and `probe.eval()` (`[probe:raw]`) are migration
 escape hatches. Both take type-checked browser callbacks and await promises automatically.
 `probe.eval` accepts `{ timeoutMs?: number }` after either `(callback)` or
-`(surface, callback)`. Raw JavaScript strings are rejected. New specs must not use them. The channel ratchet
-records current legacy usage per E2E file and fails on increases or stale
-baseline entries.
+`(surface, callback)`. Raw JavaScript strings are rejected. New specs must not use them; spec-lint rejects them in `core/` and `proofs/`.
 
 Before, composer reload coverage imported hosts, behaviors, CDP evaluation, and
 evidence APIs directly. After, the journey is only:
@@ -342,7 +361,7 @@ This is enforced by `pnpm --dir evals run lint:layers`.
 ## Composable packages and diagnostics
 
 The packages under [`packages/`](./packages) are independently consumable, but
-executable coverage is always assembled as a test under `specs/`.
+executable coverage is always assembled as a journey under `core/` or a proof under `proofs/`.
 
 | Package | Owns |
 | --- | --- |
@@ -365,7 +384,9 @@ endpoint without creating test evidence.
 
 ## Worlds
 
-A world is a plain executable TypeScript file under `worlds/`. Each script
+A world is a plain executable TypeScript file. Everyday ones live under
+`worlds/` (see `worlds/README.md` for the `preview-`/`dev-`/`live-` names);
+one used by a single test, doc, or example lives next to it and runs by path. Each script
 creates concrete async resources in dependency order, registers them with a
 native `AsyncDisposableStack`, and calls `hold()` after it is ready. Typical
 resources are `server`, `createAdmin`, `createOrg`, `inviteMember`, `app`,
@@ -376,9 +397,10 @@ therefore side-effect-free until a caller invokes an exported builder. Specs,
 docs tooling, and the script entry point use those same builders; there is no
 second lifecycle layer.
 
-Useful ready-made scripts include `worlds/solo.ts`, `worlds/acme-demo.ts`,
-`worlds/acme-docs.ts`, and `worlds/desktop-prod-live.ts`. `support-org` no
-longer exists. See `pnpm world list` for the complete current set.
+Everyday scripts are `preview-desktop` (app only), `preview-den` (Den only),
+`preview-full` (Den plus desktop), `preview-app-web`, `acme-web`, `dev-app-web`,
+and `live-desktop`/`live-app-web`. `pnpm world list` shows the current set.
+Colocated scripts include `evals/docs-shots/world.ts` and `evals/worlds/infra/`.
 
 Detached scripts write PID ownership receipts to
 `evals/results/.worlds/scripts/<name>.json`. A receipt records the script path,
@@ -390,22 +412,22 @@ recipe for recreating resources.
 The root `pnpm world` command requires Node 24+. Its interactive lifecycle is:
 
 ```bash
-pnpm world up solo                 # foreground; Ctrl-C disposes its stack
-pnpm world up acme-demo --detach   # background; waits for its receipt
-pnpm world up acme-docs --detach --timeout 600000
-pnpm world down acme-demo          # signal it and wait for native disposal
+pnpm world up preview-full -- --scenario workspace   # foreground; Ctrl-C disposes its stack
+pnpm world up preview-den --detach                   # background; waits for its receipt
+pnpm world up ./evals/docs-shots/world.ts --detach --timeout 600000
+pnpm world down preview-den                          # signal it and wait for native disposal
 pnpm world list
 pnpm world forget <name>
 pnpm world help
 
 # A path or the filename-derived name selects the same script.
-pnpm world up ./worlds/dev-headless.ts
-pnpm world up ./worlds/litellm-per-member.ts
+pnpm world up ./worlds/dev-app-web.ts
+pnpm world up ./examples/litellm-per-member-keys/world.ts
 
 # Script-specific arguments must follow the separator.
-pnpm world up dev-headless --detach -- --replace --keep-tokens
-pnpm world up headless-prod-live -- --allow-shared-state
-pnpm world up desktop-prod-live -- --allow-shared-state
+pnpm world up dev-app-web --detach -- --replace --keep-tokens
+pnpm world up live-app-web -- --allow-shared-state
+pnpm world up live-desktop -- --allow-shared-state
 ```
 
 The generic `up` options are only `--detach` and, with detached mode,
@@ -413,9 +435,9 @@ The generic `up` options are only `--detach` and, with detached mode,
 script. `down` sends the script a termination signal and waits while its
 `AsyncDisposableStack` releases owned resources. `forget` removes receipt
 metadata only; it does not stop the process. `help` and `list` discover
-`worlds/*.ts`.
+`worlds/*.ts`; old names fail with a pointer to their replacement.
 
-`desktop-prod-live` is a deliberately dangerous local-only mode. It launches
+`live-desktop` is a deliberately dangerous local-only mode. It launches
 source Electron through `pnpm dev` with isolated Electron userData, app
 identifier, Vite/CDP ports, and protocol registration, while resolving the
 installed production `OPENWORK_DATA_DIR` and channel-aware `OPENCODE_DB` only at
@@ -426,20 +448,15 @@ corrupt state. Its parser requires exactly `--allow-shared-state`, after the
 `world up` argument separator. Disposal stops only the source dev process and
 does not delete shared stores.
 
-`headless-prod-live` applies the same symbolic state selection to source Vite +
+`live-app-web` applies the same symbolic state selection to source Vite +
 `openwork-server` without Electron. Its production tokens, server state, config,
 OpenWork data, and OpenCode database are resolved in place and never copied into
 the receipt. It requires the same exact script argument and refuses remote
 access, public hosts, and non-loopback host bindings.
 
-`worlds/den-split-origin-kind.ts` attaches to the shared
-`openwork-kube-lab` kind substrate and owns only its local port-forwards. Run its
-opt-in proof on a machine with local Docker, kind, kubectl, and Helm:
-
-```bash
-OPENWORK_EVAL_E2E_TESTS=1 OPENWORK_EVAL_KIND_E2E=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/world-kind-den.e2e.test.ts
-```
-
+`evals/worlds/den-split-origin-kind.world.ts` attaches to the shared
+`openwork-kube-lab` kind substrate and owns only its local port-forwards; it
+needs local Docker, kind, kubectl, and Helm (`pnpm world up den-split-origin-kind`).
 Daytona cannot host this substrate: its sandbox has no Docker binary or daemon,
 reports `CapEff: 0000000000000000`, and blocks `unshare -Urm`, so no container
 runtime can start kind there.
@@ -450,10 +467,10 @@ runtime can start kind there.
 
 Import the script's builder, create one disposal stack, and call the builder.
 Compose journeys from `@openwork/behaviors`; executable coverage belongs in
-`evals/specs`.
+`evals/core` or `evals/proofs`.
 
 ```ts
-import { bootAcmeDocs } from "../../worlds/acme-docs.ts";
+import { bootAcmeDocs } from "../docs-shots/world.ts";
 
 await using stack = new AsyncDisposableStack();
 const world = await bootAcmeDocs(stack, place);
@@ -497,16 +514,12 @@ A failed assertion is `Failed`; missing requirements, tooling failure, or
 missing test evidence is `Incomplete` or a named skip. A green suite containing
 skips is not proof.
 
-Publish an already completed test run with the `publish-evidence` skill:
-
-```bash
-pnpm evals:e2e --publish --pr <number> [--test-run <path|directory-id|latest|name>]
-```
-
-`evals:e2e --publish` judges and publishes test evidence without rerunning tests.
-Its optional `--test-run` argument selects an existing test run by path,
-directory ID, record name, or `latest` at publish time. Custom screenshots and
-recordings are supplementary and never determine the pass/fail verdict.
+CI publishes. A `PR change proof` run on a PR event runs every changed spec on
+the PR head and `evidence-review` posts one sticky comment linking the report;
+PRs no longer start it automatically, and manual runs keep records as artifacts
+without publishing. Nobody runs the publisher by hand; `evals:e2e --publish`
+remains for that trusted CI path only. Custom screenshots and recordings are supplementary and never determine
+the pass/fail verdict.
 
 ## Standalone isolated Den
 
@@ -607,7 +620,7 @@ launched mocks are loopback-only and therefore unreachable from a remote Den.
 | Composer | `[contenteditable="true"][data-lexical-editor="true"]` | `domains/session/surface/composer/editor.tsx` |
 | AI Providers | button text `AI Providers` | `domains/settings/shell/settings-page.tsx` |
 | Connect provider | button text `Connect provider` | `domains/settings/pages/ai-view.tsx` |
-| Provider search | `input[placeholder="Filter providers by name or ID"]` | `domains/connections/provider-auth/provider-auth-modal.tsx` |
+| Provider search | `input[placeholder="Search providers"]` | `domains/connections/provider-auth/provider-auth-modal.tsx` |
 | Manual key | button containing `Manually enter API Key` | `provider-auth-modal.tsx` |
 | API key | `input[type="password"][placeholder="sk-..."]` | `provider-auth-modal.tsx` |
 | Save key | button text `Save key` | `provider-auth-modal.tsx` |

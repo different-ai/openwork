@@ -1,3 +1,6 @@
+import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
 
@@ -30,13 +33,13 @@ export type ModelsDevProvider = {
   models: ModelsDevModel[]
 }
 
-let modelsDevCache:
-  | {
-      expiresAt: number
-      providers: ModelsDevProvider[]
-      providersById: Map<string, ModelsDevProvider>
-    }
-  | null = null
+type ModelsDevCatalog = {
+  expiresAt: number
+  providers: ModelsDevProvider[]
+  providersById: Map<string, ModelsDevProvider>
+}
+
+let modelsDevCache: ModelsDevCatalog | null = null
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -52,11 +55,7 @@ function asStringList(value: unknown): string[] {
     : []
 }
 
-async function loadModelsDevCatalog() {
-  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) {
-    return modelsDevCache
-  }
-
+async function fetchModelsDevCatalog() {
   const response = await fetch(MODELS_DEV_API_URL, {
     signal: AbortSignal.timeout(10_000),
     headers: {
@@ -74,7 +73,9 @@ async function loadModelsDevCatalog() {
     throw new Error("models.dev returned an invalid payload")
   }
 
-  const providers = Object.entries(payload)
+  // Mantle and Foundry Claude models need their own SDK per gateway provider; see
+  // bedrock-mantle-catalog and microsoft-foundry-catalog.
+  const providers = Object.entries(withMicrosoftFoundryProvider(withBedrockMantleProvider(payload)))
     .map(([providerKey, rawProvider]) => {
       if (!isRecord(rawProvider)) {
         throw new Error("models.dev returned an invalid provider")
@@ -124,6 +125,16 @@ async function loadModelsDevCatalog() {
   return nextCache
 }
 
+// Only the public catalog is shared. Provider configuration and authorization
+// still run independently for every request. Failed refreshes remain retryable.
+let modelsDevInflight: Promise<ModelsDevCatalog> | null = null
+
+async function loadModelsDevCatalog() {
+  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) return modelsDevCache
+  modelsDevInflight ??= fetchModelsDevCatalog().finally(() => { modelsDevInflight = null })
+  return modelsDevInflight
+}
+
 export async function listModelsDevProviders(): Promise<ModelsDevProviderSummary[]> {
   const catalog = await loadModelsDevCatalog()
   return catalog.providers.map((provider) => ({
@@ -140,6 +151,11 @@ export async function listModelsDevProviders(): Promise<ModelsDevProviderSummary
 export async function getModelsDevProvider(providerId: string): Promise<ModelsDevProvider | null> {
   const catalog = await loadModelsDevCatalog()
   return catalog.providersById.get(providerId) ?? null
+}
+
+/** Every provider with its models, from one cached catalog read. */
+export async function getModelsDevCatalogProviders(): Promise<readonly ModelsDevProvider[]> {
+  return (await loadModelsDevCatalog()).providers
 }
 
 /** Resolve several providers from a single cached catalog read. */

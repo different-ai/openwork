@@ -1,0 +1,8 @@
+// path: proofs/composer-draft.proof.test.ts
+import { spec } from "@openwork/testkit";
+import { core } from "../worlds/core-web.ts";
+const test = spec.world(core);
+test("a person keeps a draft", async ({ user, evidence }) => {
+  await user.see("composer");
+  evidence.recordAssertionEvidence("Draft kept", "The draft is still there.", true);
+});

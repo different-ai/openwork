@@ -1,3 +1,4 @@
+import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 type DashboardLaunchOptions = {
   signal: AbortSignal;
   priority?: () => number;
@@ -10,7 +11,8 @@ type QueuedLaunch = {
 
 const PRIORITY_AGING_MS = 30_000;
 
-export function createDashboardLaunchScheduler(limit = 2) {
+// Four, matching the App startup queue, so a dashboard launches four tiles together.
+export function createDashboardLaunchScheduler(limit = 4) {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new RangeError("Dashboard launch limit must be a positive integer");
   }
@@ -51,6 +53,7 @@ export function createDashboardLaunchScheduler(limit = 2) {
 
     return new Promise<T>((resolve, reject) => {
       const queuedAt = Date.now();
+      const queueTiming = startMcpAppTiming("dashboard.launch-queue");
       const abort = () => {
         if (!queue.delete(job)) return;
         signal.removeEventListener("abort", abort);
@@ -68,15 +71,26 @@ export function createDashboardLaunchScheduler(limit = 2) {
           }
         },
         async start() {
+          queueTiming();
           signal.removeEventListener("abort", abort);
           active += 1;
+          // A launch the person left stops counting at once, so the App on
+          // screen never queues behind one nobody is waiting for.
+          let released = false;
+          const release = () => {
+            if (released) return;
+            released = true;
+            signal.removeEventListener("abort", release);
+            active -= 1;
+            pump();
+          };
+          signal.addEventListener("abort", release, { once: true });
           try {
             resolve(await run());
           } catch (error) {
             reject(error);
           } finally {
-            active -= 1;
-            pump();
+            release();
           }
         },
       };

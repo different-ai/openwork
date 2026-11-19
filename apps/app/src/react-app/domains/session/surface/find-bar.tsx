@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { FindField } from "@/components/find-field";
 import { useSessionFindStore } from "./find-store";
 import { SEARCH_HIGHLIGHT_SELECTOR } from "./text-highlights";
 import { SESSION_SCROLL_NAVIGATION_EVENT } from "./scroll-controller";
@@ -12,7 +9,6 @@ const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 150;
 const MUTATION_DEBOUNCE_MS = 100;
 const COLLECT_AFTER_RENDER_MS = 50;
-const TARGET_RESOLVE_TIMEOUT_MS = 2_500;
 const SEARCH_HIGHLIGHT_ACTIVE_ATTR = "data-search-highlight-active";
 const SEARCH_HIGHLIGHT_BASE_BG_CLASS = "bg-amber-4/70";
 const SEARCH_HIGHLIGHT_ACTIVE_CLASSES = ["bg-amber-7", "ring-1", "ring-amber-9"];
@@ -70,16 +66,6 @@ function wrappedIndex(index: number, total: number) {
   return remainder < 0 ? remainder + total : remainder;
 }
 
-function firstMatchInMessage(matches: HTMLElement[], messageId: string) {
-  for (const match of matches) {
-    const messageRoot = match.closest("[data-message-id]");
-    if (messageRoot instanceof HTMLElement && messageRoot.dataset.messageId === messageId) {
-      return match;
-    }
-  }
-  return null;
-}
-
 export function SessionFindBar({
   sessionId,
   scrollRef,
@@ -90,7 +76,6 @@ export function SessionFindBar({
   const ownerSessionId = useSessionFindStore((state) => state.sessionId);
   const query = useSessionFindStore((state) => state.query);
   const appliedQuery = useSessionFindStore((state) => state.appliedQuery);
-  const target = useSessionFindStore((state) => state.target);
   const focusNonce = useSessionFindStore((state) => state.focusNonce);
   const setQuery = useSessionFindStore((state) => state.setQuery);
   const setAppliedQuery = useSessionFindStore((state) => state.setAppliedQuery);
@@ -100,7 +85,6 @@ export function SessionFindBar({
   const matchesRef = useRef<HTMLElement[]>([]);
   const activeIndexRef = useRef(0);
   const activeElementRef = useRef<HTMLElement | null>(null);
-  const targetStartedAtRef = useRef<number | null>(null);
   const pendingQueryRef = useRef<string | null>(null);
   const [matches, setMatchesState] = useState<HTMLElement[]>([]);
   const [activeIndex, setActiveIndexState] = useState(0);
@@ -164,46 +148,11 @@ export function SessionFindBar({
 
     const nextMatches = collectHighlightMarks(container);
     const previousActive = activeElementRef.current;
-    const pendingTarget = useSessionFindStore.getState().target;
-    const targetForSession = pendingTarget?.sessionId === sessionId ? pendingTarget : null;
     let nextIndex = retainedMatchIndex(nextMatches, previousActive, activeIndexRef.current);
     let shouldScroll = false;
-
-    if (targetForSession) {
-      if (targetStartedAtRef.current === null) {
-        targetStartedAtRef.current = performance.now();
-      }
-
-      const targetMatch = targetForSession.messageId
-        ? firstMatchInMessage(nextMatches, targetForSession.messageId)
-        : nextMatches[0] ?? null;
-
-      if (targetMatch) {
-        const targetIndex = nextMatches.indexOf(targetMatch);
-        if (targetIndex >= 0) {
-          nextIndex = targetIndex;
-          shouldScroll = true;
-          targetStartedAtRef.current = null;
-          useSessionFindStore.setState({ target: null });
-        }
-      } else {
-        const startedAt = targetStartedAtRef.current;
-        const timedOut = startedAt !== null && performance.now() - startedAt >= TARGET_RESOLVE_TIMEOUT_MS;
-        if (timedOut) {
-          targetStartedAtRef.current = null;
-          useSessionFindStore.setState({ target: null });
-          if (nextMatches.length > 0) {
-            nextIndex = 0;
-            shouldScroll = true;
-          }
-        }
-      }
-    } else {
-      targetStartedAtRef.current = null;
-      if (pendingQueryRef.current === activeQuery && nextMatches.length > 0) {
-        nextIndex = 0;
-        shouldScroll = true;
-      }
+    if (pendingQueryRef.current === activeQuery && nextMatches.length > 0) {
+      nextIndex = 0;
+      shouldScroll = true;
     }
 
     const nextActive = nextMatches[nextIndex] ?? null;
@@ -272,7 +221,6 @@ export function SessionFindBar({
         if (!["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) return;
       }
       pendingQueryRef.current = null;
-      if (useSessionFindStore.getState().target?.sessionId === sessionId) useSessionFindStore.setState({ target: null });
     };
     const events = ["wheel", "touchmove", "pointerdown", "keydown", SESSION_SCROLL_NAVIGATION_EVENT];
     for (const event of events) container.addEventListener(event, cancelNavigation, { passive: true });
@@ -307,17 +255,6 @@ export function SessionFindBar({
     };
   }, [scrollRef, searchActive]);
 
-  useEffect(() => {
-    if (!searchActive || target?.sessionId !== sessionId) {
-      targetStartedAtRef.current = null;
-      return;
-    }
-
-    targetStartedAtRef.current = performance.now();
-    const timer = window.setTimeout(() => collectMatches(), TARGET_RESOLVE_TIMEOUT_MS);
-    return () => window.clearTimeout(timer);
-  }, [searchActive, sessionId, target]);
-
   useEffect(() => () => {
     setActiveHighlight(activeElementRef, null);
   }, []);
@@ -335,92 +272,17 @@ export function SessionFindBar({
 
   return (
     <div className="absolute top-2 right-3 z-30 sm:right-5">
-      <div className="flex items-center gap-1 rounded-xl border border-dls-border bg-dls-surface/95 px-1.5 py-1 shadow-(--dls-card-shadow) backdrop-blur-md">
-        <Search className="ml-1 size-3.5 shrink-0 text-dls-secondary" />
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              if (event.shiftKey) {
-                jumpToPrevious();
-              } else {
-                jumpToNext();
-              }
-              return;
-            }
-
-            if (event.key === "Escape") {
-              event.preventDefault();
-              closeFind();
-            }
-          }}
-          className="h-7 w-48 bg-transparent px-1 text-sm text-dls-text outline-none placeholder:text-dls-secondary sm:h-8 sm:w-56"
-          placeholder="Find in conversation"
-          aria-label="Find in conversation"
-        />
-        <span className={cn(
-          "min-w-14 text-right text-xs tabular-nums text-muted-foreground",
-          counterText === "No matches" && "min-w-20",
-        )} aria-live="polite">
-          {counterText}
-        </span>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Previous match"
-                disabled={totalMatches === 0}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={jumpToPrevious}
-              >
-                <ChevronUp />
-              </Button>
-            }
-          />
-          <TooltipContent>Previous match (⇧↵)</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Next match"
-                disabled={totalMatches === 0}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={jumpToNext}
-              >
-                <ChevronDown />
-              </Button>
-            }
-          />
-          <TooltipContent>Next match (↵)</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Close find"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={closeFind}
-              >
-                <X />
-              </Button>
-            }
-          />
-          <TooltipContent>Close (Esc)</TooltipContent>
-        </Tooltip>
-      </div>
+      <FindField
+        inputRef={inputRef}
+        label="Find in conversation"
+        query={query}
+        onQueryChange={setQuery}
+        counterText={counterText}
+        hasMatches={totalMatches > 0}
+        onNext={jumpToNext}
+        onPrevious={jumpToPrevious}
+        onClose={closeFind}
+      />
     </div>
   );
 }

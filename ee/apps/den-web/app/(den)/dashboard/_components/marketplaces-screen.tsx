@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
-import { Cable, Loader2, Plus, Search } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { Cable, Loader2, LockKeyhole, Plus, Search } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getMarketplaceRoute, getOrgAccessFlags, getPluginSourcesRoute } from "../../_lib/den-org";
+import { getMarketplaceRoute, getOrgAccessFlags, getPluginSourcesRoute, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
@@ -19,19 +19,38 @@ import {
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
 import { AdvancedPageTemplate } from "./advanced-page-template";
+import { useFeatureIntro } from "../_features/feature-intros";
+import { collectionsIntroFacts } from "./collections-intro-facts";
 
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
   const router = useRouter();
-  const { data: marketplaces = [], isLoading, error } = useMarketplaces();
+  const { data: marketplacesData, isLoading, error } = useMarketplaces();
+  const marketplaces = marketplacesData ?? [];
   const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
+
+  // Feature intro: full screen with no collection at all (in place of the empty states
+  // below), banner while only the built-in OpenWork Marketplace exists (DESIGN.md I1, I2).
+  // From the data itself (not isLoading), which only lists collections this person has a role on.
+  const intro = useFeatureIntro("collections", collectionsIntroFacts(error ? undefined : marketplacesData, access.canManageAllShared));
+
+  // Feature intro action (DESIGN.md I5): ?new=1 opens New collection once, then leaves the address.
+  const searchParams = useSearchParams();
+  const newRequested = searchParams.get("new") === "1";
+  useEffect(() => {
+    if (!orgContext || !newRequested) return;
+    if (access.canManageMarketplaces) setCreateOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url);
+  }, [orgContext, newRequested, access.canManageMarketplaces]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = useMemo(() => {
@@ -49,8 +68,29 @@ export function MarketplacesScreen() {
     );
   }, [marketplaces, normalizedQuery]);
 
+  const createDialog = access.canManageMarketplaces ? (
+    <CreateMarketplaceDialog
+      open={createOpen}
+      onClose={() => setCreateOpen(false)}
+      onCreated={(marketplace) => {
+        setCreateOpen(false);
+        router.push(getMarketplaceRoute(orgSlug, marketplace.id));
+      }}
+    />
+  ) : null;
+
+  if (intro.size === "fullscreen") {
+    return (
+      <AdvancedPageTemplate tab="collections">
+        {intro.element}
+        {createDialog}
+      </AdvancedPageTemplate>
+    );
+  }
+
   return (
     <AdvancedPageTemplate tab="collections">
+      {intro.size === "banner" ? <div className="mb-6">{intro.element}</div> : null}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
         <div className="min-w-0 flex-1">
           <DenInput
@@ -61,11 +101,17 @@ export function MarketplacesScreen() {
             placeholder="Search collections..."
           />
         </div>
-        {access.isAdmin ? (
+        {access.canManageMarketplaces ? (
           <DenButton icon={Plus} onClick={() => setCreateOpen(true)}>
             New collection
           </DenButton>
-        ) : null}
+        ) : (
+          <span title={permissionLockReason("marketplaces.manage")}>
+            <DenButton icon={LockKeyhole} variant="secondary" disabled aria-label={`New collection. ${permissionLockReason("marketplaces.manage")}`}>
+              New collection
+            </DenButton>
+          </span>
+        )}
       </div>
 
       {error ? (
@@ -118,16 +164,7 @@ export function MarketplacesScreen() {
           ))}
         </DenCatalogList>
       )}
-      {access.isAdmin ? (
-        <CreateMarketplaceDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          onCreated={(marketplace) => {
-            setCreateOpen(false);
-            router.push(getMarketplaceRoute(orgSlug, marketplace.id));
-          }}
-        />
-      ) : null}
+      {createDialog}
     </AdvancedPageTemplate>
   );
 }

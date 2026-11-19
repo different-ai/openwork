@@ -1,0 +1,47 @@
+---
+title: "TrueFoundry: Too many tokens"
+description: "Fix a person shown as Too many tokens on a TrueFoundry provider: raise TrueFoundry's limit on personal access tokens per user, or reset the person's tokens from OpenWork."
+keywords: ["TrueFoundry", "Too many tokens", "personal access token", "PAT limit", "Maximum Personal Access Token (PAT) Per User", "Reset tokens"]
+---
+
+OpenWork creates one TrueFoundry personal access token (PAT) for each person, named after them, who uses your [TrueFoundry provider](/ai-gateway/truefoundry). TrueFoundry can limit how many PATs each user holds. When someone already holds that many, TrueFoundry refuses OpenWork's token. The person then appears under **Needs attention** as **Too many tokens**, and can't use the TrueFoundry models in OpenWork.
+
+Their own tokens count towards the limit too: tokens they made for their laptop, notebooks, scripts or other tools.
+
+You can fix it in either of two ways. Raising the limit is the gentler one: nobody loses a token.
+
+## Raise the limit in TrueFoundry
+
+You need the Tenant Admin role in TrueFoundry, or a role that can manage settings.
+
+1. In TrueFoundry, open **Settings › Organisation › Security**.
+2. Select **Edit Security**.
+3. Raise **Maximum Personal Access Token (PAT) Per User**. Leave it blank to remove the limit.
+4. Save.
+5. In OpenWork, open **AI Gateway › AI Providers**, open the TrueFoundry provider, and select **Sync**.
+
+After the sync, OpenWork creates the person's token and they drop off **Needs attention**.
+
+<Note>
+The PAT limits in TrueFoundry only apply while the Security policy is turned on. TrueFoundry suggests a limit of about 5 so tokens don't pile up unnoticed. OpenWork only ever needs one per person.
+</Note>
+
+## Reset the person's tokens from OpenWork
+
+If you'd rather keep the limit, reset the person's tokens instead:
+
+1. On the TrueFoundry provider page, find the person under **Needs attention**.
+2. Select **Reset tokens**.
+3. Read the confirmation, then select **Revoke all and create a new key**.
+
+<Warning>
+TrueFoundry doesn't let OpenWork find only the tokens OpenWork created, and TrueFoundry's own token list doesn't show who owns each token. So **Reset tokens** revokes **every** personal access token the person holds in TrueFoundry, including ones they made for other tools. Those stop working straight away, and the person has to create them again in TrueFoundry. Tell them before you reset.
+</Warning>
+
+OpenWork then creates a new token for them, and they can use the TrueFoundry models again.
+
+## Other ways to fix it
+
+- **Delete their old OpenWork tokens in TrueFoundry.** Tokens OpenWork creates are named after the person, like `openwork-alice-example-com-3f9a1c`, so you can find them in TrueFoundry's token list. Delete the ones for that person, then select **Sync** in OpenWork. Tokens named `openwork-` followed only by random characters come from an older version of OpenWork and don't show whose they are.
+- **The person deletes old tokens themselves.** People can see and delete their own tokens in TrueFoundry. After they delete one they no longer use, select **Sync** in OpenWork.
+- **Wait for old OpenWork tokens to expire.** Tokens OpenWork creates expire after 90 days, or sooner if your tenant's maximum token lifetime is shorter. When one expires, OpenWork creates a new one at the next sync.

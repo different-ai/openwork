@@ -1,3 +1,4 @@
+import { startupPhase, withStartupPhase } from "./startup-log.mjs";
 import { randomUUID, X509Certificate } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -9,11 +10,15 @@ import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import {
+  deleteEnv,
   desktopBootstrapPath,
+  envKey,
+  mergeEnv,
   normalizeWorkspaceRootPath,
   openworkEnvStorePath,
   openworkServerConfigPath,
   resolveWorkspaceOpencodeConfigPath,
+  setEnv,
 } from "@openwork/paths";
 import {
   dedupeCertificates,
@@ -259,6 +264,47 @@ export function resolveOpenworkServerConfigPath(env = process.env) {
   return openworkServerConfigPath({ env });
 }
 
+/**
+ * Files any earlier OpenWork Desktop run leaves behind. If none exist when the
+ * app starts, this is a brand-new install, not an update.
+ * @param {{ userDataDir: string, serverConfigPath: string, env?: NodeJS.ProcessEnv }} input
+ * @returns {string[]}
+ */
+export function openworkInstallMarkerPaths({ userDataDir, serverConfigPath, env = process.env }) {
+  const serverDir = path.dirname(serverConfigPath);
+  const runtimeDb = env.OPENWORK_RUNTIME_DB?.trim() ? path.resolve(env.OPENWORK_RUNTIME_DB.trim()) : path.join(serverDir, "runtime.sqlite");
+  return [
+    serverConfigPath,
+    runtimeDb,
+    path.join(path.dirname(runtimeDb), "engine-v2-preview.json"),
+    env.OPENWORK_SERVER_TOKEN_STORE_PATH?.trim() ? path.resolve(env.OPENWORK_SERVER_TOKEN_STORE_PATH.trim()) : path.join(userDataDir, "openwork-server-tokens.json"),
+    env.OPENWORK_SERVER_STATE_PATH?.trim() ? path.resolve(env.OPENWORK_SERVER_STATE_PATH.trim()) : path.join(userDataDir, "openwork-server-state.json"),
+    path.join(userDataDir, "openwork-workspaces.json"),
+    path.join(userDataDir, "workspace-state.json"),
+    path.join(userDataDir, "app-recovery.v1.json"),
+  ];
+}
+
+/**
+ * Migrate existing v1 installs in the background by default, independently of
+ * Den rollout policy. Explicit local engine/migration overrides always win.
+ * @returns {boolean | undefined}
+ */
+export function resolveDesktopEngineAutoUpgrade(env = process.env) {
+  if (env.OPENWORK_ENGINE_V2_PREVIEW?.trim() || env.OPENWORK_ENGINE_AUTO_UPGRADE !== undefined) return undefined;
+  return true;
+}
+
+/**
+ * Fresh installs can select v2 immediately; existing profiles migrate safely.
+ * @param {{ markerPaths: string[], exists?: (filePath: string) => boolean, env?: NodeJS.ProcessEnv }} input
+ * @returns {"v2" | undefined}
+ */
+export function resolveFreshInstallEngine({ markerPaths, exists = existsSync, env = process.env }) {
+  if (env.OPENWORK_ENGINE_V2_PREVIEW?.trim()) return undefined;
+  return markerPaths.some((filePath) => exists(filePath)) ? undefined : "v2";
+}
+
 export function seedWorkspacePathsForEmbeddedServer(workspacePaths, serverConfigExists) {
   return serverConfigExists ? [] : workspacePaths;
 }
@@ -276,31 +322,33 @@ export function resolveEvalLocalServerDelayMs(env = process.env) {
   return Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0;
 }
 
+// Saved variables never replace inherited ones. On Windows a saved `PATH` is
+// the inherited `Path`, so names compare case-insensitively there.
 export function reconcileInjectedUserEnv({
   processEnv,
   inheritedEnv,
   userEnv,
   previouslyInjectedKeys = new Set(),
+  platform = process.platform,
 }) {
+  const opts = { platform };
+  const inheritedKey = (key) => envKey(inheritedEnv, key, opts);
   for (const key of previouslyInjectedKeys) {
-    if (Object.prototype.hasOwnProperty.call(userEnv, key)) continue;
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) {
-      processEnv[key] = inheritedEnv[key];
+    if (envKey(userEnv, key, opts) !== undefined) continue;
+    const inherited = inheritedKey(key);
+    if (inherited !== undefined) {
+      setEnv(processEnv, key, inheritedEnv[inherited], opts);
     } else {
-      delete processEnv[key];
+      deleteEnv(processEnv, key, opts);
     }
   }
 
   for (const [key, value] of Object.entries(userEnv)) {
-    if (Object.prototype.hasOwnProperty.call(inheritedEnv, key)) continue;
-    processEnv[key] = value;
+    if (inheritedKey(key) !== undefined) continue;
+    setEnv(processEnv, key, value, opts);
   }
 
-  return new Set(
-    Object.keys(userEnv).filter(
-      (key) => !Object.prototype.hasOwnProperty.call(inheritedEnv, key),
-    ),
-  );
+  return new Set(Object.keys(userEnv).filter((key) => inheritedKey(key) === undefined));
 }
 
 export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
@@ -309,6 +357,28 @@ export function commandMatchesPackagedSidecar(command, sidecarDirs = []) {
     return false;
   }
   return /(?:^|[/\\])opencode[^/\\\s]*\s+serve\b/.test(value);
+}
+
+/**
+ * Sidecars from this bundle that no other live instance owns. Another instance
+ * of the same bundle (a second profile, or concurrent packaged smoke checks)
+ * spawns its engine as a direct child of its own main process; killing that
+ * engine fails its startup with "OpenWork server did not finish starting".
+ *
+ * @param {{ pid: number, ppid: number, command: string }[]} rows `ps` rows
+ * @param {{ sidecarDirs?: string[], appExecutables?: (string | undefined)[], selfPid?: number }} [options]
+ * @returns {number[]}
+ */
+export function orphanedPackagedSidecarPids(rows, { sidecarDirs = [], appExecutables = [], selfPid } = {}) {
+  const executables = appExecutables.map((value) => String(value ?? "").trim()).filter(Boolean);
+  const isAppInstance = (command) =>
+    executables.some((executable) => command === executable || command.startsWith(`${executable} `));
+  const liveInstances = new Set(
+    rows.filter((row) => row.pid !== selfPid && isAppInstance(row.command)).map((row) => row.pid),
+  );
+  return rows
+    .filter((row) => commandMatchesPackagedSidecar(row.command, sidecarDirs) && !liveInstances.has(row.ppid))
+    .map((row) => row.pid);
 }
 
 export function embeddedServerImportUrl(embeddedPath) {
@@ -400,13 +470,9 @@ function createOpenworkServerState() {
     // Sticky ports and persisted tokens make the connection details identical
     // across restarts, so clients need this to observe a new server lifetime.
     generation: null,
-    remoteAccessEnabled: false,
     host: null,
     port: null,
     baseUrl: null,
-    connectUrl: null,
-    mdnsUrl: null,
-    lanUrl: null,
     clientToken: null,
     ownerToken: null,
     hostToken: null,
@@ -424,13 +490,9 @@ export function snapshotOpenworkServerState(state) {
   return {
     running,
     generation: typeof state.generation === "number" ? state.generation : null,
-    remoteAccessEnabled: state.remoteAccessEnabled,
     host: state.host,
     port: state.port,
     baseUrl: state.baseUrl,
-    connectUrl: state.connectUrl,
-    mdnsUrl: state.mdnsUrl,
-    lanUrl: state.lanUrl,
     clientToken: state.clientToken,
     ownerToken: state.ownerToken,
     hostToken: state.hostToken,
@@ -451,22 +513,18 @@ export function snapshotOpenworkServerState(state) {
  * so a request for a different workspace retargets the running runtime
  * instead of restarting it. A restart here would abort every in-flight run,
  * including sessions still working in the workspace being left. Only an
- * explicit forceRestart or a host rebind (remote access change) gives up the
- * running server.
+ * explicit forceRestart gives up the running server.
  */
 export function resolveOpenworkServerReuse({
   forceRestart,
   inProcess,
   lifecycleState,
-  remoteAccessEnabled,
-  requestedRemoteAccess,
   currentProjectDir,
   requestedProjectDir,
   platform,
 }) {
   if (forceRestart === true) return { reuse: false, retarget: false };
   if (inProcess !== true || lifecycleState !== "healthy") return { reuse: false, retarget: false };
-  if (remoteAccessEnabled !== (requestedRemoteAccess === true)) return { reuse: false, retarget: false };
   const retarget =
     normalizeWorkspaceKey(currentProjectDir, platform) !== normalizeWorkspaceKey(requestedProjectDir, platform);
   return { reuse: true, retarget };
@@ -529,50 +587,41 @@ async function readJsonFile(targetPath, fallback) {
   }
 }
 
-function selectLanAddress() {
-  const interfaces = os.networkInterfaces();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry && entry.family === "IPv4" && entry.internal === false) {
-        return entry.address;
-      }
-    }
+function targetTriple(platform = process.platform, arch = process.arch) {
+  if (platform === "darwin") {
+    return arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  }
+  if (platform === "linux") {
+    return arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
+  }
+  if (platform === "win32") {
+    return arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
   }
   return null;
 }
 
-function buildConnectUrls(port) {
-  const hostname = os.hostname().trim();
-  const mdnsUrl = hostname ? `http://${hostname.replace(/\.local$/i, "")}.local:${port}` : null;
-  const lan = selectLanAddress();
-  const lanUrl = lan ? `http://${lan}:${port}` : null;
-  return {
-    connectUrl: lanUrl ?? mdnsUrl,
-    mdnsUrl,
-    lanUrl,
-  };
-}
-
-function targetTriple() {
-  if (process.platform === "darwin") {
-    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
-  }
-  if (process.platform === "linux") {
-    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
-  }
-  if (process.platform === "win32") {
-    return process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
-  }
-  return null;
-}
-
-function binaryFileNames(baseName) {
-  const ext = process.platform === "win32" ? ".exe" : "";
-  const triple = targetTriple();
+function binaryFileNames(baseName, platform = process.platform, arch = process.arch) {
+  const ext = platform === "win32" ? ".exe" : "";
+  const triple = targetTriple(platform, arch);
   return [
-    triple ? `${baseName}-${triple}${ext}` : null,
     `${baseName}${ext}`,
+    triple ? `${baseName}-${triple}${ext}` : null,
   ].filter(Boolean);
+}
+
+export function bundledEngineEnv(sidecarDirs, { required = false, platform = process.platform, arch = process.arch } = {}) {
+  /** @type {NodeJS.ProcessEnv} */
+  const env = {};
+  for (const [base, key] of [["opencode", "OPENWORK_OPENCODE_BIN"], ["opencode2", "OPENWORK_OPENCODE2_BIN"]]) {
+    const candidates = sidecarDirs.flatMap((directory) =>
+      binaryFileNames(base, platform, arch).map((name) => path.resolve(directory, name)));
+    const binary = candidates.find((candidate) => {
+      try { return statSync(candidate).isFile(); } catch { return false; }
+    });
+    if (binary) env[key] = binary;
+    else if (required) throw new Error(`Missing packaged engine ${base}. Checked: ${candidates.join(", ")}`);
+  }
+  return env;
 }
 
 function isDirectory(targetPath) {
@@ -628,7 +677,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -644,7 +692,6 @@ function extraPathEntries() {
       path.join(home, ".bun", "bin"),
       path.join(home, ".cargo", "bin"),
       path.join(home, ".pyenv", "shims"),
-      path.join(home, ".local", "bin"),
     );
   }
 
@@ -658,7 +705,9 @@ function extraPathEntries() {
     );
   }
 
-  return candidates.filter((entry) => entry && isDirectory(entry));
+  // Tools installed while OpenWork is open (Claude Code's installer creates ~/.local/bin) are found without a
+  // restart only when their folder is already on PATH, so this one is listed before it exists.
+  return [...candidates.filter((entry) => entry && isDirectory(entry)), path.join(home, ".local", "bin")];
 }
 
 function enrichedPath(sidecarDirs, currentPath) {
@@ -728,6 +777,13 @@ export function resolveUserEnvFilePath(env = process.env) {
 const USER_ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const USER_ENV_RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"];
 
+// Windows reads `opencode_config` as OPENCODE_CONFIG, so reserved prefixes
+// match case-insensitively there.
+export function isReservedUserEnvKey(key, platform = process.platform) {
+  const name = platform === "win32" ? key.toUpperCase() : key;
+  return USER_ENV_RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
 // Synchronous, best-effort; absent or malformed returns {}. Reserved prefixes
 // are stripped so a tampered file can never shadow OPENWORK_* / OPENCODE_*.
 function loadUserEnvFile(env = process.env) {
@@ -741,7 +797,7 @@ function loadUserEnvFile(env = process.env) {
       const { key, value } = entry;
       if (typeof key !== "string" || typeof value !== "string") continue;
       if (!USER_ENV_KEY_PATTERN.test(key)) continue;
-      if (USER_ENV_RESERVED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      if (isReservedUserEnvKey(key)) continue;
       out[key] = value;
     }
     return out;
@@ -1360,21 +1416,41 @@ export async function resolveSystemCaEnv(options) {
  * @param {NodeJS.ProcessEnv} [baseEnv]
  * @param {NodeJS.ProcessEnv} [caEnv]
  * @param {NodeJS.ProcessEnv} [extra]
+ * @param {NodeJS.Platform} [platform]
  * @returns {NodeJS.ProcessEnv}
  */
-export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}) {
-  return {
-    ...baseEnv,
-    ...(Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : caEnv),
-    ...extra,
-  };
+export function mergeSystemCaChildEnv(baseEnv = {}, caEnv = {}, extra = {}, platform = process.platform) {
+  const opts = { platform };
+  return mergeEnv([
+    baseEnv,
+    envKey(baseEnv, "NODE_EXTRA_CA_CERTS", opts) === undefined ? caEnv : {},
+    extra,
+  ], opts);
 }
+
+/** @param {unknown} raw @returns {string | undefined} */
+export function sandboxFeatureDenOrigin(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.username || url.password || url.search || url.hash || url.pathname !== "/") return undefined;
+    const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return undefined;
+    return url.origin;
+  } catch { return undefined; }
+}
+
+/** @returns {Promise<string | undefined>} */
+async function noConfiguredDenOrigin() { return undefined; }
 
 export function createRuntimeManager({
   app,
   desktopRoot,
   listLocalWorkspacePaths,
+  trustedDenOrigin = noConfiguredDenOrigin,
   localManagedMcpVaultKey,
+  driveFileApproval = undefined,
+  anonymousInference = undefined,
   workspaceMkdir = mkdir,
   workspacePlatform = process.platform,
 }) {
@@ -1409,6 +1485,11 @@ export function createRuntimeManager({
   }
 
   const userDataDir = app.getPath("userData");
+  // Decided once, before this process writes any OpenWork state, so a server
+  // restart in the same session does not mistake its own files for an update.
+  const freshInstallEngine = resolveFreshInstallEngine({
+    markerPaths: openworkInstallMarkerPaths({ userDataDir, serverConfigPath: resolveOpenworkServerConfigPath(process.env) }),
+  });
   const sidecarDirs = [
     path.join(desktopRoot, "resources", "sidecars"),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
@@ -1417,11 +1498,11 @@ export function createRuntimeManager({
   let systemCaPromise = null;
 
   function systemCa() {
-    systemCaPromise ??= resolveSystemCa({
+    systemCaPromise ??= withStartupPhase("ca.bundle", () => resolveSystemCa({
       tlsModule: tls,
       userDataDir,
-      parentEnv: { ...loadUserEnvFile(process.env), ...process.env },
-    });
+      parentEnv: mergeEnv([loadUserEnvFile(process.env), process.env]),
+    }));
     return systemCaPromise;
   }
 
@@ -1552,12 +1633,11 @@ export function createRuntimeManager({
       ? await ensureDevModePaths()
       : null;
     const userEnvPathEnv = devPaths
-      ? {
-          ...process.env,
+      ? mergeEnv([process.env, {
           HOME: devPaths.homeDir,
           USERPROFILE: devPaths.homeDir,
           XDG_CONFIG_HOME: devPaths.xdgConfigHome,
-        }
+        }])
       : process.env;
     const userEnv = loadUserEnvFile(userEnvPathEnv);
     injectedUserEnvKeys = reconcileInjectedUserEnv({
@@ -1566,36 +1646,30 @@ export function createRuntimeManager({
       userEnv,
       previouslyInjectedKeys: injectedUserEnvKeys,
     });
-    const baseEnv = {
-      ...userEnv,
-      ...process.env,
-      BUN_CONFIG_DNS_RESULT_ORDER: "verbatim",
-    };
-    const caEnv = Object.prototype.hasOwnProperty.call(baseEnv, "NODE_EXTRA_CA_CERTS") ? {} : (await systemCa()).childEnv;
+    // mergeEnv keeps one entry per Windows name, so a child never sees both a
+    // saved `PATH` and the inherited `Path` and picks one by spelling.
+    const baseEnv = mergeEnv([userEnv, process.env, { BUN_CONFIG_DNS_RESULT_ORDER: "verbatim" }]);
+    const caEnv = envKey(baseEnv, "NODE_EXTRA_CA_CERTS") === undefined ? (await systemCa()).childEnv : {};
     // Bun honors Node's NODE_EXTRA_CA_CERTS, so bundled Bun sidecars inherit
     // the exported OS trust store through the same child env variable.
     const env = mergeSystemCaChildEnv(baseEnv, caEnv, extra);
-    const pathKey =
-      Object.prototype.hasOwnProperty.call(env, "PATH") ||
-      !Object.prototype.hasOwnProperty.call(env, "Path")
-        ? "PATH"
-        : "Path";
+    const pathKey = envKey(env, "PATH") ?? "PATH";
     const pathEnv = enrichedPath(sidecarDirs, env[pathKey]);
     if (pathEnv) {
       env[pathKey] = pathEnv;
     }
-    if (devPaths) {
-      env.OPENWORK_DEV_MODE = "1";
-      env.HOME = devPaths.homeDir;
-      env.USERPROFILE = devPaths.homeDir;
-      env.XDG_CONFIG_HOME = devPaths.xdgConfigHome;
-      env.XDG_DATA_HOME = devPaths.xdgDataHome;
-      env.XDG_CACHE_HOME = devPaths.xdgCacheHome;
-      env.XDG_STATE_HOME = devPaths.xdgStateHome;
-      env.OPENCODE_CONFIG_DIR = devPaths.opencodeConfigDir;
-      env.OPENCODE_TEST_HOME = devPaths.homeDir;
-    }
-    return env;
+    if (!devPaths) return env;
+    return mergeEnv([env, {
+      OPENWORK_DEV_MODE: "1",
+      HOME: devPaths.homeDir,
+      USERPROFILE: devPaths.homeDir,
+      XDG_CONFIG_HOME: devPaths.xdgConfigHome,
+      XDG_DATA_HOME: devPaths.xdgDataHome,
+      XDG_CACHE_HOME: devPaths.xdgCacheHome,
+      XDG_STATE_HOME: devPaths.xdgStateHome,
+      OPENCODE_CONFIG_DIR: devPaths.opencodeConfigDir,
+      OPENCODE_TEST_HOME: devPaths.homeDir,
+    }]);
   }
 
   function resolveBinaryInfo(baseName, extraPaths = []) {
@@ -1641,6 +1715,12 @@ export function createRuntimeManager({
   }
 
   function resolveOpencodeBinary(opencodeBinPath) {
+    const end = startupPhase("engine.v1.resolve");
+    try { const result = resolveOpencodeBinaryInner(opencodeBinPath); end(); return result; }
+    catch (error) { end(true); throw error; }
+  }
+
+  function resolveOpencodeBinaryInner(opencodeBinPath) {
     const explicitPath = typeof opencodeBinPath === "string" ? opencodeBinPath.trim() : "";
     return explicitPath ? { path: explicitPath, source: "custom" } : resolveBinaryInfo("opencode");
   }
@@ -1737,61 +1817,6 @@ export function createRuntimeManager({
     };
   }
 
-  function engineDoctor(options = {}) {
-    const resolved = resolveOpencodeBinary(options?.opencodeBinPath);
-    if (!resolved?.path) {
-      return {
-        found: false,
-        inPath: false,
-        resolvedPath: null,
-        resolvedSource: null,
-        version: null,
-        supportsServe: false,
-        notes: ["OpenCode binary not found in bundled sidecars or PATH."],
-        serveHelpStatus: null,
-        serveHelpStdout: null,
-        serveHelpStderr: null,
-      };
-    }
-
-    const versionResult = spawnSync(resolved.path, ["--version"], { encoding: "utf8" });
-    const helpResult = spawnSync(resolved.path, ["serve", "--help"], { encoding: "utf8" });
-    const notes = [`Using ${resolved.source}: ${resolved.path}`];
-    if (versionResult.status !== 0) {
-      notes.push("OpenCode version probe failed.");
-    }
-    if (helpResult.status !== 0) {
-      notes.push("OpenCode serve --help probe failed.");
-    }
-
-    return {
-      found: true,
-      inPath: resolved.source === "path",
-      resolvedPath: resolved.path,
-      resolvedSource: resolved.source,
-      version: versionResult.stdout?.trim() || versionResult.stderr?.trim() || null,
-      supportsServe: helpResult.status === 0,
-      notes,
-      serveHelpStatus: typeof helpResult.status === "number" ? helpResult.status : null,
-      serveHelpStdout: helpResult.stdout?.trim() || null,
-      serveHelpStderr: helpResult.stderr?.trim() || null,
-    };
-  }
-
-  async function pinnedOpencodeInstallCommand() {
-    const constantsPath = path.resolve(desktopRoot, "../../constants.json");
-    const payload = JSON.parse(await readFile(constantsPath, "utf8"));
-    const version = String(payload?.opencodeVersion ?? "").trim().replace(/^v/, "");
-    if (!version) {
-      throw new Error("constants.json is missing opencodeVersion");
-    }
-    return `curl -fsSL https://opencode.ai/install | bash -s -- --version ${version} --no-modify-path`;
-  }
-
-  function processMatchesSidecar(command) {
-    return commandMatchesPackagedSidecar(command, sidecarDirs);
-  }
-
   function killProcessId(pid, signal = "SIGTERM") {
     if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return;
     try {
@@ -1807,16 +1832,18 @@ export function createRuntimeManager({
     // Safety net: an unclean Electron quit can orphan sidecars. Packaged builds
     // should always own a fresh runtime per app launch, so remove any leftover
     // sidecars from this app bundle before choosing ports for the new runtime.
-    const result = spawnSync("ps", ["-Ao", "pid=,command="], { encoding: "utf8" });
-    const rows = String(result.stdout ?? "").split(/\r?\n/);
-    const pids = [];
-    for (const row of rows) {
-      const match = row.match(/^\s*(\d+)\s+(.+)$/);
+    const result = spawnSync("ps", ["-Ao", "pid=,ppid=,command="], { encoding: "utf8" });
+    const rows = [];
+    for (const row of String(result.stdout ?? "").split(/\r?\n/)) {
+      const match = row.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
       if (!match) continue;
-      const pid = Number(match[1]);
-      const command = match[2] ?? "";
-      if (processMatchesSidecar(command)) pids.push(pid);
+      rows.push({ pid: Number(match[1]), ppid: Number(match[2]), command: match[3] ?? "" });
     }
+    const pids = orphanedPackagedSidecarPids(rows, {
+      sidecarDirs,
+      appExecutables: [process.execPath, process.argv[0]],
+      selfPid: process.pid,
+    });
     for (const pid of pids) killProcessId(pid, "SIGTERM");
     if (pids.length > 0) {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -1885,7 +1912,7 @@ export function createRuntimeManager({
     // The inner start stops any previous runtime before mutating state, so a
     // throw below always happens with nothing left running.
     try {
-      return await startOpenworkServerInner(options);
+      return await withStartupPhase("server.start", () => startOpenworkServerInner(options));
     } catch (error) {
       resetRuntimeStatesAfterFailedServerStart(openworkServerState, engineState, options);
       throw error;
@@ -1905,7 +1932,7 @@ export function createRuntimeManager({
     }
     await stopChild(openworkServerState);
 
-    const host = options.remoteAccessEnabled ? "0.0.0.0" : "127.0.0.1";
+    const host = "127.0.0.1";
 
     const managedOpencode = options.manageOpencode ? resolveOpencodeBinary(options.opencodeBinPath) : null;
     openworkServerState.managedOpencodeBinPath = managedOpencode?.path ?? null;
@@ -1915,8 +1942,12 @@ export function createRuntimeManager({
       engineState.opencodeBinSource = managedOpencode?.source ?? null;
     }
 
-    // Inject user env vars so the server and managed OpenCode inherit them.
-    const serverEnv = await buildChildEnv({});
+    // The embedded server resolves v2 independently of v1. Give both engines
+    // absolute bundled paths before loading it, never a PATH/cache download.
+    // Keep triple-name support for dev and older packaged layouts.
+    const engineEnv = bundledEngineEnv(sidecarDirs, { required: app.isPackaged });
+    if (managedOpencode) engineEnv.OPENWORK_OPENCODE_BIN = managedOpencode.path;
+    const serverEnv = await buildChildEnv(engineEnv);
     Object.assign(process.env, serverEnv);
 
     // Once the embedded server has a persisted registry, it is the source of
@@ -1964,6 +1995,7 @@ export function createRuntimeManager({
       port: portSelection.port,
       corsOrigins: ["*"],
       approvalMode: "auto",
+      driveFileApproval,
       configPath: serverConfigPath,
       workspaces: workspacePaths,
       token: tokens.clientToken,
@@ -1975,6 +2007,10 @@ export function createRuntimeManager({
       opencodeBin: managedOpencode?.path ?? undefined,
       opencodeCwd: managedOpencodeWorkdir(),
       localManagedMcpVaultKey,
+      anonymousInference,
+      freshInstallEngine,
+      engineAutoUpgrade: resolveDesktopEngineAutoUpgrade(),
+      trustedDenOrigin: await trustedDenOrigin(),
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;
@@ -1988,17 +2024,11 @@ export function createRuntimeManager({
     openworkServerState.inProcess = true;
     openworkServerGenerationCounter += 1;
     openworkServerState.generation = openworkServerGenerationCounter;
-    openworkServerState.remoteAccessEnabled = options.remoteAccessEnabled;
     openworkServerState.host = host;
     openworkServerState.port = boundPort;
     openworkServerState.baseUrl = baseUrl;
     openworkServerState.clientToken = tokens.clientToken;
     openworkServerState.hostToken = tokens.hostToken;
-
-    const connectUrls = options.remoteAccessEnabled ? buildConnectUrls(boundPort) : { connectUrl: null, mdnsUrl: null, lanUrl: null };
-    openworkServerState.connectUrl = connectUrls.connectUrl;
-    openworkServerState.mdnsUrl = connectUrls.mdnsUrl;
-    openworkServerState.lanUrl = connectUrls.lanUrl;
 
     // No health check needed -- startServer() resolves only after the listener is bound.
     let workspaceList = null;
@@ -2084,7 +2114,6 @@ export function createRuntimeManager({
         opencodeBaseUrl: engineState.baseUrl,
         opencodeUsername: engineState.opencodeUsername,
         opencodePassword: engineState.opencodePassword,
-        remoteAccessEnabled: options.remoteAccessEnabled,
         manageOpencode: options.manageOpencode === true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -2094,6 +2123,22 @@ export function createRuntimeManager({
     }
 
     assertOpenworkServerReady(openworkServer);
+  }
+
+  function adoptManagedEngineConnection() {
+    const config = inProcessServer?.config;
+    const baseUrl = String(config?.opencodeBaseUrl ?? "").trim();
+    if (!baseUrl || !inProcessServer?.managedOpencode?.isAlive?.()) return;
+    const url = new URL(baseUrl);
+    engineState.runtime = DIRECT_RUNTIME;
+    engineState.hostname = url.hostname;
+    engineState.port = Number(url.port) || null;
+    engineState.baseUrl = baseUrl;
+    engineState.opencodeUsername = config.opencodeUsername ?? null;
+    engineState.opencodePassword = config.opencodePassword ?? null;
+    engineState.execution = inProcessServer.managedOpencodeExecution ?? null;
+    engineState.child = null;
+    engineState.childExited = false;
   }
 
   async function engineStart(projectDir, options = {}) {
@@ -2123,8 +2168,6 @@ export function createRuntimeManager({
       forceRestart: options.forceRestart,
       inProcess: openworkServerState.inProcess,
       lifecycleState,
-      remoteAccessEnabled: openworkServerState.remoteAccessEnabled,
-      requestedRemoteAccess: options.openworkRemoteAccess,
       currentProjectDir: engineState.projectDir,
       requestedProjectDir: safeProjectDir,
       platform: workspacePlatform,
@@ -2146,6 +2189,9 @@ export function createRuntimeManager({
           engineState.projectDir = safeProjectDir;
           await persistPreferredOpenworkPort(safeProjectDir, openworkServerState.port);
         }
+        // A server started before any workspace existed never learned its
+        // engine connection from a workspace; adopt it from the server.
+        if (!engineState.baseUrl) adoptManagedEngineConnection();
         return snapshotEngineState(engineState);
       }
     }
@@ -2178,7 +2224,6 @@ export function createRuntimeManager({
       await ensureOpenwork({
         projectDir: safeProjectDir,
         workspacePaths,
-        remoteAccessEnabled: options.openworkRemoteAccess === true,
         manageOpencode: true,
         opencodeBinPath: options.opencodeBinPath,
       });
@@ -2199,18 +2244,18 @@ export function createRuntimeManager({
   }
 
   async function engineRestart(options = {}) {
+    return withStartupPhase("engine.restart.requested", () => engineRestartInner(options), options.diagnosticsCause ?? "requested");
+  }
+
+  async function engineRestartInner(options = {}) {
     const projectDir = engineState.projectDir;
     if (!projectDir) {
       throw new Error("OpenCode is not configured for a local workspace");
     }
-    const openworkRemoteAccess = typeof options.openworkRemoteAccess === "boolean"
-      ? options.openworkRemoteAccess
-      : openworkServerState.remoteAccessEnabled;
     return engineStart(projectDir, {
       runtime: engineState.runtime,
       workspacePaths: [projectDir],
       opencodeEnableExa: options.opencodeEnableExa,
-      openworkRemoteAccess,
       forceRestart: true,
     });
   }
@@ -2236,46 +2281,30 @@ export function createRuntimeManager({
   }
 
   async function openworkServerRestart(options = {}) {
+    return withStartupPhase("server.restart.requested", () => openworkServerRestartInner(options), options.diagnosticsCause ?? "requested");
+  }
+
+  async function openworkServerRestartInner(options = {}) {
     const workspacePaths = prioritizeWorkspacePaths(engineState.projectDir, await listLocalWorkspacePaths(), {
       platform: workspacePlatform,
     });
     const shouldManageOpencode = Boolean(
       openworkServerState.managedOpencodeBinPath || engineState.opencodeBinPath || !engineState.baseUrl,
     );
-    return startOpenworkServer({
+    const info = await startOpenworkServer({
       workspacePaths,
       opencodeBaseUrl: shouldManageOpencode ? null : engineState.baseUrl,
       opencodeUsername: shouldManageOpencode ? null : engineState.opencodeUsername,
       opencodePassword: shouldManageOpencode ? null : engineState.opencodePassword,
-      remoteAccessEnabled: options.remoteAccessEnabled === true,
       manageOpencode: shouldManageOpencode,
       opencodeBinPath: engineState.opencodeBinPath ?? openworkServerState.managedOpencodeBinPath,
     });
-  }
-
-  async function engineInstall() {
-    if (process.platform === "win32") {
-      return {
-        ok: false,
-        status: -1,
-        stdout: "",
-        stderr:
-          "Guided install is not supported on Windows yet. Install the OpenWork-pinned OpenCode version manually, then restart OpenWork.",
-      };
-    }
-
-    const installDir = path.join(app.getPath("home"), ".opencode", "bin");
-    const command = await pinnedOpencodeInstallCommand();
-    const result = await runShellCommand("bash", ["-lc", command], {
-      env: { ...(await buildChildEnv()), OPENCODE_INSTALL_DIR: installDir },
-      timeoutMs: 180_000,
-    });
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    };
+    // The server now runs its managed engine even before the first
+    // workspace exists. Report that runtime as healthy so a later
+    // engineStart(firstWorkspace) retargets it — the same join a workspace
+    // switch uses — instead of tearing the running engine down.
+    if (inProcessServer?.managedOpencode?.isAlive?.()) lifecycleState = "healthy";
+    return info;
   }
 
   async function opencodeMcpAuth(projectDir, serverName) {
@@ -2338,8 +2367,6 @@ export function createRuntimeManager({
     dispose: () => withRuntimeLifecycle(() => stopAllRuntimeChildren()),
     runtimeStatus,
     engineInfo,
-    engineDoctor,
-    engineInstall,
     openworkServerInfo,
     openworkServerRestart: (options) => withRuntimeLifecycle(() => openworkServerRestart(options)),
     opencodeMcpAuth,

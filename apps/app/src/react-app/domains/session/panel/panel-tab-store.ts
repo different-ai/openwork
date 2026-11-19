@@ -1,3 +1,5 @@
+import type { DynamicToolUIPart } from "ai";
+import type { McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -5,7 +7,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser" | "app";
+export type PanelTabType = "artifact" | "browser" | "app" | "mcp-app" | "remote-thread" | "side-chat";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -20,7 +22,15 @@ export type ArtifactPanelTab = {
 
 export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab;
+export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; updating?: boolean; part: DynamicToolUIPart; origin: McpAppOrigin };
+
+/** A task running on another computer, opened from its row in the chat. */
+export type RemoteThreadPanelTab = { id: string; type: "remote-thread"; label: string; threadKey: string; owner: { workspaceId: string; sessionId: string } };
+
+export const SIDE_CHAT_TAB_ID = "side-chat";
+export type SideChatPanelTab = { id: typeof SIDE_CHAT_TAB_ID; type: "side-chat"; label: string };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab | RemoteThreadPanelTab | SideChatPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -49,10 +59,6 @@ export type PanelTabStore = {
   selectTab: (sessionId: string, tabId: string | null) => void;
   reorderTabs: (sessionId: string, tabIds: string[]) => void;
   syncBrowserTabs: (sessionId: string, browserTabs: BrowserPanelTab[], activeBrowserTabId: string | null) => void;
-  syncArtifactTargets: (
-    sessionId: string,
-    targets: Array<{ id: string; name: string; preview: OpenTargetPreview }>,
-  ) => void;
   syncTranscriptArtifacts: (sessionId: string, targets: OpenTarget[]) => void;
   clearSession: (sessionId: string) => void;
 };
@@ -146,6 +152,18 @@ function isSameTab(left: PanelTab, right: PanelTab) {
     );
   }
 
+  if (left.type === "mcp-app" && right.type === "mcp-app") {
+    return left.label === right.label && left.part === right.part && left.origin === right.origin;
+  }
+
+  if (left.type === "side-chat" && right.type === "side-chat") {
+    return left.label === right.label;
+  }
+
+  if (left.type === "remote-thread" && right.type === "remote-thread") {
+    return left.label === right.label && left.threadKey === right.threadKey;
+  }
+
   if (left.type === "app" && right.type === "app") {
     return left.label === right.label && left.appId === right.appId && left.revisionId === right.revisionId && left.receiptId === right.receiptId;
   }
@@ -160,9 +178,9 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.canGoBack === right.canGoBack &&
       left.canGoForward === right.canGoForward &&
       left.ownerSessionId === right.ownerSessionId &&
-      JSON.stringify(left.browserApproval) === JSON.stringify(right.browserApproval) &&
       JSON.stringify(left.loadError) === JSON.stringify(right.loadError) &&
       JSON.stringify(left.browserTask) === JSON.stringify(right.browserTask) &&
+      JSON.stringify(left.agentViewport) === JSON.stringify(right.agentViewport) &&
       left.siteToolCount === right.siteToolCount &&
       JSON.stringify(left.siteTools) === JSON.stringify(right.siteTools) &&
       JSON.stringify(left.siteToolActivity) === JSON.stringify(right.siteToolActivity)
@@ -336,16 +354,6 @@ export const usePanelTabStore = create<PanelTabStore>()(
           tabs: mergedTabs,
           activeTabId,
         });
-      }),
-      syncArtifactTargets: (sessionId, targets) => set((state) => {
-        const session = getWritableSession(state, sessionId);
-        const nextSession = reconcileOpenArtifactTabs(session, targets);
-
-        if (isSameSessionPanelState(session, nextSession.tabs, nextSession.activeTabId)) {
-          return state;
-        }
-
-        return updateSession(state, sessionId, nextSession);
       }),
       syncTranscriptArtifacts: (sessionId, targets) => set((state) => {
         const currentTranscript = state.transcriptArtifactTargets[sessionId] ?? [];

@@ -1,65 +1,43 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test"
+import type { DynamicToolUIPart } from "ai"
+import { automationProposalCalls, isAutomationProposalToolPart, parseAutomationProposal } from "../src/components/tools/openwork-automation-proposal"
 
-import { parseAutomationProposal } from "../src/components/tools/openwork-automation-proposal";
-
-const dailyProposal = {
+const envelope = JSON.stringify({
   ok: true,
   id: "automation.propose",
-  result: {
-    ok: true,
-    kind: "automation-proposal",
-    created: false,
-    proposal: {
-      name: "Morning Slack check",
-      instructions: "Summarize my most recent Slack message.",
-      schedule: { kind: "daily", timezone: "Europe/Berlin", hour: 9, minute: 0 },
-    },
-  },
-};
+  result: { kind: "automation-proposal", created: false, proposal: { name: "Morning summary", instructions: "Summarize my inbox.", schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 } } },
+})
 
-describe("Automation proposal card", () => {
-  test("reads a proposal out of an openwork_execute result, string or object", () => {
-    const fromObject = parseAutomationProposal(dailyProposal);
-    const fromString = parseAutomationProposal(JSON.stringify(dailyProposal));
+const script = (details: unknown[], calls: unknown[]): DynamicToolUIPart => ({
+  type: "dynamic-tool", toolName: "execute", toolCallId: "script", state: "output-available", input: {}, output: envelope,
+  callProviderMetadata: { openwork: { codeMode: { calls, details } } },
+} as DynamicToolUIPart)
 
-    expect(fromObject).toEqual(fromString);
-    expect(fromObject?.name).toBe("Morning Slack check");
-    expect(fromObject?.schedule).toEqual({
-      kind: "daily",
-      timezone: "Europe/Berlin",
-      hour: 9,
-      minute: 0,
-    });
-    expect(fromObject?.model).toBeUndefined();
-  });
+test("a proposal made from a script is found with its content-list result", () => {
+  const input = { id: "automation.propose", args: {} }
+  const part = script(
+    [{ invocationId: "script:0", ordinal: 0, tool: "openwork_execute", input, status: "completed", startedAt: 1, output: [{ type: "text", text: envelope }] }],
+    [{ tool: "openwork_execute", status: "completed", input }],
+  )
+  const found = automationProposalCalls(part)
+  expect(found).toHaveLength(1)
+  expect(found[0]?.toolCallId).toBe("script:call:0")
+  expect(parseAutomationProposal(found[0]?.output)?.name).toBe("Morning summary")
+})
 
-  test("ignores results that are not Automation proposals", () => {
-    expect(parseAutomationProposal({ ...dailyProposal, id: "session.create" })).toBeNull();
-    expect(parseAutomationProposal({ ...dailyProposal, ok: false })).toBeNull();
-    expect(parseAutomationProposal("not json")).toBeNull();
-    expect(parseAutomationProposal(null)).toBeNull();
-  });
+test("other script calls and other commands are not proposals", () => {
+  const other = JSON.stringify({ ok: true, id: "session.rename", result: {} })
+  const part = script(
+    [{ invocationId: "script:0", ordinal: 0, tool: "openwork_execute", status: "completed", startedAt: 1, output: [{ type: "text", text: other }] }],
+    [{ tool: "openwork_execute", status: "completed" }],
+  )
+  expect(automationProposalCalls(part)).toEqual([])
+  expect(parseAutomationProposal([{ type: "text", text: "not json" }])).toBeNull()
+  expect(parseAutomationProposal([])).toBeNull()
+})
 
-  test("refuses a proposal whose schedule or fields fail the shared contract", () => {
-    const badSchedule = {
-      ...dailyProposal,
-      result: {
-        ...dailyProposal.result,
-        proposal: {
-          ...dailyProposal.result.proposal,
-          schedule: { kind: "interval", timezone: "Europe/Berlin", everyMinutes: 5 },
-        },
-      },
-    };
-    const emptyName = {
-      ...dailyProposal,
-      result: {
-        ...dailyProposal.result,
-        proposal: { ...dailyProposal.result.proposal, name: "   " },
-      },
-    };
-
-    expect(parseAutomationProposal(badSchedule)).toBeNull();
-    expect(parseAutomationProposal(emptyName)).toBeNull();
-  });
-});
+test("a direct proposal step still reads its text result", () => {
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork_execute", toolCallId: "direct", state: "output-available", input: {}, output: envelope }
+  expect(isAutomationProposalToolPart(part)).toBe(true)
+  expect(automationProposalCalls(part)).toEqual([])
+})

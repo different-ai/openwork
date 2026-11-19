@@ -1,6 +1,7 @@
 .frame {
   --dls-text-primary: #171717; --dls-text-secondary: #686868; --dls-border: #e4e4e4;
   --dls-hover: #f5f5f5; --dls-accent: #171717;
+  --setup-hairline: #ededed; --setup-ink-soft: #444; --setup-placeholder: #9a9a9a;
   min-height: 100dvh; background: #fcfcfc; color: #171717; padding: 28px clamp(20px, 5vw, 80px) 20px;
 }
 .top, .grid { max-width: 1130px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.12fr); gap: clamp(40px, 7vw, 100px); }
@@ -12,6 +13,7 @@
 .progressSummary > span:first-child { color: #171717; font-weight: 500; }
 .progressSummary > span:last-child { color: #777; font-size: 12px; font-variant-numeric: tabular-nums; }
 .steps { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; padding: 0; margin: 0; }
+.simplified .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .steps li { display: flex; min-width: 0; flex-direction: column; gap: 11px; font-size: 12px; line-height: 1.4; color: #8a8a8a; white-space: nowrap; }
 .progressSegment { display: block; height: 3px; width: 100%; border-radius: 3px; background: #e9e9e9; }
 .steps [aria-current] { color: #171717; font-weight: 500; }
@@ -39,6 +41,8 @@
 .panel :global(.den-button-primary):hover:not(:disabled) { background: #333; }
 .panel :global(.den-label) { padding-left: 0; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #444; }
 .panel :global(.den-input) { font-size: 13px; border-radius: 12px; padding: 13px 14px; }
+.panel :global(.den-divider) { font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; color: #8a8a8a; }
+.panel :global(.den-divider)::before, .panel :global(.den-divider)::after { background: var(--setup-hairline); }
 .panel button { transition: background-color .16s, border-color .16s, transform .16s; }
 .panel button:active:not(:disabled) { transform: translateY(1px); }
 .panel button:focus-visible, .panel input:focus-visible, .panel a:focus-visible { outline: 2px solid #444; outline-offset: 3px; }
@@ -113,11 +117,46 @@
 .preview figcaption { font-size: 10px; line-height: 1.7; color: #777; margin-top: 12px; }
 .storyNote { max-width: 330px; font-size: 11px; line-height: 1.8; color: #888; margin: 19px 0 0; }
 .footer { display: flex; justify-content: space-between; gap: 20px; max-width: 1130px; margin: auto; padding-top: 18px; border-top: 1px solid #e9e9e9; color: #888; font-size: 10px; }
+/* One-page flows: the header is only the brand, so the story starts closer to it. */
+.plain .top { grid-template-columns: 1fr; }
+.plain .grid { margin-top: 24px; }
+.plain .customPreview { margin-top: 56px; }
+/* One-page flows change state in place; the panel does not re-enter (P11, V6). */
+.plain .panel { animation: none; }
 .embedded { min-height: auto; border-radius: 18px; padding: 30px clamp(18px, 3vw, 42px); }
 .embedded .top, .embedded .grid { gap: 35px; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); }
 .embedded .grid { margin: 48px auto; }
 .embedded .intro h1 { font-size: clamp(36px, 3.6vw, 50px); }
 .embedded .cloud { display: none; }
+/* Simplified onboarding: brand on top, then one centered column holding the
+   progress and a single Den panel per step (P7, S1, V1-V4). Shared auth
+   controls are normalised to the Den primitives (DenInput 42px, DenButton
+   40px, 8px radius, #0f172a ink) so all three steps read as one flow. */
+.simplified { background: #fafafa; }
+/* Brand, progress and panel share one left edge, so nothing floats in a corner. */
+.simpleBody { max-width: 440px; margin: clamp(24px, 7vh, 72px) auto 48px; }
+.simpleBody > .brand { margin-bottom: 36px; font-size: 16px; letter-spacing: -.4px; gap: 9px; }
+.simpleBody > .brand img { width: 22px; height: 22px; }
+.simpleBody .progress { margin-bottom: 16px; }
+/* The dithered band is the brand moment of every step: same height, flush to the panel edge. */
+.simplified .panelVisual { height: 88px; margin-bottom: 24px; }
+.simplified .panel { --panel-padding: 28px; --panel-radius: 16px; border-color: #e5e7eb; box-shadow: none; animation: none; }
+.simpleTitle, .simplified .panel h2 { margin: 0; font-size: 20px; line-height: 1.4; font-weight: 600; letter-spacing: -.02em; color: #0f172a; overflow-wrap: anywhere; }
+.simpleTitle { margin-bottom: 20px; }
+.simplified .panel :global(.den-copy) { font-size: 13px; line-height: 1.5; color: #6b7280; }
+.simplified .panel :global(.den-label) { font-size: 13px; font-weight: 500; color: #111827; }
+.simplified .panel :global(.den-input) { height: 42px; padding: 0 16px; border-radius: 8px; border-color: #e5e7eb; font-size: 14px; line-height: 20px; }
+.simplified .panel :global(.den-input):focus { border-color: #d1d5db; box-shadow: 0 0 0 2px rgb(17 24 39 / .05); }
+.simplified .panel :global(.den-button-primary), .simplified .panel :global(.den-button-secondary) { min-height: 40px; height: 40px; padding: 0 20px; border-radius: 8px; font-size: 13px; font-weight: 500; transform: none; }
+.simplified .panel :global(.den-button-primary) { background: #0f172a; box-shadow: none; }
+.simplified .panel :global(.den-button-primary):hover:not(:disabled) { background: #111c33; transform: none; }
+.simplified .panel :global(.den-button-secondary) { box-shadow: inset 0 0 0 1px #e5e7eb; color: #374151; }
+.simplified .panel :global(.den-divider) { font-size: 12px; }
+/* Labels state the action; no trailing arrows (C7). */
+.simplified .panel button :global(svg.lucide-arrow-right) { display: none; }
+.simplified .panel button:active:not(:disabled) { transform: none; }
+/* Focus is a light ring, never a dark outline. */
+.simplified .panel button:focus-visible, .simplified .panel input:focus-visible, .simplified .panel a:focus-visible, .simplified .panel summary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(15 23 42 / .1); }
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1050px) {
   .embedded .grid { grid-template-columns: 1fr; margin-top: 28px; gap: 26px; }
@@ -143,6 +182,7 @@
   .description { margin-top: 12px; font-size: 14px; line-height: 1.6; max-width: 440px; overflow-wrap: anywhere; }
   .modelSupport { margin-top: 15px; font-size: 12px; gap: 3px 7px; }
   .preview, .customPreview, .storyNote { display: none; }
+  .plain .grid { margin-top: 20px; }
   .panel { --panel-padding: 20px; --panel-radius: 18px; }
   .panelVisual { height: 58px; margin-bottom: 21px; }
   .panelEyebrow { display: none; }
@@ -150,5 +190,8 @@
   .footer { font-size: 11px; line-height: 1.6; }
   .footer > span:last-child { display: none; }
 }
+@media (max-width: 760px) { .simpleBody { margin: 8px auto 30px; } .simpleBody > .brand { margin-bottom: 24px; } .simplified .panel { --panel-padding: 20px; } .simplified .panelVisual { height: 64px; margin-bottom: 20px; } }
 @media (max-width: 420px) { .frame, .embedded { padding-inline: 16px; } }
+/* Explicit opt-in: do not change the display headline on other setup flows. */
+.intro h1.compactHeading { font-size: var(--text-xl); line-height: var(--text-xl--line-height); letter-spacing: -.03em; font-weight: var(--font-weight-semibold); }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .panel button { transition: none; } }

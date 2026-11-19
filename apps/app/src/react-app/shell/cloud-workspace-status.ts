@@ -36,49 +36,7 @@ export type CloudWorkspaceViewModel = {
 
 export type CloudWorkspaceMainContentDecision = "takeover" | "error" | "content";
 
-export type CloudWorkspaceBootStageState = "done" | "active" | "pending";
-
-export type CloudWorkspaceBootStage = {
-  id: string;
-  label: string;
-  state: CloudWorkspaceBootStageState;
-};
-
-/**
- * Boot progress is derived from the status we already poll rather than from a
- * timer, so the ladder can never claim more progress than we can prove. Each
- * variant tells us which checkpoint the sandbox is standing on: a provisioning
- * sandbox is still being reserved, while a waking or updating one demonstrably
- * exists already.
- */
-const BOOT_STAGES: Partial<
-  Record<CloudWorkspacePillVariant, { labels: readonly [string, string, string]; activeIndex: number }>
-> = {
-  provisioning: {
-    labels: ["Reserving your computer", "Restoring your files", "Connecting the app"],
-    activeIndex: 0,
-  },
-  waking: {
-    labels: ["Reserving your computer", "Restoring your files", "Connecting the app"],
-    activeIndex: 1,
-  },
-  updating: {
-    labels: ["Saving your session", "Applying the latest image", "Reconnecting the app"],
-    activeIndex: 1,
-  },
-};
-
-export function cloudWorkspaceBootStages(variant: CloudWorkspacePillVariant): CloudWorkspaceBootStage[] {
-  const stages = BOOT_STAGES[variant];
-  if (!stages) return [];
-  return stages.labels.map((label, index) => ({
-    id: `${variant}-${index}`,
-    label,
-    state: index < stages.activeIndex ? "done" : index === stages.activeIndex ? "active" : "pending",
-  }));
-}
-
-/** Past this point "usually under a minute" stops being true, so the copy and the actions change. */
+/** Long waits expose a status check without restarting a healthy boot. */
 export const CLOUD_WORKSPACE_SLOW_BOOT_MS = 45_000;
 
 export function cloudWorkspaceBootIsSlow(elapsedMs: number): boolean {
@@ -96,6 +54,8 @@ export function formatCloudWorkspaceElapsed(elapsedMs: number): string {
 export function cloudWorkspaceTakeoverCopy(input: {
   variant: CloudWorkspacePillVariant;
   slow: boolean;
+  connecting?: boolean;
+  checking?: boolean;
 }): { title: string; body: string } {
   if (input.variant === "access-required") {
     return {
@@ -117,25 +77,27 @@ export function cloudWorkspaceTakeoverCopy(input: {
   }
   if (input.slow) {
     return {
-      title: "Still working on it…",
+      title: "Your cloud workspace is taking longer than usual",
       body: "This is taking longer than usual. You can keep waiting or check again.",
     };
   }
+  if (input.checking) return { title: "Checking cloud workspace…", body: "" };
+  if (input.connecting) return { title: "Connecting to your workspace…", body: "" };
   if (input.variant === "provisioning") {
     return {
-      title: "Starting your workspace…",
-      body: "Usually under a minute. We’ll open it the moment it’s ready.",
+      title: "Creating your cloud workspace…",
+      body: "",
     };
   }
   if (input.variant === "updating") {
     return {
-      title: "Updating your workspace…",
-      body: "We’re applying the latest OpenWork image. Your files and sessions come along.",
+      title: "Updating your cloud workspace…",
+      body: "",
     };
   }
   return {
-    title: "Waking your workspace…",
-    body: "Your sandbox is coming back online. We’ll open it as soon as it’s ready.",
+    title: "Starting your cloud workspace…",
+    body: "",
   };
 }
 
@@ -229,7 +191,7 @@ export function shouldSuppressBootOverlayForGateway(input: {
   signedIn: boolean;
   variant: CloudWorkspacePillVariant;
 }): boolean {
-  return input.gatewayMode && input.signedIn && !cloudWorkspaceStatusHasReadyContent(input.variant);
+  return input.gatewayMode && input.signedIn;
 }
 
 export function shouldShowCloudWorkspaceStatusPill(input: {
@@ -248,9 +210,11 @@ export function mapCloudWorkspaceMainContentDecision(input: {
   status: CloudWorkspacePillVariant;
   hasWorkspaces: boolean;
   gatewayMode: boolean;
+  startupPending?: boolean;
 }): CloudWorkspaceMainContentDecision {
   if (!input.gatewayMode) return "content";
   if (input.status === "failed" || input.status === "access-required") return "takeover";
+  if (input.startupPending) return "takeover";
   if (!cloudWorkspaceStatusHasReadyContent(input.status)) {
     return input.hasWorkspaces ? "content" : "takeover";
   }

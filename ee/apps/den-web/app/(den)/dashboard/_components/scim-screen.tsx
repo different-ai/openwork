@@ -1,8 +1,7 @@
 "use client";
 
-import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { Copy, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
@@ -11,8 +10,13 @@ import {
   type DenOrgScimHealth,
   getOrgAccessFlags,
   parseOrgScimPayload,
+  permissionLockReason,
 } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
+import type { AuthSecurityFacts } from "../_features/feature-intros/intros/auth-security";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { scimIntroState } from "./auth-security-intro-facts";
+import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
   if (!value) {
@@ -27,8 +31,17 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-export function ScimScreen() {
+export type ScimScreenProps = {
+  /** `?setup=1` from an intro's action: open the connector settings instead of the intro (DESIGN.md I5). */
+  setupMode?: boolean;
+  /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
+  onIntroFacts?: (facts: AuthSecurityFacts) => void;
+};
+
+/** The User provisioning tab of Settings › Auth & Security. The tab names it, so no second title (P2). */
+export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
+  const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
@@ -54,13 +67,13 @@ export function ScimScreen() {
       getOrgAccessFlags(
         orgContext?.currentMember.role ?? "member",
         orgContext?.currentMember.isOwner ?? false,
-        orgContext?.roles,
+        orgContext?.currentMember.permissions,
       ),
-    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.roles],
+    [orgContext?.currentMember.isOwner, orgContext?.currentMember.role, orgContext?.currentMember.permissions],
   );
 
   async function loadScimConfig(isCurrent = () => true) {
-    if (!orgId || !access.canViewSettings) {
+    if (!orgId || !access.canViewScim) {
       if (isCurrent()) {
         setBaseUrl(null);
         setSsoReady(false);
@@ -96,6 +109,7 @@ export function ScimScreen() {
         setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
+        setLoaded(true);
       }
     } catch (nextError) {
       if (isReauthRequiredError(nextError)) {
@@ -124,7 +138,7 @@ export function ScimScreen() {
     return () => {
       active = false;
     };
-  }, [orgId, access.canViewSettings]);
+  }, [orgId, access.canViewScim]);
 
   useEffect(() => {
     if (!copiedValue) {
@@ -150,7 +164,7 @@ export function ScimScreen() {
 
   async function handleRotateToken() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can create or rotate SCIM tokens.");
+      setError("You don't have permission to create or rotate SCIM tokens.");
       return;
     }
 
@@ -199,7 +213,7 @@ export function ScimScreen() {
 
   async function handleRunReconciliation() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can run SCIM reconciliation.");
+      setError("You don't have permission to run SCIM reconciliation.");
       return;
     }
 
@@ -237,7 +251,7 @@ export function ScimScreen() {
 
   async function handleGroupMappingChange() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can change SCIM mappings.");
+      setError("You don't have permission to change SCIM mappings.");
       return;
     }
 
@@ -275,7 +289,7 @@ export function ScimScreen() {
 
   async function handleDeleteConnection() {
     if (!access.canManageScim) {
-      setError("Only workspace owners and super-admins can delete SCIM connections.");
+      setError("You don't have permission to delete SCIM connections.");
       return;
     }
 
@@ -318,37 +332,42 @@ export function ScimScreen() {
     }
   }
 
+  // Feature intro facts (DESIGN.md I2) once the connector has loaded.
+  const introState = loaded ? scimIntroState(connection, health) : null;
+  const scimIncluded = orgContext?.entitlements.scim;
+  useEffect(() => {
+    if (!introState || scimIncluded === undefined) return;
+    onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
+  }, [introState, scimIncluded, ssoReady, onIntroFacts]);
+  // `?setup=1` skips the intro that stands in for an empty connector; a created one still gets its banner.
+  const introFacts = introState && scimIncluded !== undefined && !(setupMode && introState === "none")
+    ? { scim: introState, scimIncluded, ssoReady }
+    : null;
+
   if (!orgContext) {
     return (
-      <DashboardPageTemplate
-        icon={Shield}
-        title="SCIM"
-        description="Provision organization members from your identity provider with an org-scoped SCIM connector."
-        colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
-      >
+      <div data-testid="scim-tab-content">
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading organization details...
         </div>
-      </DashboardPageTemplate>
+      </div>
     );
   }
 
   return (
-    <DashboardPageTemplate
-      icon={Shield}
-      title="SCIM"
-      description="Create one SCIM connector per workspace, then give your identity provider the base URL and bearer token shown here."
-      colors={["#ECFEFF", "#155E75", "#06B6D4", "#A5F3FC"]}
-    >
-      {!access.canViewSettings ? (
-        <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
-          Only workspace admins can view SCIM.
+    <div data-testid="scim-tab-content">
+      {!access.canViewScim ? (
+        <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
+          {permissionLockReason("scim.view")}
         </div>
       ) : (
-        <>
+        <FeatureIntroGate introKey="auth-security.scim" facts={introFacts}>
+          {!orgContext.entitlements.scim ? (
+            <EnterprisePlanNotice feature="SCIM provisioning" />
+          ) : null}
           {!access.canManageScim ? (
-            <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">
-              Read-only: owners and super-admins can create tokens, reconcile, change mappings, or delete SCIM connections.
+            <div className="mb-6 rounded-[24px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-5 py-4 text-[14px] text-[var(--dls-text-primary)]">
+              {`Read only. ${permissionLockReason("scim.manage")}`}
             </div>
           ) : null}
           <div className="mb-6 flex flex-wrap gap-2 rounded-[24px] border border-gray-200 bg-white px-5 py-4 text-[12px] font-semibold shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
@@ -365,7 +384,7 @@ export function ScimScreen() {
           ) : null}
 
           {!ssoReady ? (
-            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+            <div className="mb-6 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
               <p className="font-semibold">Configure SAML/SSO before enabling SCIM</p>
               <p className="mt-1 leading-6">
                 Add an enabled SSO connection for this workspace before creating or rotating its SCIM connector token.
@@ -374,7 +393,7 @@ export function ScimScreen() {
           ) : null}
 
           {health.unresolvedFailureCount > 0 ? (
-            <div className="mb-6 rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">
+            <div className="mb-6 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <p className="font-semibold">SCIM needs attention</p>
@@ -397,7 +416,7 @@ export function ScimScreen() {
             </div>
           ) : null}
 
-          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div id="scim-base-url" className="mb-6 scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
@@ -547,8 +566,8 @@ export function ScimScreen() {
               </div>
             ) : null}
           </div>
-        </>
+        </FeatureIntroGate>
       )}
-    </DashboardPageTemplate>
+    </div>
   );
 }

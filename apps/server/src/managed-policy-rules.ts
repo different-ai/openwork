@@ -1,4 +1,4 @@
-import type { DesktopConfig, DesktopExecutionPolicy, DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
+import type { DesktopConfig, DesktopExecutionPolicy } from "@openwork/types/den/desktop-policies";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { z } from "zod";
 
@@ -7,22 +7,6 @@ export const managedPolicyActionSchema = z.enum([
   "model", "webfetch", "websearch", "browser", "extensions", "settings", "provider", "workspace",
 ]);
 export type ManagedPolicyAction = z.infer<typeof managedPolicyActionSchema>;
-
-// Every existing Den control must have an explicit owner. Adding a key without
-// mapping it is a type error; UI-only fields cannot pretend to be tool rules.
-export const desktopPolicyTargets = {
-  allowCustomProviders: "provider", allowZenModel: "provider",
-  allowMultipleWorkspaces: "workspace", allowControlSettings: "settings",
-  allowManageExtensions: "extensions", allowBuiltInExtensions: "builtins",
-  allowAlphaUpdates: "app", showWelcomePage: "app",
-} satisfies Record<DesktopPolicyKey, string>;
-
-export const executionPolicyTargets = {
-  commands: ["engine.shell", "engine.proxy"],
-  blockedCommands: ["engine.shell", "engine.proxy"],
-  browserOrigins: ["engine.webfetch", "browser.request"],
-  blockBrowserUploads: ["browser.request"],
-} satisfies Record<keyof DesktopExecutionPolicy, readonly string[]>;
 
 export type EnginePermissionRule = { action: string; resource: string; effect: "allow" | "deny" };
 export function executionRules(policy: DesktopExecutionPolicy | undefined): EnginePermissionRule[] {
@@ -129,7 +113,7 @@ export function policyRequestActions(method: string, path: string): ManagedPolic
   const actions: ManagedPolicyAction[] = [];
   if (/^\/workspaces\/(local|remote)$/.test(path)) actions.push("workspace");
   if (/^\/runtime-config\/providers$/.test(path)) actions.push("provider");
-  if (/^\/workspace\/[^/]+\/(?:cloud-plugins|claude-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
+  if (/^\/workspace\/[^/]+\/(?:cloud-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
     && !/\/mcp\/[^/]+\/(?:auth|managed\/connect)$/.test(path)) actions.push("extensions");
   if (/^\/workspace\/[^/]+\/(?:config|opencode-config|runtime-config|permissions|authorized-folders)(?:\/|$)/.test(path)) actions.push("settings");
   if (path === "/experimental/engine-v2-preview") actions.push("settings");

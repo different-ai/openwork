@@ -1,0 +1,161 @@
+import { sessionActivityFrom } from "./opencode-plugins/session-activity.js";
+
+// Kept dependency-free: the bundled engine plugin imports this adapter.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+type Read = (path: string) => Promise<unknown>;
+function data(value: unknown): unknown { return isRecord(value) && "data" in value ? value.data : value; }
+function items(value: unknown): Record<string, unknown>[] {
+  const rows = data(value);
+  if (!Array.isArray(rows)) throw new Error("Invalid engine list response");
+  return rows.filter(isRecord);
+}
+function session(value: unknown) {
+  const row = data(value);
+  if (!isRecord(row)) throw new Error("Invalid engine session response");
+  const info = isRecord(row.info) ? row.info : row;
+  const home = info.openworkHomeDirectory;
+  return { ...info, directory: home ?? (isRecord(info.location) ? info.location.directory : undefined) };
+}
+async function pages(read: Read, path: string, limit?: number): Promise<Record<string, unknown>[]> {
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) {
+    throw new Error("Invalid engine read limit: expected a positive safe integer");
+  }
+  const url = new URL(path, "http://engine");
+  const rows: Record<string, unknown>[] = [];
+  const cursors = new Set<string>();
+  while (true) {
+    // The semantic total is not the engine's native page size (maximum 200).
+    const remaining = limit === undefined ? undefined : limit - rows.length;
+    url.searchParams.set("limit", String(Math.min(200, remaining ?? 200)));
+    const result = await read(url.pathname + url.search);
+    const page = items(result);
+    rows.push(...(remaining === undefined ? page : page.slice(0, remaining)));
+    if (!page.length) return rows;
+    const next = isRecord(result) && isRecord(result.cursor) ? result.cursor.next : undefined;
+    if (typeof next !== "string" || !next) return rows;
+    if (cursors.has(next)) throw new Error("Invalid engine pagination cursor");
+    if (rows.length === limit) return rows;
+    cursors.add(next);
+    // The opaque cursor carries the order; the engine rejects cursor + order.
+    url.searchParams.delete("order");
+    url.searchParams.set("cursor", next);
+  }
+}
+
+/** Adapt read-only native endpoints to the existing semantic query contract.
+ * Calls go through OpenWork's native proxy, which checks stable session homes. */
+export function createV2ReadAdapter(read: Read): Read {
+  return async path => {
+    const match = /^\/workspace\/([^/]+)\/opencode(\/.*)$/.exec(path);
+    if (!match) return read(path);
+    const base = `/workspace/${match[1]}/opencode2`;
+    const native: Read = path => read(base + path);
+    const url = new URL(match[2], "http://engine");
+    if (url.pathname === "/session/status") {
+      const active = data(await native("/api/session/active"));
+      if (!isRecord(active)) throw new Error("Invalid engine activity response");
+      return Object.fromEntries(Object.entries(active).map(([id, value]) => [id,
+        { type: isRecord(value) && value.type === "running" ? "busy" : "idle" }]));
+    }
+    if (url.pathname === "/session") {
+      const rows = await pages(native, "/api/session");
+      return rows.filter(row => url.searchParams.get("roots") !== "true" || !row.parentID).map(session);
+    }
+    if (url.pathname === "/provider") {
+      const [models, providers] = await Promise.all([native("/api/model").then(items), native("/api/provider").then(items)]);
+      const names = new Map(providers.map(provider => [provider.id, provider.name]));
+      const catalog = new Map<string, { id: string; name: string; models: Record<string, { name: string }> }>();
+      for (const model of models) {
+        if (typeof model.id !== "string" || typeof model.providerID !== "string") continue;
+        const name = names.get(model.providerID);
+        const provider = catalog.get(model.providerID) ?? {
+          id: model.providerID, name: typeof name === "string" ? name : model.providerID, models: {},
+        };
+        provider.models[model.id] = { name: typeof model.name === "string" ? model.name : model.id };
+        catalog.set(model.providerID, provider);
+      }
+      return { all: [...catalog.values()], connected: [...catalog.keys()] };
+    }
+    if (url.pathname === "/question") return items(await native("/api/form"));
+    const target = /^\/session\/([^/]+)(\/message|\/children)?$/.exec(url.pathname);
+    if (!target) throw new Error("Unsupported native engine read");
+    if (!target[2]) return session(await native(`/api/session/${target[1]}`));
+    if (target[2] === "/children") {
+      return (await pages(native, "/api/session")).filter(row => row.parentID === decodeURIComponent(target[1])).map(session);
+    }
+    const limit = url.searchParams.get("limit");
+    const rows = await pages(native, `/api/session/${target[1]}/message?order=desc`, limit === null ? undefined : Number(limit));
+    // Native pages are newest first. Reverse before the stable time sort so
+    // messages sharing a timestamp also keep chronological timeline order.
+    return rows.reverse().filter(row => row.type === "user" || row.type === "assistant")
+      .sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0))
+      .map(row => ({ info: { id: row.id, role: row.type, time: row.time, ...(row.error ? { error: row.error } : {}) },
+        parts: Array.isArray(row.content) ? row.content.filter(part => isRecord(part) && part.type === "text") : typeof row.text === "string" ? [{ type: "text", text: row.text }] : [] }));
+  };
+}
+
+function nativeSessionPath(workspaceId: string, sessionId: string): string {
+  return `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
+}
+
+/**
+ * Native `Session.Message.Info` rows of every type, unfiltered, in timeline
+ * order: the first `limit` from the start, or the newest `limit` from the end
+ * (all of them when `limit` is omitted). Used by `session.read` detail reads.
+ */
+export async function readV2NativeMessages(
+  read: Read,
+  workspaceId: string,
+  sessionId: string,
+  options: { from: "start" | "end"; limit?: number },
+): Promise<Record<string, unknown>[]> {
+  const order = options.from === "start" ? "asc" : "desc";
+  const rows = await pages(read, `${nativeSessionPath(workspaceId, sessionId)}/message?order=${order}`, options.limit);
+  const timeline = order === "desc" ? rows.reverse() : rows;
+  // Stable sort: messages sharing a timestamp keep the engine's timeline order.
+  return timeline.sort((a, b) => Number(isRecord(a.time) ? a.time.created : 0) - Number(isRecord(b.time) ? b.time.created : 0));
+}
+
+/** One native `Session.Message.Info` row by id. */
+export async function readV2NativeMessage(read: Read, workspaceId: string, sessionId: string, messageId: string): Promise<unknown> {
+  return data(await read(`${nativeSessionPath(workspaceId, sessionId)}/message/${encodeURIComponent(messageId)}`));
+}
+
+export async function readV2SessionActivity(read: Read, workspaceId: string, sessionId: string) {
+  const base = `/workspace/${encodeURIComponent(workspaceId)}/opencode2`;
+  const native: Read = path => read(base + path);
+  const [listed, statuses] = await Promise.all([
+    pages(native, "/api/session").catch(() => null),
+    native("/api/session/active").then(data).catch(() => null),
+  ]);
+  const ids = new Set([sessionId]);
+  if (listed) {
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const row of listed) {
+        if (typeof row.id !== "string" || typeof row.parentID !== "string" || !ids.has(row.parentID) || ids.has(row.id)) continue;
+        ids.add(row.id); changed = true;
+      }
+    }
+  }
+  const permissions: Record<string, unknown>[] = [];
+  const questions: Record<string, unknown>[] = [];
+  let complete = listed !== null;
+  const pending = [...ids];
+  await Promise.all(Array.from({ length: Math.min(4, pending.length) }, async () => {
+    for (let id = pending.shift(); id; id = pending.shift()) {
+      try {
+        const [p, q] = await Promise.all([
+          native(`/api/session/${encodeURIComponent(id)}/permission`),
+          native(`/api/session/${encodeURIComponent(id)}/form`),
+        ]);
+        permissions.push(...items(p).map(item => ({ ...item, sessionID: id })));
+        questions.push(...items(q).map(item => ({ ...item, sessionID: id })));
+      } catch { complete = false; }
+    }
+  }));
+  return sessionActivityFrom(statuses, complete ? permissions : null, complete ? questions : null,
+    sessionId, [...ids].filter(id => id !== sessionId), listed ? 0 : 1);
+}

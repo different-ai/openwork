@@ -21,10 +21,10 @@ export type ConnectCapabilityClient = {
     organizationId: string,
     marketplaceId: string,
   ) => Promise<DenOrgMarketplaceResolved>;
-  getOrgPluginResolved: (
+  getOrgPluginsResolved: (
     organizationId: string,
-    plugin: DenOrgPlugin,
-  ) => Promise<DenOrgPluginResolved>;
+    plugins: DenOrgPlugin[],
+  ) => Promise<DenOrgPluginResolved[]>;
 };
 
 export type ConnectPluginFile = {
@@ -230,11 +230,16 @@ function pluginFromLibraryItem(item: DenMeLibraryPlugin): DenOrgPlugin {
 export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
+  /** Activity requires a complete answer; partial lists are not removal evidence. */
+  requireComplete?: boolean;
 }): Promise<ConnectCapabilityInventory> {
   const [assigned, libraryPlugins] = await Promise.all([
     input.client.listAssignedMarketplaceCapabilities(input.organizationId),
     input.client.listMeLibraryPlugins
-      ? input.client.listMeLibraryPlugins(input.organizationId).catch(() => [])
+      ? input.client.listMeLibraryPlugins(input.organizationId).catch((error: unknown) => {
+          if (input.requireComplete) throw error;
+          return [];
+        })
       : Promise.resolve([]),
   ]);
 
@@ -249,17 +254,26 @@ export async function listAssignedConnectCapabilities(input: {
       item.marketplaceId ? [`${item.marketplaceId}:${item.pluginId}:${item.configObjectId}`] : []
     )),
   );
-  const marketplaces = assigned.length === 0
+  // The catalog listing is paginated and can include admin-only visibility.
+  // For change detection resolve the complete grant-scoped ID set directly.
+  const marketplaces = input.requireComplete || assigned.length === 0
     ? []
     : (await input.client.listOrgMarketplaces(input.organizationId))
       .filter((marketplace) => marketplace.status === "active")
       .filter((marketplace) => assignedMarketplaceIds.has(marketplace.id))
       .sort((left, right) => left.name.localeCompare(right.name));
-  const resolvedMarketplaces = await Promise.all(
-    marketplaces.map((marketplace) =>
-      input.client.getOrgMarketplaceResolved(input.organizationId, marketplace.id)
+  const marketplaceIds = input.requireComplete
+    ? [...assignedMarketplaceIds]
+    : marketplaces.map((marketplace) => marketplace.id);
+  const resolvedMarketplaces = (await Promise.all(
+    marketplaceIds.map((marketplaceId) =>
+      input.client.getOrgMarketplaceResolved(input.organizationId, marketplaceId)
     ),
-  );
+  ))
+    // Both paths return the same inventory, so a complete pass can also serve
+    // the Connect views: active marketplaces only, in name order.
+    .filter((resolved) => resolved.marketplace.status === "active")
+    .sort((left, right) => left.marketplace.name.localeCompare(right.marketplace.name));
 
   const plugins = new Map<string, MarketplacePlugin>();
   for (const resolved of resolvedMarketplaces) {
@@ -281,12 +295,11 @@ export async function listAssignedConnectCapabilities(input: {
   }
   if (plugins.size === 0) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
 
-  const resolvedPlugins = await Promise.all(
-    [...plugins.values()].map(async ({ marketplace, plugin }) => ({
-      marketplace,
-      resolved: await input.client.getOrgPluginResolved(input.organizationId, plugin),
-    })),
-  );
+  const pluginEntries = [...plugins.values()];
+  const resolvedPlugins = (await input.client.getOrgPluginsResolved(
+    input.organizationId,
+    pluginEntries.map(({ plugin }) => plugin),
+  )).map((resolved, index) => ({ marketplace: pluginEntries[index]!.marketplace, resolved }));
 
   const skills: SkillCard[] = [];
   const pluginsById = new Map<string, ConnectPluginCard>();
@@ -354,7 +367,9 @@ export async function listAssignedConnectCapabilities(input: {
   }
 
   const pluginCards = [...pluginsById.values()]
-    .filter((plugin) => plugin.files.length > 0)
+    // Activity also observes plugins whose contents have no desktop file
+    // projection (for example, a cloud-only Workflow).
+    .filter((plugin) => input.requireComplete || plugin.files.length > 0)
     .sort((left, right) => left.name.localeCompare(right.name));
   skills.sort((left, right) => left.name.localeCompare(right.name));
   mcpServers.sort((left, right) => left.name.localeCompare(right.name));

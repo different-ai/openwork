@@ -23,6 +23,8 @@ export interface SeedDesktopOptions {
   env?: Record<string, string>;
   /** Refuse the pooled lane's shared sandbox; this desktop gets one of its own. */
   ownSandbox?: boolean;
+  /** With a Den: `false` signs in without creating a workspace (a member who has not made one yet). */
+  workspace?: false;
 }
 
 export interface SeedWebOptions {
@@ -95,7 +97,7 @@ export interface SeedDenLink extends AsyncDisposable {
 /** Framework-free arrangement contract implemented by the testkit world fixture. */
 export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
-  /** With a Den the desktop is signed in (or arranged signed-out) against it and always carries a workspace. */
+  /** With a Den the desktop is signed in (or arranged signed-out) against it and carries a workspace unless `workspace: false`. */
   desktop(options: SeedDesktopOptions & { den: Den }): Promise<App>;
   desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
   appWeb(options: SeedAppWebOptions): Promise<AppWeb>;

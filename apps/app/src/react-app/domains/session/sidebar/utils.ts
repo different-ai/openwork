@@ -1,7 +1,7 @@
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
-import { isSandboxWorkspace } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { getSessionOrder } from "./session-order";
 
 export const MAX_SESSIONS_PREVIEW = 6;
 
@@ -30,10 +30,6 @@ export const isActiveWorkSessionStatus = (status: string | undefined) =>
   status === "responding" ||
   status === "compacting";
 
-/** Waiting is "needs you" on the right edge — not left-lane activity. */
-export const isStreamingSessionStatus = (status: string | undefined) =>
-  isActiveWorkSessionStatus(status) || status === "waiting";
-
 export const isNeedsAttentionSessionStatus = (status: string | undefined) =>
   status === "waiting";
 
@@ -49,7 +45,7 @@ export function formatSessionRelativeTime(updatedAt: number | null | undefined):
   return `${Math.round(hours / 24)}d`;
 }
 
-const normalizeSessionParentID = (session: SessionListItem) => {
+const normalizeSessionParentID = (session: { parentID?: string | null }) => {
   const parentID = session.parentID?.trim();
   return parentID || "";
 };
@@ -59,7 +55,7 @@ const normalizeSessionParentID = (session: SessionListItem) => {
  * in the loaded page (the parent may be archived, deleted, or beyond the list
  * limit). Children are only reached from the task card in their parent.
  */
-export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
+export const getRootSessions = <T extends { parentID?: string | null }>(sessions: T[]): T[] =>
   sessions.filter((session) => !normalizeSessionParentID(session));
 
 /**
@@ -69,6 +65,7 @@ export const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) =>
 export const getSessionDescendantIds = (
   sessions: WorkspaceSessionGroup["sessions"],
   sessionId: string,
+  taskChildren: Readonly<Record<string, readonly string[]>> = {},
 ): string[] => {
   const root = sessionId.trim();
   if (!root) return [];
@@ -87,6 +84,15 @@ export const getSessionDescendantIds = (
       visited.add(id);
       descendants.push(id);
       nextParents.add(id);
+    }
+    for (const parent of parents) {
+      for (const child of taskChildren[parent] ?? []) {
+        const id = child.trim();
+        if (!id || visited.has(id)) continue;
+        visited.add(id);
+        descendants.push(id);
+        nextParents.add(id);
+      }
     }
     parents = nextParents;
   }
@@ -162,27 +168,21 @@ export function buildGlobalArchivedSessions(groups: WorkspaceSessionGroup[]): Gl
 }
 
 /**
- * Order root sessions: pinned first, then manual order, then server recency.
+ * Order root sessions by saved position and creation, never server recency.
  */
 export const orderRootSessions = (
   roots: SessionListItem[],
   pinnedIds: Set<string>,
   orderIds: string[],
 ): SessionListItem[] => {
-  const byId = new Map(roots.map((root) => [root.id, root]));
-  const ordered: SessionListItem[] = [];
-  const used = new Set<string>();
-
-  for (const id of orderIds) {
-    const root = byId.get(id);
-    if (!root || used.has(id)) continue;
-    ordered.push(root);
-    used.add(id);
-  }
+  const byId = new Map<string, SessionListItem>();
   for (const root of roots) {
-    if (used.has(root.id)) continue;
-    ordered.push(root);
-    used.add(root.id);
+    if (!byId.has(root.id)) byId.set(root.id, root);
+  }
+  const ordered: SessionListItem[] = [];
+  for (const id of getSessionOrder(roots, orderIds)) {
+    const root = byId.get(id);
+    if (root) ordered.push(root);
   }
 
   // Stable partition: pinned roots float to the top, preserving relative order.
@@ -218,17 +218,11 @@ const EMPTY_ARRAY: string[] = [];
 
 export const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
-  workspace.openworkWorkspaceName?.trim() ||
   workspace.name?.trim() ||
   workspace.path?.trim() ||
   t("workspace_list.workspace_fallback");
 
-export const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-  workspace.workspaceType === "remote"
-    ? isSandboxWorkspace(workspace)
-      ? t("workspace.sandbox_badge")
-      : t("workspace.remote_badge")
-    : t("workspace.local_badge");
+export const workspaceKindLabel = () => t("workspace.local_badge");
 
 const WORKSPACE_SWATCHES = ["#2563eb", "#5a67d8", "#f97316", "#10b981"];
 

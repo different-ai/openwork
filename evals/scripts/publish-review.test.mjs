@@ -1,135 +1,114 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { association, authorEvidenceNotice } from "../../.github/scripts/evidence-association.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
-import { association, publishCompletedEvidence } from "./publish-review.mjs";
+import { CORE_SPECS, proofArtifact } from "../../.github/scripts/pr-proof.mjs";
+import { publishCompletedEvidence } from "./publish-review.mjs";
+import { assembleReview } from "../packages/test-artifacts/src/review.ts";
+import { summarizeReview } from "../../packages/review/src/schema.ts";
 
-const repo = "sample-org/sample-project";
-const repository = { id: 10, full_name: repo, name: "sample-project", owner: { login: "sample-org" } };
-const sha = "1".repeat(40);
-const workflows = [
-  { id: 20, file: "ci-tests.yml", name: "Build and core checks", events: ["pull_request", "push"] },
-  { id: 21, file: "daytona-e2e.yml", name: "Product journeys", events: ["workflow_run"] },
-];
-function run(id = 30, producer = workflows[0]) {
-  return {
-    id, run_attempt: 1, workflow_id: producer.id, path: `.github/workflows/${producer.file}`, name: producer.name,
-    event: producer.events[0], status: "completed", conclusion: "success",
-    repository, head_repository: repository, head_sha: sha,
-    pull_requests: [{ number: 7, base: { repo: { id: 10 } }, head: { repo: { id: 10 }, sha } }],
-  };
-}
-function harness(runs = [run()]) {
-  const logs = [], downloads = [], publications = [];
-  const current = { number: 7, state: "open", created_at: "2026-07-01T00:00:00Z", base: { repo: repository }, head: { repo: repository, sha } };
-  const api = async (path) => {
-    const workflow = workflows.find((item) => path.endsWith(`/workflows/${item.file}`));
-    if (workflow) return { ...workflow, path: `.github/workflows/${workflow.file}` };
-    if (path.endsWith("/pulls/7")) return current;
-    const id = /\/actions\/runs\/(\d+)$/.exec(path)?.[1];
-    if (id) return runs.find((item) => item.id === Number(id));
-    if (path.includes("/artifacts?")) return { total_count: 1, artifacts: [{ expired: false }] };
-    const workflowId = /\/workflows\/(\d+)\/runs\?/.exec(path)?.[1];
-    if (workflowId) {
-      const matches = runs.filter((item) => item.workflow_id === Number(workflowId));
-      return { total_count: matches.length, workflow_runs: matches };
-    }
-    throw new Error(`Unexpected API path: ${path}`);
-  };
-  return {
-    logs, downloads, publications, current,
-    dependencies: {
-      api, log: (message) => logs.push(message),
-      required: async () => ({ state: "waiting", url: "https://github.com/sample-org/sample-project/actions/runs/31" }),
-      binding: async (_repo, id) => ({ producer: runs.find(item => item.id === id), receipt: { pr: 7, sha } }),
-      download: async (id, directory) => {
-        downloads.push(id);
-        await mkdir(directory, { recursive: true });
-        await writeFile(join(directory, "test-run.json"), JSON.stringify({
-          name: `Producer ${id}`, dir: directory, createdAt: "2026-07-02T00:00:00Z", closedAt: "2026-07-02T00:01:00Z", gitSha: sha,
-          engine: "v1", branch: "test", artifacts: [], trace: [], steps: [], outcome: "passed",
-          summary: { ok: true, totalArtifacts: 0, passedArtifacts: 0, failedArtifacts: 0, unvalidatedArtifacts: 0,
-            pendingArtifacts: 0, passedExpectations: 0, failedExpectations: 0, pendingJudgments: 0 },
-        }));
-      },
-      publish: async (options) => { publications.push(options); return { posted: true, urls: { report: "published" } }; },
+test("author evidence uses only the API run's validated starter, with actor fallback", () => {
+  const label = "Author evidence: these tests run the PR's own code. Not a CI verification or merge gate.";
+  assert.equal(authorEvidenceNotice({ triggering_actor: { login: "api-user" }, actor: { login: "original" }, artifacts: [{ login: "artifact" }] }), `Started by @api-user. ${label}`);
+  assert.equal(authorEvidenceNotice({ actor: { login: "original" } }), `Started by @original. ${label}`);
+  for (const login of [undefined, "", "-bad", "bad-", "bad--login", "a".repeat(40), "@team", "<img>", "x\ntext", "x\n", "x\r", 42])
+    assert.equal(authorEvidenceNotice({ triggering_actor: { login }, artifacts: [{ login: "artifact" }] }), label);
+});
+
+const repo = "example/repo";
+const repository = { id: 1, full_name: repo, owner: { login: "example" }, name: "repo" };
+const sha = "a".repeat(40);
+const workflows = [{ id: 2, file: "pr-proof.yml", name: "PR change proof", events: ["pull_request", "workflow_dispatch"] }];
+const run = { workflow_id: 2, path: ".github/workflows/pr-proof.yml", name: "PR change proof",
+  repository, head_repository: repository, status: "completed", conclusion: "success",
+  event: "workflow_dispatch", head_branch: "proof/branch", head_sha: sha, pull_requests: [] };
+const pr = { number: 3, state: "open", base: { repo: repository }, head: { repo: repository, ref: run.head_branch, sha } };
+
+for (const [name, pulls, expected] of [
+  ["one matching open PR", [pr], { pr: 3, sha }],
+  ["no match", [], { reason: "missing or ambiguous PR association" }],
+  ["two matches", [pr, { ...pr, number: 4 }], { reason: "missing or ambiguous PR association" }],
+  ...[
+    ["fork head", { head: { ...pr.head, repo: { ...repository, id: 9, full_name: "fork/repo" } } }],
+    ["different SHA", { head: { ...pr.head, sha: "b".repeat(40) } }],
+    ["closed PR", { state: "closed" }],
+    ["different branch", { head: { ...pr.head, ref: "other" } }],
+    ["different repository ID", { base: { repo: { ...repository, id: 9 } } }],
+  ].map(([name, change]) => [name, [{ ...pr, ...change }], { reason: "missing or ambiguous PR association" }]),
+]) test(`dispatch association: ${name}`, async () => {
+  assert.deepEqual(await association(run, repo, workflows, async path => {
+    assert.equal(path, "repos/example/repo/pulls?state=open&head=example%3Aproof%2Fbranch&per_page=100&page=1");
+    return pulls;
+  }), expected);
+});
+
+test("dispatch association reads every page before accepting a unique PR", async () => {
+  const pages = [Array.from({ length: 100 }, () => ({ ...pr, state: "closed" })), [pr]];
+  assert.deepEqual(await association(run, repo, workflows, async () => pages.shift()), { pr: 3, sha });
+});
+
+test("pull_request association is unchanged and does not list pulls", async () => {
+  assert.deepEqual(await association({ ...run, event: "pull_request", pull_requests: [pr] }, repo, workflows,
+    async () => assert.fail("unexpected API lookup")), { pr: 3, sha });
+  assert.deepEqual(await association({ ...run, event: "pull_request" }, repo, workflows), { reason: "missing or ambiguous PR association" });
+});
+
+for (const [event, fault] of [
+  ["workflow_dispatch", "none"], ["pull_request", "none"], ["pull_request", "missing-core"],
+  ...["missing", "duplicate", "unexpected", "future-attempt", "stale-sha", "wrong-spec"].map(fault => ["workflow_dispatch", fault]),
+]) test(`${event} publication with selected artifacts: ${fault}`, async () => {
+  const changed = ["evals/proofs/web.proof.test.ts", "evals/core/packaged-startup.e2e.test.ts"];
+  const specs = event === "pull_request" ? [...CORE_SPECS, ...changed] : changed;
+  let artifacts = specs.map(spec => ({ name: proofArtifact(spec, 2), expired: false }));
+  if (fault === "missing" || fault === "missing-core") artifacts = artifacts.slice(1);
+  if (fault === "duplicate") artifacts.push(artifacts[0]);
+  if (fault === "unexpected") artifacts.push({ name: proofArtifact("evals/proofs/other.proof.test.ts", 2), expired: false });
+  if (fault === "future-attempt") artifacts.push({ name: proofArtifact(changed[0], 3), expired: false });
+  let published = false;
+  const result = await publishCompletedEvidence({ repo, runId: 10, runAttempt: 2 }, {
+    api: async path => {
+      if (path.endsWith("/workflows/pr-proof.yml")) return { ...workflows[0], path: run.path };
+      if (path.endsWith("/actions/runs/10")) return { ...run, id: 10, run_attempt: 2, event, pull_requests: event === "pull_request" ? [pr] : [] };
+      if (path.includes("/pulls?")) return [pr];
+      if (path.endsWith("/pulls/3")) return { ...pr, changed_files: changed.length };
+      if (path.includes("/pulls/3/files?")) return changed.map(filename => ({ filename, status: "modified" }));
+      if (path.includes("/artifacts?")) return { total_count: artifacts.length, artifacts };
+      assert.fail(`unexpected GitHub lookup: ${path}`);
     },
-  };
-}
-
-test("external-base push association is skipped before looking up its PR number", async () => {
-  const source = run();
-  source.event = "push";
-  source.pull_requests[0].base.repo.id = 99;
-  const fixture = harness([source]);
-  await publishCompletedEvidence({ repo, runId: 30 }, fixture.dependencies);
-  assert.match(fixture.logs[0], /base or head repository identity mismatch/);
-  assert.deepEqual(fixture.downloads, []);
+    download: async (id, directory, name) => {
+      assert.equal(id, 10);
+      const spec = specs.find(spec => proofArtifact(spec, 2) === name);
+      assert.ok(spec); await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "test-run.json"), JSON.stringify({
+        name: spec, specFile: fault === "wrong-spec" ? "evals/proofs/other.proof.test.ts" : spec,
+        gitSha: fault === "stale-sha" ? "b".repeat(40) : sha, dir: directory,
+        createdAt: "2026-11-12T00:00:00.000Z", closedAt: "2026-11-12T00:00:01.000Z",
+        outcome: spec.includes("packaged-") ? "skipped" : "passed",
+        artifacts: spec.includes("packaged-") ? [] : [{ caption: "Synthetic check", fileName: "", hash: "", route: "",
+          at: "2026-11-12T00:00:00.000Z", description: "", model: "", ok: true,
+          results: [{ expectation: "Synthetic check", passed: true, evidence: "unit fixture" }] }],
+        summary: { ok: false, totalArtifacts: 0, passedArtifacts: 0, failedArtifacts: 0, unvalidatedArtifacts: 0, passedExpectations: 0, failedExpectations: 0 },
+      }));
+    },
+    publish: async options => {
+      published = true; assert.equal(options.testRunDirs.length, specs.length);
+      const { report } = await assembleReview(options);
+      assert.ok(report.sources.some(source => source.kind === "test-run" && source.outcome === "skipped"));
+      assert.equal(summarizeReview(report).verdict, "Incomplete");
+      return { posted: true, urls: { report: "https://review.example.test/r/test" } };
+    },
+    log: () => {},
+  });
+  assert.equal(published, fault === "none");
+  if (fault === "none") assert.equal(result.posted, true);
+  else assert.match(result.skipped, /missing or duplicated|unexpected proof artifact|source or commit/);
 });
 
-test("missing, ambiguous, stale and invalid producer identities skip visibly", async () => {
-  for (const change of [
-    (source) => { source.pull_requests = []; },
-    (source) => { source.pull_requests.push(source.pull_requests[0]); },
-    (source) => { source.path = ".github/workflows/unknown.yml"; },
-    (source) => { source.head_repository = { ...repository, owner: { login: "other-org" } }; },
-    (source) => { source.head_sha = "2".repeat(40); },
-  ]) {
-    const source = run(); change(source);
-    const fixture = harness([source]);
-    await publishCompletedEvidence({ repo, runId: 30 }, fixture.dependencies);
-    assert.match(fixture.logs[0], /skipped: .+; existing report unchanged/);
-    assert.deepEqual(fixture.publications, []);
-  }
-  const fixture = harness();
-  fixture.current.head.sha = "2".repeat(40);
-  await publishCompletedEvidence({ repo, runId: 30 }, fixture.dependencies);
-  assert.match(fixture.logs[0], /stale/);
-});
-
-test("chained producer PR arrays are not authority without an authenticated upstream binding", () => {
-  const chained = run(31, workflows[1]);
-  chained.head_sha = "2".repeat(40);
-  assert.match(association(chained, repo, workflows).reason, /authenticated upstream binding/);
-  chained.pull_requests = [];
-  assert.match(association(chained, repo, workflows).reason, /authenticated upstream binding/);
-});
-
-test("later publication gathers all verified producers, excluding untrusted runs", async () => {
-  const chained = run(31, workflows[1]);
-  chained.head_sha = "2".repeat(40);
-  const unrelated = run(32); unrelated.pull_requests[0].base.repo.id = 99;
-  const fixture = harness([run(), chained, unrelated]);
-  await publishCompletedEvidence({ repo, runId: 31 }, fixture.dependencies);
-  assert.deepEqual(fixture.downloads, [30, 31]);
-  assert.equal(fixture.publications[0].testRunDirs.length, 2);
-  assert.equal(fixture.publications[0].automatic, true);
-  assert.match(fixture.publications[0].gaps[0], /Required verification: waiting/);
-});
-
-test("unbound chained evidence cannot publish even with plausible artifact identities", async () => {
-  const fixture = harness([run(31, workflows[1])]);
-  fixture.dependencies.binding = async () => { throw new Error("unsupported chain"); };
-  await publishCompletedEvidence({ repo, runId: 31 }, fixture.dependencies);
-  assert.deepEqual(fixture.publications, []);
-  assert.deepEqual(fixture.downloads, []);
-});
-
-test("bounded history, expired artifacts and changed producer/current PR fail closed", async () => {
-  for (const condition of ["bound", "expired", "producer", "head"]) {
-    const fixture = harness();
-    const original = fixture.dependencies.api;
-    let runReads = 0, prReads = 0;
-    fixture.dependencies.api = async (path) => {
-      const value = await original(path);
-      if (condition === "bound" && path.includes("/runs?")) return { ...value, total_count: 501 };
-      if (condition === "expired" && path.includes("/artifacts?")) return { total_count: 1, artifacts: [{ expired: true }] };
-      if (condition === "producer" && path.endsWith("/runs/30") && ++runReads > 1) return { ...value, name: "Unknown" };
-      if (condition === "head" && path.endsWith("/pulls/7") && ++prReads > 1) return { ...value, head: { ...value.head, sha: "2".repeat(40) } };
-      return value;
-    };
-    await publishCompletedEvidence({ repo, runId: 30 }, fixture.dependencies);
-    assert.deepEqual(fixture.publications, []);
-    assert.match(fixture.logs[0], /skipped:/);
-  }
+test("Evidence review admits dispatches and keeps publisher checkout on the default branch", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/evidence-review.yml", import.meta.url), "utf8");
+  assert.equal(workflow.match(/contains\(fromJSON\('\["pull_request", "workflow_dispatch"\]'\), github.event.workflow_run.event\)/g)?.length, 2);
+  assert.equal(workflow.match(/ref: \$\{\{ github.event.repository.default_branch \}\}/g)?.length, 2);
+  assert.match(workflow, /github.event_name == 'workflow_dispatch' && github.ref == format\('refs\/heads\/\{0\}', github.event.repository.default_branch\)/);
 });

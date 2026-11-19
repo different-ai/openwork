@@ -20,6 +20,11 @@ export function externalMcpSharedCallbackUrl(): string {
   return publicApiUrl("/v1/mcp-connections/oauth/callback")
 }
 
+/** The shared callback, or null on a deployment without DEN_API_PUBLIC_URL (setup screens omit it then). */
+export function externalMcpSharedCallbackUrlIfConfigured(): string | null {
+  return env.apiPublicUrl ? externalMcpSharedCallbackUrl() : null
+}
+
 export function externalMcpLegacyCallbackUrl(connectionId: string): string {
   return publicApiUrl(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`)
 }

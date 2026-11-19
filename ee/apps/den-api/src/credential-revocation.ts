@@ -6,8 +6,10 @@ import {
   OAuthConsentTable,
   OAuthRefreshTokenTable,
 } from "@openwork-ee/den-db/schema"
+import { recordOrganizationSessionsRevoked } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
+import { revokeHeadlessResumeGrantsForMember } from "./headless-runner/resume-grant-revocation.js"
 
 type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthSessionTable.$inferSelect.userId
@@ -16,18 +18,35 @@ export type MembershipCredentialRevocationCounts = {
   sessions: number
   oauthAccessTokens: number
   oauthRefreshTokens: number
+  headlessResumeGrants: number
 }
+
+/** Why an organization change revoked the user's sessions (session.revoked reasonCode). */
+export type MembershipSessionRevocationReason = "member_removed" | "role_changed" | "role_permissions_changed" | "ownership_transferred"
 
 export async function revokeMembershipSessionCredentials(input: {
   organizationId: OrganizationId
   userId: UserId | null
+  /** The affected membership (removed or changed), for the audit event. */
+  memberId: string | null
+  reason: MembershipSessionRevocationReason
 }): Promise<MembershipCredentialRevocationCounts> {
   if (!input.userId) {
-    return { sessions: 0, oauthAccessTokens: 0, oauthRefreshTokens: 0 }
+    return { sessions: 0, oauthAccessTokens: 0, oauthRefreshTokens: 0, headlessResumeGrants: 0 }
   }
 
-  const sessions = await db
-    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+  // A request that read the membership before this change must not cache it
+  // again: MCP requests check membership through this cache.
+  await cache.org.revokeMembership({ organizationId: input.organizationId, userId: input.userId })
+
+  // Headless runner resume grants could otherwise mint fresh MCP tokens for the member's turns. Revoked first, before
+  // any token is deleted: an exchange that minted a token before this point has it deleted below, and one minting
+  // after it sees the revocation when it re-checks and deletes its own token (exchangeHeadlessResumeGrant).
+  const headlessResumeGrants = await revokeHeadlessResumeGrantsForMember({ organizationId: input.organizationId, userId: input.userId })
+
+  // primary throughout: revocation must find credentials minted moments ago.
+  const sessions = await db.$primary
+    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, input.userId))
 
@@ -42,9 +61,12 @@ export async function revokeMembershipSessionCredentials(input: {
       cache.auth.revokeSession(session.token),
       cache.auth.revokeSessionId(session.id),
     ]))
+    // Direct delete: no better-auth hook fires. session.revoked in the affected
+    // organization (never blocks or rolls back the revocation).
+    await recordOrganizationSessionsRevoked({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId, sessions, reasonCode: input.reason })
   }
 
-  const oauthAccessTokens = await db
+  const oauthAccessTokens = await db.$primary
     .select({ id: OAuthAccessTokenTable.id })
     .from(OAuthAccessTokenTable)
     .where(and(
@@ -58,7 +80,7 @@ export async function revokeMembershipSessionCredentials(input: {
       .where(inArray(OAuthAccessTokenTable.id, oauthAccessTokens.map((token) => token.id)))
   }
 
-  const oauthConsents = await db
+  const oauthConsents = await db.$primary
     .select({ id: OAuthConsentTable.id })
     .from(OAuthConsentTable)
     .where(and(
@@ -73,7 +95,7 @@ export async function revokeMembershipSessionCredentials(input: {
     await Promise.all(oauthConsents.map((consent) => cache.auth.revokeGrant(consent.id)))
   }
 
-  const oauthRefreshTokens = await db
+  const oauthRefreshTokens = await db.$primary
     .select({ id: OAuthRefreshTokenTable.id })
     .from(OAuthRefreshTokenTable)
     .where(and(
@@ -93,5 +115,6 @@ export async function revokeMembershipSessionCredentials(input: {
     sessions: sessions.length,
     oauthAccessTokens: oauthAccessTokens.length,
     oauthRefreshTokens: oauthRefreshTokens.length,
+    headlessResumeGrants,
   }
 }

@@ -41,6 +41,15 @@ Containerized production installs run the precompiled artifact directly:
 node /app/ee/packages/den-db/dist/scripts/bootstrap.js
 ```
 
+`db:migrate`, `db:push` and `bootstrap.js` finish by reconciling default
+permission sets: catalog permissions that are new since a Member or Admin set
+was created get a row (`source = 'reconcile'`). It is idempotent and needs no
+migration file, so the Den DB Migrate workflow also runs it on its own:
+
+```bash
+pnpm --dir ee/packages/den-db db:reconcile-permissions
+```
+
 ## Production 0097 upgrade preconditions
 
 For an existing database with canonical 0097 still pending, use the compiled
@@ -88,7 +97,8 @@ refused rather than treating incomplete metadata visibility as proof of absence.
 Affected table/column collations must match the database defaults. The runner does
 not change engine settings, PK requirements, grants, encryption or TLS.
 
-History must be the exact canonical hash/timestamp prefix. Unknown, superseded,
+History must be the exact canonical hash/timestamp prefix; the only exceptions
+are released bodies listed in `scripts/superseded-migrations.ts`. Unknown, superseded,
 unjournaled, nonempty intermediate or partial-0097 states require separately
 reviewed recovery; bootstrap does not repair, replay partial DDL, or baseline them.
 A failed or uncertain completion must be inspected before any restart. For callers
@@ -139,6 +149,23 @@ local env vars — see `.env.example`):
 | `DATABASE_HOST` | PlanetScale host (e.g. `aws.connect.psdb.cloud`) |
 | `DATABASE_USERNAME` | PlanetScale branch password username |
 | `DATABASE_PASSWORD` | PlanetScale branch password |
+
+### Read replicas
+
+`createDenDb` always returns `db` wrapped in Drizzle's
+[`withReplicas`](https://orm.drizzle.team/docs/read-replicas). Reads
+(`select`, `selectDistinct`, `$count`, `with`, `query`) go to the replica;
+writes, `execute` and transactions go to the primary.
+
+Den API and the Gateway read optional `DATABASE_READ_USERNAME` and
+`DATABASE_READ_PASSWORD`: replica credentials for the same host as the primary
+(`DATABASE_HOST`, or the host in `DATABASE_URL`). Without both, the replica *is*
+the primary, so self-hosted and single-credential deployments behave as before.
+
+Replicas can lag the primary slightly. A read that must see a write made
+moments earlier should use `db.$primary.select()...`; Better Auth's adapter is
+pinned to `db.$primary` for this reason. Migration and maintenance scripts
+don't pass replica credentials and always use the primary.
 
 ### One-time baseline
 

@@ -1,0 +1,276 @@
+"use client";
+
+import {
+  DEFAULT_MODEL_SOURCE_LABELS,
+  sameDefaultModel,
+  type DefaultModelChoice,
+  type DefaultModelOption,
+  type DefaultModelOptions,
+  type DefaultModelSettings,
+} from "@openwork/types/den/default-model";
+import { useId, useState, type ReactNode } from "react";
+import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { DenButton } from "../../_components/ui/button";
+import { DenCombobox, type DenComboboxOption } from "../../_components/ui/combobox";
+import { DenNotice } from "../../_components/ui/notice";
+import { DenSkeleton } from "../../_components/ui/skeleton";
+import { getAiGatewayRoute } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { providerIconSlug } from "./library-models";
+import { useDefaultModelOptions, useDefaultModelSettings, useSaveDefaultModel } from "./default-model-data";
+import { ConflictLine, ReadOnlyNotice, SavedUndoLine, ScopeChip, SettingRow } from "./scoped-setting";
+import { EVERYONE_SCOPE, teamScopeOf, type TeamScope } from "./team-scope";
+
+/** The combobox value for "no model of its own": no default (Everyone) or use Everyone's (team). */
+const INHERIT_VALUE = "";
+const VALUE_SEPARATOR = "::";
+
+function valueOf(choice: DefaultModelChoice | null): string {
+  return choice ? `${choice.providerId}${VALUE_SEPARATOR}${choice.modelId}` : INHERIT_VALUE;
+}
+
+function choiceOf(value: string): DefaultModelChoice | null {
+  const at = value.indexOf(VALUE_SEPARATOR);
+  if (!value || at <= 0) return null;
+  return { providerId: value.slice(0, at), modelId: value.slice(at + VALUE_SEPARATOR.length) };
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+function findOption(options: DefaultModelOptions | undefined, choice: DefaultModelChoice | null): DefaultModelOption | null {
+  return choice ? options?.options.find((option) => sameDefaultModel(option, choice)) ?? null : null;
+}
+
+/** "Claude Sonnet 4.5 (Anthropic)", or the bare model id when the organization no longer has it. */
+export function defaultModelName(options: DefaultModelOptions | undefined, choice: DefaultModelChoice | null): string | null {
+  if (!choice) return null;
+  const option = findOption(options, choice);
+  return option ? `${option.modelName} (${option.providerName})` : choice.modelId;
+}
+
+function ModelMark({ option }: { option: Pick<DefaultModelOption, "providerName" | "logoProviderId"> }) {
+  return (
+    <DenBrandMark
+      name={option.providerName}
+      simpleIconSlug={providerIconSlug(option.logoProviderId)}
+      className="h-5 w-5 rounded-[5px] border-gray-200"
+      imageClassName="h-3.5 w-3.5"
+    />
+  );
+}
+
+function comboboxOptions(input: {
+  options: DefaultModelOptions;
+  saved: DefaultModelChoice | null;
+  inherit: { label: string; description?: string; icon?: ReactNode };
+}): DenComboboxOption[] {
+  const listed: DenComboboxOption[] = input.options.options.map((option) => ({
+    value: valueOf(option),
+    label: option.modelName,
+    description: option.providerName,
+    meta: option.source === "openwork" ? undefined : DEFAULT_MODEL_SOURCE_LABELS[option.source],
+    keywords: [option.providerName, option.modelId, DEFAULT_MODEL_SOURCE_LABELS[option.source]],
+    icon: <ModelMark option={option} />,
+  }));
+  // A saved model the organization no longer has stays visible as the current value.
+  const missing = input.saved && !findOption(input.options, input.saved)
+    ? [{ value: valueOf(input.saved), label: input.saved.modelId, description: "No longer available" }]
+    : [];
+  return [{ value: INHERIT_VALUE, label: input.inherit.label, description: input.inherit.description, icon: input.inherit.icon }, ...missing, ...listed];
+}
+
+type PickerProps = {
+  scope: TeamScope;
+  label: string;
+  canManage: boolean;
+  settings: DefaultModelSettings | undefined;
+  /** The scope's saved model: Everyone's default, or the team's own. */
+  saved: DefaultModelChoice | null;
+  inherit: { label: string; description?: string; icon?: ReactNode };
+  /** On a team's page: its members who are also on a team with a different model. */
+  conflictCount?: number;
+  settingsError: unknown;
+  onRetrySettings: () => void;
+};
+
+/**
+ * One default model row: a searchable list of the organization's models, read
+ * live, saved as soon as it is picked, with Undo. Shared by Org settings and
+ * each team's Access tab.
+ */
+function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit, conflictCount = 0, settingsError, onRetrySettings }: PickerProps) {
+  const { orgId: scopedOrgId, orgSlug } = useOrgDashboard();
+  const orgId = scopedOrgId ?? "";
+  const labelId = useId();
+  const options = useDefaultModelOptions(orgId, true);
+  const save = useSaveDefaultModel(orgId);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedChange, setSavedChange] = useState<{ previous: DefaultModelChoice | null; next: DefaultModelChoice | null } | null>(null);
+  const teamId = scope.kind === "team" ? scope.teamId : null;
+
+  async function store(next: DefaultModelChoice | null, previous: DefaultModelChoice | null) {
+    setSaveError(null);
+    setSavedChange(null);
+    try {
+      await save.mutateAsync({ teamId, model: next });
+      setSavedChange({ previous, next });
+    } catch (error) {
+      setSaveError(errorMessage(error, "Couldn't save the default model. Try again."));
+    }
+  }
+
+  const gatewayUnavailable = options.data?.unavailableSources.includes("gateway") ?? false;
+  const otherUnavailable = options.data?.unavailableSources.filter((source) => source !== "gateway") ?? [];
+  const noModels = options.data !== undefined && options.data.options.length === 0 && options.data.unavailableSources.length === 0;
+  const savedMissing = Boolean(saved && options.data && !findOption(options.data, saved) && options.data.unavailableSources.length === 0);
+  const loading = !settings || options.isPending;
+  const savedName = (choice: DefaultModelChoice | null) => defaultModelName(options.data, choice);
+
+  let control: ReactNode;
+  if (settingsError) {
+    control = <span className="text-[13px] text-gray-500">Unavailable</span>;
+  } else if (loading) {
+    control = <DenSkeleton className="h-10 w-80 max-w-full" data-testid="default-model-skeleton" />;
+  } else if (options.isError && !saved) {
+    control = <span className="text-[13px] text-gray-500">Unavailable</span>;
+  } else if (noModels && !saved) {
+    control = (
+      <>
+        <span className="text-[13px] text-gray-500" data-testid="default-model-empty">No models yet</span>
+        {canManage ? <DenButton variant="secondary" size="sm" href={getAiGatewayRoute(orgSlug)}>Set up models</DenButton> : null}
+      </>
+    );
+  } else {
+    control = (
+      <div className="w-80 min-w-0 max-w-full" data-testid="default-model-picker">
+        <DenCombobox
+          className="h-8! text-[13px]!"
+          ariaLabel={label}
+          value={valueOf(saved)}
+          options={comboboxOptions({ options: options.data ?? { options: [], unavailableSources: [] }, saved, inherit })}
+          disabled={!canManage || save.isPending || options.isError}
+          placeholder={inherit.label}
+          searchPlaceholder="Search models"
+          emptyLabel="No models match"
+          onChange={(value) => {
+            const next = choiceOf(value);
+            if (sameDefaultModel(next, saved)) return;
+            void store(next, saved);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3">
+      {settingsError ? (
+        <DenNotice
+          tone="error"
+          message={errorMessage(settingsError, "Couldn't load the default model.")}
+          action={<DenButton variant="secondary" size="sm" onClick={onRetrySettings}>Try again</DenButton>}
+        />
+      ) : null}
+      {!settingsError && options.isError ? (
+        <DenNotice
+          tone="error"
+          message={errorMessage(options.error, "Couldn't load your organization's models.")}
+          action={<DenButton variant="secondary" size="sm" loading={options.isFetching} onClick={() => void options.refetch()}>Try again</DenButton>}
+        />
+      ) : null}
+      {gatewayUnavailable || otherUnavailable.length > 0 ? (
+        <DenNotice
+          tone="warning"
+          message={gatewayUnavailable && otherUnavailable.length === 0
+            ? "Couldn't load AI Gateway models. Your other models are listed."
+            : "Some of your organization's models couldn't be loaded. The rest are listed."}
+          action={<DenButton variant="secondary" size="sm" loading={options.isFetching} onClick={() => void options.refetch()}>Try again</DenButton>}
+        />
+      ) : null}
+      {savedMissing ? (
+        <DenNotice
+          tone="warning"
+          message={scope.kind === "team"
+            ? "This team's model is no longer available. Its members start on Everyone's model until you choose another."
+            : "The default model is no longer available. Desktops keep their own default until you choose another."}
+        />
+      ) : null}
+
+      <div className="divide-y divide-[var(--den-list-line)] border-b border-[var(--den-list-line)]" data-section={scope.kind === "team" ? "team-default-model" : "org-default-model"}>
+        <SettingRow flush label={label} labelId={labelId}>
+          {settings ? <ScopeChip scope={scope} changed={saved !== null} /> : null}
+          {control}
+        </SettingRow>
+        <ConflictLine flush count={conflictCount} setting="model" />
+      </div>
+
+      {saveError ? <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p> : null}
+      {savedChange ? (
+        <SavedUndoLine
+          message={savedChange.next
+            ? `Saved. New desktop chats start on ${savedName(savedChange.next)}.`
+            : scope.kind === "team" ? "Saved. This team uses Everyone's model." : "Saved. No default model for Everyone."}
+          pending={save.isPending}
+          onUndo={() => void store(savedChange.previous, savedChange.next)}
+        />
+      ) : null}
+      {!canManage && settings ? <ReadOnlyNotice permission="inference.manage" /> : null}
+    </div>
+  );
+}
+
+/** The row's label under a "Default model" section title, on Everyone's page and on a team's. */
+const SCOPED_ROW_LABEL = "New desktop chats start on";
+
+/** Org settings › Default model: the model new desktop chats start with, for everyone. */
+export function OrgDefaultModelSection({ canManage, embedded = false }: { canManage: boolean; /** Under the "Default model" section title of Everyone › Models. */ embedded?: boolean }) {
+  const orgId = useOrgDashboard().orgId ?? "";
+  const settings = useDefaultModelSettings(orgId, true);
+  return (
+    <section className={embedded ? "grid gap-3" : "mt-6 grid gap-3"} aria-label="Default model" data-testid="org-default-model-section">
+      <DefaultModelPicker
+        scope={EVERYONE_SCOPE}
+        label={embedded ? SCOPED_ROW_LABEL : "Default model"}
+        canManage={canManage && (settings.data?.canEdit ?? true)}
+        settings={settings.data}
+        saved={settings.data?.everyone ?? null}
+        inherit={{ label: "No default", description: "Desktops keep their own default" }}
+        settingsError={settings.error}
+        onRetrySettings={() => void settings.refetch()}
+      />
+    </section>
+  );
+}
+
+/** A team's Models tab › Default model: use Everyone's model or pick the team's own. */
+export function TeamDefaultModelSection({ team: shownTeam, canManage, embedded = false }: { team: { id: string; name: string }; canManage: boolean; /** Under a section title of the page's own (the team's Models tab). */ embedded?: boolean }) {
+  const orgId = useOrgDashboard().orgId ?? "";
+  const settings = useDefaultModelSettings(orgId, true);
+  const options = useDefaultModelOptions(orgId, true);
+  const team = settings.data?.teams.find((entry) => entry.teamId === shownTeam.id);
+  const orgDefault = settings.data?.everyone ?? null;
+  const orgDefaultOption = findOption(options.data, orgDefault);
+  return (
+    <section className={embedded ? "grid gap-3" : "mb-8 grid gap-3"} aria-label={embedded ? "Default model" : undefined} aria-labelledby={embedded ? undefined : "team-default-model-heading"} data-testid="team-default-model-section">
+      {embedded ? null : <h2 id="team-default-model-heading" className="text-lg font-semibold text-gray-950">Default model</h2>}
+      <DefaultModelPicker
+        scope={teamScopeOf(shownTeam)}
+        label={SCOPED_ROW_LABEL}
+        canManage={canManage && (settings.data?.canEdit ?? true)}
+        settings={settings.data}
+        saved={team?.model ?? null}
+        inherit={orgDefault ? {
+          // Following Everyone shows which model that is; the chip beside the picker says it is Everyone's.
+          label: orgDefaultOption?.modelName ?? orgDefault.modelId,
+          description: orgDefaultOption ? `Everyone's model, ${orgDefaultOption.providerName}` : "Everyone's model",
+          icon: orgDefaultOption ? <ModelMark option={orgDefaultOption} /> : undefined,
+        } : { label: "Use Everyone's model", description: "No default model for Everyone" }}
+        conflictCount={team?.conflictingMemberCount}
+        settingsError={settings.error}
+        onRetrySettings={() => void settings.refetch()}
+      />
+    </section>
+  );
+}

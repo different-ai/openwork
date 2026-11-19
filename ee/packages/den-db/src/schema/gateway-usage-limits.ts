@@ -22,6 +22,7 @@ const member = () => denTypeIdColumn("member", "member_id").notNull()
 const timeframe = () => mysqlEnum("timeframe", ["day", "week", "month"]).notNull()
 const money = (name: string) => bigint(name, { mode: "number" }).notNull().default(0)
 const date = (name: string) => timestamp(name, { fsp: 3 }).notNull()
+const providerScope = () => varchar("provider_scope", { length: 64 }).notNull().default("")
 
 export const GatewayUsagePolicyTable = mysqlTable(
   "gateway_usage_limit_policy",
@@ -32,12 +33,17 @@ export const GatewayUsagePolicyTable = mysqlTable(
     hardLimit: boolean("hard_limit").notNull().default(true),
     allowRequestReset: boolean("allow_request_reset").notNull().default(true),
     revision: int("revision").notNull().default(1),
+    /** Null: a default limit. Otherwise the organization Gateway provider this limit governs. */
+    inferenceProviderId: denTypeIdColumn("inferenceProvider", "inference_provider_id"),
     archivedAt: timestamp("archived_at", { fsp: 3 }),
     createdAt: date("created_at"),
     updatedAt: date("updated_at"),
     createdBy: member(),
   },
-  (t) => [index("gateway_usage_policy_org").on(t.organizationId)],
+  (t) => [
+    index("gateway_usage_policy_org").on(t.organizationId),
+    index("gateway_usage_policy_provider").on(t.organizationId, t.inferenceProviderId),
+  ],
 )
 export const GatewayUsageLimitTable = mysqlTable(
   "gateway_usage_limit_entry",
@@ -62,15 +68,24 @@ export const GatewayUsageAssignmentTable = mysqlTable(
     organizationId: org(),
     memberId: denTypeIdColumn("member", "member_id"),
     teamId: denTypeIdColumn("team", "team_id"),
+    organization: boolean("organization"),
     createdAt: date("created_at"),
   },
   (t) => [
     uniqueIndex("gateway_usage_assignment_member").on(t.policyId, t.memberId),
     uniqueIndex("gateway_usage_assignment_team").on(t.policyId, t.teamId),
+    uniqueIndex("gateway_usage_assignment_organization").on(
+      t.organizationId,
+      t.policyId,
+      t.organization,
+    ),
     index("gateway_usage_assignment_org").on(t.organizationId),
     index("gateway_usage_assignment_member_lookup").on(t.organizationId, t.memberId),
     index("gateway_usage_assignment_team_lookup").on(t.organizationId, t.teamId),
-    check("gateway_usage_assignment_target", sql`(${t.memberId} is null) <> (${t.teamId} is null)`),
+    check(
+      "gateway_usage_assignment_target",
+      sql`(${t.organization} is null and ((${t.memberId} is null) <> (${t.teamId} is null))) or (${t.organization} is not null and ${t.organization} = 1 and ${t.memberId} is null and ${t.teamId} is null)`,
+    ),
   ],
 )
 export const GatewayUsageSubjectTable = mysqlTable("gateway_usage_subject", {
@@ -105,6 +120,8 @@ export const GatewayUsageBucketTable = mysqlTable(
     id: id(),
     organizationId: org(),
     memberId: member(),
+    /** '' for the default scope, otherwise the Gateway provider id (see GATEWAY_DEFAULT_USAGE_SCOPE). */
+    providerScope: providerScope(),
     timeframe: timeframe(),
     startAt: date("start_at"),
     resetAt: date("reset_at"),
@@ -122,9 +139,10 @@ export const GatewayUsageBucketTable = mysqlTable(
     allowRequestReset: boolean("allow_request_reset").notNull(),
   },
   (t) => [
-    uniqueIndex("gateway_usage_bucket_window").on(
+    uniqueIndex("gateway_usage_bucket_scope_window").on(
       t.organizationId,
       t.memberId,
+      t.providerScope,
       t.timeframe,
       t.startAt,
     ),
@@ -201,6 +219,7 @@ export const GatewayUsageResetTable = mysqlTable(
     bucketId: varchar("bucket_id", { length: 64 }).notNull(),
     policyId: varchar("policy_id", { length: 64 }).notNull(),
     policyRevision: int("policy_revision").notNull(),
+    providerScope: providerScope(),
     timeframe: timeframe(),
     policyName: varchar("policy_name", { length: 120 }).notNull(),
     reason: text("reason").notNull(),

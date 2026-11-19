@@ -3,7 +3,7 @@ import { t } from "../../../i18n";
 
 /**
  * What a user sees on an inventory row:
- * - app: a runtime that runs on this device (Ollama, Computer Use, Browser)
+ * - app: a runtime that runs on this device (Ollama, Browser)
  * - connection: an account, shared by an organization or signed in by the member
  * - mcp: an MCP server configured in this workspace
  * - skill / command / agent: composer capabilities managed in Library
@@ -18,7 +18,8 @@ export type ExtensionTransport = "mcp" | "native" | null;
 export type ExtensionInventoryState = "all" | "needs_signin" | "needs_admin_setup" | "ready" | "available" | "disabled";
 
 export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
-  "mcp",
+  "all",
+  "connection",
   "skill",
   "plugin",
 ];
@@ -30,7 +31,8 @@ export const extensionInventoryFilters: ExtensionInventoryFilter[] = [
  */
 export function primaryLibraryFilter(filter?: ExtensionInventoryFilter): ExtensionInventoryFilter {
   if (filter === "skill" || filter === "command" || filter === "agent") return "skill";
-  return filter === "plugin" ? "plugin" : "mcp";
+  if (filter === "connection" || filter === "mcp") return "connection";
+  return filter === "plugin" ? "plugin" : "all";
 }
 
 /** Built-ins ship with OpenWork and run here, so they are apps. Accounts arrive as org connections. */
@@ -41,7 +43,7 @@ export function taxonomyForDirectoryEntry(entry: McpDirectoryInfo): ExtensionTax
 
 /**
  * The MCPs category lists third-party servers only. OpenWork's own runtimes
- * (Computer Use, the browser panel, Ollama, UI control) and auto-managed
+ * (the browser panel, Ollama, UI control) and auto-managed
  * plumbing such as Cloud Control are app functionality, not MCPs to browse;
  * their setup pages stay reachable by direct link.
  */
@@ -54,7 +56,9 @@ export function matchesExtensionFilter(
   taxonomy: ExtensionTaxonomy,
   transport: ExtensionTransport = null,
 ) {
-  return filter === "all" || filter === taxonomy || (filter === "mcp" && (taxonomy === "connection" || transport === "mcp"));
+  if (filter === "all" || filter === taxonomy) return true;
+  const connector = taxonomy === "connection" || taxonomy === "mcp" || transport === "mcp";
+  return (filter === "mcp" || filter === "connection") && connector;
 }
 
 export function extensionFilterLabel(filter: ExtensionInventoryFilter) {

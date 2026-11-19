@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createDenClient } from "@/app/lib/den";
+import { createDenClient, denOriginComparisonKey } from "@/app/lib/den";
 import { readGatewayUsageScope as readScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useDenAuth } from "./den-auth-provider";
-import { corroboratesGatewayUsageError, gatewayUsageResetDelay, gatewayUsageQueryPrefix, type GatewayUsageErrorEvidence } from "./gateway-usage-state";
+import { allGatewayUsageBuckets, corroboratesGatewayUsageError, gatewayUsageResetDelay, gatewayUsageQueryPrefix, type GatewayUsageErrorEvidence } from "./gateway-usage-state";
 import { refreshGatewayUsageAfterCompletion } from "./gateway-usage-refresh";
 import type { GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 function subscribeScope(listener: () => void) {
@@ -21,21 +21,30 @@ function subscribeScope(listener: () => void) {
   });
 }
 
+// Outlives the chat view so an explained error stays hidden after leaving and reopening the session.
+const handledGatewayErrorKeys = new Set<string>();
+
 export function useGatewayUsageErrorHandled(input: {
   scopeKey: string;
   sessionOwner: string;
   errorKey: string | null;
   gatewaySelected: boolean;
   evidence: GatewayUsageErrorEvidence | null;
+  /** A generic 429 whose policy body and headers did not survive the engine. */
+  rateLimited?: boolean;
   status?: GatewayUsageStatus;
 }) {
-  const key = input.evidence ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence]) : null;
-  const corroborated = input.gatewaySelected && corroboratesGatewayUsageError(input.evidence, input.status);
-  const [handledKey, setHandledKey] = useState<string | null>(null);
+  const bare = !input.evidence && input.rateLimited === true;
+  const key = input.evidence || bare ? JSON.stringify([input.scopeKey, input.sessionOwner, input.errorKey, input.evidence ?? "rate-limited"]) : null;
+  // Without evidence only the member's own blocked status can explain the 429.
+  const corroborated = input.gatewaySelected && (bare ? input.status?.state === "blocked" : corroboratesGatewayUsageError(input.evidence, input.status));
+  const [, setHandled] = useState(0);
   useEffect(() => {
-    if (corroborated && key) setHandledKey(key);
+    if (!corroborated || !key || handledGatewayErrorKeys.has(key)) return;
+    handledGatewayErrorKeys.add(key);
+    setHandled((count) => count + 1);
   }, [corroborated, key]);
-  return input.gatewaySelected && key !== null && (corroborated || handledKey === key);
+  return input.gatewaySelected && key !== null && (corroborated || handledGatewayErrorKeys.has(key));
 }
 
 export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKey?: string, settled = false, providerScope?: number | null) {
@@ -64,8 +73,6 @@ export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKe
     refetchOnMount: panelOpen ? "always" : true,
     retry: false,
     refetchOnWindowFocus: "always",
-    refetchInterval: (state) => enabled && (panelOpen || state.state.data?.state === "blocked" || state.state.data?.state === "over_limit" || state.state.data?.buckets.some((bucket) => bucket.resetRequestStatus === "pending")) ? 30_000 : false,
-    refetchIntervalInBackground: false,
   });
   const { refetch } = query;
   const refreshScope = `${scope.generation}:${auth.verifiedIdentity?.principalId ?? ""}`;
@@ -96,7 +103,7 @@ export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKe
     retry: false,
     mutationFn: async (input: { bucketId: string; reason: string }) => {
       const organizationId = assertCurrent();
-      const bucket = query.data?.buckets.find((item) => item.id === input.bucketId);
+      const bucket = query.data ? allGatewayUsageBuckets(query.data).find((item) => item.id === input.bucketId) : undefined;
       if (query.isError || !bucket?.canRequestReset || bucket.resetRequestStatus === "pending") throw new Error("Refresh usage limits to check increase eligibility.");
       const result = await client.requestGatewayUsageReset(organizationId, input);
       assertCurrent();
@@ -104,14 +111,19 @@ export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKe
     },
     onSuccess: (request) => {
       if (readScope() !== scope) return;
+      const pending = <T extends { id: string }>(bucket: T) => bucket.id === request.bucketId ? { ...bucket, canRequestReset: false, resetRequestStatus: request.status } : bucket;
       queryClient.setQueryData(queryKey, query.data ? {
         ...query.data,
-        buckets: query.data.buckets.map((bucket) => bucket.id === request.bucketId ? { ...bucket, canRequestReset: false, resetRequestStatus: request.status } : bucket),
+        buckets: query.data.buckets.map(pending),
+        ...(query.data.providers ? { providers: query.data.providers.map((provider) => ({ ...provider, buckets: provider.buckets.map(pending) })) } : {}),
       } : undefined);
     },
     onSettled: async () => {
       if (readScope() === scope) await queryClient.invalidateQueries({ queryKey, exact: true });
     },
   });
-  return { query, reset, authorized, active: enabled && authorized, scopeKey: `${scope.generation}:${auth.verifiedIdentity?.principalId ?? ""}`, data: authorized ? query.data : undefined };
+  const approvalScopeKey = authorized && auth.verifiedIdentity?.principalId
+    ? JSON.stringify([denOriginComparisonKey(scope.baseUrl), scope.organizationId, auth.verifiedIdentity.principalId])
+    : null;
+  return { query, reset, authorized, approvalScopeKey, active: enabled && authorized, scopeKey: `${scope.generation}:${auth.verifiedIdentity?.principalId ?? ""}`, data: authorized ? query.data : undefined };
 }

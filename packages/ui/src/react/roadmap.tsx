@@ -162,7 +162,7 @@ export const roadmapSections: RoadmapSection[] = [
     items: [
       {
         title: "Desktop policies",
-        description: "Control custom providers, OpenCode Zen, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member.",
+        description: "Control custom providers, the free starter model, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member.",
         status: "live",
       },
       {
@@ -206,11 +206,6 @@ export const roadmapSections: RoadmapSection[] = [
     callout:
       "Start with the desktop app. Leave work running in a hosted workspace. Return from the desktop, Slack, mobile, or another surface.",
     items: [
-      {
-        title: "Remote workspace connections",
-        description: "Open a compatible remote runtime through the normal desktop workspace flow.",
-        status: "live",
-      },
       {
         title: "Persistent hosted workspaces",
         description: "Give every user or team a durable filesystem and agent environment in the cloud.",

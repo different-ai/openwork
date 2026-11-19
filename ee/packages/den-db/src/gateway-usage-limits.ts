@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 import { and, asc, eq, isNull, or, sql } from "drizzle-orm"
+import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  GATEWAY_DEFAULT_USAGE_SCOPE,
+  gatewayRequestScope,
   gatewaySafeMoney,
   gatewayUsdToMicroUsd,
   type GatewayUsagePolicyWrite,
@@ -10,15 +13,21 @@ import {
 import {
   withGatewayUsageEntitlementMutation,
   usagePolicyMembers,
+  usageOrganizationMembers,
+  lockUsageOrganization,
   lockUsageMembers,
 } from "./gateway-usage-entitlements"
 import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
 import { readGatewayUsageResetPage } from "./gateway-usage-reset-page"
 import {
   activeUsageMember,
+  assignableUsageMember,
   usagePolicies,
   currentUsage,
+  effectiveUsagePolicyScopes,
   readUsageStatus,
+  readUsageStatusWithProviders,
+  usageProviderNames,
   usageFail as fail,
   type GatewayUsageDb,
   type GatewayUsageScope,
@@ -26,6 +35,7 @@ import {
 } from "./gateway-usage-read"
 import { settleGatewayUsage, type UsageLogRow } from "./gateway-usage-settlement"
 import { AuthUserTable } from "./schema/auth"
+import { GatewayProviderTable } from "./schema/inference-providers"
 import { MemberTable } from "./schema/org"
 import { TeamMemberTable, TeamTable } from "./schema/teams"
 import {
@@ -38,8 +48,14 @@ import {
 } from "./schema/gateway-usage-limits"
 
 export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
-export { withGatewayUsageEntitlementMutation } from "./gateway-usage-entitlements"
+export { withGatewayUsageEntitlementMutation, lockUsageOrganization, moveUsageMemberAssignments } from "./gateway-usage-entitlements"
+export { gatewayProviderUsageLimitsEnabled } from "./gateway-usage-features"
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
+export {
+  GatewayProviderUsageLimitsError,
+  settleGatewayProviderUsageLimits,
+  type GatewayProviderRemovalLimitsResult,
+} from "./gateway-usage-provider-removal"
 export { reconcileGatewayUsageBatch } from "./gateway-usage-reconciliation"
 export { listPendingGatewayUsageRequests, recoverGatewayUsageRequests, rotateGatewayUsageEpoch } from "./gateway-usage-operations"
 export {
@@ -111,6 +127,11 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         and(eq(MemberTable.id, row.memberId), eq(MemberTable.organizationId, row.organizationId)),
       )
     const [bucket] = await tx.select().from(B).where(eq(B.id, row.bucketId))
+    const providerId = row.providerScope || null
+    const providerName = providerId
+      ? ((await usageProviderNames(tx, row.organizationId, [providerId])).get(providerId) ??
+        "Removed provider")
+      : null
     return {
       id: row.id,
       memberId: row.memberId,
@@ -119,6 +140,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       bucketId: row.bucketId,
       timeframe: row.timeframe,
       policyName: row.policyName,
+      providerId,
+      providerName,
       reason: row.reason,
       status: row.status,
       createdAt: row.createdAt.toISOString(),
@@ -133,9 +156,34 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       resetAt: row.resetAt.toISOString(),
     }
   }
+  /** Validates the provider a policy is limited to. Null keeps a default limit. */
+  async function policyProvider(
+    tx: UsageTx,
+    scope: GatewayUsageScope,
+    providerId: string | null,
+    previous: string | null,
+  ) {
+    if (providerId === null) return null
+    if (!isDenTypeId("inferenceProvider", providerId))
+      return fail("invalid_provider", 400, "Invalid provider ID.")
+    if (providerId === previous) return providerId
+    const [provider] = await tx
+      .select({ id: GatewayProviderTable.id })
+      .from(GatewayProviderTable)
+      .where(
+        and(
+          eq(GatewayProviderTable.id, providerId),
+          eq(GatewayProviderTable.organization_id, scope.organizationId),
+        ),
+      )
+      .for("share")
+    if (!provider) return fail("provider_not_found", 404, "Organization provider not found.")
+    return providerId
+  }
   return {
     listPolicies(scope: GatewayUsageScope) {
       return transaction(async (tx) => {
+        // Organization-wide read: share-lock the caller's active membership for it (see activeUsageMember).
         await activeUsageMember(tx, scope, true)
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
@@ -145,6 +193,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       input: GatewayUsagePolicyWrite,
       id?: string,
       revision?: number,
+      _options: { providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, now) => {
         const members = id ? await usagePolicyMembers(tx, scope.organizationId, id) : []
@@ -152,7 +201,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policyId = id ?? randomUUID()
             const previous = id ? await policyById(tx, scope, id) : null
             if (previous && (previous.archivedAt || previous.revision !== revision))
@@ -160,8 +209,17 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
             const nextRevision = previous ? previous.revision + 1 : 1
             if (nextRevision > 2_147_483_647)
               return fail("policy_revision_overflow", 409, "Policy revision exhausted.")
+            const inferenceProviderId = await policyProvider(
+              tx,
+              scope,
+              input.providerId === undefined
+                ? (previous?.inferenceProviderId ?? null)
+                : input.providerId,
+              previous?.inferenceProviderId ?? null,
+            )
             const fields = {
               name: input.name,
+              inferenceProviderId,
               hardLimit: input.hardLimit,
               allowRequestReset: input.allowRequestReset,
               revision: nextRevision,
@@ -206,7 +264,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policy = await policyById(tx, scope, id)
             if (policy.revision !== revision)
               return fail(
@@ -228,34 +286,75 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         ),
       )
     },
+    restorePolicy(scope: GatewayUsageScope, id: string, revision: number) {
+      return transaction(async (tx, now) =>
+        withGatewayUsageEntitlementMutation(
+          tx,
+          scope.organizationId,
+          async () => {
+            await activeUsageMember(tx, scope, true)
+            const policy = await policyById(tx, scope, id)
+            if (policy.revision !== revision)
+              return fail(
+                "policy_revision_conflict",
+                409,
+                "Policy changed. Reload before restoring.",
+              )
+            if (policy.archivedAt) {
+              await tx
+                .update(P)
+                .set({ archivedAt: null, updatedAt: now, revision: revision + 1 })
+                .where(eq(P.id, id))
+              await audit(tx, scope, id, "policy_restored", { revision }, now)
+            }
+            return policyView(tx, scope, id)
+          },
+          await usagePolicyMembers(tx, scope.organizationId, id),
+          now,
+        ),
+      )
+    },
     assign(
       scope: GatewayUsageScope,
       policyId: string,
       target:
+        | { organization: true }
         | { memberId: GatewayUsageScope["memberId"] }
         | { teamId: typeof TeamTable.$inferSelect.id },
     ) {
       return transaction(async (tx, now) => {
+        await lockUsageOrganization(tx, scope.organizationId)
         const members =
-          "memberId" in target
-            ? [target.memberId]
-            : (
-                await tx
-                  .select({ id: TeamMemberTable.orgMembershipId })
-                  .from(TeamMemberTable)
-                  .where(eq(TeamMemberTable.teamId, target.teamId))
-              ).flatMap((row) => (row.id ? [row.id] : []))
+          "organization" in target
+            ? await usageOrganizationMembers(tx, scope.organizationId)
+            : "memberId" in target
+              ? [target.memberId]
+              : (
+                  await tx
+                    .select({ id: TeamMemberTable.orgMembershipId })
+                    .from(TeamMemberTable)
+                    .innerJoin(
+                      TeamTable,
+                      and(
+                        eq(TeamTable.id, TeamMemberTable.teamId),
+                        eq(TeamTable.organizationId, scope.organizationId),
+                      ),
+                    )
+                    .where(eq(TeamMemberTable.teamId, target.teamId))
+                    .for("share")
+                ).flatMap((row) => (row.id ? [row.id] : []))
         return withGatewayUsageEntitlementMutation(
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             const policy = await policyById(tx, scope, policyId)
             if (policy.archivedAt)
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
             const memberId = "memberId" in target ? target.memberId : null
             const teamId = "teamId" in target ? target.teamId : null
-            if (memberId) await activeUsageMember(tx, { ...scope, memberId }, false, true)
+            // Someone invited who has not joined yet may hold a limit: their member row keeps its id when they join.
+            if (memberId) await assignableUsageMember(tx, { ...scope, memberId })
             if (teamId) {
               const [team] = await tx
                 .select()
@@ -274,6 +373,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
                 organizationId: scope.organizationId,
                 memberId,
                 teamId,
+                organization: "organization" in target ? true : null,
                 createdAt: now,
               })
               .onDuplicateKeyUpdate({ set: { policyId } })
@@ -291,7 +391,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           tx,
           scope.organizationId,
           async () => {
-            await activeUsageMember(tx, scope, true, true)
+            await activeUsageMember(tx, scope, true)
             await policyById(tx, scope, policyId)
             await tx
               .delete(A)
@@ -312,6 +412,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     members(scope: GatewayUsageScope, query = "") {
       return transaction(async (tx) => {
+        // Returns other members' names and emails: share-lock the caller's active membership so a
+        // concurrent removal can't land between this check and the read (as listResets does).
         await activeUsageMember(tx, scope, true)
         return {
           members: await tx
@@ -335,11 +437,19 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         }
       })
     },
-    getStatus(scope: GatewayUsageScope, memberId?: GatewayUsageScope["memberId"]) {
+    getStatus(
+      scope: GatewayUsageScope,
+      memberId?: GatewayUsageScope["memberId"],
+      _options: { providerLimits?: boolean } = {},
+    ) {
       return transaction(async (tx, now) => {
+        // Another member's usage: share-lock the caller's active membership for the read.
         if (memberId !== undefined) await activeUsageMember(tx, scope, true)
-        return (await readUsageStatus(tx, { ...scope, memberId: memberId ?? scope.memberId }, now))
-          .usage
+        return readUsageStatusWithProviders(
+          tx,
+          { ...scope, memberId: memberId ?? scope.memberId },
+          now,
+        )
       })
     },
     admit(
@@ -347,14 +457,43 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       _requestId: string,
       accountable: boolean,
       _requestStartedAt?: Date,
+      options: { providerId?: string | null; providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, admittedAt) => {
-        const { usage, snapshot } = await readUsageStatus(tx, scope, admittedAt, false, true)
+        // A provider limit for this provider governs the request instead of the default.
+        const scopes =
+          options.providerId
+            ? await effectiveUsagePolicyScopes(tx, scope)
+            : null
+        const providerScope = scopes
+          ? gatewayRequestScope(scopes, options.providerId)
+          : GATEWAY_DEFAULT_USAGE_SCOPE
+        const { usage, snapshot } = await readUsageStatus(
+          tx,
+          scope,
+          admittedAt,
+          false,
+          true,
+          providerScope,
+          scopes ? (scopes.get(providerScope) ?? []) : undefined,
+        )
         const accountingUnavailable =
           usage.coverage.captureEnabled === false || (!accountable && usage.buckets.some((bucket) => bucket.hardLimit))
+        // Named only for the out-of-usage response, so ordinary admissions skip the lookup.
+        const provider = providerScope && usage.state === "blocked"
+          ? {
+              id: providerScope,
+              name:
+                (await usageProviderNames(tx, scope.organizationId, [providerScope])).get(
+                  providerScope,
+                ) ?? "this provider",
+            }
+          : null
         return {
           usage,
           snapshot,
+          providerScope,
+          provider,
           admitted: usage.state !== "blocked" && !accountingUnavailable,
           accountingUnavailable,
         }
@@ -367,7 +506,18 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     submitReset(scope: GatewayUsageScope, bucketId: string, reason: string) {
       return transaction(async (tx, now) => {
         await lockUsageMembers(tx, scope.organizationId, [scope.memberId])
-        const { usage } = await readUsageStatus(tx, scope, now, true)
+        const [located] = await tx
+          .select({ providerScope: B.providerScope })
+          .from(B)
+          .where(
+            and(
+              eq(B.id, bucketId),
+              eq(B.organizationId, scope.organizationId),
+              eq(B.memberId, scope.memberId),
+            ),
+          )
+        const providerScope = located?.providerScope ?? GATEWAY_DEFAULT_USAGE_SCOPE
+        const { usage } = await readUsageStatus(tx, scope, now, true, false, providerScope)
         const view = usage.buckets.find((bucket) => bucket.id === bucketId)
         if (!view) return fail("bucket_not_found", 404, "Current own bucket not found.")
         const [pending] = await tx
@@ -408,6 +558,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           bucketId,
           policyId: view.policyId,
           policyRevision: view.policyRevision,
+          providerScope,
           timeframe: view.timeframe,
           policyName: view.policyName,
           reason: reason.trim(),
@@ -429,6 +580,8 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     listResets(scope: GatewayUsageScope, own: boolean, options: GatewayUsageResetListOptions = {}) {
       return transaction(async (tx, now) => {
+        // Organization-wide listings read other members' requests: share-lock the caller's
+        // active membership so a concurrent removal can't land between this check and the read.
         await activeUsageMember(tx, scope, !own)
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })
@@ -446,7 +599,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           .where(and(eq(R.id, id), eq(R.organizationId, scope.organizationId)))
         if (!subject) return fail("reset_not_found", 404, "Increase request not found.")
         await lockUsageMembers(tx, scope.organizationId, [subject.memberId, scope.memberId])
-        await activeUsageMember(tx, scope, true, true)
+        await activeUsageMember(tx, scope, true)
         const [row] = await tx
           .select()
           .from(R)
@@ -466,7 +619,14 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
           .for("share")
         const current =
           member?.userId && !member.removedAt
-            ? await currentUsage(tx, { ...scope, memberId: row.memberId }, now, true)
+            ? await currentUsage(
+                tx,
+                { ...scope, memberId: row.memberId },
+                now,
+                true,
+                true,
+                row.providerScope,
+              )
             : { buckets: [], winners: [] }
         const bucket = current.buckets.find(
           (bucket) =>
@@ -475,7 +635,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
             bucket.policyRevision === row.policyRevision &&
             bucket.baseAllowanceMicroUsd === row.baseAllowanceMicroUsd &&
             bucket.allowRequestReset &&
-            !bucket.extensionUsed &&
             bucket.resetAt > now &&
             current.winners.some(
               (winner) =>
@@ -488,7 +647,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         }
         const extension =
           decision === "approved"
-            ? Math.ceil(bucket.baseAllowanceMicroUsd / 4)
+            ? gatewaySafeMoney(bucket.extensionMicroUsd + Math.ceil(bucket.baseAllowanceMicroUsd / 4))
             : bucket.extensionMicroUsd
         const allowanceMicroUsd = gatewaySafeMoney(bucket.baseAllowanceMicroUsd + extension)
         if (decision === "approved")

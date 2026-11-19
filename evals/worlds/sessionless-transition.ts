@@ -2,7 +2,7 @@ import { captureBrowserFilm } from "@openwork/cdp";
 import type { AppWeb, Seed } from "@openwork/env";
 import { join } from "node:path";
 
-type Sample = { index: number; submitted: boolean; submissionIndex: number | null; submittedAt: number | null; elapsed: number; source: string; route: string; hero: boolean; persisted: string[]; totalUsers: number; top: number; left: number; width: number; height: number; starting: boolean; working: boolean; preparing: boolean; users: number };
+type Sample = { index: number; submitted: boolean; submissionIndex: number | null; submittedAt: number | null; elapsed: number; source: string; route: string; hero: boolean; persisted: string[]; totalUsers: number; top: number; left: number; width: number; height: number; starting: boolean; working: boolean; preparing: boolean; users: number; pending: boolean };
 declare global {
   interface Window {
     __sessionlessTransition?: { samples: Sample[]; stop(): void };
@@ -110,7 +110,9 @@ export async function sessionlessTransition(seed: Seed, app: AppWeb, workspaceId
         starting: [...document.querySelectorAll<HTMLElement>('[data-loading-message="starting"], [role="status"]')].some((node) => visible(node) && node.textContent?.includes("Starting")),
         working: [...document.querySelectorAll<HTMLElement>('[data-loading-message="working"], [role="status"]')].some((node) => visible(node) && node.textContent?.includes("Working")),
         preparing: [...(hero?.querySelectorAll<HTMLElement>('button[aria-label="Creating conversation..."][aria-busy="true"]') ?? [])]
-          .some((node) => visible(node) && Boolean(node.querySelector('.animate-spin'))) });
+          .some((node) => visible(node) && Boolean(node.querySelector('.animate-spin'))),
+        // Since #5167 the first send renders at once in a provisional conversation while the session is created.
+        pending: [...document.querySelectorAll<HTMLElement>("[data-pending-conversation]")].some(visible) });
     };
     const submit = (event: Event) => {
       if (!event.isTrusted || submissionIndex !== null || !(event.target instanceof Element)) return;

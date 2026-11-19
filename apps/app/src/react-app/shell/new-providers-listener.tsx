@@ -8,18 +8,18 @@ import {
 } from "@/app/lib/provider-events";
 import { t } from "@/i18n";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
+import { readDenSettings } from "@/app/lib/den";
+import { requestMemberActivityRefresh } from "@/react-app/kernel/activity-types";
 import { notifyEvent } from "./notifications";
 import { orgOnboardingVisibilityEvent } from "./reload-coordinator";
 
 const SEEN_KEY = "openwork.seenProviderIds";
-const PENDING_MODEL_PICKER_KEY = "openwork.pendingModelPickerProviderIds";
 const NEW_PROVIDERS_DEDUPE_KEY = "new-providers";
 
 /** Custom event to request the model picker to open. */
 export const openModelPickerEvent = "openwork-open-model-picker";
 /** Custom event to request the provider auth (connect API keys) modal to open. */
 export const openProviderAuthEvent = "openwork-open-provider-auth";
-export const pendingModelPickerProviderIdsKey = PENDING_MODEL_PICKER_KEY;
 
 function readSeenProviderIds(): Set<string> {
   try {
@@ -36,35 +36,6 @@ function markProvidersSeen(ids: string[]): void {
     for (const id of ids) existing.add(id);
     window.localStorage.setItem(SEEN_KEY, JSON.stringify([...existing]));
   } catch {}
-}
-
-/**
- * Open the model picker focused on the given new providers. If no session
- * surface picks the event up, fall back to navigating to preferences.
- */
-export function requestOpenModelPicker(providerIds: string[]): void {
-  try {
-    window.localStorage.setItem(
-      PENDING_MODEL_PICKER_KEY,
-      JSON.stringify({ newProviderIds: providerIds, initialTab: "available" }),
-    );
-  } catch {}
-  window.dispatchEvent(
-    new CustomEvent(openModelPickerEvent, {
-      detail: { newProviderIds: providerIds, initialTab: "available" },
-    }),
-  );
-  window.setTimeout(() => {
-    try {
-      if (window.localStorage.getItem(PENDING_MODEL_PICKER_KEY)) {
-        const path = window.location.hash.replace(/^#/, "") || "/settings/preferences";
-        const match = path.match(/^\/workspace\/([^/]+)/);
-        window.location.hash = match?.[1]
-          ? `/workspace/${match[1]}/settings/preferences`
-          : "/settings/preferences";
-      }
-    } catch {}
-  }, 0);
 }
 
 type ListenerState = {
@@ -116,6 +87,13 @@ export function NewProvidersListener() {
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<NewProvidersEventDetail>).detail;
+      // The engine catalog describes materialization, not member entitlement.
+      // Signed-in provider changes belong to the scoped inventory observer;
+      // never add a second, profile-wide cloud entry (including on first sync).
+      if (readDenSettings().authToken?.trim()) {
+        requestMemberActivityRefresh();
+        return;
+      }
       if (detail.providers.length === 0 && !detail.newModelCount) return;
       if (orgOnboardingVisible) {
         setPendingProviders((current) => [

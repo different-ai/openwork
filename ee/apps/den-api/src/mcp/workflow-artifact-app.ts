@@ -13,12 +13,12 @@ import {
   type WorkflowArtifactPayload,
 } from "@openwork/types/workflows"
 import { z } from "zod"
+import { OPENWORK_MCP_APP_DOMAIN } from "./mcp-app-metadata.js"
 
 export { workflowArtifactPayloadSchema } from "@openwork/types/workflows"
 
 export const WORKFLOW_ARTIFACT_APP_RESOURCE_URI = "ui://openwork/workflow-artifact/v1/view.html"
 export const WORKFLOW_ARTIFACT_APP_TOOL_NAME = "render_workflow_artifact"
-export const LEGACY_WORKFLOW_ARTIFACT_TOOL_NAME = "render_dynamic_artifact"
 export const WORKFLOW_ARTIFACT_APP_SCHEMA_VERSION = workflowArtifactSchemaVersion
 
 const idSchema = z.string().trim().min(1).max(160)
@@ -35,8 +35,10 @@ export const workflowArtifactAppServerCapabilities = {
   },
 }
 
-const workflowArtifactAppResourceMeta: { ui: McpUiResourceMeta } = {
+const workflowArtifactAppResourceMeta: { ui: McpUiResourceMeta; "openai/widgetDescription": string } = {
+  "openai/widgetDescription": "Shows a retained Workflow result with Preview, Data, and Lineage tabs, including freshness, receipt, and Workflow version.",
   ui: {
+    domain: OPENWORK_MCP_APP_DOMAIN,
     csp: {
       connectDomains: [],
       resourceDomains: [],
@@ -473,12 +475,13 @@ export function registerAgentWorkflowArtifactApp(input: {
     input.server,
     WORKFLOW_ARTIFACT_APP_TOOL_NAME,
     {
-      title: "Render Workflow Artifact",
+      title: "View Workflow result",
       description: [
-        "Read an authorized immutable result from a Workflow and present it as a Workflow Artifact.",
-        "Use the latest successful snapshot by default, or pass receiptId to pin an exact snapshot.",
-        "This tool never runs or refreshes a Workflow; Automations and explicit Workflow runs own data refresh.",
-        "Clients without MCP Apps support receive the same artifact as Markdown text.",
+        "Read a retained, successful immutable result from a Workflow the current member can access and display it as an artifact.",
+        "Use the latest successful snapshot by default, or pass receiptId to select an exact snapshot from that Workflow.",
+        "Returns structured schemaVersion, artifact metadata (freshness, generation time, Workflow version, receipt and digest), and data, with the retained result as Markdown text for clients without MCP Apps support.",
+        "Missing, inaccessible, or unreadable snapshots return isError with error and message in JSON text.",
+        "This tool never runs or refreshes a Workflow, writes a snapshot, or contacts connected providers; use an explicit Workflow run or Automation to refresh data.",
       ].join(" "),
       annotations: {
         readOnlyHint: true,
@@ -487,40 +490,15 @@ export function registerAgentWorkflowArtifactApp(input: {
         openWorldHint: false,
       },
       inputSchema: z.object({
-        configObjectId: idSchema.describe("The Workflow configObjectId."),
-        receiptId: idSchema.optional().describe("Optional exact immutable artifact receipt. Defaults to the latest successful snapshot."),
-        maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional().describe("Freshness threshold used for the rendered status. Defaults to 24 hours."),
+        configObjectId: idSchema.describe("The saved Workflow's configObjectId from capability discovery or a Workflow run, not its Plugin ID, version ID, or artifact view ID. The current member must have access."),
+        receiptId: idSchema.optional().describe("An immutable successful run receipt belonging to this Workflow. Omit to read its latest successful retained snapshot; supply to pin an exact historical result."),
+        maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional().describe("Age threshold in milliseconds for labeling a retained artifact as fresh or stale. Does not filter snapshots, reject stale results, or trigger a refresh."),
       }),
-      outputSchema: workflowArtifactPayloadSchema,
+      outputSchema: workflowArtifactPayloadSchema.describe("Retained Workflow artifact: schemaVersion, artifact metadata with freshness and immutable receipt lineage, and original result data. Markdown text accompanies the structured output."),
       _meta: {
-        ui: {
-          resourceUri: WORKFLOW_ARTIFACT_APP_RESOURCE_URI,
-          visibility: ["model", "app"],
-        },
-      },
-    },
-    renderWorkflowArtifact,
-  )
-
-  registerAppTool(
-    input.server,
-    LEGACY_WORKFLOW_ARTIFACT_TOOL_NAME,
-    {
-      title: "Render Workflow Artifact (Deprecated Alias)",
-      description: "Deprecated: use render_workflow_artifact. This alias delegates to the canonical Workflow Artifact renderer and will be removed after one release.",
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: z.object({
-        configObjectId: idSchema.describe("The Workflow configObjectId."),
-        receiptId: idSchema.optional().describe("Optional exact immutable artifact receipt. Defaults to the latest successful snapshot."),
-        maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional().describe("Freshness threshold used for the rendered status. Defaults to 24 hours."),
-      }),
-      outputSchema: workflowArtifactPayloadSchema,
-      _meta: {
+        "openai/toolInvocation": { invoking: "Load Workflow result", invoked: "Show Workflow result" },
+        "openai/toolInvocation/invoking": "Load Workflow result",
+        "openai/toolInvocation/invoked": "Show Workflow result",
         ui: {
           resourceUri: WORKFLOW_ARTIFACT_APP_RESOURCE_URI,
           visibility: ["model", "app"],

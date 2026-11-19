@@ -78,10 +78,15 @@ export function useDashboardTileGeometry(scopeKey: string, entryId: string, work
       needsRead = false;
       if (!size) { reported = null; return; }
       checkWidth(size.contentWidth);
-      if (!measurement || measurement.contentWidth !== size.contentWidth || size.outerHeight < measurement.frameHeight) {
+      if (!measurement || measurement.contentWidth !== size.contentWidth) {
         reported = null;
         return;
       }
+      // A size callback can precede React's iframe height commit. Keep that
+      // report so the following resize can persist the committed dimensions.
+      const iframe = node.querySelector("iframe");
+      if (!iframe || Math.abs(iframe.getBoundingClientRect().height - measurement.frameHeight) > 1
+        || size.outerHeight < measurement.frameHeight) return;
       if (size.reserved) return;
       reported = null;
       const next = { contentWidth: size.contentWidth, outerHeight: size.outerHeight, workspaceId, frameHeight: measurement.frameHeight, measuredAt: Date.now() };
