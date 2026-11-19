@@ -7,7 +7,7 @@ import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 import { isEngineGlobalRuntimeConfigId, onRuntimeOpencodeConfigWrite, readGlobalRuntimeOpencodeConfig, runtimeExternalDirectory } from "./runtime-opencode-config-store.js";
-import { resolveSandboxMounts, SandboxFolderError, sandboxMountFingerprint, sandboxMountFingerprintForWrite, sandboxMountGrants } from "./sandbox-mounts.js";
+import { isSandboxHostConfigOverlay, prepareSandboxHostConfigFolders, resolveSandboxMounts, SandboxFolderError, sandboxMountFingerprint, sandboxMountFingerprintForWrite, sandboxMountGrants } from "./sandbox-mounts.js";
 import { createSandboxToolHost, SANDBOX_TOOL_NAMES, sandboxToolSchemas, type SandboxToolCall } from "./sandbox-tool-host.js";
 import { readAppliedSandboxSettings, readSandboxSettings, type SandboxSettings } from "./sandbox-settings-store.js";
 import { loadSandboxImageSdk, packagedSandboxResources, prepareSandboxGuestImage, sandboxImagePin } from "./packaged-sandbox-assets.js";
@@ -88,6 +88,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
   }
   async function mountsFor(directory: string) {
     const grants = await directories();
+    await prepareSandboxHostConfigFolders(directory, config.readOnly);
     return resolveSandboxMounts(sandboxMountGrants(directory, grants, config.readOnly), protectedMountPaths(), grants);
   }
   function setMode(directory: string, mode: SandboxStatusResponse["mode"]) {
@@ -214,7 +215,7 @@ export function createLocalSandboxRuntime(config: ServerConfig, deps: LocalSandb
         }
       }
       const current = publish();
-      current.folders = mounts.map(mount => ({ path: mount.guestPath, kind: mount.guestPath === directory ? "workspace" : "folder", access: mount.access }));
+      current.folders = mounts.filter(mount => !isSandboxHostConfigOverlay(mount, mounts)).map(mount => ({ path: mount.guestPath, kind: mount.guestPath === directory ? "workspace" : "folder", access: mount.access }));
       readDurations ??= sandboxPreparationDurations.get(config, durationsKey).catch(() => undefined);
       durations = await bounded("durationsRead", readDurations) ?? durations;
       // Read once, then use the updated in-memory durations after later successes.

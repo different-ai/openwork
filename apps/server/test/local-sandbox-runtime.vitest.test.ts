@@ -102,11 +102,12 @@ test("mount changes replace the guest before dispatch; provider failure never su
   try {
     expect(await runtime.status(f.workspace)).toEqual({ mode: "tools" });
     await runtime.execute(f.workspace, "shell", { command: "pwd" });
-    expect(mounted).toEqual([[f.workspace]]);
+    // The workspace's .opencode folder is created and mounted read-only inside it.
+    expect(mounted).toEqual([[f.workspace, join(f.workspace, ".opencode")]]);
     dirs = { [`${f.external}/*`]: "allow" };
     const restarted = await runtime.execute(f.workspace, "shell", { command: "pwd" });
     expect(restarted.metadata).toMatchObject({ sandboxRestarted: true });
-    expect(mounted[1]).toEqual([f.external, f.workspace].sort());
+    expect(mounted[1]).toEqual([f.external, f.workspace, join(f.workspace, ".opencode")].sort());
     expect(provider.fake.count("destroy")).toBe(1);
     expect(runs).toBe(2);
     enabled = false;

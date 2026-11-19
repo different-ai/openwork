@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
-import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveSandboxMounts, sandboxMountFingerprint, sandboxMountGrants } from "../src/sandbox-mounts.js";
+import { isSandboxHostConfigOverlay, prepareSandboxHostConfigFolders, resolveSandboxMounts, sandboxMountFingerprint, sandboxMountFingerprintForWrite, sandboxMountGrants } from "../src/sandbox-mounts.js";
 
 test("workspace and runtime Authorized Folders are live mounts at the model's original absolute paths", () => {
   expect(sandboxMountGrants("/work/project", { "*": "ask", "/data/reference/*": "allow", "/private/*": "deny" })).toEqual([
@@ -61,4 +61,39 @@ test("canonical host paths preserve guest aliases and runtime state cannot be mo
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
+});
+
+test("git and engine config folders inside a writable mount are mounted again read-only", async () => {
+  const temp = await realpath(await mkdtemp(join(tmpdir(), "sandbox-config-")));
+  try {
+    const workspace = join(temp, "workspace");
+    const reference = join(temp, "reference");
+    await mkdir(join(workspace, ".git"), { recursive: true });
+    await mkdir(join(reference, ".git"), { recursive: true });
+    await writeFile(join(reference, ".opencode"), "a file, not a folder");
+    const rules = { [`${reference}/*`]: "allow" };
+    await prepareSandboxHostConfigFolders(workspace, false);
+    expect((await stat(join(workspace, ".opencode"))).isDirectory()).toBe(true);
+    const mounts = await resolveSandboxMounts(sandboxMountGrants(workspace, rules), [], rules);
+    expect(mounts).toEqual([
+      { hostPath: reference, guestPath: reference, access: "rw" },
+      { hostPath: join(reference, ".git"), guestPath: join(reference, ".git"), access: "ro" },
+      { hostPath: workspace, guestPath: workspace, access: "rw" },
+      { hostPath: join(workspace, ".git"), guestPath: join(workspace, ".git"), access: "ro" },
+      { hostPath: join(workspace, ".opencode"), guestPath: join(workspace, ".opencode"), access: "ro" },
+    ]);
+    expect(mounts.filter(mount => isSandboxHostConfigOverlay(mount, mounts)).map(mount => mount.guestPath)).toEqual([join(reference, ".git"), join(workspace, ".git"), join(workspace, ".opencode")]);
+    // A settings write compares the same plan, so it does not restart the sandbox for nothing.
+    expect(sandboxMountFingerprintForWrite(workspace, rules, false, [])).toEqual(sandboxMountFingerprint(mounts));
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+test("a read-only workspace gets no extra folders and nothing is created in it", async () => {
+  const temp = await realpath(await mkdtemp(join(tmpdir(), "sandbox-config-ro-")));
+  try {
+    await mkdir(join(temp, ".git"));
+    await prepareSandboxHostConfigFolders(temp, true);
+    await expect(stat(join(temp, ".opencode"))).rejects.toThrow();
+    expect(await resolveSandboxMounts(sandboxMountGrants(temp, {}, true), [])).toEqual([{ hostPath: temp, guestPath: temp, access: "ro" }]);
+  } finally { await rm(temp, { recursive: true, force: true }); }
 });

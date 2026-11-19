@@ -52,7 +52,8 @@ function instructionDocument(path: string) {
 async function gitIgnored(cwd: string, paths: string[]) {
   if (paths.length === 0) return new Set<string>();
   try {
-    const run = execFileAsync("git", ["check-ignore", "-z", "--stdin"], { cwd, timeout: 5_000 });
+    // The workspace may have been written by a sandbox: never run a command its git config names.
+    const run = execFileAsync("git", ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "check-ignore", "-z", "--stdin"], { cwd, timeout: 5_000 });
     run.child.stdin?.end(paths.join("\0"));
     const { stdout } = await run;
     return new Set(stdout.split("\0").filter(Boolean));

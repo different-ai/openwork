@@ -53,6 +53,12 @@ engine-wide `permission.external_directory` row, **not** `config.authorizedRoots
 encode a separate write mode; readonly server mounts are ro, and policies that cannot safely become binds are
 refused. Canonical aliases and protected runtime paths are checked before mounting.
 
+Inside each writable bind, `.git` and `.opencode` are mounted again read-only (the workspace's `.opencode` is
+created first when missing). The host acts on those folders by itself: git runs a `core.fsmonitor` command from
+`.git/config`, and the engine loads `.opencode` plugins once the sandbox is no longer required. The sandbox can read
+the repository but not commit, change git config or hooks, or add engine plugins. A missing `.git` is not created.
+The server's own git call disables `core.fsmonitor` and hooks.
+
 Changing grants stops/recreates the guest before reuse and prepares the replacement right away, so the next
 command does not pay for it. Host bind contents survive; guest-only scratch is reset, with a restart notice on the
 next result. A command queued behind a grant change never runs in a sandbox that still has the revoked folder.

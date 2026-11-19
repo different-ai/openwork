@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { createServer, type Server } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -62,6 +62,26 @@ test("live: the guest sees only its mounts, and a read-only mount cannot be writ
     await provider.destroy(handle, opts)
     await rm(readOnly, { recursive: true, force: true })
     await rm(readWrite, { recursive: true, force: true })
+  }
+})
+
+test("live: a read-only folder inside a writable mount cannot be changed, moved or removed", { skip, timeout: 180_000 }, async () => {
+  // OpenWork mounts a workspace's .git and .opencode this way, so the guest cannot plant config the host runs.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "msb-nested-")))
+  await mkdir(join(root, ".git"))
+  await writeFile(join(root, ".git", "config"), "[core]\n")
+  const provider = createMicrosandboxProvider({ image, network: { egress: "none" }, mounts: [
+    { hostPath: root, guestPath: root, access: "rw" }, { hostPath: join(root, ".git"), guestPath: join(root, ".git"), access: "ro" }] })
+  const { run: exec } = withBlocks(provider, ["run"])
+  const handle = await provider.create(spec(), opts)
+  try {
+    const result = await exec(handle, { ...opts, command: `cd ${root}; echo x > top.txt; echo $?; echo y >> .git/config; echo $?; mv .git moved; echo $?; rm -rf .git; echo $?` })
+    assert.deepEqual(result.stdout.trim().split("\n"), ["0", "1", "1", "1"])
+    assert.equal(await readFile(join(root, ".git", "config"), "utf8"), "[core]\n")
+    assert.equal(await readFile(join(root, "top.txt"), "utf8"), "x\n")
+  } finally {
+    await provider.destroy(handle, opts)
+    await rm(root, { recursive: true, force: true })
   }
 })
 
