@@ -1,6 +1,6 @@
 # Secret handles: what was verified on the real app
 
-This records one end-to-end run of secret handles on the OpenWork desktop app,
+This records the final end-to-end run of secret handles on the OpenWork desktop app,
 what it proved, and what it did not. The feature itself is described in
 [secret-handles.md](./secret-handles.md).
 
@@ -9,7 +9,7 @@ what it proved, and what it did not. The feature itself is described in
 | Check | Result |
 | --- | --- |
 | `evals/proofs/browser-secret-handles.proof.test.ts`, local, on the merged branch | Passed: 1 test, 7 of 7 recorded checks |
-| Visual review of the six screenshots | Not run: the pictures are attached as taken |
+| Screenshot review | Manually inspected; layout-only review reported six existing-chrome notes; no pixel/vision judgment |
 | Same proof on `dev` (before the change) | Not run |
 | Same proof on Linux or in CI | Not run |
 | Cloud browser host, through any product screen | Not available: see "Not covered" |
@@ -21,6 +21,8 @@ OPENWORK_EVAL_MYSQL_URL=mysql://root:password@127.0.0.1:<port> \
 DATABASE_REDIS_URL=redis://127.0.0.1:<port> \
 pnpm evals:e2e browser-secret-handles --local
 ```
+
+Implementation tested: `3469621b05a7c51de62150ecfc57c523e9caf920` (includes the fetched `origin/dev`). Subsequent changes update evidence and screenshots only.
 
 ## What ran
 
@@ -121,6 +123,39 @@ page that received a secret is not screenshotted by design.
   for it, and its secret routes are switched off. Nothing here is evidence for
   it.
 - **macOS only**, one run, from source rather than a packaged build.
+
+## Security and transport regressions
+
+The focused suites also run locally against the final implementation:
+
+| Command | Scope |
+| --- | --- |
+| `pnpm check` | Required checks, including independent secret-store/task/approval review regressions |
+| `pnpm --filter @openwork/desktop test:browser-secret-pages` | 41 real-Electron page scenarios, including the actual product browser panel, approval races, navigation replay, encoded/WebMCP echoes, and image refusal after a response echo and removal |
+| `pnpm --filter @openwork/desktop test:browser-secret-swap` | 30 native transport/lifecycle cases; root-page requests only |
+| `node --test apps/desktop/electron/browser-secret-hosts.review.test.mjs` | 5 host-boundary checks, including a leaking unprotected redirect control |
+| `node --test packages/computer-use/browser-secrets-cloud.test.mjs` | 24 cloud-primitive/Chromium checks; not cloud product enablement |
+| App dialog and approval component tests | 23 checks |
+| Server secret-action schema and disabled-route tests | 7 checks |
+
+The 164-check unit/review suite is also executed using Electron's shipping Node runtime,
+not only the system Node runtime. These regressions initially exposed real
+focus, redaction, document-replay and delayed-redirect defects; the final
+assertions remain enabled. They are not skipped to obtain a green result.
+
+The local 200-request transport microbenchmark measured roughly 0.26 ms per
+request without interception versus 0.49 ms with interception in one run.
+These numbers are a small loopback measurement, not a production latency SLA.
+
+## Visual review
+
+The screenshots were inspected manually. A separate automated **layout-only**
+review completed and reported six notes in existing window/sidebar/tab chrome
+(overlapping/truncated labels, contrast and small account text), including the
+feature-off screenshot. Those shared surfaces are not redesigned in this PR.
+The screenshots remain unvalidated artifacts in the functional test record;
+this is not a passed pixel/vision judgment. The blank native-page area is an
+explicit capture limitation, not proof of an empty website.
 
 ## Reproducing it
 
