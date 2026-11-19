@@ -20,8 +20,13 @@ With this feature on:
   review and choose **Create stack** (with **Copy link** to hand the approval to
   a teammate), then the install. The section says until when the approval is
   open. Coming back to the page shows the same approval link again.
-- **If AWS shows something else** answers the four cases people hit: a root or
-  IAM sign-in page, "Select a role", a different account number, a closed tab.
+- **Already signed in to AWS?** opens the identical installer or CloudShell
+  destination directly, without the portal; the primary action still uses the
+  saved sign-in. The direct link can also be copied with the browser's link menu.
+- **If AWS shows something else** covers a root or IAM sign-in page, "Select a
+  role", a different account number, a closed tab, and a blank **HTTP ERROR 400**
+  on signin.aws.amazon.com. For the latter, use the direct link when already
+  signed in to the deployment's account, or open the approval in a private window.
 - **AWS sign-in** (Deployments › Settings, and each AWS deployment's Details)
   saves the organization's access portal URL and, optionally, a role once.
   Without a saved role, AWS asks the person to choose one when signing in.
@@ -45,6 +50,14 @@ With this feature on:
   URL is trimmed and stored without a trailing slash.
 - Links are wrapped only while the feature is on and a sign-in is saved.
   Otherwise Den returns the plain console links, exactly as before.
+- Launch handoffs include optional `directUrl: string | null`: the unwrapped
+  console destination when a sign-in applies, otherwise null. Older responses
+  without it remain accepted. This fallback and its help use the existing
+  `managedDeploymentAwsSignIn` flag; disabling it restores plain console links.
+- Install links leave out any parameter whose value equals the installer
+  template's default, so CloudFormation fills in the same value. A unit test
+  checks the defaults table against `cloudformation.json`. Update commands
+  still send every parameter.
 - Changing the sign-in does not start a new approval: reopening a prepared
   approval returns the same run with the link issued for the current sign-in.
 - With the feature off, the earlier single-screen Deployments page is shown and

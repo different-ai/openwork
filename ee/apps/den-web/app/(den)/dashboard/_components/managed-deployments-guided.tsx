@@ -327,6 +327,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
     ? `https://console.cloud.google.com/?project=${encodeURIComponent(deployment.target.projectId)}&cloudshell=true`
     : `https://${deployment.target.region}.console.aws.amazon.com/cloudshell/home?region=${deployment.target.region}`);
   const approvalLink = launch?.approvalUrl ?? null;
+  const directUrl = aws && signIn ? launch?.handoff?.directUrl : null;
 
   function copy(value: string) {
     void navigator.clipboard.writeText(value).then(() => setCopied(true)).catch(onCopyFailed);
@@ -381,6 +382,11 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
             </>
           )}
         </div>
+        {directUrl ? (
+          <div className="flex flex-wrap items-center gap-2 py-2">
+            <a className={buttonVariants({ variant: "ghost", size: "sm" })} data-testid="deployment-direct-link" href={directUrl} target="_blank" rel="noopener noreferrer">Already signed in to AWS? Open {approvalLink ? "the installer" : "CloudShell"} directly<ExternalLink aria-hidden className="size-4" /></a>
+          </div>
+        ) : null}
         <div className={ROW_CLASS}>
           <StepNumber value={aws ? signInStep + 2 : 2} />
           <StepText pending title={changeRun ? "OpenWork applies the configuration change" : run.kind === "update" ? "OpenWork updates" : "OpenWork installs"} description="About 20 minutes" />
@@ -479,6 +485,7 @@ function DeploymentView({ deployment, launch, reopening, busy, canManage, canPre
         {awaiting && aws ? (
           <DisclosureSection label="If AWS shows something else" open={otherOpen} onToggle={() => setOtherOpen((value) => !value)} testId="deployment-aws-help-toggle">
             <DetailRows rows={[
+              ...(signIn ? [{ wrap: true, label: "A blank page saying “HTTP ERROR 400” on signin.aws.amazon.com", value: <span data-testid="deployment-aws-http-400-help">Your browser is sending AWS more saved sign-in data than it accepts. Nothing is wrong with the installer. {directUrl ? <><a className="underline underline-offset-2" href={directUrl} target="_blank" rel="noopener noreferrer">Open {approvalLink ? "the installer" : "CloudShell"} directly</a> if you are already signed in to account {account}, or open the approval link in a private window.</> : <>Sign in to account {account} and reopen this approval to use the direct link, or open the approval link in a private window.</>}</span> }] : []),
               { wrap: true, label: "A sign-in page asking for a root or IAM user", value: `This browser isn't signed in to account ${account}. ${signIn ? `Sign in at ${portalHost(signIn)}` : "Sign in on your company's AWS page"}, then open the link again.` },
               { wrap: true, label: "“Select a role”", value: `Choose ${signIn?.roleName ?? "a role that can create CloudFormation stacks"}. The filled-in form opens next.` },
               { wrap: true, label: "A different account number in the top right", value: `Don't create the stack. Switch to account ${account}, then open the link again.` },

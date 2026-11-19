@@ -1,7 +1,21 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { cloudShellUrl, consoleUrl, throughAccessPortal } from "@openwork/managed-deployments/aws"
-import { awsPortalBase, awsSignInInputSchema, awsSignInSchema } from "@openwork/managed-deployments/schema"
+import { awsPortalBase, awsSignInInputSchema, awsSignInSchema, managedDeploymentLaunchSchema } from "@openwork/managed-deployments/schema"
+
+test("both launch handoffs preserve a direct console URL and accept older responses without it", () => {
+  for (const handoff of [
+    { action: "open_link", url: "https://acme.awsapps.com/start", command: null, instructions: "Review and approve" },
+    { action: "run_in_cloud_shell", url: "https://acme.awsapps.com/start", command: "aws sts get-caller-identity", instructions: "Run in CloudShell" },
+  ]) {
+    const directUrl = cloudShellUrl("us-east-1")
+    const schema = managedDeploymentLaunchSchema.shape.handoff
+    assert.deepEqual(schema.parse(handoff), handoff)
+    assert.deepEqual(schema.parse({ ...handoff, directUrl }), { ...handoff, directUrl })
+    assert.equal(schema.parse({ ...handoff, directUrl: null })?.directUrl, null)
+    assert.equal(schema.safeParse({ ...handoff, directUrl: "not-a-url" }).success, false)
+  }
+})
 
 test("an access portal address is normalized to its sign-in base", () => {
   assert.equal(awsPortalBase("https://acme.awsapps.com/start"), "https://acme.awsapps.com/start")

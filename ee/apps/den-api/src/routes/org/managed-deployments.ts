@@ -80,7 +80,7 @@ export function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn
     return {
       approvalUrl: null, command,
       handoff: {
-        action: "run_in_cloud_shell" as const, url: gcpCloudShellUrl(target.projectId), command,
+        action: "run_in_cloud_shell" as const, url: gcpCloudShellUrl(target.projectId), directUrl: null, command,
         instructions: `Open Google Cloud Shell for project ${target.projectId}, then paste and run the command. It verifies the pinned installer, asks you to type the project ID to approve, and only then creates billable resources.`,
       },
     }
@@ -93,11 +93,12 @@ export function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn
     ...(run.kind === "configure" ? { approvalCheck: true, includeNetworkParameters: Object.hasOwn(row.target, "network") } : {}),
   }
   if (run.kind === "install") {
-    const url = throughAccessPortal(quickCreateUrl(launch), launch.target.accountId, signIn)
+    const destination = quickCreateUrl(launch)
+    const url = throughAccessPortal(destination, launch.target.accountId, signIn)
     return {
       approvalUrl: url, command: null,
       handoff: {
-        action: "open_link" as const, url, command: null,
+        action: "open_link" as const, url, directUrl: destination === url ? null : destination, command: null,
         instructions: signIn
           ? `Open the link. It signs you in to AWS account ${launch.target.accountId} through your access portal${signIn.roleName ? ` as ${signIn.roleName}` : ", where you choose your role"}, then opens the installer. Review the installer permissions, acknowledge IAM and choose Create stack. Nothing is created until you do.`
           : `Open the link signed in to AWS account ${launch.target.accountId}, review the installer permissions, acknowledge IAM and choose Create stack. Nothing is created until you do.`,
@@ -105,10 +106,12 @@ export function launchDetails(row: DeploymentRow, run: RunRow, signIn: AwsSignIn
     }
   }
   const command = updateStackCommand(launch)
+  const destination = cloudShellUrl(launch.target.region)
+  const url = throughAccessPortal(destination, launch.target.accountId, signIn)
   return {
     approvalUrl: null, command,
     handoff: {
-      action: "run_in_cloud_shell" as const, url: throughAccessPortal(cloudShellUrl(launch.target.region), launch.target.accountId, signIn), command,
+      action: "run_in_cloud_shell" as const, url, directUrl: destination === url ? null : destination, command,
       instructions: run.kind === "configure"
         ? `Open AWS CloudShell signed in to account ${launch.target.accountId}, then paste and run the command. It checks the account, asks OpenWork whether this change is still the one to apply, and only then updates the existing installer; nothing is deleted. Once OpenWork has confirmed it, the change can no longer be edited or discarded.`
         : `Open AWS CloudShell ${signIn ? `with the link, which signs you in to account ${launch.target.accountId} through your access portal${signIn.roleName ? "" : ", where you choose your role"}` : `signed in to account ${launch.target.accountId}`}, then paste and run the command. It checks the account and updates only the existing installer; nothing is deleted.`,

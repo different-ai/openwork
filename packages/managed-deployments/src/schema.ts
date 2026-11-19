@@ -345,7 +345,9 @@ export const managedDeploymentLaunchInputSchema = z.object({
 }).strict().superRefine((input, context) => {
   if ((input.assistants || input.runtimeProfile) && input.kind !== "update") context.addIssue({ code: "custom", path: ["runtimeProfile"], message: "Change the runtime profile or computers with a version-increasing Update, not Install or Retry." })
 })
-const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() })
+/** The same console destination without the access portal; absent in older API responses. */
+const directConsoleUrlSchema = z.string().url().nullable().optional()
+const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.string(), instructions: z.string() })
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
@@ -361,7 +363,7 @@ export const managedDeploymentLaunchSchema = z.object({
    * the API keeps parsing launches. Make it required once both have shipped.
    */
   handoff: z.discriminatedUnion("action", [
-    z.object({ action: z.literal("open_link"), url: z.string().url(), command: z.null(), instructions: z.string() }),
+    z.object({ action: z.literal("open_link"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.null(), instructions: z.string() }),
     cloudShellHandoffSchema,
   ]).optional(),
   expiresAt: z.string().datetime(),

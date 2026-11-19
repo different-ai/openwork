@@ -84,19 +84,28 @@ test("an admin saves the company AWS sign-in once and the approval link then ope
     await user.see({ testId: "deployment-approve-link" }, { timeoutMs: 60_000 });
     const signIn = (await text('[data-testid="deployment-approve-sign-in"]')).join(" ");
     const href = (await probe.linkTargets('[data-testid="deployment-approve-link"]'))[0] ?? "";
+    await user.see({ testId: "deployment-direct-link" });
+    const direct = (await probe.linkTargets('[data-testid="deployment-direct-link"]'))[0] ?? "";
     const issued = await world.approvalUrl();
     const params = new URLSearchParams(href.slice(href.indexOf("?") + 1));
     await user.screenshot();
-    const ok = href === issued && href.startsWith(`${PORTAL_URL}/#/console?`) && params.get("account_id") === ACCOUNT_ID && params.get("role_name") === ROLE_NAME
+    const ok = direct === params.get("destination") && direct.startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/")
+      && href === issued && href.startsWith(`${PORTAL_URL}/#/console?`) && params.get("account_id") === ACCOUNT_ID && params.get("role_name") === ROLE_NAME
       && (params.get("destination") ?? "").startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/") && signIn.includes(`Account ${account} · ${ROLE_NAME}`);
-    evidence.recordAssertionEvidence("Review and approve in AWS opens the access portal with the account, the role and the filled-in CloudFormation page as its destination",
+    evidence.recordAssertionEvidence("The primary action opens the portal; the direct action opens the identical CloudFormation installer without the portal",
       `row: ${signIn}; link: ${href.slice(0, 48)}…; account_id=${params.get("account_id")}; role_name=${params.get("role_name")}; destination host: ${params.get("destination") ? new URL(params.get("destination") ?? "").host : "none"}; same as Den issues: ${href === issued}`, ok);
     expect(ok).toBe(true);
   });
 
   await step("what to do when AWS shows something else is one click away, and the list shows the saved sign-in", async () => {
     await user.click({ testId: "deployment-aws-help-toggle" });
-    await user.see({ text: "A different account number in the top right" });
+    await user.see({ testId: "deployment-aws-http-400-help" });
+    const help = (await text('[data-testid="deployment-aws-help-toggle"] + div')).join(" ");
+    const recovery = (await text('[data-testid="deployment-aws-http-400-help"]')).join(" ");
+    const helpOk = help.includes("HTTP ERROR 400") && help.includes("signin.aws.amazon.com")
+      && recovery.includes("Nothing is wrong with the installer") && recovery.includes("directly") && recovery.includes("private window");
+    evidence.recordAssertionEvidence("Blank HTTP ERROR 400 on AWS sign-in offers the direct installer and a private window", `${help}; ${recovery}`, helpOk);
+    expect(helpOk).toBe(true);
     await user.screenshot();
     await user.click({ text: "Deployments" });
     await user.see({ testId: "aws-sign-in-setting" }, { timeoutMs: 60_000 });
