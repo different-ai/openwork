@@ -1,4 +1,4 @@
-import { cloudComputerCall, cloudComputerFor, cloudComputerJson, cloudComputerSecretInput, cloudComputerSecretSession, cloudComputerSecretsCall, cloudComputerSecretsFor, readCloudComputerSecretBody, startCloudComputerBridge } from "./cloud-computer.js";
+import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudComputerBridge } from "./cloud-computer.js";
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
@@ -3680,46 +3680,15 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).interact(body)));
   });
-  // Secret handles for the cloud browser. A value arrives in one body and goes to the computer's memory: these
-  // handlers record nothing and answer with the handle, name, kind and websites only.
-  addRoute(routes, "GET", "/cloud-computer/secrets", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const sessionId = cloudComputerSecretSession(ctx.url.searchParams.get("sessionId"));
-    return cloudComputerJson({ secrets: await cloudComputerSecretsCall(() => cloudComputerSecretsFor(config).secrets.list(sessionId)) });
-  });
-  addRoute(routes, "POST", "/cloud-computer/secrets", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    ensureWritable(config);
-    const input = cloudComputerSecretInput(await readCloudComputerSecretBody(ctx.request));
-    const added = await cloudComputerSecretsCall(() => cloudComputerSecretsFor(config).secrets.add(input));
-    if (added.ok) return cloudComputerJson({ ok: true, secret: added.secret });
-    if (added.code === "feature_disabled") throw new ApiError(404, "feature_disabled", added.error);
-    return cloudComputerJson({ ok: false, error: added.error });
-  });
-  addRoute(routes, "DELETE", "/cloud-computer/secrets", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    ensureWritable(config);
-    const body = await readCloudComputerSecretBody(ctx.request);
-    const sessionId = cloudComputerSecretSession(body.sessionId);
-    const secretRef = body.secretRef;
-    if (typeof secretRef !== "string" || !secretRef || secretRef.length > 128) throw new ApiError(400, "invalid_payload", "Name the secret to remove.");
-    return cloudComputerJson({ ok: await cloudComputerSecretsCall(() => cloudComputerSecretsFor(config).secrets.remove(sessionId, secretRef)) });
-  });
-  // The open approval to enter a secret, for the conversation's chat to show and answer.
-  addRoute(routes, "GET", "/cloud-computer/request", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    const sessionId = cloudComputerSecretSession(ctx.url.searchParams.get("sessionId"));
-    return cloudComputerJson({ request: await cloudComputerSecretsCall(() => cloudComputerSecretsFor(config).request(sessionId)) });
-  });
-  addRoute(routes, "POST", "/cloud-computer/request", "client", async (ctx) => {
-    requireClientScope(ctx, "collaborator");
-    ensureWritable(config);
-    const body = await readCloudComputerSecretBody(ctx.request);
-    const sessionId = cloudComputerSecretSession(body.sessionId);
-    const { id, answer } = body;
-    if (typeof id !== "string" || !id || id.length > 128 || (answer !== "allow" && answer !== "dismiss")) throw new ApiError(400, "invalid_payload", "Answer the open request with allow or dismiss.");
-    return cloudComputerJson({ ok: await cloudComputerSecretsCall(() => cloudComputerSecretsFor(config).answerRequest({ sessionId, id, answer })) });
-  });
+  // Guest tools can obtain the client authority used by this server. It is not a human-consent
+  // boundary: do not expose secret enrollment or approval until a separate trusted UI channel exists.
+  for (const [method, path] of [["GET", "/cloud-computer/secrets"], ["POST", "/cloud-computer/secrets"],
+    ["DELETE", "/cloud-computer/secrets"], ["GET", "/cloud-computer/request"], ["POST", "/cloud-computer/request"]] as const) {
+    addRoute(routes, method, path, "client", async (ctx) => {
+      requireClientScope(ctx, "collaborator");
+      throw new ApiError(404, "feature_disabled", "Secrets for the cloud browser are not available yet.");
+    });
+  }
   // Electron verifies remote rollout authority here, independent of renderer state.
   addRoute(routes, "GET", "/managed-policy/remote-computers", "client", async () =>
     jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));

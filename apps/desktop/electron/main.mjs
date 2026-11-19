@@ -1328,8 +1328,7 @@ async function setBrowserSecretsEnabled(requested) {
     browserSecretsEnabled = false;
     return false;
   }
-  // The app repeats its report until confirmed; once on, repeating it changes nothing.
-  if (browserSecretsEnabled) return true;
+  // Recheck on every use: a renderer's earlier report is not continuing rollout authority.
   let confirmed = false;
   try {
     const server = await runtimeManager.openworkServerInfo();
@@ -1342,8 +1341,11 @@ async function setBrowserSecretsEnabled(requested) {
     }
   } catch { /* Not confirmed: the feature stays off and the app asks again. */ }
   // A newer report, such as the feature turning off meanwhile, decides instead of this answer.
-  if (report === browserSecretsReport && confirmed) browserSecretsEnabled = true;
-  return browserSecretsEnabled;
+  if (report === browserSecretsReport) {
+    if (!confirmed && browserSecretsEnabled) browserSecrets.clear();
+    browserSecretsEnabled = confirmed;
+  }
+  return report === browserSecretsReport && confirmed && browserSecretsEnabled;
 }
 /** @param {unknown} kind @returns {kind is "password" | "code" | "token"} */
 const isBrowserSecretKind = (kind) => kind === "password" || kind === "code" || kind === "token";
@@ -1360,7 +1362,7 @@ browserPanel = createBrowserPanel({
   // A password or code is typed only on a site the person confirmed in the chat.
   approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
   secrets: browserSecrets,
-  secretsEnabled: () => browserSecretsEnabled,
+  secretsEnabled: async () => browserSecretsEnabled && await setBrowserSecretsEnabled(true),
   // A secret is entered only after the person confirmed this secret for this exact site, each time.
   approveSecret: async (sessionId, request, signal) => isBrowserSecretKind(request.kind)
     && computerControl.approveCredential({ sessionId, site: request.site, secret: { label: request.label, kind: request.kind, field: request.field } }, { signal }),
@@ -2348,11 +2350,11 @@ const desktopCommandHandlers = {
   },
   "browserSecretsList": async (event, sessionId) => {
       assertBrowserSecretsSender(event);
-      return browserSecretsEnabled && typeof sessionId === "string" ? browserSecrets.list(sessionId) : [];
+      return browserSecretsEnabled && typeof sessionId === "string" && await setBrowserSecretsEnabled(true) ? browserSecrets.list(sessionId) : [];
   },
   "browserSecretsAdd": async (event, input) => {
       assertBrowserSecretsSender(event);
-      if (!browserSecretsEnabled) return { ok: false, error: "Secrets for the built-in browser are not available yet. Try again in a moment." };
+      if (!browserSecretsEnabled || !await setBrowserSecretsEnabled(true)) return { ok: false, error: "Secrets for the built-in browser are not available yet. Try again in a moment." };
       try {
         const { sessionId, label, kind, origins, value } = input && typeof input === "object" ? input : {};
         return { ok: true, secret: browserSecrets.add({ sessionId, label, kind, origins, value }) };

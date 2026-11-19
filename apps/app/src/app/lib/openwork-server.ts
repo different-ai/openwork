@@ -2,7 +2,6 @@ import { z } from "zod";
 import { claudeCodeSignInSchema, parseClaudeAgentIntegrationList } from "./claude-agent";
 import type { McpStatusMap } from "../types";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
-import type { BrowserSecretKind, BrowserSecretSummary, ComputerRequest } from "@openwork/types/desktop-ipc";
 import type { Message, Part, Session, Todo } from "@opencode-ai/sdk/v2/client";
 import type { GatewayDesktopOauthStartRequest, GatewayDesktopOauthStartResponse, GatewayUsableModel } from "@openwork/types/den/gateway";
 import {
@@ -1692,12 +1691,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     cloudComputerStatus: () => requestJson<{ ready: boolean; paused: boolean; busy: boolean; sessionId: string | null }>(baseUrl, "/cloud-computer/status", { token, timeoutMs: 15_000 }),
     cloudComputerFrame: () => requestJson<{ dataUrl: string; width: number; height: number; screenWidth: number; screenHeight: number; generation: number }>(baseUrl, "/cloud-computer/frame", { token, timeoutMs: 15_000 }),
     cloudComputerInteract: (body: Record<string, unknown>) => requestJson<unknown>(baseUrl, "/cloud-computer/interact", { token, method: "POST", body, timeoutMs: 15_000 }),
-    cloudComputerSecrets: (sessionId: string) => requestJson<{ secrets: BrowserSecretSummary[] }>(baseUrl, `/cloud-computer/secrets?sessionId=${encodeURIComponent(sessionId)}`, { token, timeoutMs: 15_000 }),
-    cloudComputerAddSecret: (input: { sessionId: string; label: string; kind: BrowserSecretKind; origins: string[]; value: string }) =>
-      requestJson<{ ok: true; secret: BrowserSecretSummary } | { ok: false; error: string }>(baseUrl, "/cloud-computer/secrets", { token, method: "POST", body: input, timeoutMs: 15_000 }),
-    cloudComputerRemoveSecret: (input: { sessionId: string; secretRef: string }) => requestJson<{ ok: boolean }>(baseUrl, "/cloud-computer/secrets", { token, method: "DELETE", body: input, timeoutMs: 15_000 }),
-    cloudComputerRequest: (sessionId: string) => requestJson<{ request: ComputerRequest | null }>(baseUrl, `/cloud-computer/request?sessionId=${encodeURIComponent(sessionId)}`, { token, timeoutMs: 15_000 }),
-    cloudComputerAnswerRequest: (input: { sessionId: string; id: string; answer: "allow" | "dismiss" }) => requestJson<{ ok: boolean }>(baseUrl, "/cloud-computer/request", { token, method: "POST", body: input, timeoutMs: 15_000 }),
     desktopFreePreferences: async () => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, timeoutMs: timeouts.config })),
     setDesktopFreeEnabled: async (enabled: boolean) => desktopFreePreferencesSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/preferences", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.cloudMcpReconcile })),
     setDesktopFreeAnalytics: async (enabled: boolean) => desktopFreeAnalyticsSchema.parse(await requestJson<unknown>(baseUrl, "/anonymous-inference/analytics", { hostToken, method: "PUT", body: { enabled }, timeoutMs: timeouts.config })),

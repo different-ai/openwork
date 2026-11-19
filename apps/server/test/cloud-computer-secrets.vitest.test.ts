@@ -73,94 +73,47 @@ async function call(method: string, path: string, body?: unknown, headers: Recor
   const parsed: unknown = text ? JSON.parse(text) : null;
   return { status: response.status, text, json: parsed, cache: response.headers.get("cache-control") };
 }
-const secret = (extra: Record<string, unknown> = {}) => ({ sessionId: SESSION, label: "Site sign-in", kind: "password", origins: ["https://app.example"], value: VALUE, ...extra });
-/** The value as it could appear in a log: as typed, and as JSON or a URL would spell it. */
-const spellings = (value: string) => [value, JSON.stringify(value).slice(1, -1), encodeURIComponent(value), Buffer.from(value, "utf8").toString("base64")];
+// Client and host bearer authority is available to guest shell tools, not a proof of a human answer.
+const routes: [string, string, unknown?][] = [
+  ["GET", `/cloud-computer/secrets?sessionId=${SESSION}`],
+  ["POST", "/cloud-computer/secrets", { sessionId: SESSION, label: "Site sign-in", kind: "password", origins: ["https://app.example"], value: VALUE }],
+  ["DELETE", "/cloud-computer/secrets", { sessionId: SESSION, secretRef: "sec_example" }],
+  ["GET", `/cloud-computer/request?sessionId=${SESSION}`],
+  ["POST", "/cloud-computer/request", { sessionId: SESSION, id: "guessed-or-discovered-id", answer: "allow" }],
+];
 
-test("the five routes: add, list, the open approval, an answer, remove", async () => {
+test("cloud enrollment and approval stay disabled even with both rollouts and guest-readable authority", async () => {
   expect((await fetch(`${base}/cloud-computer/secrets?sessionId=${SESSION}`)).status).toBe(401);
-  expect(await call("GET", `/cloud-computer/secrets?sessionId=${SESSION}`)).toMatchObject({ status: 200, json: { secrets: [] }, cache: "no-store" });
-
-  const added = await call("POST", "/cloud-computer/secrets", secret());
-  expect(added).toMatchObject({ status: 200, cache: "no-store", json: { ok: true, secret: { label: "Site sign-in", kind: "password", origins: ["https://app.example"] } } });
-  expect(added.text).toMatch(/"secretRef":"sec_[A-Za-z0-9]{22,}"/);
-  const secretRef = /"secretRef":"(sec_[A-Za-z0-9]+)"/.exec(added.text)?.[1] ?? "";
-  for (const spelling of spellings(VALUE)) expect(added.text.includes(spelling)).toBe(false);
-
-  const listed = await call("GET", `/cloud-computer/secrets?sessionId=${SESSION}`);
-  expect(listed.json).toEqual({ secrets: [{ secretRef, label: "Site sign-in", kind: "password", origins: ["https://app.example"] }] });
-  expect((await call("GET", "/cloud-computer/secrets?sessionId=another-conversation")).json).toEqual({ secrets: [] });
-
-  expect(await call("GET", `/cloud-computer/request?sessionId=${SESSION}`)).toMatchObject({ status: 200, json: { request: null }, cache: "no-store" });
-  expect((await call("POST", "/cloud-computer/request", { sessionId: SESSION, id: "not-an-open-request", answer: "allow" })).json).toEqual({ ok: false });
-  expect((await call("POST", "/cloud-computer/request", { sessionId: SESSION, id: "not-an-open-request", answer: "always" })).status).toBe(400);
-
-  expect((await call("DELETE", "/cloud-computer/secrets", { sessionId: "another-conversation", secretRef })).json).toEqual({ ok: false });
-  expect((await call("DELETE", "/cloud-computer/secrets", { sessionId: SESSION, secretRef })).json).toEqual({ ok: true });
-  expect((await call("DELETE", "/cloud-computer/secrets", { sessionId: SESSION, secretRef })).json).toEqual({ ok: false });
-  expect((await call("GET", `/cloud-computer/secrets?sessionId=${SESSION}`)).json).toEqual({ secrets: [] });
-});
-
-test("the body limit fits the longest value in its longest spelling, and refuses more", async () => {
-  // 4096 characters, each written as a six-byte JSON escape.
-  const longest = "\u2713".repeat(4096);
-  const escaped = JSON.stringify(secret({ value: "@" })).replace('"@"', `"${"\\u2713".repeat(4096)}"`);
-  expect(Buffer.byteLength(escaped)).toBeGreaterThan(24_000);
-  const added = await call("POST", "/cloud-computer/secrets", escaped);
-  expect(added).toMatchObject({ status: 200, json: { ok: true } });
-  expect(added.text.includes(longest.slice(0, 8))).toBe(false);
-  expect((await call("POST", "/cloud-computer/secrets", secret({ value: "x".repeat(4097) }))).json).toMatchObject({ ok: false });
-  expect(await call("POST", "/cloud-computer/secrets", secret({ label: "x".repeat(70_000) }))).toMatchObject({ status: 413, json: { code: "request_too_large" } });
-});
-
-test("a refused request never repeats what was sent", async () => {
-  const refusals = [
-    await call("POST", "/cloud-computer/secrets", secret(), { "content-type": "text/plain" }),
-    await call("POST", "/cloud-computer/secrets", `{"value":"${VALUE}`),
-    await call("POST", "/cloud-computer/secrets", JSON.stringify(VALUE)),
-    await call("POST", "/cloud-computer/secrets", secret({ kind: VALUE })),
-    await call("POST", "/cloud-computer/secrets", secret({ origins: VALUE })),
-    await call("POST", "/cloud-computer/secrets", secret({ sessionId: "" })),
-    await call("POST", "/cloud-computer/secrets", secret({ origins: [VALUE] })),
-    await call("POST", "/cloud-computer/secrets", secret({ origins: ["http://app.example"] })),
-    await call("POST", "/cloud-computer/secrets", secret({ label: `Named ${VALUE}` })),
-    await call("DELETE", "/cloud-computer/secrets", { sessionId: SESSION, secretRef: [VALUE] }),
-    await call("POST", "/cloud-computer/request", { sessionId: SESSION, id: VALUE.repeat(4), answer: "allow" }),
-    await call("GET", "/cloud-computer/secrets"),
-    await call("GET", "/cloud-computer/request"),
-  ];
-  expect(refusals.map((refusal) => refusal.status)).toEqual([415, 400, 400, 400, 400, 400, 200, 200, 200, 400, 400, 400, 400]);
-  for (const refusal of refusals) {
-    if (refusal.status === 200) expect(refusal.json).toMatchObject({ ok: false, error: expect.stringMatching(/\S/) });
-    for (const spelling of spellings(VALUE)) expect(refusal.text.includes(spelling)).toBe(false);
+  for (const headers of [{}, { "x-openwork-host-token": config.hostToken }]) {
+    for (const [method, path, body] of routes) {
+      expect(await call(method, path, body, headers)).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
+    }
   }
-  expect((await call("GET", `/cloud-computer/secrets?sessionId=${SESSION}`)).json).toMatchObject({ secrets: [{ kind: "password" }] });
 });
 
-test("with either rollout off every route answers 404 feature_disabled, and the secrets are forgotten", async () => {
-  expect((await call("POST", "/cloud-computer/secrets", secret({ label: "Before the rollout ends" }))).json).toMatchObject({ ok: true });
-  const routes: [string, string, unknown?][] = [
-    ["GET", `/cloud-computer/secrets?sessionId=${SESSION}`], ["POST", "/cloud-computer/secrets", secret()], ["DELETE", "/cloud-computer/secrets", { sessionId: SESSION, secretRef: "sec_none" }],
-    ["GET", `/cloud-computer/request?sessionId=${SESSION}`], ["POST", "/cloud-computer/request", { sessionId: SESSION, id: "none", answer: "allow" }],
-  ];
+test("a disabled route never parses or echoes a malformed enrollment or approval", async () => {
+  for (const path of ["/cloud-computer/secrets", "/cloud-computer/request"]) {
+    expect(await call("POST", path, `{"value":"${VALUE}`)).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
+  }
+});
+
+test("rollout changes cannot re-enable cloud secret enrollment or approval", async () => {
   for (const off of ["browserSecretHandles", "remoteComputers"] as const) {
     features[off] = false;
     try {
-      for (const [method, path, body] of routes) expect(await call(method, path, body), `${method} ${path} with ${off} off`).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
+      for (const [method, path, body] of routes) expect(await call(method, path, body)).toMatchObject({ status: 404, json: { code: "feature_disabled" } });
     } finally { features[off] = true; }
   }
-  expect((await call("GET", `/cloud-computer/secrets?sessionId=${SESSION}`)).json).toEqual({ secrets: [] });
 });
 
-test("nothing the server logged or wrote holds a value that was sent", async () => {
+test("disabled routes never log or persist the submitted fake value", async () => {
   const output = logged.join("\n");
-  expect(output).toMatch(/POST \/cloud-computer\/secrets 200/);
-  expect(output).toMatch(/POST \/cloud-computer\/secrets 400/);
+  expect(output).toMatch(/POST \/cloud-computer\/secrets 404/);
   expect(output).not.toMatch(/sessionId=/);
   const entries = await readdir(temp, { recursive: true, withFileTypes: true });
   const files = await Promise.all(entries.filter((entry) => entry.isFile()).map((entry) => readFile(join(entry.parentPath, entry.name))));
   const written = Buffer.concat(files).toString("utf8");
-  for (const spelling of [...spellings(VALUE), "\u2713\u2713\u2713\u2713", "\\u2713\\u2713"]) {
+  for (const spelling of [VALUE, JSON.stringify(VALUE).slice(1, -1), encodeURIComponent(VALUE), Buffer.from(VALUE).toString("base64")]) {
     expect(output.includes(spelling)).toBe(false);
     expect(written.includes(spelling)).toBe(false);
   }

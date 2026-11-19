@@ -25,7 +25,7 @@ function chromiumBinary() {
   const named = process.env.OPENWORK_TEST_CHROMIUM;
   if (named) return runnable(named) ? { path: named } : { reason: "OPENWORK_TEST_CHROMIUM does not name a program that can be run." };
   const path = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ...["chromium", "chromium-browser", "google-chrome"].flatMap((name) => (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((directory) => join(directory, name)))].find(runnable);
+    ...["chromium", "chromium-browser", "google-chrome", "google-chrome-stable"].flatMap((name) => (process.env.PATH ?? "").split(delimiter).filter(Boolean).map((directory) => join(directory, name)))].find(runnable);
   return path ? { path } : { reason: "No Chrome or Chromium was found. Set OPENWORK_TEST_CHROMIUM to a browser binary to run the real-browser proof." };
 }
 
@@ -197,7 +197,8 @@ describe("the cloud computer's secrets", () => {
 });
 
 const found = chromiumBinary();
-if (found.reason) console.warn(`[browser-secrets-cloud] SKIPPED: ${found.reason}`);
+if (found.reason && process.env.CI) throw new Error("The required cloud secret browser tests need an installed Chrome or Chromium binary.");
+if (found.reason) console.warn(`[browser-secrets-cloud] INCOMPLETE: real-browser tests skipped. ${found.reason}`);
 
 describe("secret handles on the cloud browser, on a real Chromium", { skip: found.reason ?? false }, () => {
   /** @type {string} */

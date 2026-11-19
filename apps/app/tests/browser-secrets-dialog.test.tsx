@@ -2,6 +2,7 @@
 import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act } from "react"
+import { z } from "zod"
 import type { Root } from "react-dom/client"
 import type { BrowserSecretSummary } from "@openwork/types/desktop-ipc"
 
@@ -60,11 +61,11 @@ function installBridge(saved: BrowserSecretSummary[] = []): Bridge {
     state.calls.push({ command, args })
     if (command === "browserSecretsList") return [...state.saved]
     if (command === "browserSecretsAdd") {
-      const input = args[0] as { label: string; kind: BrowserSecretSummary["kind"]; origins: string[] }
+      const input = z.object({ label: z.string(), kind: z.enum(["password", "code", "token"]), origins: z.array(z.string()) }).parse(args[0])
       return state.add(input)
     }
     if (command === "browserSecretsRemove") {
-      const { secretRef } = args[0] as { secretRef: string }
+      const { secretRef } = z.object({ secretRef: z.string() }).parse(args[0])
       const before = state.saved.length
       state.saved = state.saved.filter((secret) => secret.secretRef !== secretRef)
       return state.saved.length < before

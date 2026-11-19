@@ -55,6 +55,18 @@ jobs:
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
+      - name: Install the browser for secret-handle regressions
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        uses: ./.github/actions/setup-browser
+      - name: Exercise secret handles on real browser hosts
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a node --test apps/desktop/test/browser-secret-swap.test.mjs apps/desktop/test/browser-secret-pages.test.mjs apps/desktop/electron/browser-secret-hosts.review.test.mjs
+            OPENWORK_TEST_CHROMIUM="$CHROME_BIN" node --test packages/computer-use/browser-secrets-cloud.test.mjs
+          else
+            node --test apps/desktop/test/browser-secret-swap.test.mjs apps/desktop/test/browser-secret-pages.test.mjs apps/desktop/electron/browser-secret-hosts.review.test.mjs
+          fi
       - name: Build server plugins
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter openwork-server build
