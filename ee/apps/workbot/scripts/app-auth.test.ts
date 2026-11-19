@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createAuth, type AppEnv, type DenAuth } from "../src/server/auth.js"
-import { loadConfig, WORKBOT_APP_CALLBACK_PATH, WORKBOT_APP_ID } from "../src/server/config.js"
+import { loadConfig, WORKBOT_APP_CALLBACK_PATH, WORKBOT_APP_ID, WORKBOT_IOS_APP_ID } from "../src/server/config.js"
 import { createDen, DenRateLimitedError, DenSignedOutError, denSessionSchema, type DenSession } from "../src/server/den.js"
 import { registerWorkbotRoutes } from "../src/server/routes.js"
 import type { Tokens } from "../src/server/sealed.js"
@@ -281,6 +281,7 @@ test("only an HTTPS Workbot has a phone return address, and only a configured on
   assert.deepEqual(local.appRedirectUris, [])
   assert.deepEqual(config.appRedirectUris, [APP_REDIRECT])
   assert.equal(WORKBOT_APP_ID, "com.differentai.openwork")
+  assert.equal(WORKBOT_IOS_APP_ID, "com.differentai.openwork.ios")
 
   const served = (settings: Record<string, string>) => {
     const app = new Hono<AppEnv>()
@@ -294,8 +295,8 @@ test("only an HTTPS Workbot has a phone return address, and only a configured on
   const fingerprint = Array.from({ length: 32 }, () => "AB").join(":")
   const set = served({ WORKBOT_IOS_TEAM_ID: "ABCDE12345", WORKBOT_ANDROID_CERT_SHA256: fingerprint.toLowerCase() })
   assert.deepEqual(await (await set.request("/.well-known/apple-app-site-association")).json(), {
-    applinks: { details: [{ appIDs: ["ABCDE12345.com.differentai.openwork"], components: [{ "/": "/auth/app/callback" }] }] },
-    webcredentials: { apps: ["ABCDE12345.com.differentai.openwork"] },
+    applinks: { details: [{ appIDs: ["ABCDE12345.com.differentai.openwork.ios"], components: [{ "/": "/auth/app/callback" }] }] },
+    webcredentials: { apps: ["ABCDE12345.com.differentai.openwork.ios"] },
   })
   assert.deepEqual(await (await set.request("/.well-known/assetlinks.json")).json(), [
     { relation: ["delegate_permission/common.handle_all_urls"], target: { namespace: "android_app", package_name: "com.differentai.openwork", sha256_cert_fingerprints: [fingerprint] } },

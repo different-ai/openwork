@@ -111,9 +111,10 @@ builds.
 ## Build for the App Store
 
 1. In Xcode, select the OpenWork target, then Signing & Capabilities, and
-   choose the Apple developer team that signs the desktop app. The app ID
-   `com.differentai.openwork` and Associated Domains for the Workbot server
-   are already set.
+   choose the Different AI Apple developer team. The app ID
+   `com.differentai.openwork.ios` and Associated Domains for the Workbot server
+   are already set. The Workbot server must set `WORKBOT_IOS_TEAM_ID` to that
+   team's ID, or iOS won't return sign-in to the app.
 2. Product, then Archive. The scheme archives the Release configuration,
    which talks to `https://chat.openworklabs.com`.
 3. Distribute from the Organizer.
