@@ -187,9 +187,15 @@ export function stageRuntimeNodeModules(outdir, { roots = requiredRoots, platfor
   return staged.map((entry) => entry.split(sep).join("/")).sort();
 }
 
+// Release jobs cross-package ARM64 on x64 runners (and Intel macOS on Apple
+// silicon). TARGET names the packaged CPU, as for the sidecar and guest image.
+export function targetArch(target = process.env.TARGET ?? "", hostArch = process.arch) {
+  return target.startsWith("x86_64-") ? "x64" : target.startsWith("aarch64-") ? "arm64" : hostArch;
+}
+
 const outdirIndex = process.argv.indexOf("--outdir");
 if (outdirIndex !== -1) {
   const outdir = process.argv[outdirIndex + 1];
   if (!outdir) throw new Error("--outdir requires a path.");
-  process.stdout.write(`${JSON.stringify({ staged: stageRuntimeNodeModules(outdir) })}\n`);
+  process.stdout.write(`${JSON.stringify({ staged: stageRuntimeNodeModules(outdir, { arch: targetArch() }) })}\n`);
 }
