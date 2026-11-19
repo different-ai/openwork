@@ -118,6 +118,14 @@ jobs:
           scripts/ci/check-codeql-results.test.mjs
           scripts/den-db-migrate-target.test.mjs
           scripts/check.test.mjs
+      - name: Check browser secret isolation, approval and redaction
+        run: >-
+          node --test
+          packages/computer-use/browser-secrets.test.mjs
+          packages/computer-use/browser-task-secrets.test.mjs
+          packages/computer-use/browser-secrets.review.test.mjs
+          packages/computer-use/computer-control-secret-approval.test.mjs
+          apps/desktop/electron/session-runner-computer-requests.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm

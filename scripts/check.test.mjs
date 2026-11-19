@@ -30,6 +30,15 @@ test("the checks CI requires are the commands pnpm check runs", () => {
   }
 });
 
+test("browser secret regressions run both locally and in the required CI check", () => {
+  const workflow = readFileSync(resolve(root, ".github/workflows/quick-check.yml"), "utf8");
+  const check = CHECKS.find((item) => item.name === "browser-secrets");
+  assert.ok(check);
+  for (const path of check.command.filter((part) => part.endsWith(".test.mjs"))) {
+    assert.ok(workflow.includes(path), `quick-check.yml no longer runs ${path}`);
+  }
+});
+
 test("a check whose tool is absent is skipped, not failed", () => {
   const features = CHECKS.find((check) => check.name === "features");
   assert.equal(skipReason(features, { has: () => false }), "helm is not installed");

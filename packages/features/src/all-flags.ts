@@ -5,6 +5,7 @@ export { default as administratorRecovery } from "@openwork/features/flags/admin
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"
 export { default as automationSharing } from "@openwork/features/flags/automation-sharing"
 export { default as browserDemonstrations } from "@openwork/features/flags/browser-demonstrations"
+export { default as browserSecretHandles } from "@openwork/features/flags/browser-secret-handles"
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
 export { default as connectEngineTools } from "@openwork/features/flags/connect-engine-tools"
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"

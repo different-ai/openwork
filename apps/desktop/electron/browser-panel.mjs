@@ -5,6 +5,7 @@ import { constants as fsConstants } from "node:fs";
 import { access, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 
 import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session, shell } from "electron";
 import {
@@ -19,10 +20,11 @@ import {
   lockedAgentViewport,
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
-import { runDetachedTask } from "./process-resilience.mjs";
+import { runDetachedTask as runDetached } from "./process-resilience.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "@openwork/computer-use/browser-task";
 import { agentPermissionDenialMessage, decideAgentPermission, stricterAgentPermissionDecision } from "@openwork/types/den/agent-permissions-runtime";
+import { createSecretInterception } from "./browser-secret-interception.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
@@ -48,7 +50,24 @@ const BROWSER_SECURITY_PREFERENCES = Object.freeze({
 });
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, readWebsiteRules, websiteRulesWereInForce = false, onWebsiteRulesInForce, showNativeContextMenu, closeNativeContextMenu,
-  approveFiles = async () => false, approveCredential = undefined }) {
+  approveFiles = async () => false, approveCredential = undefined,
+  // Secret handles: the app's one store, whether the feature is on (read at each use), and the
+  // in-chat question asked before a secret is entered. Without a store nothing here changes.
+  secrets = /** @type {ReturnType<typeof import("@openwork/computer-use/browser-secrets").createBrowserSecrets> | undefined} */ (undefined),
+  secretsEnabled = /** @type {() => boolean | Promise<boolean>} */ (() => false),
+  approveSecret = /** @type {((sessionId: string, request: { site: string, label: string, kind: string, field: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined) }) {
+  // A page can echo a secret, or keep a placeholder, in its title or address. Whatever of a page
+  // this file shows, remembers or logs passes through here first.
+  /** @template T @param {T} text @returns {T | string} */
+  const pageText = (text) => secrets && typeof text === "string" ? secrets.redactText(text) : text;
+  // A failed load names the address it was loading. A task failure is logged as before unless
+  // what would be printed holds a secret or a placeholder; then the redacted text is logged instead.
+  /** @param {string} label @param {() => unknown} task */
+  const runDetachedTask = (label, task) => runDetached(label, task, (message, error) => {
+    const printed = inspect(error);
+    const safe = pageText(printed);
+    console.error(message, safe === printed ? error : safe);
+  });
   // The member's agent permission rules for websites, from their desktop
   // config. They apply to every page, frame and request the built-in browser
   // makes, whoever opens it, as the engines apply them to the agent's web fetches.
@@ -475,7 +494,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       browser_url: cdpBrowserUrl(),
       target_id: targetId,
       tab_id: result.tabId,
-      url: getBrowserTab(result.tabId).view.webContents.getURL(),
+      url: pageText(getBrowserTab(result.tabId).view.webContents.getURL()),
       owner_session_id: registry.ownerOf(result.tabId),
       visible: registry.surfacingFor(result.tabId) === "foreground",
     };
@@ -553,8 +572,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function browserTabToPanelTab(tabId, tab) {
     const webContents = tab.view.webContents;
     const failed = showsErrorPage(tab) ? tab.loadError : null;
-    const url = failed?.url ?? webContents.getURL();
-    const title = failed ? "" : webContents.getTitle();
+    const url = pageText(failed?.url ?? webContents.getURL());
+    const title = failed ? "" : pageText(webContents.getTitle());
     const isLoading = webContents.isLoading();
 
     return {
@@ -562,13 +581,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       type: "browser",
       label: getBrowserTabLabel(title, url),
       url,
-      favicon: tab.favicon ?? null,
+      favicon: pageText(tab.favicon ?? null),
       status: tab.suspending ? "suspending" : tab.operation ? "restoring" : isLoading ? "loading" : "ready",
       automationProtected: tab.automationProtected,
       canGoBack: webContents.canGoBack(),
       canGoForward: webContents.canGoForward(),
       ownerSessionId: registry.ownerOf(tabId),
-      loadError: tab.loadError,
+      loadError: tab.loadError && "url" in tab.loadError ? { ...tab.loadError, url: pageText(tab.loadError.url) } : tab.loadError,
       browserTask: tab.browserTask,
       agentViewport: tab.agentViewport
         ? { key: tab.agentViewport, width: tab.agentViewportSize.width, height: tab.agentViewportSize.height, scale: tab.viewportScale }
@@ -887,6 +906,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       && viewHost()?.contentView.children.includes(tab.view) === true && tab.view.getVisible();
   }
   const webMcpBroker = createWebMcpBroker({
+    // Site tools and their results are page text: what the broker returns or reports is redacted.
+    ...(secrets ? { redact: (value) => secrets.redact(value) } : {}),
     getTab: (tabId) => getBrowserTab(tabId),
     getActiveTabId: (sessionId) => registry.activeTabIdFor(sessionId),
     assertTabAccess: async (tabId, sessionId) => {
@@ -917,6 +938,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   });
 
 
+  // While a tab has a live secret placeholder, its requests pause in its debugger and are answered
+  // by the interception. Detaching that debugger would let them through unswapped and revoke the
+  // placeholder, so the debugger of a tab is only ever detached through detachTabDebugger.
+  const secretInterception = secrets ? createSecretInterception({
+    secrets,
+    // Attaching a debugger before a tab has a document can hang it.
+    hasDocument: (candidate) => {
+      const tab = getBrowserTab(candidate.tabId);
+      return tab === candidate && tab.domReady && !tab.rendererGone && !tab.suspending;
+    },
+    // Background tabs and the agent's viewport are emulated through the same debugger.
+    keepDebugger: (candidate) => {
+      const tab = getBrowserTab(candidate.tabId);
+      return tab === candidate && (tab.background || Boolean(tab.agentViewport));
+    },
+  }) : null;
+  /** Detaches a tab's debugger, or leaves that to the secret interception while it holds the tab. */
+  function detachTabDebugger(tab) {
+    const cdp = tab.view.webContents.debugger;
+    if (!cdp.isAttached()) return;
+    if (secretInterception?.holds(tab)) secretInterception.detachOnRelease(tab);
+    else cdp.detach();
+  }
+
   const taskHost = createBrowserTaskHost({
     getTab: getBrowserTab,
     tabsFor: (sessionId) => registry.tabsFor(sessionId).map((item) => getBrowserTab(item.tabId)).filter(Boolean),
@@ -939,6 +984,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     },
     approveFiles,
     approveCredential,
+    secrets,
+    secretsEnabled,
+    approveSecret,
+    armSecretSwap: async ({ tabId }) => {
+      const tab = getBrowserTab(tabId);
+      return Boolean(tab && secretInterception) && await secretInterception.arm(tab);
+    },
     changed: (tabId, activity) => {
       const tab = getBrowserTab(tabId);
       if (!tab) return;
@@ -1161,6 +1213,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // Only a main-frame commit replaces the document. Aborts and downloads
       // retain its warning; old resource failures cannot affect the new document.
       tab.documentGeneration += 1;
+      // The old document's placeholders cover the requests it left in flight, then expire.
+      secrets?.documentChanged(tabId);
       tab.requests = new Set();
       tab.requestsOverflowed = false;
       tab.websiteRecheck = false;
@@ -1385,7 +1439,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && !tab.agentViewport) detachTabDebugger(tab);
       }
     });
     if (tab.agentViewport) emulateAgentViewport(tab);
@@ -1465,7 +1519,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
             await cdp.sendCommand(method, params);
           }
         } finally {
-          if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+          if (isOwned() && !tab.background && !tab.agentViewport) detachTabDebugger(tab);
         }
       });
     }
@@ -1490,7 +1544,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           await cdp.sendCommand(method, params);
         }
       } finally {
-        if (isOwned() && !tab.background && !tab.agentViewport && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background && !tab.agentViewport) detachTabDebugger(tab);
       }
     });
   }
@@ -1664,7 +1718,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         if (!isCurrent() || tab.background || tab.suspending) return;
         await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
       } finally {
-        if (isOwned() && !tab.background && cdp.isAttached()) cdp.detach();
+        if (isOwned() && !tab.background) detachTabDebugger(tab);
       }
     });
   }
@@ -1739,6 +1793,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab(tabId);
     if (!registry.has(tabId)) return null;
     taskHost.invalidate(tabId, { closed: true, reason });
+    // A closed, destroyed or suspended tab sends nothing more for a secret.
+    secrets?.tabClosed(tabId);
+    if (tab && secretInterception) runDetachedTask("end secret interception for a closed tab", () => secretInterception.release(tab));
     if (!preserve) suspendedTabs.delete(tabId);
     if (menuRequest?.tabId === tabId) hideContextMenu();
     const wasOnScreen = registry.onScreenTabId() === tabId;
@@ -1979,11 +2036,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           if (!targetInfo?.targetId) throw new Error("Could not resolve built-in browser CDP target.");
           handle = {
             provider: "builtin", browser_url: cdpBrowserUrl(), target_id: targetInfo.targetId,
-            tab_id: tabId, url: tab.view.webContents.getURL(), owner_session_id: registry.ownerOf(tabId),
+            tab_id: tabId, url: pageText(tab.view.webContents.getURL()), owner_session_id: registry.ownerOf(tabId),
             visible: registry.surfacingFor(tabId) === "foreground",
           };
         } finally {
-          if (!attached && !tab.view.webContents.isDestroyed() && cdp.isAttached()) cdp.detach();
+          if (!attached && !tab.view.webContents.isDestroyed()) detachTabDebugger(tab);
         }
       }
       if (browserTabs.get(tabId) !== tab) throw new Error("Browser tab was closed.");
@@ -2021,6 +2078,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       .filter((tab) => tab.ownerSessionId === ownerSessionId)
       .map((tab) => tab.tabId);
     for (const tabId of closedTabIds) closeBrowserTab(tabId);
+    // The app closes a conversation's tabs when that conversation is deleted: its secrets go with it.
+    secrets?.clearSession(ownerSessionId);
     return closedTabIds;
   }
 
