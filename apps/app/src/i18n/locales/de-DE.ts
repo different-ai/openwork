@@ -1,8 +1,3 @@
-/**
- * German translations (Deutsch)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "account.mcp_connected_one": "{count} MCP-Server",
   "account.mcp_connected_other": "{count} MCP-Server",
