@@ -107,13 +107,6 @@ export async function rememberThreadApproval(
   });
 }
 
-export async function forgetThreadApprovals(config: ServerConfig, workspaceId: string, sessionId: string): Promise<void> {
-  const stored = await threadApprovalStore.get(config, workspaceId);
-  if (!stored?.sessions[sessionId]) return;
-  const { [sessionId]: _removed, ...sessions } = stored.sessions;
-  await threadApprovalStore.set(config, workspaceId, { sessions });
-}
-
 interface PendingAsk {
   directory: string;
   sessionId: string;
@@ -244,6 +237,9 @@ export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptio
   };
 
   const handleFrame = async (connection: EnginePoolConnection, frame: string) => {
+    // Every engine event crosses this consumer. A frame whose text never names
+    // a permission event cannot decode into one, so skip the JSON parse.
+    if (!frame.includes("permission.asked") && !frame.includes("permission.replied")) return;
     const payload = sseFramePayload(frame);
     if (!isRecord(payload) || typeof payload.directory !== "string" || !isRecord(payload.payload)) return;
     const event = payload.payload;

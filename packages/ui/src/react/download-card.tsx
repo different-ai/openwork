@@ -203,9 +203,11 @@ function DownloadPlatformGridContent({
   openInNewTab,
   customCompanyPresentation,
   flat,
+  stacked,
   recommendedTestId,
   onDownload,
 }: {
+  stacked?: boolean
   detected: DetectedPlatform | null
   groups: DownloadPlatformGroup[]
   openInNewTab: boolean
@@ -215,7 +217,7 @@ function DownloadPlatformGridContent({
   onDownload?: (option: DownloadPlatformOption) => void
 }) {
   return (
-    <div className={`grid ${flat ? "gap-x-10 gap-y-6 bg-transparent" : "gap-px border-t border-[#E9EDF3] bg-[#E9EDF3]"} ${customCompanyPresentation ? "lg:grid-cols-3" : "sm:grid-cols-3"}`}>
+    <div className={`grid ${flat ? "gap-x-10 gap-y-6 bg-transparent" : "gap-px border-t border-[#E9EDF3] bg-[#E9EDF3]"} ${stacked ? "" : customCompanyPresentation ? "lg:grid-cols-3" : "sm:grid-cols-3"}`}>
       {groups.map((group) => (
         <DownloadColumn
           key={group.os}
@@ -251,7 +253,10 @@ export function DownloadPlatformGrid({
   recommendedTestId,
   onDownload,
   variant = "card",
+  stacked = false,
 }: {
+  /** One platform per row, for narrow panels. */
+  stacked?: boolean
   groups: DownloadPlatformGroup[]
   openInNewTab?: boolean
   recommendedTestId?: string
@@ -274,6 +279,7 @@ export function DownloadPlatformGrid({
         openInNewTab={openInNewTab}
         customCompanyPresentation
         flat={variant === "flat"}
+        stacked={stacked}
         recommendedTestId={recommendedTestId}
         onDownload={onDownload}
       />

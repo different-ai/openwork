@@ -60,6 +60,8 @@ export type SendEmailInput<Template extends EmailTemplate = EmailTemplate> = {
   props: EmailTemplateProps[Template]
   config: EmailSendConfig
   subject?: string
+  /** Extra headers, e.g. List-Unsubscribe for lifecycle reminders. */
+  headers?: Record<string, string>
 }
 
 export async function sendEmail<Template extends EmailTemplate>(input: SendEmailInput<Template>) {
@@ -84,11 +86,11 @@ export async function sendEmail<Template extends EmailTemplate>(input: SendEmail
   ])
 
   if (provider === "resend") {
-    await sendViaResend({ to, subject, replyTo, html, text, template: input.template, config: input.config })
+    await sendViaResend({ to, subject, replyTo, html, text, headers: input.headers, template: input.template, config: input.config })
     return
   }
 
-  await sendViaNodemailer({ to, subject, replyTo, html, text, template: input.template, config: input.config })
+  await sendViaNodemailer({ to, subject, replyTo, html, text, headers: input.headers, template: input.template, config: input.config })
 }
 
 function getEmailProvider(config: EmailSendConfig): EmailProvider {
@@ -110,6 +112,7 @@ async function sendViaResend(input: {
   replyTo?: string
   html: string
   text: string
+  headers?: Record<string, string>
   template: EmailTemplate
   config: EmailSendConfig
 }) {
@@ -132,6 +135,7 @@ async function sendViaResend(input: {
       replyTo: input.replyTo,
       html: input.html,
       text: input.text,
+      ...(input.headers ? { headers: input.headers } : {}),
     })
 
     if (result.error) {
@@ -157,6 +161,7 @@ async function sendViaNodemailer(input: {
   replyTo?: string
   html: string
   text: string
+  headers?: Record<string, string>
   template: EmailTemplate
   config: EmailSendConfig
 }) {
@@ -190,6 +195,7 @@ async function sendViaNodemailer(input: {
       replyTo: input.replyTo,
       html: input.html,
       text: input.text,
+      ...(input.headers ? { headers: input.headers } : {}),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error"

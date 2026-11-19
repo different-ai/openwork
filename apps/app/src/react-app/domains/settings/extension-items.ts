@@ -112,10 +112,6 @@ export function isOpenworkProvidedSkill(skill: Pick<SkillCard, "name" | "path">)
     OPENWORK_PROVIDED_SKILL_NAMES.has(normalizedName);
 }
 
-export function isToggleControlledExtension(entry: McpDirectoryInfo) {
-  return entry.extensionManifest?.enablement?.some((condition) => condition.type === "toggle-enabled") === true;
-}
-
 function setupStateFromEnablement(enablement: { active: boolean; results: EnablementResult[] } | null): ExtensionSetupState {
   if (!enablement || enablement.results.length === 0) return "needs_setup";
   if (enablement.active) return "ready";
@@ -129,7 +125,13 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   return "installed";
 }
 
-export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+type PersonalKeyReadiness = Partial<Pick<DenExternalMcpConnection, "authType" | "credentialHealth">>;
+
+export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures"> & PersonalKeyReadiness) {
+  if (connection.credentialMode === "per_member" && connection.authType === "apikey") {
+    // A saved key enables use/replacement, but does not assert upstream validity.
+    return connection.connectedForMe && connection.credentialHealth !== "reconnect_required" && !connectionNeedsReconnect(connection);
+  }
   return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
@@ -140,10 +142,17 @@ export function nativeProviderDisplayName(nativeProviderKey: string | null | und
   return null;
 }
 
-export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey" | "externalAccountId">) {
+export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey" | "externalAccountId"> & PersonalKeyReadiness) {
   const provider = nativeProviderDisplayName(connection.nativeProviderKey);
   const prefix = provider ? `${provider} — ` : "";
   if (connection.credentialMode === "shared") return `${prefix}One org account managed by your organization — the AI acts as it.`;
+  if (connection.authType === "apikey") {
+    if (connection.needsReconnect === true || connection.credentialHealth === "reconnect_required") return "Your key was rejected.";
+    return connection.connectedForMe && !connectionNeedsReconnect(connection)
+      ? "Uses your own key."
+      : connection.connectedForMe ? "Your key was rejected."
+      : "Available from your organization. Add your own key to use it.";
+  }
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return `${prefix}Reconnect your account to grant newly requested permissions.`;
   if (connection.connectedForMe) {
     // Keep the base sentence intact as a prefix: specs and people both read it.
@@ -155,8 +164,12 @@ export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConne
   return `${prefix}Available from your organization. Connect your own account to use it.`;
 }
 
-export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "externalAccountId">) {
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "externalAccountId"> & PersonalKeyReadiness) {
   if (connection.credentialMode === "shared") return "Managed by your organization";
+  if (connection.authType === "apikey") {
+    if (connection.needsReconnect === true || connection.credentialHealth === "reconnect_required") return "Replace key";
+    return isOrgMcpConnectionReady(connection) ? "Key saved" : connection.connectedForMe ? "Replace key" : "Add key";
+  }
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
   if (connection.connectedForMe) {
     // Show WHICH account: with several connectors for one service (two Google
@@ -285,8 +298,8 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     }];
   });
 
+  // The Library lists every connection the member can see, including a shared one an admin has not connected yet.
   const orgMcpConnectionItems = (input.orgMcpConnections ?? []).flatMap((connection): ExtensionItem[] => {
-    if (!orgConnectionCanRender(connection)) return [];
     const ready = isOrgMcpConnectionReady(connection);
     return [{
       id: `org-mcp:${connection.id}`,

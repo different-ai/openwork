@@ -8,6 +8,23 @@
  */
 export const newProvidersEvent = "openwork-new-providers-available";
 
+export type ProviderCatalogScope = {
+  baseUrl: string;
+  directory?: string;
+  /** New V2 notifications require confirmed live-sync ownership; omitted is legacy. */
+  reason?: "native" | "reconnect";
+};
+const catalogListeners = new Set<(scope: ProviderCatalogScope) => void>();
+
+export function subscribeProviderCatalogChanges(listener: (scope: ProviderCatalogScope) => void) {
+  catalogListeners.add(listener);
+  return () => { catalogListeners.delete(listener); };
+}
+
+export function dispatchProviderCatalogChanged(scope: ProviderCatalogScope) {
+  for (const listener of catalogListeners) listener(scope);
+}
+
 export type NewProviderInfo = {
   id: string;
   name: string;

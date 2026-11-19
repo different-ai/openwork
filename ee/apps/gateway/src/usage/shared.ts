@@ -21,6 +21,7 @@ export type UsageParser = {
   // Binary framings (AWS event-stream) must see the raw bytes.
   pushBytes?(chunk: Uint8Array): void
   result(): ParsedUsage
+  complete?(): boolean
 }
 
 export const defaultMaxBufferLength = 1024 * 1024
@@ -66,10 +67,12 @@ export function emptyUsage(): ParsedUsage {
 // only; callers still relay their original bytes.
 export function createSseUsageParser(
   applyEvent: (target: ParsedUsage, event: unknown) => void,
-  options: { maxBufferLength?: number } = {},
+  options: { maxBufferLength?: number; isTerminal?: (event: unknown) => boolean } = {},
 ): UsageParser {
   const maxBufferLength = options.maxBufferLength ?? defaultMaxBufferLength
   const usage = emptyUsage()
+  let terminal = false
+  let malformed = false
   let buffer = ""
   let overflowed = false
   let data = ""
@@ -80,12 +83,14 @@ export function createSseUsageParser(
     const trimmed = line.endsWith("\r") ? line.slice(0, -1) : line
     if (!trimmed) {
       if (eventType === "error") usage.streamError = "upstream_stream_error"
+      if (data.trim() === "[DONE]") terminal = true
       try {
         const event: unknown = JSON.parse(data)
+        if (options.isTerminal?.(event) || isRecord(event) && ["message_stop", "response.completed", "response.incomplete"].includes(String(event.type))) terminal = true
         captureResponseIdentity(usage, event)
         applyEvent(usage, event)
       } catch {
-        // Malformed data and [DONE] are not usage.
+        if (data.trim() && data.trim() !== "[DONE]") malformed = true
       }
       data = ""
       eventType = ""
@@ -114,6 +119,7 @@ export function createSseUsageParser(
       }
       if (overflowed) { buffer = ""; data = ""; eventType = "" }
     },
+    complete() { return terminal && usage.found && !usage.streamError && !overflowed && !malformed && !buffer.trim() && !data.trim() },
     result() {
       if (overflowed) return { ...emptyUsage(), ...(usage.streamError ? { streamError: usage.streamError } : {}) }
       return { ...usage }
@@ -139,6 +145,10 @@ export function createJsonBodyUsageParser(
         return
       }
       buffer += chunkText
+    },
+    complete() {
+      if (overflowed) return false
+      try { const usage = parseJson(JSON.parse(buffer)); return usage.found && !usage.streamError } catch { return false }
     },
     result() {
       if (overflowed) return emptyUsage()

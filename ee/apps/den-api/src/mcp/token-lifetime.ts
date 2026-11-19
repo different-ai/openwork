@@ -22,3 +22,10 @@ export const DEN_MCP_REFRESH_TOKEN_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60
 // refresh grant. Keep its exposure window bounded; the desktop maintenance
 // loop replaces it silently before expiry while OpenWork is in normal use.
 export const DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+// better-auth signs the /oauth2/authorize query that carries a brand-new
+// person through sign-up, email verification, and naming their first
+// workspace, and uses the same window for the single-use, PKCE-bound
+// authorization code. The 10-minute default expires mid sign-up, so the
+// agent's authorization fails with invalid_signature after the person did
+// everything right. Thirty minutes covers a real first-time sign-up.
+export const DEN_MCP_OAUTH_AUTHORIZATION_EXPIRES_IN_SECONDS = 30 * 60

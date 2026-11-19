@@ -41,6 +41,8 @@ export type EngineSpawnTemplate = {
   cwd: string;
   runtimeConfigPath: string;
   env: Record<string, string | undefined>;
+  /** Private engine v1 storage for when a standalone OpenCode v2 owns the shared one. */
+  stateDir?: string;
   /** Ports a standby must avoid (the OpenWork server, and the live engine). */
   reservedPorts: () => number[];
   /** Readiness budget for a standby spawn. Defaults to the managed-engine default. */
@@ -89,21 +91,22 @@ export type EnginePoolHooks = {
 export type RolloverReason = string;
 
 /**
- * What a rollover request did. Only `reloaded_in_place` and `rolled_over`
+ * What a refresh request did. `updated_live`, `reloaded_in_place` and `rolled_over`
  * mean the engine now serves the requested config; `skipped` and `coalesced`
  * leave the caller's change owed, so a caller tracking a pending reload must
  * keep it pending until one of the applied outcomes arrives.
  */
 export type RolloverOutcome =
+  | { action: "updated_live" }
   | { action: "skipped"; reason: "unchanged" | "disposed" }
   | { action: "reloaded_in_place" }
   | { action: "coalesced" }
   | { action: "rolled_over"; generationId: string; drainingSessions: number };
 
-export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "reloaded_in_place" | "rolled_over" }>;
+export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "updated_live" | "reloaded_in_place" | "rolled_over" }>;
 
 export function rolloverOutcomeApplied(outcome: RolloverOutcome): outcome is AppliedRolloverOutcome {
-  return outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
+  return outcome.action === "updated_live" || outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
 }
 
 type RolloverRequest = {
@@ -244,21 +247,18 @@ export function isEngineConnectionFailure(error: unknown): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
     if (typeof current === "string") {
-      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(current);
+      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(current);
     }
     if (!isRecord(current) || visited.has(current)) return false;
     visited.add(current);
     const code = current.code;
-    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT") return true;
+    // An engine that dies mid-request closes the socket (UND_ERR_SOCKET, EPIPE).
+    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EPIPE" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_SOCKET") return true;
     const message = current.message;
-    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(message)) return true;
+    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(message)) return true;
     current = current.cause;
   }
   return false;
-}
-
-export function isConnectionRefusedClassError(error: unknown): boolean {
-  return isEngineConnectionFailure(error);
 }
 
 function isRoutableGeneration(
@@ -445,6 +445,11 @@ export class EnginePool {
     this.hooks = input.hooks;
   }
 
+  /** Directory every generation of this engine starts in. */
+  cwd(): string {
+    return this.template.cwd;
+  }
+
   /**
    * Register the engine spawned during startup as the first generation, so a
    * later rollover knows what it is replacing.
@@ -543,6 +548,11 @@ export class EnginePool {
     return { target: primaryConnection, fallback };
   }
 
+  /** Live proxied event streams, i.e. clients currently listening to this engine. */
+  eventProxyCount(): number {
+    return this.eventProxyControllers.size;
+  }
+
   openEventProxy(clientSignal?: AbortSignal): EngineEventProxyLease {
     const controller = new AbortController();
     this.eventProxyControllers.add(controller);
@@ -558,6 +568,21 @@ export class EnginePool {
         this.eventProxyControllers.delete(controller);
       },
     };
+  }
+
+  /**
+   * How the event fan-in should treat frames from a generation. With one
+   * primary generation and no ownership pinned elsewhere, every frame is
+   * forwarded verbatim and never parsed; `filter` requires the payload-level
+   * check in `shouldForwardEvent`, which is what a rollover needs.
+   */
+  eventForwardMode(generationId: string): "forward" | "filter" | "drop" {
+    const generation = this.generationForId(generationId);
+    if (!generation) return "drop";
+    if (generation.status !== "primary" || this.generations.filter(isRoutableGeneration).length !== 1) return "filter";
+    for (const owner of this.sessionOwnership.values()) if (owner !== generation.id) return "filter";
+    for (const owner of this.pinnedRequests.values()) if (owner !== generation.id) return "filter";
+    return "forward";
   }
 
   shouldForwardEvent(generationId: string, payload: unknown): boolean {
@@ -714,7 +739,7 @@ export class EnginePool {
 
     const busy = forceStandby
       ? true
-      : await this.hooks.engineBusy(this.config, workspace).catch(() => false);
+      : await this.hooks.engineBusy(this.config, workspace).catch(() => true);
     if (!busy) {
       await this.hooks.reloadInPlace(this.config, workspace, { awaitPostRefreshSync });
       if (primary) primary.reloadedDirectories.set(directory, fingerprint);
@@ -840,8 +865,14 @@ export class EnginePool {
       }).catch(() => undefined);
     }
 
-    const drainingSessions = await this.nonIdleSessionIds(primary);
+    const activity = await this.nonIdleSessionIds(primary);
     const pinnedRequestIds = await this.pendingRequestIds(primary);
+    const drainingSessions = activity.sessionIds;
+    if (primary && !activity.complete) {
+      for (const [sessionId, owner] of this.sessionOwnership) {
+        if (owner === primary.id && !drainingSessions.includes(sessionId)) drainingSessions.push(sessionId);
+      }
+    }
     this.flip(generation, primary, drainingSessions, pinnedRequestIds);
 
     this.hooks.logger?.log("info", "Engine rollover flipped to the new generation.", {
@@ -912,7 +943,6 @@ export class EnginePool {
     this.config.opencodeUsername = next.handle.username;
     this.config.opencodePassword = next.handle.password;
     for (const entry of this.config.workspaces) {
-      if (entry.workspaceType === "remote") continue;
       entry.baseUrl = next.handle.url;
       entry.opencodeUsername = next.handle.username;
       entry.opencodePassword = next.handle.password;
@@ -955,24 +985,36 @@ export class EnginePool {
   private startDrainMonitor(generation: Generation, workspace: WorkspaceInfo): void {
     generation.drainDeadline = Date.now() + drainTimeoutMs();
     this.watchDrainActivity(generation);
+    let ticking = false;
     const tick = async (): Promise<void> => {
-      if (generation.status !== "draining") return;
-      const remaining = await this.nonIdleSessionIds(generation);
-      this.updateActiveSessions(generation, remaining);
-      if (remaining.length === 0) {
-        await this.retire(generation, "idle");
-        return;
-      }
-      if (generation.drainDeadline !== null && Date.now() >= generation.drainDeadline) {
-        this.hooks.logger?.log("warn", "Engine drain saw no session activity for the grace period; aborting the remaining sessions.", {
-          "engine.drain.sessions": remaining.join(","),
-          "engine.drain.session_count": remaining.length,
-        });
-        for (const sessionId of remaining) {
-          await this.abortSession(generation, sessionId).catch(() => undefined);
+      if (ticking || generation.status !== "draining") return;
+      ticking = true;
+      try {
+        const activity = await this.nonIdleSessionIds(generation);
+        if (generation.status !== "draining") return;
+        const remaining = activity.complete
+          ? activity.sessionIds
+          : [...new Set([...(this.activeSessionsByGeneration.get(generation.id) ?? []), ...activity.sessionIds])];
+        this.updateActiveSessions(generation, remaining);
+        if (activity.complete && remaining.length === 0) {
+          await this.retire(generation, "idle");
+          return;
         }
-        await new Promise((resolve) => setTimeout(resolve, abortSettleMs()));
-        await this.retire(generation, "forced");
+        if (generation.drainDeadline !== null && Date.now() >= generation.drainDeadline) {
+          this.hooks.logger?.log("warn", "Engine drain saw no session activity for the grace period; aborting the remaining sessions.", {
+            "engine.drain.sessions": remaining.join(","),
+            "engine.drain.session_count": remaining.length,
+            "engine.drain.activity_complete": activity.complete,
+          });
+          for (const sessionId of remaining) {
+            if (generation.status !== "draining") return;
+            await this.abortSession(generation, sessionId).catch(() => undefined);
+          }
+          await new Promise((resolve) => setTimeout(resolve, abortSettleMs()));
+          await this.retire(generation, "forced");
+        }
+      } finally {
+        ticking = false;
       }
     };
     const timer = setInterval(() => void tick().catch(() => undefined), drainPollIntervalMs());
@@ -1008,11 +1050,7 @@ export class EnginePool {
         if (response.ok && response.body) {
           await this.consumeDrainActivityEvents(generation, response.body, signal);
         }
-      } catch {
-        // Losing the stream only pauses activity credit. The poll loop still
-        // owns the abort decision, and an unreachable engine reports no
-        // sessions to drain in the first place.
-      }
+      } catch {}
       if (signal.aborted || generation.status !== "draining") return;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, drainActivityReconnectMs());
@@ -1272,6 +1310,7 @@ export class EnginePool {
       cwd: this.template.cwd,
       excludedPorts: this.template.reservedPorts(),
       ...(this.template.spawnTimeoutMs ? { timeoutMs: this.template.spawnTimeoutMs } : {}),
+      ...(this.template.stateDir ? { stateDir: this.template.stateDir } : {}),
       env: {
         ...this.template.env,
         OPENCODE_CONFIG: this.template.runtimeConfigPath,
@@ -1319,9 +1358,10 @@ export class EnginePool {
     throw new Error("Standby OpenCode engine did not report healthy");
   }
 
-  private async nonIdleSessionIds(generation: Generation | null): Promise<string[]> {
-    if (!generation || generation.status === "dead" || !generation.handle.isAlive()) return [];
+  private async nonIdleSessionIds(generation: Generation | null): Promise<{ sessionIds: string[]; complete: boolean }> {
+    if (!generation || generation.status === "dead" || !generation.handle.isAlive()) return { sessionIds: [], complete: true };
     const sessionIds = new Set<string>();
+    let complete = true;
     await Promise.all(this.engineProbeDirectories().map(async (directory) => {
       try {
         const url = new URL("/session/status", generation.handle.url);
@@ -1330,26 +1370,32 @@ export class EnginePool {
           headers: { Authorization: buildEngineAuthProbeHeader(generation.handle.username, generation.handle.password) },
           signal: AbortSignal.timeout(5_000),
         });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(`Session status probe returned HTTP ${response.status}`);
         const payload: unknown = await response.json();
-        if (!isRecord(payload)) return;
+        if (!isRecord(payload)) throw new Error("Session status probe returned a malformed payload");
         for (const [sessionId, status] of Object.entries(payload)) {
-          if (isRecord(status) && status.type !== "idle") sessionIds.add(sessionId);
+          if (!isRecord(status) || (status.type !== "idle" && status.type !== "busy" && status.type !== "retry")) {
+            complete = false;
+          } else if (status.type !== "idle") {
+            sessionIds.add(sessionId);
+          }
         }
       } catch {
-        // Unknown activity never keeps a drain open forever; the grace timeout
-        // still bounds it, and an unreachable engine has nothing left to drain.
+        complete = false;
       }
     }));
-    return [...sessionIds];
+    if (!generation.handle.isAlive()) return { sessionIds: [], complete: true };
+    if (!complete) {
+      this.hooks.logger?.log("warn", "Engine session activity probe incomplete; preserving known active sessions until confirmed idle or the inactivity deadline.", {
+        "engine.generation_id": generation.id,
+        "engine.drain.activity_complete": false,
+      });
+    }
+    return { sessionIds: [...sessionIds], complete };
   }
 
   private engineProbeDirectories(): Array<string | null> {
-    const directories = new Set(
-      this.config.workspaces
-        .filter((workspace) => workspace.workspaceType !== "remote")
-        .map((workspace) => workspace.path),
-    );
+    const directories = new Set(this.config.workspaces.map((workspace) => workspace.path));
     return directories.size > 0 ? [...directories] : [null];
   }
 

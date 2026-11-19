@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CircleCheck, CircleX, LockKeyhole, X } from "lucide-react";
+import { Check, ChevronRight, CircleCheck, CircleX, LockKeyhole, X } from "lucide-react";
+import { toolResultPresentation } from "./result-presentation";
 import { UnderlineTabs } from "../../../_components/ui/tabs";
 import {
   type ExternalMcpInspectionBody,
@@ -78,7 +79,7 @@ export function InspectionBody({ body }: { body: ExternalMcpInspectionBody }) {
         </span>
       </div>
       {body.unavailable ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">The transport body could not be captured.</div>
+        <div className="rounded-lg border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-[11px] text-[var(--dls-text-primary)]">The transport body could not be captured.</div>
       ) : (
         <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{body.text || "(empty body)"}</pre>
       )}
@@ -138,7 +139,7 @@ function TracePill({ label, state }: { label: string; state: HopState }) {
 
 function DetailsUnavailable() {
   return (
-    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-800" role="status">
+    <div className="rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12px] leading-5 text-[var(--dls-text-primary)]" role="status">
       Request and response details were unavailable. Refresh after the dashboard and its server are running the same version.
     </div>
   );
@@ -146,7 +147,7 @@ function DetailsUnavailable() {
 
 function RedactionNotice() {
   return (
-    <div className="rounded-lg border border-amber-100 bg-amber-50/70 px-3 py-2 text-[10px] leading-4 text-amber-800">
+    <div className="rounded-lg border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-[10px] leading-4 text-[var(--dls-text-primary)]">
       Credential and session headers are redacted. Bodies may contain sensitive provider data; this inspection is returned only for this run and is not stored in OpenWork logs.
     </div>
   );
@@ -203,6 +204,28 @@ function ResponseInspection({ inspection }: { inspection: ExternalMcpToolCallIns
   );
 }
 
+function ToolResult({ result }: { result: unknown }) {
+  const presentation = toolResultPresentation(result);
+  return (
+    <div className="space-y-3">
+      {presentation.isError ? <p role="alert" className="text-[12px] text-red-600">The tool returned an error.</p> : null}
+      {presentation.blocks.map((block, index) => (
+        <pre key={index} className={`max-h-80 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-5 text-[var(--dls-text-primary)] ${block.kind === "text" ? "font-sans" : "font-mono"}`}>
+          {block.text}
+        </pre>
+      ))}
+      {presentation.emptyMessage ? <p className="text-[12px] text-[var(--dls-text-secondary)]">{presentation.emptyMessage}</p> : null}
+      <details className="group/result border-t border-[var(--dls-border)] pt-3">
+        <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-[var(--dls-text-secondary)] [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-150 ease-out group-open/result:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+          Technical details
+        </summary>
+        <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(result)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome }) {
   const [activeTab, setActiveTab] = useState<"result" | "request" | "response">("result");
   const succeeded = outcome.status === "completed";
@@ -247,8 +270,8 @@ export function McpToolCallInspector({ outcome }: { outcome: McpToolCallOutcome 
       <div className="p-4">
         {activeTab === "result" ? (
           <div className="space-y-2">
-            <pre className="max-h-80 overflow-auto rounded-xl bg-gray-950 p-3 text-[11px] leading-[18px] text-gray-100">{formatJson(outcome.result)}</pre>
-            <p className="inline-flex items-center gap-1.5 text-[10px] text-gray-500">
+            <ToolResult result={outcome.result} />
+            <p className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
               <LockKeyhole className="h-3 w-3" aria-hidden="true" /> Credential headers redacted. Returned only for this run — never stored in OpenWork logs.
             </p>
           </div>

@@ -1,10 +1,14 @@
 import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
+import { useEffect, useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import type { NewSessionDestination } from "./new-session-destination";
 
 export type WorkbenchPane = "primary" | "secondary";
 export type WorkbenchSessionTab = OpenworkSessionRef & {
   workspaceTitle?: string;
+  draftDestination?: NewSessionDestination;
+  pendingConversationId?: string;
 };
 
 export type WorkbenchSnapshot = {
@@ -139,6 +143,16 @@ export function syncWorkbenchSnapshot(
     secondary,
     focusedPane: secondary && isSameWorkbenchSession(primary, current.primary) ? current.focusedPane : "primary",
   });
+}
+
+export function useRouteWorkbench(input: SyncWorkbenchInput): WorkbenchSnapshot {
+  const current = useWorkbenchStore();
+  const snapshot = useMemo(() => syncWorkbenchSnapshot(current, input), [current, input]);
+  const sync = current.sync;
+  useEffect(() => {
+    sync(input);
+  }, [sync, input]);
+  return snapshot;
 }
 
 export function openWorkbenchTab(

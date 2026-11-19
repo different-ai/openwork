@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
 import { readMigrationFiles } from "drizzle-orm/migrator"
 import { ORGANIZATION_REPAIRS, type Executor } from "../src/schema-repairs.ts"
+import { receiptMatchesMigration } from "./superseded-migrations.ts"
 
 export const journalTable = "__drizzle_migrations"
 export const stateTable = "__openwork_dev_migration_state"
@@ -58,6 +60,7 @@ export function loadMigrationPlan(folder: string) {
     throw new MigrationSafetyError("0097_gateway_access_matrix SQL, journal entry and generated snapshot must be finalized together before local startup. No database changes made.")
   }
   if (!plan.at(-1)?.snapshot) throw new MigrationSafetyError("Missing final migration snapshot; refusing to start a partial migration plan")
+  preservedDashboardShape(plan)
   return plan
 }
 
@@ -66,7 +69,7 @@ export type MigrationPlan = ReturnType<typeof loadMigrationPlan>
 export function historyPrefix(plan: MigrationPlan, rows: Record<string, unknown>[]) {
   for (const [index, row] of rows.entries()) {
     const entry = plan[index]
-    if (!entry || row.hash !== entry.hash || Number(row.created_at) !== entry.folderMillis) {
+    if (!entry || !receiptMatchesMigration(row.hash, entry) || Number(row.created_at) !== entry.folderMillis) {
       throw new MigrationSafetyError(`Migration history is not an exact hash/timestamp prefix at receipt ${index + 1}. ${recovery}`)
     }
   }
@@ -99,10 +102,13 @@ function checkExpression(value: string) {
   // grouping intact (stripping all parentheses would accept a weaker check).
   // INFORMATION_SCHEMA on MySQL 8.4 escapes the known string delimiters.
   let text = value.replace(/_utf8mb4\\'(member:|team:|organization)\\'/g, "'$1'")
-    .replace(/`gateway_provider_access`\./g, "").replace(/`|\s/g, "")
+    .replace(/`(?:gateway_provider_access|gateway_usage_bucket|gateway_usage_consumption_event|gateway_usage_limit_assignment|gateway_usage_limit_entry|gateway_usage_tracking)`\./g, "").replace(/`|\s/g, "")
     .split(/('[^']*')/).map((part, index) => index % 2 ? part : part.toLowerCase()).join("")
     .replace(/_utf8mb4(?=')/g, "")
-    .replace(/\(((?:org_membership_id|team_id)is(?:not)?null)\)/g, "$1")
+    .replace(/\(((?:org_membership_id|member_id|team_id|cost_micro_usd|organization)is(?:not)?null)\)/g, "$1")
+    .replace(/\((organization=1)\)/g, "$1")
+    .replace(/\((base_allowance_micro_usd\+extension_micro_usd)\)/g, "$1")
+    .replace(/\(((?:used_micro_usd|cost_micro_usd|base_allowance_micro_usd\+extension_micro_usd)between0and9007199254740991|cost_limit_micro_usd>=0|cost_limit_micro_usd<=7205759403792792)\)/g, "$1")
     .replace(/\((case[\s\S]*?end)\)/g, "$1")
     .replace(/\((audience_key=case[\s\S]*?end)\)/g, "$1")
   while (text.startsWith("(") && text.endsWith(")")) {
@@ -140,6 +146,60 @@ export function snapshotShape(snapshot: Snapshot) {
     if (Object.keys(table.foreignKeys).length) throw new MigrationSafetyError("Foreign keys need explicit local migration recognition")
   }
   return shape
+}
+
+function preservedDashboardShape(plan: MigrationPlan): Map<string, string> {
+  const names = ["dashboard", "dashboard_access_grant"]
+  const definitionHash = "ab8bd253403cbebc0365a51ff354a28ae07e3a3e6efe293a1bce2c506377e656"
+  const anchors = [
+    { tag: "0078_premium_mastermind", when: 1787667476277, hash: "253f5149181ebdc8dd6aee457cf35436b6fca05380e64f8ad3a68a1178a70714" },
+    { tag: "0147_free_auto_behavior", when: 1792104699960, hash: "d800c2060cbfbc81377f70b04918627b9af901dba492fbc7ef5658a1c8635b48" },
+  ]
+  const changed = () => new MigrationSafetyError("Preserved dashboard migration definitions changed; review physical schema expectations before startup. No database changes made.")
+  for (const anchor of anchors) {
+    const entry = plan.find((migration) => migration.tag === anchor.tag)
+    if (!entry?.snapshot || entry.folderMillis !== anchor.when
+      || createHash("sha256").update(entry.sql.join("--> statement-breakpoint")).digest("hex") !== anchor.hash) throw changed()
+  }
+  const canonical = plan.find((entry) => entry.tag === "0078_premium_mastermind")?.snapshot
+  if (!canonical || !plan.find((entry) => entry.tag === "0146_gateway_provider_usage_limits")?.snapshot) throw changed()
+  for (const entry of plan) {
+    const number = Number(entry.tag.slice(0, 4))
+    if (entry.snapshot) {
+      const tables = names.map((name) => entry.snapshot?.tables[name])
+      if (number >= 78 && number < 147) {
+        if (createHash("sha256").update(JSON.stringify(tables)).digest("hex") !== definitionHash) throw changed()
+      } else if (tables.some(Boolean)) throw changed()
+    }
+    // Only 0078 owns these tables. A later SQL change needs a new, reviewed
+    // physical expectation even if a logical snapshot still omits the pair.
+    if (number !== 78 && entry.sql.some((sql) => /\b(?:dashboard|dashboard_access_grant)\b/i.test(sql.replace(/^\s*--[^\n]*$/gm, "")))) throw changed()
+  }
+  const tables: Snapshot["tables"] = {}
+  for (const name of names) tables[name] = canonical.tables[name]
+  return snapshotShape({ ...canonical, tables })
+}
+
+export type PhysicalSchemaLayout = "historical-replay" | "snapshot-bootstrap"
+
+export function physicalSchemaShape(plan: MigrationPlan, applied: number, layout: PhysicalSchemaLayout = "historical-replay") {
+  const preserved = preservedDashboardShape(plan)
+  const entry = plan[applied - 1]
+  if (!entry?.snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
+  const shape = snapshotShape(entry.snapshot)
+  // 0147 deliberately preserves the SQL tables but drops them from logical
+  // snapshots. A historical replay still requires their complete definitions.
+  // Current-schema bootstrap is a separate complete layout, not optional tables.
+  if (Number(entry.tag.slice(0, 4)) >= 147 && layout === "historical-replay") {
+    for (const [key, value] of preserved) shape.set(key, value)
+  }
+  return shape
+}
+
+export function recordedSchemaLayout(plan: MigrationPlan, applied: number, actual: Map<string, string>): PhysicalSchemaLayout {
+  if (Number(plan[applied - 1]?.tag.slice(0, 4)) >= 147
+    && schemaDifferences(physicalSchemaShape(plan, applied, "snapshot-bootstrap"), actual).length === 0) return "snapshot-bootstrap"
+  return "historical-replay"
 }
 
 export async function inspectSchema(executor: Executor) {

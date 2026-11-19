@@ -1,0 +1,597 @@
+import { z } from "zod"
+
+/**
+ * Organization permission catalog shared by den-api (enforcement) and den-web
+ * (editors and gating). See docs/permissions/overview.md, sections 4 and 7.
+ *
+ * Rules:
+ * - Keys are permanent. Never reuse a key for a different meaning.
+ * - Actions only the owner can ever do (delete organization, transfer
+ *   ownership) are not here.
+ * - Baseline member actions (things every member can do today) are not here.
+ * - `defaultOn` reproduces the role checks from before Permissions: a key is
+ *   `["admin"]` only when every action it gates was open to plain admins.
+ *   Actions that need the owner or a super-admin are owner-only by default:
+ *   `defaultOn: []`. The owner holds every key; the Super admin default set
+ *   starts with every key (see `isPermissionDefaultOn`), and either can grant
+ *   owner-only keys to Admin or team permissions.
+ * - `sensitive` matches the old recent sign-in requirement of what it gates.
+ */
+
+/**
+ * The organization's built-in permission sets, in the order roles are listed:
+ * Member (every member), Admin (effective admins), Billing manager (the people
+ * and teams it is given to) and Super admin (direct super-admin role, and the
+ * teams it is given to). Each is a stored, editable set seeded from the
+ * catalog, kept current as the catalog grows, and never renamed or deleted.
+ */
+export const PERMISSION_DEFAULT_SET_KEYS = ["member", "admin", "billing-manager", "super-admin"] as const
+export type PermissionDefaultSetKey = (typeof PERMISSION_DEFAULT_SET_KEYS)[number]
+
+export const PERMISSION_DEFAULT_SET_LABELS: Readonly<Record<PermissionDefaultSetKey, string>> = {
+  member: "Member",
+  admin: "Admin",
+  "billing-manager": "Billing manager",
+  "super-admin": "Super admin",
+}
+
+/**
+ * Built-in sets that apply through an organization role: every member holds
+ * Member, effective admins hold Admin and direct super-admins hold Super
+ * admin. The others (Billing manager) apply only to the people and teams they
+ * are given to, like a custom role.
+ */
+export const ROLE_PERMISSION_DEFAULT_SET_KEYS = ["member", "admin", "super-admin"] as const satisfies readonly PermissionDefaultSetKey[]
+export type RolePermissionDefaultSetKey = (typeof ROLE_PERMISSION_DEFAULT_SET_KEYS)[number]
+
+/**
+ * Built-in sets that can be given to a person or a team the way a custom role
+ * is: Billing manager, and Super admin (to a team; a person holds it through
+ * the super-admin role).
+ */
+export const ASSIGNABLE_PERMISSION_DEFAULT_SET_KEYS = ["billing-manager", "super-admin"] as const satisfies readonly PermissionDefaultSetKey[]
+
+export const PERMISSION_AREAS = {
+  organization: { label: "Organization" },
+  members: { label: "Members and teams" },
+  access: { label: "Permissions" },
+  sharing: { label: "Sharing" },
+  security: { label: "Security and sign-in" },
+  desktop: { label: "Desktop app" },
+  deployments: { label: "Deployments" },
+  billing: { label: "Billing" },
+  models: { label: "Models and providers" },
+  gateway: { label: "AI Gateway" },
+  connections: { label: "Connections" },
+  library: { label: "Plugins and marketplaces" },
+} as const satisfies Record<string, { label: string }>
+
+export type PermissionAreaKey = keyof typeof PERMISSION_AREAS
+
+export type PermissionDefinition = {
+  area: PermissionAreaKey
+  /** Short, user-facing label, e.g. "Delete providers". */
+  label: string
+  description?: string
+  /**
+   * Code defaults (feature off) and seed/reconcile targets (feature on) for
+   * Member, Admin and Billing manager. Super admin starts on with every key
+   * regardless; read through `isPermissionDefaultOn` rather than this list.
+   */
+  defaultOn: readonly PermissionDefaultSetKey[]
+  /** Can never be denied in these default sets. No key uses it today: the owner can always restore access. */
+  lockedOn?: readonly "admin"[]
+  /** Requires a recent sign-in (PRIVILEGED_SESSION_MAX_AGE_MS). */
+  sensitive?: boolean
+  /**
+   * Reconciliation only allows this key in a default set where `follows` is
+   * currently allowed. Must name another catalog key; checked at compile time
+   * by `PermissionFollowsTarget` and at runtime by `permissionCatalogProblems`.
+   */
+  follows?: string
+}
+
+const ADMIN = ["admin"] as const
+/** Owner-only by default: the owner and super-admins hold these; nobody else does until granted. */
+const OWNER_ONLY = [] as const
+/** On for admins, and part of the Billing manager role. */
+const ADMIN_AND_BILLING_MANAGER = ["admin", "billing-manager"] as const
+/** Not on for admins, but part of the Billing manager role: still owner-only until that role is given. */
+const BILLING_MANAGER_ONLY = ["billing-manager"] as const
+
+export const PERMISSIONS = {
+  // Team computer inventory (owners always hold every permission).
+  "computers.view": {
+    area: "desktop",
+    label: "View team computers",
+    description: "View the team's computer inventory, owners, versions, availability and reported readiness. Does not grant control or access to files or screen content.",
+    defaultOn: ADMIN,
+  },
+  "computers.disconnect": {
+    area: "desktop",
+    label: "Disconnect team computers",
+    description: "Disconnect a member's signed-in computer from the organization, which signs OpenWork out there, and remove computers from the team list. Does not grant control or access to files, sessions or screen content.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
+  // Organization
+  "organization.update": {
+    area: "organization",
+    label: "Edit organization settings",
+    description: "Change the organization name, slug and other workspace settings.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "branding.update": {
+    area: "organization",
+    label: "Change branding",
+    description: "Upload the organization logo and other brand assets.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "web_origins.view": {
+    area: "organization",
+    label: "View approved web origins",
+    defaultOn: ADMIN,
+  },
+  "web_origins.manage": {
+    area: "organization",
+    label: "Manage approved web origins",
+    description: "Approve and remove websites that may embed or call OpenWork.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  // Members and teams
+  "invitations.manage": {
+    area: "members",
+    label: "Invite people",
+    description: "Invite people as members and cancel pending invitations. Inviting someone as an admin also needs Change member roles.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "members.update": {
+    area: "members",
+    label: "Change member roles",
+    description: "Make people admins or members, including inviting someone as an admin.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "members.delete": {
+    area: "members",
+    label: "Remove members",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "teams.view": {
+    area: "members",
+    label: "View any team",
+    description: "Open any team's details, including teams you are not in.",
+    defaultOn: ADMIN,
+  },
+  "teams.manage": {
+    area: "members",
+    label: "Manage teams",
+    description: "Create, rename and delete teams and change who is in them.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "teams.manage_admin": {
+    area: "members",
+    label: "Manage Admin teams",
+    description: "Mark a team as an Admin team, change its members, delete it, or invite people into it.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  // Permissions
+  "permissions.view": {
+    area: "access",
+    label: "View permissions",
+    description: "See Member, Admin and team permissions and their history.",
+    defaultOn: ADMIN,
+  },
+  "permissions.manage": {
+    area: "access",
+    label: "Manage permissions",
+    description: "Change Member, Admin and team permissions.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "agent_permissions.view": {
+    area: "access",
+    label: "View agent permissions",
+    description: "See what agents can do on members' computers, for everyone and per team.",
+    defaultOn: ADMIN,
+  },
+  "agent_permissions.manage": {
+    area: "access",
+    label: "Manage agent permissions",
+    description: "Change which commands, file edits, websites, local skills and MCP servers agents can use, for everyone and per team.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  // Sharing
+  "sharing.manage_all": {
+    area: "sharing",
+    label: "Manage everything shared",
+    description: "Act as a manager on every plugin, marketplace, skill and connector in the organization, even when it was not shared with you.",
+    defaultOn: ADMIN,
+  },
+  "sharing.share_org_wide": {
+    area: "sharing",
+    label: "Share with everyone",
+    description: "Share plugins, skills, marketplaces and connections with the whole organization.",
+    defaultOn: ADMIN,
+  },
+
+  // Security and sign-in
+  "sso.view": {
+    area: "security",
+    label: "View single sign-on",
+    defaultOn: ADMIN,
+  },
+  "sso.manage": {
+    area: "security",
+    label: "Manage single sign-on",
+    description: "Configure SAML or OIDC, verify domains, and turn single sign-on on or off.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "scim.view": {
+    area: "security",
+    label: "View SCIM provisioning",
+    defaultOn: ADMIN,
+  },
+  "scim.manage": {
+    area: "security",
+    label: "Manage SCIM provisioning",
+    description: "Create SCIM tokens, change mapping, reconcile and turn SCIM off.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "api_keys.view": {
+    area: "security",
+    label: "View API keys",
+    defaultOn: ADMIN,
+  },
+  "api_keys.manage": {
+    area: "security",
+    label: "Manage API keys",
+    description: "Create and revoke organization API keys.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "audit.view": {
+    area: "security",
+    label: "View audit history",
+    description: "Read and export the organization's audit events and usage.",
+    defaultOn: ADMIN,
+  },
+  "audit.manage": {
+    area: "security",
+    label: "Change audit capture",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
+  // Desktop app
+  "desktop_policies.view": {
+    area: "desktop",
+    label: "View desktop policies",
+    defaultOn: ADMIN,
+  },
+  "desktop_policies.manage": {
+    area: "desktop",
+    label: "Manage desktop policies",
+    description: "Create, change and delete desktop app policies.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  "prompts.view": {
+    area: "desktop",
+    label: "View prompts",
+    description: "See the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+  },
+  "prompts.manage": {
+    area: "desktop",
+    label: "Manage prompts",
+    description: "Write, change and remove the system prompts that steer members' agents, for everyone and per team.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
+  // Deployments
+  "deployments.view": {
+    area: "deployments",
+    label: "View deployments",
+    description: "See the organization's installations in its own cloud accounts and which clouds can be launched.",
+    defaultOn: ADMIN,
+  },
+  "deployments.manage": {
+    area: "deployments",
+    label: "Manage deployments",
+    description: "Create, launch, update and remove installations in the organization's own cloud accounts.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+
+  // Billing
+  "billing.view": {
+    area: "billing",
+    label: "View billing",
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
+  },
+  "billing.manage": {
+    area: "billing",
+    label: "Start a subscription",
+    description: "Start paid billing in checkout and refresh its status afterwards.",
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
+    sensitive: true,
+  },
+  "billing_portal.use": {
+    area: "billing",
+    label: "Open the billing portal",
+    description: "Change payment details, see invoices and change or cancel the subscription.",
+    defaultOn: BILLING_MANAGER_ONLY,
+    sensitive: true,
+  },
+  // Read-only invoices, split from the portal so admins (and billing managers)
+  // can see and download invoices without being able to change payment
+  // details or cancel. Sensitive like the portal: invoices carry the billing
+  // address and a payment method summary. New key: reconciliation turns it on
+  // in every organization's Admin set (it was never seen there before).
+  "billing_invoices.view": {
+    area: "billing",
+    label: "View invoices",
+    description: "See and download the organization's invoices. Does not open the billing portal or change payment details.",
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
+    sensitive: true,
+  },
+
+  // Models and providers
+  "inference.view": {
+    area: "models",
+    label: "View OpenWork Models settings",
+    description: "See OpenWork Models settings and the organization's free allowance summary.",
+    defaultOn: ADMIN,
+  },
+  "inference.manage": {
+    area: "models",
+    label: "Manage OpenWork Models",
+    description: "Turn OpenWork Models on or off and change the Auto pin.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "usage_analytics.view": {
+    area: "organization",
+    label: "View usage analytics",
+    description: "See adoption, usage and skill usage analytics for the organization.",
+    defaultOn: ADMIN,
+  },
+  "analytics.view": {
+    area: "models",
+    label: "View task analytics",
+    defaultOn: ADMIN,
+  },
+  "analytics.manage": {
+    area: "models",
+    label: "Manage task analytics",
+    description: "Turn task analytics on or off and connect or disconnect analytics exports.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "llm_providers.view": {
+    area: "models",
+    label: "View all providers",
+    description: "See every provider in the organization, not only your own or those shared with you.",
+    defaultOn: ADMIN,
+  },
+  "llm_providers.update": {
+    area: "models",
+    label: "Edit any provider",
+    description: "Change any provider and who can use it. People can always edit providers they added.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "llm_providers.delete": {
+    area: "models",
+    label: "Delete any provider",
+    description: "People can always delete providers they added.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "llm_provider_credentials.manage": {
+    area: "models",
+    label: "Manage people's provider keys",
+    description: "List, provision and block member credentials for providers.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
+  // AI Gateway
+  "gateway_providers.view": {
+    area: "gateway",
+    label: "View Gateway providers",
+    description: "See Gateway providers, model groups, credential sets and access grants.",
+    defaultOn: ADMIN,
+  },
+  "gateway_providers.manage": {
+    area: "gateway",
+    label: "Manage Gateway providers",
+    description: "Create, change and delete Gateway providers, model groups, credential sets and access grants.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "gateway_usage.view": {
+    area: "gateway",
+    label: "View Gateway usage",
+    defaultOn: ADMIN_AND_BILLING_MANAGER,
+  },
+  "gateway_limits.view": {
+    area: "gateway",
+    label: "View usage limits",
+    description: "See usage limit policies, assignments, member status and reset requests.",
+    defaultOn: ADMIN,
+  },
+  "gateway_limits.manage": {
+    area: "gateway",
+    label: "Manage usage limits",
+    description: "Change usage limit policies and assignments, and approve or deny reset requests.",
+    defaultOn: ADMIN,
+  },
+
+  // Connections
+  "connections.view": {
+    area: "connections",
+    label: "View all connections",
+    description: "See every connection, its tools, apps and tool policy, not only your own.",
+    defaultOn: ADMIN,
+  },
+  "connections.manage": {
+    area: "connections",
+    label: "Manage connections",
+    description: "Add organization connections, change who can use any connection, set tool policies, connect shared accounts and configure the Slack assistant.",
+    defaultOn: ADMIN,
+  },
+  "connections.update": {
+    area: "connections",
+    label: "Edit any connection",
+    description: "Change any connection's server, sign-in and settings. People can always edit connections they added.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "connections.disconnect": {
+    area: "connections",
+    label: "Disconnect any connection",
+    description: "Sign out every account stored for a connection, keeping the connection itself.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+  "connections.delete": {
+    area: "connections",
+    label: "Remove any connection",
+    description: "Delete any connection. People can always remove connections they added.",
+    defaultOn: OWNER_ONLY,
+    sensitive: true,
+  },
+  "oauth_clients.view": {
+    area: "connections",
+    label: "View OAuth apps",
+    defaultOn: ADMIN,
+  },
+  "oauth_clients.manage": {
+    area: "connections",
+    label: "Manage OAuth apps",
+    description: "Bring your own OAuth app for providers such as Google Workspace.",
+    defaultOn: ADMIN,
+    sensitive: true,
+  },
+
+  // Plugins and marketplaces
+  "marketplaces.manage": {
+    area: "library",
+    label: "Create and remove marketplaces",
+    defaultOn: ADMIN,
+  },
+  "plugins.import": {
+    area: "library",
+    label: "Import plugins from GitHub",
+    defaultOn: ADMIN,
+  },
+  "connectors.manage": {
+    area: "library",
+    label: "Manage sync sources",
+    description: "Connect GitHub accounts and repositories and apply what they discover.",
+    defaultOn: ADMIN,
+  },
+} as const satisfies Record<string, PermissionDefinition>
+
+export type PermissionKey = keyof typeof PERMISSIONS
+
+type PermissionFollowsTargets = {
+  [K in PermissionKey]: (typeof PERMISSIONS)[K] extends { follows: infer Target } ? Target : never
+}[PermissionKey]
+
+type AssertPermissionKeys<T extends PermissionKey> = T
+
+/** Fails to compile when a `follows` value is not a catalog key. */
+export type PermissionFollowsTarget = AssertPermissionKeys<PermissionFollowsTargets>
+
+export function isPermissionKey(value: string): value is PermissionKey {
+  return Object.prototype.hasOwnProperty.call(PERMISSIONS, value)
+}
+
+export const PERMISSION_KEYS: readonly PermissionKey[] = Object.keys(PERMISSIONS).filter(isPermissionKey)
+
+export function getPermissionDefinition(key: PermissionKey): PermissionDefinition {
+  return PERMISSIONS[key]
+}
+
+/**
+ * Whether a catalog entry starts on in a default set: always for Super admin
+ * (it holds every key, including owner-only ones, like the owner), otherwise
+ * when its `defaultOn` names the set. Seeding, reconciliation, code defaults
+ * and the "restore a shipped default" edit rule all read this.
+ */
+export function isPermissionDefaultOn(definition: Pick<PermissionDefinition, "defaultOn">, set: PermissionDefaultSetKey): boolean {
+  return set === "super-admin" || definition.defaultOn.includes(set)
+}
+
+export function permissionDefaultKeys(set: PermissionDefaultSetKey): PermissionKey[] {
+  return PERMISSION_KEYS.filter((key) => isPermissionDefaultOn(getPermissionDefinition(key), set))
+}
+
+/**
+ * What the built-in Billing manager role starts with: see the plan, seats and
+ * usage, see and download invoices, open the billing portal (payment method,
+ * billing details, change or cancel the subscription) and start a
+ * subscription. Nothing else: no members, teams, permissions, connections,
+ * plugins, models, security or organization settings. Deleting the
+ * organization and transferring ownership stay owner-only and are not catalog
+ * keys at all.
+ */
+export const BILLING_MANAGER_PERMISSION_KEYS: readonly PermissionKey[] = permissionDefaultKeys("billing-manager")
+
+export function isPermissionLockedOn(key: PermissionKey, set: PermissionDefaultSetKey): boolean {
+  if (set !== "admin") return false
+  return getPermissionDefinition(key).lockedOn?.includes(set) ?? false
+}
+
+/** Neither Member nor Admin includes it: only the owner and the Super admin set hold it until someone grants it. */
+export function isPermissionOwnerOnlyByDefault(key: PermissionKey): boolean {
+  const definition = getPermissionDefinition(key)
+  return !isPermissionDefaultOn(definition, "member") && !isPermissionDefaultOn(definition, "admin")
+}
+
+export function isPermissionSensitive(key: PermissionKey): boolean {
+  return getPermissionDefinition(key).sensitive === true
+}
+
+export const PERMISSION_KEY_PATTERN = /^[a-z_]+\.[a-z_]+$/
+
+/** Catalog invariants. Returns human-readable problems; empty means valid. */
+export function permissionCatalogProblems(): string[] {
+  const problems: string[] = []
+  for (const key of PERMISSION_KEYS) {
+    const definition = getPermissionDefinition(key)
+    if (!PERMISSION_KEY_PATTERN.test(key)) problems.push(`${key}: key must match ${PERMISSION_KEY_PATTERN}`)
+    if (!Object.prototype.hasOwnProperty.call(PERMISSION_AREAS, definition.area)) problems.push(`${key}: unknown area ${definition.area}`)
+    if (definition.label.trim().length === 0) problems.push(`${key}: label is empty`)
+    if (definition.follows !== undefined) {
+      if (!isPermissionKey(definition.follows)) problems.push(`${key}: follows unknown key ${definition.follows}`)
+      else if (definition.follows === key) problems.push(`${key}: follows itself`)
+    }
+    for (const set of definition.lockedOn ?? []) {
+      if (!definition.defaultOn.includes(set)) problems.push(`${key}: locked on ${set} but not default on ${set}`)
+    }
+  }
+  return problems
+}
+
+export const permissionKeySchema = z.enum(PERMISSION_KEYS)
+export const permissionDefaultSetKeySchema = z.enum(PERMISSION_DEFAULT_SET_KEYS)

@@ -178,6 +178,19 @@ retention() {
   count '- name: INFERENCE_ADMIN_TOKEN' 2
   contains 'Bearer ${process.env.GATEWAY_ADMIN_TOKEN}'
   contains '/internal/rollups/run'
+  # Hourly with the hosted batch size, not one nightly default-sized batch.
+  contains 'schedule: "5 * * * *"'
+  contains 'value: "{\"maxBucketsPerRun\":48,\"maxSourceRowsPerBucket\":5000}"'
+  contains 'activeDeadlineSeconds: 900'
+}
+retention_batch() {
+  render "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only \
+    --set inference.retention.maxBucketsPerRun=10 --set gateway.retention.maxSourceRowsPerBucket=2000
+  contains 'value: "{\"maxBucketsPerRun\":10,\"maxSourceRowsPerBucket\":2000}"'
+  # Reused values from older charts have no batch keys: chart defaults apply.
+  render "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only \
+    --set inference.retention.maxBucketsPerRun=null --set inference.retention.maxSourceRowsPerBucket=null
+  contains 'value: "{\"maxBucketsPerRun\":48,\"maxSourceRowsPerBucket\":5000}"'
 }
 legacy_retention() {
   render --set inference.enabled=true --set inference.retention.enabled=true \
@@ -300,6 +313,7 @@ check legacy-models-env-compatibility legacy_env
 check retention-authoritative-both-aliases retention
 check legacy-retention legacy_retention
 check retention-false-and-empty-map retention_disabled
+check retention-batch-overrides-and-reused-defaults retention_batch
 check tag-fallback-and-overrides tags
 check immutable-resources-and-ingress identities
 check shared-and-optional-secret-refs secrets
@@ -342,6 +356,9 @@ check database-env-conflict reject 'shared config/secret' "${valid[@]}" --set de
 check port-env-conflict reject gateway.containerPort "${valid[@]}" --set gateway.env.GATEWAY_PORT=9999
 check retention-missing-secret reject gateway.retention.adminTokenSecret "${valid[@]}" --set gateway.retention.enabled=true
 check retention-empty-key reject gateway.retention.adminTokenKey "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only --set-string gateway.retention.adminTokenKey=
+check retention-rows-too-large reject 'maxSourceRowsPerBucket (or inference.retention.maxSourceRowsPerBucket) must be an integer between 1 and 5000' "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only --set gateway.retention.maxSourceRowsPerBucket=5001
+check retention-buckets-zero reject 'maxBucketsPerRun (or inference.retention.maxBucketsPerRun) must be an integer between 1 and 1000' "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only --set gateway.retention.maxBucketsPerRun=0
+check retention-buckets-not-number reject 'maxBucketsPerRun (or inference.retention.maxBucketsPerRun) must be an integer between 1 and 1000' "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only --set-string gateway.retention.maxBucketsPerRun=lots
 for alias in GATEWAY_ADMIN_TOKEN INFERENCE_ADMIN_TOKEN; do
   check "retention-env-conflict-$alias" reject 'instead of' "${valid[@]}" --set gateway.retention.enabled=true --set gateway.retention.adminTokenSecret=retention-only --set "inference.env.$alias=do-not-disclose"
 done

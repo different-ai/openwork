@@ -184,7 +184,7 @@ function ConnectorPicker({
               disabled={disabled || taken}
               onClick={() => onChange(connection.id)}
               className={selected
-                ? "flex w-full items-center gap-3 rounded-2xl border border-gray-900 bg-gray-50 px-4 py-3 text-left"
+                ? "flex w-full items-center gap-3 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-active)] px-4 py-3 text-left"
                 : "flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3 text-left transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"}
             >
               <IntegrationIcon
@@ -225,7 +225,9 @@ export function PluginEditorScreen() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [components, setComponents] = useState<DraftComponent[]>([]);
+  const [components, setComponents] = useState<DraftComponent[]>(() => searchParams.get("component") === "skill"
+    ? [{ key: 0, kind: "skill", name: "", description: "", content: "", connectionId: "" }]
+    : []);
   const [nextKey, setNextKey] = useState(1);
   const [marketplaceId, setMarketplaceId] = useState<string>("");
   const [marketplaceTouched, setMarketplaceTouched] = useState(false);

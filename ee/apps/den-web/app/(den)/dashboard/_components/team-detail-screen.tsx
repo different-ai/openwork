@@ -1,68 +1,100 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
-import { ArrowLeft, ShieldCheck, Users } from "lucide-react";
-import { DenBadge } from "../../_components/ui/badge";
+import { useRouter, useSearchParams } from "next/navigation";
+import { type ReactNode, useEffect, useState } from "react";
+import { Laptop, Compass, KeyRound, Layers, MessageCircle, ScrollText, ShieldCheck, SquareTerminal, Users } from "lucide-react";
+import type { TabItem } from "../../_components/ui/tabs";
+import { getMembersRoute, getMembersTeamsRoute, getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
-import { DenNotice } from "../../_components/ui/notice";
-import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
-import { getMarketplaceRoute, getMembersRoute } from "../../_lib/den-org";
+import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
+import { DesktopSuggestionsPanel } from "./desktop-suggestions-panel";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { TeamPermissionsPanel } from "./team-permissions-panel";
-import { OrgMemberIdentity } from "./org-member-identity";
-import { TeamAdminCheckbox } from "./team-admin-checkbox";
-import {
-  type TeamPluginAccessItem,
-  useRevokeTeamPluginAccess,
-  useTeamPluginAccess,
-} from "./team-access-data";
+import { AgentsPanel, agentsTabVisible } from "./agent-permissions-editor";
+import { TeamPluginAccessPanel } from "./team-plugin-access-panel";
+import { ModelsPanel, modelsTabVisible, teamModelsAccess } from "./team-models-panel";
+import { directoryAccess } from "./gateway-directory-data";
+import { useGatewayAccessProviders } from "./gateway-subject-access-data";
+import { PromptsPanel, promptsTabVisible } from "./prompts-panel";
+import { teamScopeOf } from "./team-scope";
+import { TeamPageFrame, TeamSections } from "./team-sections";
+import { WorkbotPanel, workbotTabVisible } from "./team-workbot-panel";
+import { ListRow, RowLane, RowLaneLabel, RowList, RowListHeader } from "../_features/computers/computer-rows";
+import { PersonLead } from "../_features/computers/computer-parts";
+import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
+import { LinkButton } from "./item-list";
+import { SharedTeamRolePanel } from "./shared-team-role-panel";
+import { MemberTeamRoles } from "./member-team-roles";
+import { useOrganizationRoles } from "./permissions-data";
+import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type FeatureIntroKey } from "../_features/feature-intros";
+import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
+import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 
-type TeamDetailTab = "overview" | "access";
+/** The role lane of the team's Members list. */
+const TEAM_MEMBER_ROLE_LANE = "flex w-40 @2xl:w-56";
 
-function formatGrantedDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
+export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
+
+/** Each tab's feature intro, for `?` and its unseen dot (DESIGN.md I9). Everyone's page shares them. */
+export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
+  role: "team-detail.role",
+  overview: "team-detail.members",
+  access: "team-detail.access",
+  agents: "team-detail.agents",
+  browser: "team-detail.browser",
+  models: "team-detail.models",
+  workbot: "team-detail.workbot",
+  prompts: "team-detail.prompts",
+  desktop: "team-detail.desktop",
+};
+
+/** A tab's body behind its feature intro: a box replaces it while the tab has nothing set up. */
+export function TeamTabIntro({ tab, facts, children }: { tab: TeamDetailTab; facts: TeamDetailFacts | null; children: ReactNode }) {
+  return <FeatureIntroGate introKey={TEAM_DETAIL_TAB_INTROS[tab]} facts={facts}>{children}</FeatureIntroGate>;
 }
 
-function AccessViaBadge({ item }: { item: TeamPluginAccessItem }) {
-  if (item.edge === "direct_team") {
-    return <DenBadge tone="success">direct team grant</DenBadge>;
-  }
-  if (item.edge === "via_catalog") {
-    return <DenBadge tone="info">via catalog: {item.marketplace?.name}</DenBadge>;
-  }
-  return (
-    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-medium text-emerald-600">
-      org-wide
-    </span>
-  );
-}
+export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string; initialTab?: TeamDetailTab | null }) {
+  const { orgContext, orgId, orgSlug } = useOrgDashboard();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const introUnseen = useFeatureIntroUnseen();
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const viewerAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
+  // Revoking a team's plugin grant needs manager access to the plugin (`sharing.manage_all`).
+  const canRevokeAccess = viewerAccess?.canManageAllShared ?? false;
+  // Members list each person's team roles the same way the Members page does.
+  const organizationRoles = useOrganizationRoles(orgId, Boolean(orgContext) && (viewerAccess?.canViewPermissions ?? false));
+  // The team's Agents tab holds what it changes from Everyone.
+  const showAgents = agentsTabVisible(orgContext);
+  // Open websites moves from Agents to its own Browser tab, and
+  // the team's AI providers, spend limits and default model get a Models tab.
 
-function RoleBadge({ role }: { role: TeamPluginAccessItem["role"] }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[12px] font-medium ${
-        role === "editor"
-          ? "border border-amber-200 bg-amber-50 text-amber-700"
-          : "bg-gray-100 text-gray-600"
-      }`}
-    >
-      {role}
-    </span>
-  );
-}
-
-export function TeamDetailScreen({ teamId }: { teamId: string }) {
-  const { orgContext, orgSlug } = useOrgDashboard();
-  const [activeTab, setActiveTab] = useState<TeamDetailTab>("access");
-  const accessQuery = useTeamPluginAccess(teamId);
-  const revokeAccess = useRevokeTeamPluginAccess();
+  const showBrowser = showAgents;
+  const showDesktop = desktopPolicyScreenRemoved(orgContext);
+  const showModels = modelsTabVisible(orgContext);
+  const showPrompts = promptsTabVisible(orgContext);
+  // What the team changes from Everyone's Workbot settings, with settings per team on.
+  const showWorkbot = workbotTabVisible(orgContext);
+  const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
+  const defaultTab: TeamDetailTab = "role";
+  // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
+  const setActiveTab = (tab: TeamDetailTab) => {
+    setChosenTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === defaultTab) url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", url);
+  };
+  const available = (tab: TeamDetailTab) => tab === "role" ? true
+    : tab === "agents" ? showAgents
+      : tab === "browser" ? showBrowser
+        : tab === "desktop" ? showDesktop
+        : tab === "models" ? showModels
+        : tab === "workbot" ? showWorkbot
+        : tab === "prompts" ? showPrompts
+          : true;
+  const activeTab: TeamDetailTab = chosenTab && available(chosenTab) ? chosenTab : defaultTab;
   const team = orgContext?.teams.find((entry) => entry.id === teamId);
   const membersById = new Map((orgContext?.members ?? []).map((member) => [member.id, member]));
   const teamMembers = (team?.memberIds ?? []).flatMap((memberId) => {
@@ -70,167 +102,130 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
     return member ? [member] : [];
   });
   const memberCount = team?.memberIds.length ?? 0;
-  const tabs: readonly TabItem<TeamDetailTab>[] = [
-    { value: "overview", label: "Overview", icon: Users },
-    { value: "access", label: "Access", icon: ShieldCheck },
+  // The team's name and people are edited in the same form as on Members › Teams.
+  const canEditTeam = Boolean(team && viewerAccess?.canManageTeams && !team.managedByScim && (!team.grantsOrganizationAdmin || viewerAccess.canManageAdminTeams));
+  const editTeamLockedReason = team?.managedByScim
+    ? "Managed by your identity provider. Ask your identity provider administrator to change this team."
+    : team?.grantsOrganizationAdmin && !viewerAccess?.canManageAdminTeams
+      ? permissionLockReason("teams.manage_admin")
+      : permissionLockReason("teams.manage");
+  // Facts the tabs' intros read; tab-specific ones are added where each tab loads them.
+  const teamFacts: TeamDetailFacts | null = team && orgContext
+    ? { teamMembers: team.memberIds.length, managedByScim: team.managedByScim, adminTeam: team.grantsOrganizationAdmin }
+    : null;
+  // The Models intro reads the same providers and OpenWork Models as the AI Gateway's, only on that tab.
+  const modelsFacts = useAiGatewayIntroFacts(introsEnabled && activeTab === "models");
+  // Same query (and request) as the tab's "Can use" list: how many providers this team can use.
+  const providerAccess = useGatewayAccessProviders(orgId ?? "", introsEnabled && activeTab === "models" && Boolean(orgId) && Boolean(teamModelsAccess(orgContext ?? null)?.providers));
+  const sharedProviders = providerAccess.data ? directoryAccess(providerAccess.data, { type: "team", teamId }).length : undefined;
+
+  // "Add people to this team" from the Members tab intro opens this team's edit form on Members › Teams (DESIGN.md I5).
+  const addPeopleRequested = searchParams.get("addPeople") === "1";
+  useEffect(() => {
+    if (addPeopleRequested) router.replace(`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`);
+  }, [addPeopleRequested, router, orgSlug, teamId]);
+  const agentsTab: readonly TabItem<TeamDetailTab>[] = [
+    ...(showAgents ? [{ value: "agents" as const, label: "Agents", icon: SquareTerminal }] : []),
+    ...(showBrowser ? [{ value: "browser" as const, label: "Browser", icon: Compass }] : []),
+    ...(showModels ? [{ value: "models" as const, label: "Models", icon: Layers }] : []),
+    ...(showWorkbot ? [{ value: "workbot" as const, label: "Workbot", icon: MessageCircle }] : []),
+    ...(showPrompts ? [{ value: "prompts" as const, label: "Prompts", icon: ScrollText }] : []),
+    ...(showDesktop ? [{ value: "desktop" as const, label: "Desktop", icon: Laptop }] : []),
   ];
+  const tabs: readonly TabItem<TeamDetailTab>[] = [
+      { value: "role", label: "Role", icon: ShieldCheck },
+      { value: "overview", label: "Members", icon: Users },
+      { value: "access", label: "Access", icon: KeyRound },
+      ...agentsTab,
+    ];
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <Link
-          href={getMembersRoute(orgSlug)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
-      </div>
-
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-950">
-          {team?.name ?? "Team"}
-        </h1>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[12px] font-medium text-gray-600">
-          {memberCount} {memberCount === 1 ? "member" : "members"}
-        </span>
-      </header>
-      {team ? <TeamAdminCheckbox team={team} /> : null}
-
-      <UnderlineTabs
-        className="mt-6"
-        tabs={tabs}
+    <TeamPageFrame title={team?.name ?? "Team"} memberCount={memberCount} backHref={getMembersTeamsRoute(orgSlug)}
+      action={team ? canEditTeam
+        ? <LinkButton size="sm" variant="secondary" href={`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`} data-testid="team-edit">Edit team</LinkButton>
+        : <span className="flex flex-col items-end gap-1"><DenButton size="sm" variant="secondary" disabled title={editTeamLockedReason} data-testid="team-edit-locked">Edit team</DenButton><span className="max-w-72 text-right text-[12px] text-[var(--dls-text-secondary)]">{editTeamLockedReason}</span></span>
+        : undefined}>
+      <TeamSections
+        tabs={tabs.map((item) => ({ ...item, unseen: introUnseen(TEAM_DETAIL_TAB_INTROS[item.value]) }))}
         activeTab={activeTab}
         onChange={setActiveTab}
-      />
+      >
+        {activeTab === "role" && team ? (
+          <div role="tabpanel" aria-label="Role">
+            <TeamTabIntro tab="role" facts={teamFacts}><SharedTeamRolePanel team={team} /></TeamTabIntro>
+          </div>
+        ) : null}
 
-      <div className="mt-6">
         {activeTab === "overview" ? (
-          <div role="tabpanel" aria-label="Overview">
+          <div role="tabpanel" aria-label="Members">
+            <TeamTabIntro tab="overview" facts={teamFacts}>
             {teamMembers.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-                <p className="text-[14px] font-medium text-gray-800">This team has no members yet.</p>
-              </div>
+              <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">This team has no members yet.</p>
             ) : (
-              <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-                {teamMembers.map((member) => (
-                  <div key={member.id} className="px-6 py-4">
-                    <OrgMemberIdentity member={member} />
-                    {member.adminTeams.length > 0 ? (
-                      <p className="mt-2 text-[12px] text-gray-500">Admin via {member.adminTeams.map((entry) => entry.name).join(", ")}</p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+              <RowList label={`People in ${team?.name ?? "this team"}`} testId="team-members-list" header={<RowListHeader lead="Member"><RowLaneLabel lane={TEAM_MEMBER_ROLE_LANE}>Role</RowLaneLabel></RowListHeader>}>
+                {teamMembers.map((member) => {
+                  const name = member.user.name || member.user.email;
+                  const flags = getOrgAccessFlags(member.role, member.isOwner);
+                  const role = flags.isOwner ? BUILT_IN_ROLES.owner.label : flags.isSuperAdmin ? BUILT_IN_ROLES["super-admin"].label : flags.canonicalRole === "admin" ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
+                  // Roles the person holds through other teams sit under the row, as on the Members page.
+                  const viaTeams = orgContext
+                    ? <MemberTeamRoles member={member} teams={orgContext.teams} setIdByTeam={organizationRoles.setIdByTeam} roles={organizationRoles.roles} exceptTeamId={teamId} />
+                    : null;
+                  return (
+                    <ListRow key={member.id} rowTestId="team-member-row" lead={<PersonLead name={name} />} name={name}
+                      secondLine={name !== member.user.email ? member.user.email : undefined}
+                      lanes={<RowLane lane={TEAM_MEMBER_ROLE_LANE} className="flex-col justify-center">
+                        <span className="truncate">{member.joinedAt ? role : `${role}, invited`}</span>
+                        {viaTeams ? <span className="[&>span]:mt-0 [&>span]:truncate">{viaTeams}</span> : null}
+                      </RowLane>} />
+                  );
+                })}
+              </RowList>
             )}
+            </TeamTabIntro>
           </div>
         ) : null}
 
         {activeTab === "access" ? (
           <div role="tabpanel" aria-label="Access">
-            <TeamPermissionsPanel teamId={teamId} />
-            <h2 className="mb-2 text-lg font-semibold text-gray-950">Plugins & connections</h2>
-            <p className="mb-4 text-sm text-gray-500">Review what this team can use and where access comes from.</p>
-            {accessQuery.isLoading ? (
-              <div className="rounded-2xl border border-gray-100 bg-white px-6 py-8 text-[13px] text-gray-400">
-                Loading team access…
-              </div>
-            ) : accessQuery.error ? (
-              <DenNotice
-                tone="error"
-                message={accessQuery.error instanceof Error ? accessQuery.error.message : "Could not load team access."}
-              />
-            ) : accessQuery.data?.length ? (
-              <div className="overflow-hidden rounded-2xl md:border md:border-gray-100 md:bg-white md:overflow-x-auto">
-                <div className="md:min-w-[760px]">
-                  <div className="hidden grid-cols-[minmax(0,1fr)_210px_100px_230px_110px] border-b border-gray-100 px-6 py-3 text-[11px] uppercase tracking-[0.14em] text-gray-400 md:grid">
-                    <span>Plugin</span>
-                    <span>Access via</span>
-                    <span>Role</span>
-                    <span>Granted by</span>
-                    <span />
-                  </div>
-                  <div className="space-y-3 md:space-y-0 md:divide-y md:divide-gray-100">
-                    {accessQuery.data.map((item) => {
-                      const revoking = revokeAccess.isPending && revokeAccess.variables?.grantId === item.grantId;
-                      return (
-                        <div
-                          key={`${item.plugin.id}-${item.edge}-${item.grantId ?? item.marketplace?.id ?? "org"}`}
-                          className={`flex flex-col gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-4 md:grid md:grid-cols-[minmax(0,1fr)_210px_100px_230px_110px] md:items-center md:gap-0 md:rounded-none md:border-0 md:px-6 md:py-3.5 ${item.role === "editor" ? "bg-amber-50/40" : ""}`}
-                        >
-                          <div className="min-w-0 md:pr-4">
-                            <p className="truncate text-[14px] font-semibold text-gray-900">{item.plugin.name}</p>
-                            <p className="mt-0.5 text-[12px] text-gray-400">
-                              {item.plugin.componentCount} {item.plugin.componentCount === 1 ? "component" : "components"}
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 md:contents">
-                            <div className="md:pr-4">
-                              <AccessViaBadge item={item} />
-                            </div>
-                            <div>
-                              <RoleBadge role={item.role} />
-                            </div>
-                          </div>
-                          <p className="text-[13px] text-gray-500 md:pr-4">
-                            {item.grantedBy?.name ?? "—"} · {formatGrantedDate(item.grantedAt)}
-                          </p>
-                          {item.edge === "direct_team" ? (
-                            <div className="flex justify-end border-t border-gray-100 pt-3 md:border-0 md:pt-0">
-                              <DenButton
-                                variant="destructive"
-                                size="sm"
-                                disabled={!item.grantId}
-                                loading={revoking}
-                                onClick={() => {
-                                  if (!item.grantId) return;
-                                  revokeAccess.mutate({
-                                    teamId,
-                                    pluginId: item.plugin.id,
-                                    grantId: item.grantId,
-                                  });
-                                }}
-                              >
-                                Revoke
-                              </DenButton>
-                            </div>
-                          ) : item.edge === "via_catalog" && item.marketplace ? (
-                            <div className="flex justify-end border-t border-gray-100 pt-3 md:border-0 md:pt-0">
-                              <DenButton
-                                href={getMarketplaceRoute(orgSlug, item.marketplace.id)}
-                                variant="secondary"
-                                size="sm"
-                              >
-                                Open catalog
-                              </DenButton>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-                <p className="text-[14px] font-medium text-gray-800">This team has no plugin access yet.</p>
-              </div>
-            )}
-
-            {revokeAccess.error ? (
-              <DenNotice
-                className="mt-4"
-                tone="error"
-                message={revokeAccess.error instanceof Error ? revokeAccess.error.message : "Could not revoke plugin access."}
-              />
-            ) : null}
-
-            <p className="mt-4 text-[12px] text-gray-500">
-              direct = revocable here; via catalog = manage in the catalog; org-wide = org setting.
-            </p>
+            <TeamPluginAccessPanel teamId={teamId} teamName={team?.name ?? "This team"} orgSlug={orgSlug} canRevoke={canRevokeAccess} />
           </div>
         ) : null}
-      </div>
-    </div>
+
+        {activeTab === "agents" && team ? (
+          <div role="tabpanel" aria-label="Agents">
+            <TeamTabIntro tab="agents" facts={teamFacts}><AgentsPanel team={{ id: team.id, name: team.name }} area="agents" /></TeamTabIntro>
+          </div>
+        ) : null}
+
+        {activeTab === "browser" && team ? (
+          <div role="tabpanel" aria-label="Browser">
+            <TeamTabIntro tab="browser" facts={teamFacts}><AgentsPanel team={{ id: team.id, name: team.name }} area="browser" /></TeamTabIntro>
+          </div>
+        ) : null}
+
+        {activeTab === "desktop" && team ? (<div role="tabpanel" aria-label="Desktop"><TeamTabIntro tab="desktop" facts={teamFacts}><DesktopSuggestionsPanel team={{ id: team.id, name: team.name }} /></TeamTabIntro></div>) : null}
+
+        {activeTab === "prompts" && team ? (
+          <div role="tabpanel" aria-label="Prompts">
+            <PromptsPanel team={{ id: team.id, name: team.name }} />
+          </div>
+        ) : null}
+
+        {activeTab === "workbot" && team ? (
+          <div role="tabpanel" aria-label="Workbot">
+            <TeamTabIntro tab="workbot" facts={teamFacts}><WorkbotPanel scope={teamScopeOf(team)} /></TeamTabIntro>
+          </div>
+        ) : null}
+
+        {activeTab === "models" && team ? (
+          <div role="tabpanel" aria-label="Models">
+            <TeamTabIntro tab="models" facts={teamFacts && modelsFacts ? { ...teamFacts, providers: modelsFacts.providers, openworkModels: modelsFacts.openworkModels, sharedProviders } : null}>
+              <ModelsPanel team={{ id: team.id, name: team.name }} />
+            </TeamTabIntro>
+          </div>
+        ) : null}
+      </TeamSections>
+    </TeamPageFrame>
   );
 }

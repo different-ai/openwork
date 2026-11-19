@@ -15,7 +15,6 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
 import { organizationAllowsManagedModels } from "../../inference.js"
-import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { listAccessibleMarketplaceCapabilityReferences } from "../../mcp/marketplace-capabilities.js"
 import {
   type MemberTeamsContext,
@@ -281,9 +280,6 @@ export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariabl
           orgMembershipId: organizationContext.currentMember.id,
           teamIds,
         },
-        enabled: memberFacingMcpConnectionsEnabled(organizationContext.organization.metadata, {
-          gatingEnabled: env.mcpConnectionsGatingEnabled,
-        }),
       })
       return c.json({
         items: items.map((item) => ({

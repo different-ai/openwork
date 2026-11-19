@@ -16,7 +16,8 @@ export type ComposerSettingsSection =
   | "plugins"
   | "connections"
   | "extensions"
-  | "providers";
+  | "providers"
+  | "permissions";
 
 /** Fallback when Configure has no + menu section (opens the full inventory). */
 export const COMPOSER_CONFIGURE_SECTION = "extensions" satisfies ComposerSettingsSection;
@@ -153,13 +154,14 @@ export function libraryAgentsFromOpencode(
 
 export type ComposerConfigureDestination =
   | { kind: "library"; path: string }
-  | { kind: "settings"; route: "/settings/ai" };
+  | { kind: "settings"; route: "/settings/ai" | "/settings/permissions" };
 
 /** Configure from the composer opens the matching Library filter, except providers. */
 export function composerConfigureDestination(
   section: ComposerSettingsSection,
 ): ComposerConfigureDestination {
   if (section === "providers") return { kind: "settings", route: "/settings/ai" };
+  if (section === "permissions") return { kind: "settings", route: "/settings/permissions" };
   return { kind: "library", path: libraryPathForSection(section) };
 }
 
@@ -190,7 +192,7 @@ const LIBRARY_ITEM_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
   switch (filter) {
     case "all":
-      return ["skill", "command", "agent", "workspace-mcp", "connection"];
+      return ["skill", "connection", "plugin"];
     case "skill":
       return ["skill"];
     case "command":
@@ -198,9 +200,9 @@ export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
     case "agent":
       return ["agent"];
     case "mcp":
-      return ["workspace-mcp"];
+      return ["mcp"];
     case "plugin":
-      return [];
+      return ["plugin"];
     case "connection":
       return ["connection"];
     default:
@@ -213,7 +215,7 @@ export function isLibraryAuthorableKind(kind: LibraryAddKind): kind is LibraryAu
 }
 
 export type LibraryAddAction =
-  | { type: "den-url"; kind: "connection" }
+  | { type: "connector-catalog" }
   | { type: "den-modal"; kind: LibraryAuthorableKind }
   | { type: "workspace-mcp" };
 
@@ -229,7 +231,7 @@ export function libraryAddAction(
     return options.allowManageExtensions ? { type: "workspace-mcp" } : null;
   }
   if (!options.cloudSignedIn) return null;
-  if (addKind === "connection") return { type: "den-url", kind: "connection" };
+  if (addKind === "connection") return { type: "connector-catalog" };
   if (isLibraryAuthorableKind(addKind)) return { type: "den-modal", kind: addKind };
   return null;
 }
@@ -334,7 +336,23 @@ export function libraryMcpConnectionRequest(form: LibraryMcpConnectionForm): Lib
   };
 }
 
-function skillMarkdown(name: string, description: string, instructions: string) {
+/** Reads the SKILL.md written by `skillMarkdown` back into its fields. */
+export function parseSkillMarkdown(raw: string): { name: string; description: string; body: string } {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return { name: "", description: "", body: raw.trim() };
+  const fields = new Map<string, string>();
+  for (const line of (match[1] ?? "").split(/\r?\n/)) {
+    const separator = line.indexOf(":");
+    if (separator > 0) fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  return {
+    name: fields.get("name") ?? "",
+    description: fields.get("description") ?? "",
+    body: (match[2] ?? "").trim(),
+  };
+}
+
+export function skillMarkdown(name: string, description: string, instructions: string) {
   return [
     "---",
     `name: ${name}`,

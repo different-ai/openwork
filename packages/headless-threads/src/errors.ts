@@ -1,3 +1,14 @@
+export function isHeadlessModelAccessError(error: unknown): boolean {
+  if (typeof error === "string") return /^(?:Model not found\s*:|ProviderModelNotFoundError\b|ProviderAuthError\b)/i.test(error);
+  if (error === null || typeof error !== "object") return false;
+  for (const key of ["code", "name"]) {
+    const value: unknown = Reflect.get(error, key);
+    if (value === "model_access_lost" || value === "ProviderModelNotFoundError" || value === "ProviderAuthError") return true;
+  }
+  const message: unknown = Reflect.get(error, "message");
+  return typeof message === "string" && isHeadlessModelAccessError(message);
+}
+
 /**
  * A single error type for every headless thread failure, so a caller running
  * many threads can classify failures without string matching.
@@ -8,6 +19,8 @@ export class HeadlessThreadError extends Error {
   readonly path: string;
   readonly status: number | null;
   readonly body: unknown;
+  /** True when retrying the same call may succeed; null when unclassified. */
+  readonly retryable: boolean | null;
 
   constructor(input: {
     code: string;
@@ -16,6 +29,7 @@ export class HeadlessThreadError extends Error {
     path: string;
     status?: number;
     body?: unknown;
+    retryable?: boolean;
   }) {
     super(input.message);
     this.name = "HeadlessThreadError";
@@ -24,5 +38,6 @@ export class HeadlessThreadError extends Error {
     this.path = input.path;
     this.status = input.status ?? null;
     this.body = input.body;
+    this.retryable = input.retryable ?? null;
   }
 }

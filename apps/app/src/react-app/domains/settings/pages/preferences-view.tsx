@@ -10,6 +10,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 
 import { t } from "@/i18n";
+import { isElectronRuntime, isMacPlatform } from "@/app/utils";
+import { isFollowUpDefault, isLinkOpenDestination, type FollowUpDefault, type LinkOpenDestination } from "@/react-app/kernel/local-preferences-storage";
 import {
   DESKTOP_NOTIFICATION_PREFERENCE_VALUES,
   isDesktopNotificationPreference,
@@ -38,8 +40,14 @@ export type PreferencesViewProps = {
   onToggleAutoCompactContext: () => void;
   analyticsEnabled: boolean;
   onToggleAnalytics: () => void;
+  followUpDefault: FollowUpDefault;
+  onFollowUpDefaultChange: (value: FollowUpDefault) => void;
+  keepAwake: boolean;
+  onToggleKeepAwake: () => void;
   desktopNotifications: DesktopNotificationPreference;
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
+  linkOpenDestination: LinkOpenDestination;
+  onLinkOpenDestinationChange: (value: LinkOpenDestination) => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -54,6 +62,15 @@ function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference
 }
 
 export function PreferencesView(props: PreferencesViewProps) {
+  const linkDestinationItems = [
+    { value: "openwork", label: "OpenWork" },
+    { value: "external", label: t("settings.links.external") },
+  ];
+  const followUpItems = [
+    { value: "queue", label: t("settings.follow_up.queue") },
+    { value: "steer", label: t("settings.follow_up.steer") },
+  ];
+  const followUpModifier = isMacPlatform() ? "⌘" : "Ctrl";
   const desktopNotificationItems = DESKTOP_NOTIFICATION_PREFERENCE_VALUES.map((value) => ({
     value,
     label: desktopNotificationPreferenceLabel(value),
@@ -102,6 +119,41 @@ export function PreferencesView(props: PreferencesViewProps) {
 
       <LayoutSection>
         <LayoutSectionHeader>
+          <LayoutSectionTitle>{t("settings.follow_up.title")}</LayoutSectionTitle>
+          <LayoutSectionDescription>{t("settings.follow_up.section_desc")}</LayoutSectionDescription>
+        </LayoutSectionHeader>
+        <LayoutSectionItem>
+          <LayoutSectionItemHeader>
+            <LayoutSectionItemTitle>{t("settings.follow_up.enter")}</LayoutSectionItemTitle>
+            <LayoutSectionItemDescription>
+              {t(props.followUpDefault === "steer" ? "settings.follow_up.enter_desc_steer" : "settings.follow_up.enter_desc_queue", { modifier: followUpModifier })}
+            </LayoutSectionItemDescription>
+            <LayoutSectionItemHeaderActions>
+              <Select
+                items={followUpItems}
+                value={props.followUpDefault}
+                onValueChange={(value) => {
+                  if (isFollowUpDefault(value)) props.onFollowUpDefaultChange(value);
+                }}
+              >
+                <SelectTrigger className="w-52" aria-label={t("settings.follow_up.enter")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {followUpItems.map(({ value, label }) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </LayoutSectionItemHeaderActions>
+          </LayoutSectionItemHeader>
+        </LayoutSectionItem>
+      </LayoutSection>
+
+      <LayoutSection>
+        <LayoutSectionHeader>
           <LayoutSectionTitle>{t("settings.desktop_notifications.title")}</LayoutSectionTitle>
           <LayoutSectionDescription>{t("settings.desktop_notifications.section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
@@ -141,7 +193,66 @@ export function PreferencesView(props: PreferencesViewProps) {
         </LayoutSectionItem>
       </LayoutSection>
 
+      {isElectronRuntime() ? (
+        <LayoutSection>
+          <LayoutSectionHeader>
+            <LayoutSectionTitle>{t("settings.power_title")}</LayoutSectionTitle>
+          </LayoutSectionHeader>
+
+          <LayoutSectionItem>
+            <LayoutSectionItemHeader>
+              <LayoutSectionItemTitle>{t("settings.keep_awake")}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{t("settings.keep_awake_desc")}</LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions>
+                <Switch
+                  aria-label={t("settings.keep_awake")}
+                  checked={props.keepAwake}
+                  disabled={props.busy}
+                  onCheckedChange={props.onToggleKeepAwake}
+                />
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        </LayoutSection>
+      ) : null}
+
       <DesktopIntegrationSection />
+
+      {isElectronRuntime() ? (
+        <LayoutSection>
+          <LayoutSectionHeader>
+            <LayoutSectionTitle>{t("settings.browser_title")}</LayoutSectionTitle>
+            <LayoutSectionDescription>{t("settings.browser_section_desc")}</LayoutSectionDescription>
+          </LayoutSectionHeader>
+
+          <LayoutSectionItem>
+            <LayoutSectionItemHeader className="min-h-10 items-center">
+              <LayoutSectionItemTitle>{t("settings.links.open_in")}</LayoutSectionItemTitle>
+              <LayoutSectionItemDescription>{t("settings.links.open_in_desc")}</LayoutSectionItemDescription>
+              <LayoutSectionItemHeaderActions className="self-center">
+                <Select
+                  value={props.linkOpenDestination}
+                  items={linkDestinationItems}
+                  onValueChange={(value) => {
+                    if (isLinkOpenDestination(value)) props.onLinkOpenDestinationChange(value);
+                  }}
+                >
+                  <SelectTrigger className="w-44" aria-label={t("settings.links.open_in")}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {linkDestinationItems.map(({ value, label }) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </LayoutSectionItemHeaderActions>
+            </LayoutSectionItemHeader>
+          </LayoutSectionItem>
+        </LayoutSection>
+      ) : null}
 
       <LayoutSection>
         <LayoutSectionHeader>

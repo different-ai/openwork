@@ -1,0 +1,9 @@
+// path: proofs/composer-draft.proof.test.ts
+import { spec, denFetch } from "@openwork/testkit";
+import { core } from "../worlds/core-web.ts";
+const test = spec.world(core);
+test("a person keeps a draft", async ({ user, seed }) => {
+  await seed.evalIn("app", () => window.localStorage.setItem("draft", "hi"));
+  await denFetch({ url: "" }, "/v1/me");
+  await user.see("composer");
+});

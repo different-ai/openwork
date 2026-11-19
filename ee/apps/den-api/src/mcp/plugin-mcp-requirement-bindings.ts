@@ -40,7 +40,8 @@ export async function upsertPluginMcpRequirementBinding(input: {
   connectionOwnedByPlugin: boolean
 }): Promise<PluginMcpRequirementBindingRow> {
   const serverName = input.serverName.trim()
-  const existing = await db
+  // primary: insert-vs-update decision must see a binding written moments ago.
+  const existing = await db.$primary
     .select()
     .from(PluginMcpRequirementBindingTable)
     .where(and(
@@ -104,7 +105,7 @@ export async function deletePluginMcpRequirementBindingsForConfigObject(input: {
   configObjectId: ConfigObjectId
   organizationId: OrganizationId
 }): Promise<void> {
-  const rows = await db
+  const rows = await db.$primary
     .select({ id: PluginMcpRequirementBindingTable.id })
     .from(PluginMcpRequirementBindingTable)
     .where(and(
@@ -118,7 +119,7 @@ export async function deletePluginMcpRequirementBindingsForPlugin(input: {
   organizationId: OrganizationId
   pluginId: PluginId
 }): Promise<void> {
-  const rows = await db
+  const rows = await db.$primary
     .select({ id: PluginMcpRequirementBindingTable.id })
     .from(PluginMcpRequirementBindingTable)
     .where(and(
@@ -133,7 +134,7 @@ export async function deletePluginMcpRequirementBindingsForPluginConfigObject(in
   organizationId: OrganizationId
   pluginId: PluginId
 }): Promise<void> {
-  const rows = await db
+  const rows = await db.$primary
     .select({ id: PluginMcpRequirementBindingTable.id })
     .from(PluginMcpRequirementBindingTable)
     .where(and(
@@ -149,7 +150,8 @@ export async function activePluginMcpRequirementBindingsReferenceConnection(inpu
   excludingPluginId: PluginId
   organizationId: OrganizationId
 }): Promise<boolean> {
-  const rows = await db
+  // primary: gates deleting a connection; a just-written binding must count.
+  const rows = await db.$primary
     .select({ pluginId: PluginMcpRequirementBindingTable.pluginId })
     .from(PluginMcpRequirementBindingTable)
     .where(and(

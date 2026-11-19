@@ -1,7 +1,10 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useReducer, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type SetStateAction } from "react";
 import { Folder, Info, Plus, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { sandboxStatusQueryKey } from "@/react-app/infra/use-sandbox";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -16,8 +19,8 @@ import { t } from "@/i18n";
 import type {
   OpenworkServerCapabilities,
   OpenworkServerClient,
-  OpenworkServerStatus,
 } from "../../../../app/lib/openwork-server";
+import type { SettingsWorkspaceState } from "../state/workspace-discovery";
 import { pickDirectory } from "../../../../app/lib/desktop";
 import {
   safeStringify,
@@ -41,12 +44,12 @@ import {
 } from "../settings-layout";
 
 export type AuthorizedFoldersPanelProps = {
+  workspaceState: SettingsWorkspaceState;
+  onRetryDiscovery: () => void;
   openworkServerClient: OpenworkServerClient | null;
-  openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
   selectedWorkspaceRoot: string;
-  activeWorkspaceType: "local" | "remote";
   onConfigUpdated: () => void;
 };
 
@@ -116,6 +119,8 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const platform = usePlatform();
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loaded, setLoaded] = useState<{ client: OpenworkServerClient; workspaceId: string; attempt: number; success: boolean } | null>(null);
   const [serverWorkspaceRoot, setServerWorkspaceRoot] = useState("");
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
@@ -133,7 +138,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const setAuthorizedFoldersStatus = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "status", value });
   const setAuthorizedFoldersError = (value: SetStateAction<string | null>) => dispatchFolderState({ type: "set", key: "error", value });
 
-  const openworkServerReady = props.openworkServerStatus === "connected";
+  const openworkServerReady = props.workspaceState === "connected";
   const openworkServerWorkspaceReady = Boolean(props.runtimeWorkspaceId);
   const canReadConfig =
     openworkServerReady &&
@@ -145,16 +150,17 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     (props.openworkServerCapabilities?.config?.write ?? false);
 
   const authorizedFoldersHint = useMemo(() => {
-    if (!openworkServerReady) return t("context_panel.server_disconnected");
+    if (props.workspaceState === "disconnected") return t("context_panel.server_disconnected");
+    if (props.workspaceState === "missing") return t("context_panel.no_server_workspace");
     if (!openworkServerWorkspaceReady) return t("context_panel.no_server_workspace");
     if (!canReadConfig) return t("context_panel.config_access_unavailable");
     if (!canWriteConfig) return t("context_panel.config_read_only");
     return null;
-  }, [canReadConfig, canWriteConfig, openworkServerReady, openworkServerWorkspaceReady]);
+  }, [canReadConfig, canWriteConfig, props.workspaceState, openworkServerWorkspaceReady]);
 
   const canUseNativeFilePicker = platform.capabilities.nativeFilePicker;
   const canPickAuthorizedFolder =
-    canUseNativeFilePicker && canWriteConfig && props.activeWorkspaceType === "local";
+    canUseNativeFilePicker && canWriteConfig;
   const workspaceRootFolder = serverWorkspaceRoot || props.selectedWorkspaceRoot.trim();
   const visibleAuthorizedFolders = useMemo(() => {
     const root = workspaceRootFolder;
@@ -179,6 +185,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         const response = await openworkClient.listAuthorizedFolders(openworkWorkspaceId);
         if (cancelled) return;
         setServerWorkspaceRoot(response.workspaceRoot.trim());
+        setLoaded({ client: openworkClient, workspaceId: openworkWorkspaceId, attempt: loadAttempt, success: true });
         dispatchFolderState({
           type: "loadSuccess",
           folders: response.folders,
@@ -186,8 +193,8 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         });
       } catch (error) {
         if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        dispatchFolderState({ type: "loadError", message });
+        dispatchFolderState({ type: "loadError", message: t("sandbox.folders_error") });
+        setLoaded({ client: openworkClient, workspaceId: openworkWorkspaceId, attempt: loadAttempt, success: false });
       } finally {
         if (!cancelled) dispatchFolderState({ type: "loadDone" });
       }
@@ -196,8 +203,9 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [canReadConfig, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canReadConfig, loadAttempt, props.openworkServerClient, props.runtimeWorkspaceId]);
 
+  const queryClient = useQueryClient();
   const persistAuthorizedFolders = useCallback(async (nextFolders: string[]) => {
     const openworkClient = props.openworkServerClient;
     const openworkWorkspaceId = props.runtimeWorkspaceId;
@@ -213,6 +221,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     try {
       const response = await openworkClient.setAuthorizedFolders(openworkWorkspaceId, nextFolders);
       setAuthorizedFolders(response.folders);
+      void queryClient.invalidateQueries({ queryKey: sandboxStatusQueryKey({ client: openworkClient, workspaceId: openworkWorkspaceId }) });
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
           response.hiddenCount,
@@ -229,7 +238,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     } finally {
       setAuthorizedFoldersSaving(false);
     }
-  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId, queryClient]);
 
   const removeAuthorizedFolder = useCallback(async (folder: string) => {
     const nextFolders = authorizedFolders.filter((entry) => entry !== folder);
@@ -268,7 +277,20 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     }
   }, [authorizedFolders, canUseNativeFilePicker, persistAuthorizedFolders, workspaceRootFolder]);
 
+  const loadedCurrent = loaded?.client === props.openworkServerClient
+    && loaded.workspaceId === props.runtimeWorkspaceId && loaded.attempt === loadAttempt;
+  const loading = props.workspaceState === "discovering" || (canReadConfig && (!loadedCurrent || authorizedFoldersLoading));
+  const loadFailed = loadedCurrent && !loaded.success;
+  const ready = canReadConfig && !loading && !loadFailed;
+  const marked = useRef(false);
+  const markReady = useCallback((element: HTMLElement | null) => {
+    if (!element || !ready || marked.current) return;
+    marked.current = true;
+    performance.mark("openwork:permissions:folders-ready");
+  }, [ready]);
+
   return (
+    <section ref={markReady} data-testid="authorized-folders-panel" data-ready={ready ? "true" : undefined}>
     <LayoutSectionItem className="gap-6">
       <LayoutSectionItemHeader>
         <LayoutSectionItemTitle>
@@ -281,7 +303,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
           <LayoutSectionItemHeaderActions>
             <Button
               onClick={() => void pickAuthorizedFolder()}
-              disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+              disabled={loading || loadFailed || authorizedFoldersSaving || !canPickAuthorizedFolder}
             >
               <Plus className="size-4" />
               Add folder
@@ -290,7 +312,15 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         ) : null}
       </LayoutSectionItemHeader>
 
-      {!canReadConfig ? (
+      {loading ? <Skeleton className="h-12 w-full" /> : props.workspaceState === "timed-out" || props.workspaceState === "disconnected" ? (
+        <SettingsNotice>
+          {props.workspaceState === "timed-out" ? t("settings.permissions_discovery_timeout") : authorizedFoldersHint} <Button variant="link" size="sm" className="h-auto px-1" onClick={props.onRetryDiscovery}>{t("common.retry")}</Button>
+        </SettingsNotice>
+      ) : loadFailed ? (
+        <SettingsNotice tone="error">
+          {t("sandbox.folders_error")} <Button variant="link" size="sm" className="h-auto px-1" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t("common.retry")}</Button>
+        </SettingsNotice>
+      ) : !canReadConfig ? (
         <SettingsNotice>
           {authorizedFoldersHint ?? t("context_panel.authorized_folders_no_access")}
         </SettingsNotice>
@@ -330,7 +360,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
               <EmptyContent>
                 <Button
                   onClick={() => void pickAuthorizedFolder()}
-                  disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+                  disabled={loading || loadFailed || authorizedFoldersSaving || !canPickAuthorizedFolder}
                 >
                   <Plus className="size-4" />
                   Add folder
@@ -350,5 +380,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         </>
       )}
     </LayoutSectionItem>
+    </section>
   );
 }

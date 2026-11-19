@@ -1,0 +1,52 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -666,9 +666,19 @@ async function auth(provider, options) {
+ */
+ function determineScope(options) {
+ 	const { requestedScope, resourceMetadata, authServerMetadata, clientMetadata } = options;
+-	let effectiveScope = requestedScope || resourceMetadata?.scopes_supported?.join(" ") || clientMetadata.scope;
+-	if (effectiveScope && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScope.split(" ").includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScope = `${effectiveScope} offline_access`;
+-	return effectiveScope;
++	const requiredScopes = requestedScope?.split(/\s+/).filter(Boolean) ?? [];
++	const selectedScopes = clientMetadata.scope?.split(/\s+/).filter(Boolean) ?? [];
++	const authorizationServerScopes = authServerMetadata?.scopes_supported;
++	const resourceScopes = resourceMetadata?.scopes_supported;
++	const advertisedScopes = [...new Set([...(authorizationServerScopes ?? []), ...(resourceScopes ?? [])])];
++	if (advertisedScopes.length > 0) {
++		const unsupportedScope = selectedScopes.find((selectedScope) => !advertisedScopes.includes(selectedScope));
++		if (unsupportedScope) throw new Error(`The selected OAuth scope is not advertised by the authorization server or protected resource: ${unsupportedScope}`);
++	}
++	const effectiveScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++	if (effectiveScopes.length === 0) effectiveScopes.push(...new Set(resourceScopes ?? authorizationServerScopes ?? []));
++	if (effectiveScopes.length > 0 && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScopes.includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScopes.push("offline_access");
++	return effectiveScopes.length > 0 ? effectiveScopes.join(" ") : void 0;
+ }
+ async function authInternal(provider, { serverUrl, authorizationCode, iss, scope, resourceMetadataUrl, fetchFn, skipIssuerMetadataValidation, forceReauthorization }) {
+ 	const clientMetadata = resolveClientMetadata(provider);
+diff --git a/dist/index.mjs b/dist/index.mjs
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -663,9 +663,19 @@ async function auth(provider, options) {
+ */
+ function determineScope(options) {
+ 	const { requestedScope, resourceMetadata, authServerMetadata, clientMetadata } = options;
+-	let effectiveScope = requestedScope || resourceMetadata?.scopes_supported?.join(" ") || clientMetadata.scope;
+-	if (effectiveScope && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScope.split(" ").includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScope = `${effectiveScope} offline_access`;
+-	return effectiveScope;
++	const requiredScopes = requestedScope?.split(/\s+/).filter(Boolean) ?? [];
++	const selectedScopes = clientMetadata.scope?.split(/\s+/).filter(Boolean) ?? [];
++	const authorizationServerScopes = authServerMetadata?.scopes_supported;
++	const resourceScopes = resourceMetadata?.scopes_supported;
++	const advertisedScopes = [...new Set([...(authorizationServerScopes ?? []), ...(resourceScopes ?? [])])];
++	if (advertisedScopes.length > 0) {
++		const unsupportedScope = selectedScopes.find((selectedScope) => !advertisedScopes.includes(selectedScope));
++		if (unsupportedScope) throw new Error(`The selected OAuth scope is not advertised by the authorization server or protected resource: ${unsupportedScope}`);
++	}
++	const effectiveScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++	if (effectiveScopes.length === 0) effectiveScopes.push(...new Set(resourceScopes ?? authorizationServerScopes ?? []));
++	if (effectiveScopes.length > 0 && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScopes.includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScopes.push("offline_access");
++	return effectiveScopes.length > 0 ? effectiveScopes.join(" ") : void 0;
+ }
+ async function authInternal(provider, { serverUrl, authorizationCode, iss, scope, resourceMetadataUrl, fetchFn, skipIssuerMetadataValidation, forceReauthorization }) {
+ 	const clientMetadata = resolveClientMetadata(provider);

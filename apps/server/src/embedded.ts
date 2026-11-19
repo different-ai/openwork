@@ -7,7 +7,12 @@
  */
 import { randomUUID } from "node:crypto";
 import { stopTaskRecovery } from "./task-recovery.js";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import constants from "../../../constants.json" with { type: "json" };
+import { readBinaryVersion, seedManagedOpencodePluginDeps } from "./selfhost-web.js";
 import { resolveServerConfig, type CliArgs } from "./config.js";
 import {
   buildEngineAuthProbeHeader,
@@ -32,12 +37,12 @@ import {
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
 import { ensureLocalWorkspaceFiles } from "./workspace-init.js";
-import { findManagedEngineWorkspace } from "./workspaces.js";
+import { findManagedEngineWorkspace, resolveManagedEngineCwd, shouldStartManagedEngine } from "./workspaces.js";
+import { runtimeStorageDir } from "./runtime-db.js";
 import { keepOpenworkRuntimeConfigFileFresh, writeOpenworkRuntimeConfigFile } from "./openwork-runtime-config.js";
 import { migrateOpenworkCloudMcpRuntimeConfig } from "./cloud-mcp-health.js";
 import { migrateWorkspaceRuntimeConfigToEngineGlobal } from "./runtime-opencode-config-store.js";
 import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
-import type { ServeResult } from "./serve-node.js";
 import type { LocalManagedMcpVaultKeyProvider, ServerConfig } from "./types.js";
 
 export type EmbeddedServerOptions = CliArgs & {
@@ -49,7 +54,15 @@ export type EmbeddedServerOptions = CliArgs & {
   opencodeCwd?: string;
   /** Secure key custody for the local managed MCP credential vault. */
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
+  driveFileApproval?: ServerConfig["driveFileApproval"];
   resumeInterruptedTasks?: boolean;
+  anonymousInference?: ServerConfig["anonymousInference"];
+  /** Desktop/bootstrap-owned control plane for signed-out feature discovery. */
+  trustedDenOrigin?: string;
+  /** Desktop marks a brand-new install so it starts on OpenCode v2. */
+  freshInstallEngine?: ServerConfig["freshInstallEngine"];
+  /** Copy v1 chats with a backup and switch when idle by default; false is a local opt-out. */
+  engineAutoUpgrade?: boolean;
 };
 
 export type EmbeddedServerHandle = {
@@ -72,6 +85,13 @@ export type EmbeddedServerHandle = {
 export async function startEmbeddedServer(options: EmbeddedServerOptions): Promise<EmbeddedServerHandle> {
   const config = await resolveServerConfig(options);
   config.localManagedMcpVaultKey = options.localManagedMcpVaultKey;
+  config.driveFileApproval = options.driveFileApproval;
+  config.anonymousInference = options.anonymousInference;
+  config.trustedDenOrigin = options.trustedDenOrigin;
+  config.freshInstallEngine = options.freshInstallEngine;
+  if (options.engineAutoUpgrade !== undefined) {
+    config.engineAutoUpgrade = options.engineAutoUpgrade;
+  }
   config.resumeInterruptedTasks = options.resumeInterruptedTasks === true && options.manageOpencode === true && !config.opencodeBaseUrl;
   const logger = createServerLogger(config);
 
@@ -82,7 +102,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   let engineSpawnTemplate: EngineSpawnTemplate | null = null;
   let enginePool: EnginePool | null = null;
   let stopRuntimeConfigFileRefresh: (() => void) | null = null;
-  let server: ServeResult | null = null;
+  let server: Awaited<ReturnType<typeof startServer>> | null = null;
   let stopPromise: Promise<void> | null = null;
 
   const releaseResources = async (): Promise<void> => {
@@ -187,101 +207,127 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   // requested one. Proxy requests that land in the short window before the
   // engine is ready fail with opencode_unconfigured and clients retry; the
   // desktop only learns the server URL after this function returns.
-  server = await duringStartup(() => startServer(config));
+  // The engine also starts with no workspace registered yet: a member who
+  // signs in before creating a workspace still needs providers to load. The
+  // first workspace later inherits this connection instead of a new spawn.
+  const manageEngine = !config.opencodeBaseUrl && options.manageOpencode === true
+    && shouldStartManagedEngine(config.workspaces);
+  server = await duringStartup(() => startServer(config, { deferManagedEngineStartup: manageEngine }));
   config.port = server.port;
   const serverUrl = `http://${config.host === "0.0.0.0" ? "127.0.0.1" : config.host}:${server.port}`;
 
-  if (!config.opencodeBaseUrl && options.manageOpencode) {
-    const workspace = findManagedEngineWorkspace(config.workspaces);
-    if (workspace) {
-      // Reap engines recorded by servers that died without cleanup. Best
-      // effort: a failed reap must never block startup.
-      await reapOrphanEngineInstances(config).catch(() => undefined);
-      // Server-managed config file: the engine re-reads it from disk on every
-      // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
-      // on every runtime-DB write — so disposes always pick up current state.
-      const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config);
-      stopRuntimeConfigFileRefresh = keepOpenworkRuntimeConfigFileFresh(config);
-      const cwd = options.opencodeCwd
-        || process.env.OPENWORK_MANAGED_OPENCODE_CWD?.trim()
-        || workspace.path;
-      await duringStartup(() => mkdir(cwd, { recursive: true }));
-      const opencodeModelsUrl = await duringStartup(() => resolveOpencodeModelsUrl());
+  if (manageEngine) {
+    // Reap engines recorded by servers that died without cleanup. Best
+    // effort: a failed reap must never block startup.
+    await reapOrphanEngineInstances(config).catch(() => undefined);
+    // Server-managed config file: the engine re-reads it from disk on every
+    // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
+    // on every runtime-DB write — so disposes always pick up current state.
+    const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config);
+    stopRuntimeConfigFileRefresh = keepOpenworkRuntimeConfigFileFresh(config);
+    const cwd = resolveManagedEngineCwd({
+      explicit: options.opencodeCwd || process.env.OPENWORK_MANAGED_OPENCODE_CWD,
+      workspace: findManagedEngineWorkspace(config.workspaces),
+      fallbackDir: join(runtimeStorageDir(config), "managed-opencode-workdir"),
+    });
+    await duringStartup(() => mkdir(cwd, { recursive: true }));
+    const opencodeModelsUrl = await duringStartup(() => resolveOpencodeModelsUrl());
 
-      const opencodeBin = options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN;
-      // Shared by the first spawn and by any later rollover standby, so a
-      // replacement engine is identical apart from its port.
-      const engineEnv: Record<string, string | undefined> = {
-        ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
-        ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
-        OPENWORK_SERVER_URL: serverUrl,
-        OPENWORK_SERVER_TOKEN: config.token,
-        OPENCODE_CONFIG: runtimeConfigPath,
-        OPENCODE_MODELS_URL: opencodeModelsUrl,
-      };
-      engineSpawnTemplate = {
-        bin: opencodeBin,
-        cwd,
-        runtimeConfigPath,
-        env: engineEnv,
-        reservedPorts: () => {
-          const poolPorts = enginePool?.connections()
-            .map((connection) => Number(new URL(connection.baseUrl).port) || 0)
-            .filter((port) => port > 0) ?? [];
-          const startupPort = managedOpencode ? Number(new URL(managedOpencode.url).port) || 0 : 0;
-          return [...new Set([config.port, ...poolPorts, startupPort].filter((port) => port > 0))];
-        },
-      };
-      managedOpencode = await duringStartup(() => createManagedOpencodeServer({
-        bin: opencodeBin,
-        cwd,
-        excludedPorts: [config.port],
-        env: engineEnv,
+    const opencodeBin = options.opencodeBin || process.env.OPENWORK_OPENCODE_BIN;
+    // A listening engine still blocks its first folder request on npm installs
+    // for plugin dependencies. Ship the same exact-version install the web CLI
+    // already uses, rather than making a fresh desktop wait on the registry.
+    // tar is an external process: it needs the real unpacked file, not an ASAR
+    // virtual path. Custom engine versions keep their own dependency lifecycle.
+    const pluginDepsArchive = fileURLToPath(new URL(
+      `./opencode-plugin-deps-${constants.opencodeVersion.replace(/^v/, "")}.tgz`, import.meta.url,
+    )).replace(/([\\/])app\.asar([\\/])/, "$1app.asar.unpacked$2");
+    if (!config.readOnly && existsSync(pluginDepsArchive) && opencodeBin
+      && readBinaryVersion(opencodeBin) === constants.opencodeVersion.replace(/^v/, "")) {
+      const seeded = await duringStartup(() => seedManagedOpencodePluginDeps({
+        archive: pluginDepsArchive, cwd, env: process.env,
+        // Desktop deliberately spawns in a scratch cwd, separate from the
+        // folders its first scoped engine requests will actually initialize.
+        workspaceDirs: config.workspaces.map((workspace) => workspace.path).filter((path) => path.trim()),
       }));
-
-      config.opencodeBaseUrl = managedOpencode.url;
-      config.opencodeUsername = managedOpencode.username;
-      config.opencodePassword = managedOpencode.password;
-      for (const entry of config.workspaces) {
-        if (entry.workspaceType === "remote") {
-          entry.baseUrl ??= managedOpencode.url;
-          entry.opencodeUsername ??= managedOpencode.username;
-          entry.opencodePassword ??= managedOpencode.password;
-          entry.directory ??= entry.path;
-          continue;
+      for (const { result } of seeded) {
+        if (result.seeded) {
+          logger.log("info", `Bundled engine dependencies seeded: true (${result.durationMs} ms).`);
+        } else if (result.reason === "failed") {
+          logger.log("warn", "Bundled engine dependencies could not be prepared; using the engine installer.");
         }
-        entry.baseUrl = managedOpencode.url;
-        entry.opencodeUsername = managedOpencode.username;
-        entry.opencodePassword = managedOpencode.password;
-        entry.directory = entry.path;
       }
-      // The identity only needs to be unique per managed-process boot; a
-      // random nonce provides that without routing the engine credentials
-      // through the fast identity hash.
-      managedOpencodeIdentity = [
-        managedOpencode.pid ?? "unknown",
-        randomUUID(),
-      ].join(":");
-      registerTrustedOpencodeProcess(config, {
-        baseUrl: managedOpencode.url,
-        identity: managedOpencodeIdentity,
-        isAlive: managedOpencode.isAlive,
-      });
-      if (managedOpencode.pid) {
-        managedEngineRecordId = randomUUID();
-        await registerEngineInstance(config, {
-          id: managedEngineRecordId,
-          pid: managedOpencode.pid,
-          port: Number(new URL(managedOpencode.url).port) || 0,
-          url: managedOpencode.url,
-          startedAt: Date.now(),
-          role: "primary",
-          serverRunId: managedOpencodeIdentity,
-          ownerPid: process.pid,
-          authProbe: buildEngineAuthProbeHeader(managedOpencode.username, managedOpencode.password),
-          bin: opencodeBin?.trim() || "opencode",
-        }).catch(() => undefined);
-      }
+    }
+    // Where engine v1 keeps a database or global config of its own when a
+    // standalone OpenCode v2 install owns the shared ones.
+    const engineStateDir = join(runtimeStorageDir(config), "opencode-v1", "state");
+    // Shared by the first spawn and by any later rollover standby, so a
+    // replacement engine is identical apart from its port.
+    const engineEnv: Record<string, string | undefined> = {
+      ...(process.env.OPENWORK_DEV_MODE ? { OPENWORK_DEV_MODE: process.env.OPENWORK_DEV_MODE } : {}),
+      ...(process.env.OPENWORK_UI_CONTROL_DISCOVERY ? { OPENWORK_UI_CONTROL_DISCOVERY: process.env.OPENWORK_UI_CONTROL_DISCOVERY } : {}),
+      OPENWORK_SERVER_URL: serverUrl,
+      OPENWORK_SERVER_TOKEN: config.token,
+      OPENCODE_CONFIG: runtimeConfigPath,
+      OPENCODE_MODELS_URL: opencodeModelsUrl,
+    };
+    engineSpawnTemplate = {
+      bin: opencodeBin,
+      cwd,
+      runtimeConfigPath,
+      env: engineEnv,
+      stateDir: engineStateDir,
+      reservedPorts: () => {
+        const poolPorts = enginePool?.connections()
+          .map((connection) => Number(new URL(connection.baseUrl).port) || 0)
+          .filter((port) => port > 0) ?? [];
+        const startupPort = managedOpencode ? Number(new URL(managedOpencode.url).port) || 0 : 0;
+        return [...new Set([config.port, ...poolPorts, startupPort].filter((port) => port > 0))];
+      },
+    };
+    managedOpencode = await duringStartup(() => createManagedOpencodeServer({
+      bin: opencodeBin,
+      cwd,
+      excludedPorts: [config.port],
+      env: engineEnv,
+      stateDir: engineStateDir,
+    }));
+
+    config.opencodeBaseUrl = managedOpencode.url;
+    config.opencodeUsername = managedOpencode.username;
+    config.opencodePassword = managedOpencode.password;
+    for (const entry of config.workspaces) {
+      entry.baseUrl = managedOpencode.url;
+      entry.opencodeUsername = managedOpencode.username;
+      entry.opencodePassword = managedOpencode.password;
+      entry.directory = entry.path;
+    }
+    // The identity only needs to be unique per managed-process boot; a
+    // random nonce provides that without routing the engine credentials
+    // through the fast identity hash.
+    managedOpencodeIdentity = [
+      managedOpencode.pid ?? "unknown",
+      randomUUID(),
+    ].join(":");
+    registerTrustedOpencodeProcess(config, {
+      baseUrl: managedOpencode.url,
+      identity: managedOpencodeIdentity,
+      isAlive: managedOpencode.isAlive,
+    });
+    if (managedOpencode.pid) {
+      managedEngineRecordId = randomUUID();
+      await registerEngineInstance(config, {
+        id: managedEngineRecordId,
+        pid: managedOpencode.pid,
+        port: Number(new URL(managedOpencode.url).port) || 0,
+        url: managedOpencode.url,
+        startedAt: Date.now(),
+        role: "primary",
+        serverRunId: managedOpencodeIdentity,
+        ownerPid: process.pid,
+        authProbe: buildEngineAuthProbeHeader(managedOpencode.username, managedOpencode.password),
+        bin: opencodeBin?.trim() || "opencode",
+      }).catch(() => undefined);
     }
   }
 
@@ -306,6 +352,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
       registryId: managedEngineRecordId,
       trustedIdentity: managedOpencodeIdentity,
     });
+    await duringStartup(server.completeManagedEngineStartup);
   }
 
   const initialManagedOpencode = managedOpencode;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { ArrowLeft, Check, ChevronDown, GitBranch, Github, Globe, Loader2, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Store, Trash2, Users, X } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
@@ -49,6 +49,8 @@ import {
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { useFeatureIntro } from "../_features/feature-intros";
+import { COLLECTION_ADD_PLUGIN_PARAM } from "../_features/feature-intros/intros/collections";
 
 const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }> = {
   skill: { singular: "skill", plural: "skills" },
@@ -60,6 +62,7 @@ const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }
   lsp_server: { singular: "LSP server", plural: "LSP servers" },
   monitor: { singular: "monitor", plural: "monitors" },
   workflow: { singular: "Workflow", plural: "Workflows" },
+  app: { singular: "Artifact", plural: "Artifacts" },
   settings: { singular: "setting", plural: "settings" },
 };
 
@@ -101,18 +104,18 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
   const configurationTargets = useMemo(() => (
     data?.plugins.flatMap((plugin) => (
       plugin.cloudReadiness?.connections
         .filter((connection) => (
           pluginRequirementNeedsAdminSetup(connection)
-          || pluginReadinessConnectionAction(connection, access.isAdmin) !== null
+          || pluginReadinessConnectionAction(connection, access.canManageConnections) !== null
         ))
         .map((connection) => ({ plugin, connection })) ?? []
     )) ?? []
-  ), [access.isAdmin, data]);
+  ), [access.canManageConnections, data]);
 
   useEffect(() => {
     if (!actionsOpen) return;
@@ -124,6 +127,27 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [actionsOpen]);
+
+  // Feature intro: a box replaces "No plugins in this collection yet" (DESIGN.md I1).
+  // This page can't tell how many collections exist, so it clears what the list reported.
+  const pluginsIntro = useFeatureIntro(
+    "collections.plugins",
+    data ? { collectionPlugins: data.plugins.length, canAddPlugins: access.canManageAllShared, collections: null, ownCollections: null } : null,
+  );
+
+  // Feature intro action (DESIGN.md I5): ?addPlugin=1 opens Add a plugin with this collection chosen.
+  const searchParams = useSearchParams();
+  const addPluginRequested = searchParams.get(COLLECTION_ADD_PLUGIN_PARAM) === "1";
+  useEffect(() => {
+    if (!orgContext || !addPluginRequested) return;
+    if (access.canManageAllShared) {
+      router.replace(`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplaceId)}`);
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete(COLLECTION_ADD_PLUGIN_PARAM);
+    window.history.replaceState(null, "", url);
+  }, [orgContext, addPluginRequested, access.canManageAllShared, router, orgSlug, marketplaceId]);
 
   if (isLoading && !data) {
     return (
@@ -173,7 +197,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
           <ArrowLeft className="h-4 w-4" />
           Back
         </Link>
-        {access.isAdmin && marketplace.canDelete ? (
+        {access.canManageMarketplaces && marketplace.canDelete ? (
           <div ref={actionsRef} className="relative">
             <button
               type="button"
@@ -299,7 +323,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  {access.isAdmin ? (
+                  {access.canManageAllShared ? (
                     <Link
                       href={`${getNewPluginRoute(orgSlug)}?marketplaceId=${encodeURIComponent(marketplace.id)}`}
                       className={buttonVariants({ variant: "primary", size: "sm" })}
@@ -311,7 +335,9 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
                 </div>
               </div>
 
-              {plugins.length === 0 ? (
+              {plugins.length === 0 && pluginsIntro.size === "box" ? (
+                pluginsIntro.element
+              ) : plugins.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-gray-200 bg-white px-5 py-10 text-center">
                   <p className="text-[14px] font-medium tracking-[-0.02em] text-gray-800">
                     No plugins in this collection yet
@@ -346,7 +372,7 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
             <MarketplaceConfigureSection
               targets={configurationTargets}
               presets={presets}
-              isAdmin={access.isAdmin}
+              canManageConnections={access.canManageConnections}
               connectingConnectionId={authorization.connectingConnectionId}
               connectError={authorization.error}
               pollingConnectionId={authorization.pollingConnectionId}
@@ -629,7 +655,7 @@ function MarketplaceAccessSection({ marketplaceId }: { marketplaceId: string }) 
             <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500">
               {orgWideGrant
                 ? "All org members can see this collection."
-                : "Only admins and people you add below can see this collection."}
+                : "Only people you add below, and people who manage everything shared, can see this collection."}
             </p>
           </div>
           <div
@@ -880,7 +906,7 @@ function AccessAddPicker({
 function MarketplaceConfigureSection({
   connectError,
   connectingConnectionId,
-  isAdmin,
+  canManageConnections,
   onConnect,
   pollingConnectionId,
   targets,
@@ -889,7 +915,8 @@ function MarketplaceConfigureSection({
 }: {
   connectError: { connectionId: string; message: string } | null;
   connectingConnectionId: string | null;
-  isAdmin: boolean;
+  /** `connections.manage`: configure services and connect organization accounts. */
+  canManageConnections: boolean;
   onConnect: (connectionId: string) => void;
   pollingConnectionId: string | null;
   targets: PluginMcpSetupTarget[];
@@ -930,7 +957,7 @@ function MarketplaceConfigureSection({
           const needsAdminSetup = pluginRequirementNeedsAdminSetup(target.connection);
           const readinessAction = needsAdminSetup
             ? null
-            : pluginReadinessConnectionAction(target.connection, isAdmin);
+            : pluginReadinessConnectionAction(target.connection, canManageConnections);
 
           return (
             <div key={`${target.plugin.id}:${target.connection.configObjectId}:${target.connection.serverName}`} className="px-4 py-3.5">
@@ -946,7 +973,7 @@ function MarketplaceConfigureSection({
                   <p className="mt-0.5 truncate text-[11.5px] text-gray-500">Required by {target.plugin.name}</p>
                 </div>
                 {needsAdminSetup ? (
-                  isAdmin ? (
+                  canManageConnections ? (
                     <DenButton
                       variant="secondary"
                       size="sm"
@@ -1222,7 +1249,7 @@ export function PluginMcpSetupDialog({
                     kind="secret"
                     name="marketplace-mcp-api-key"
                     value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
+                    onChange={setApiKey}
                     placeholder="API key"
                   />
                   <p className="mt-1.5 text-[11.5px] leading-4 text-gray-500">
@@ -1270,7 +1297,7 @@ export function PluginMcpSetupDialog({
                         kind="secret"
                         name="marketplace-mcp-oauth-client-secret"
                         value={clientSecret}
-                        onChange={(event) => setClientSecret(event.target.value)}
+                        onChange={setClientSecret}
                         placeholder="Client secret"
                       />
                     </div>

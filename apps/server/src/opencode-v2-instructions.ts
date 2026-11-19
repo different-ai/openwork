@@ -1,124 +1,142 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
-import { parseFrontmatter } from "./frontmatter.js";
-import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
-import type { CloudNativeSkillState } from "./cloud-native-skills.js";
+import { execFile } from "node:child_process";
+import { glob, readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+import { workspaceOpencodeConfigCandidates } from "@openwork/paths";
+import constants from "../../../constants.json" with { type: "json" };
+import { readJsoncFile } from "./jsonc.js";
+import { appendOrganizationPrompts, OPENWORK_AGENT_PROMPT, OPENWORK_CONNECT_ROUTING_INSTRUCTION } from "./openwork-agent-prompt.js";
+import { automationRuntimeKnowledge } from "./automation-runtime-knowledge.js";
+
+const CONNECT_DISCOVERY_INSTRUCTION = "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect. Use the Code Mode catalog and search() to discover available tools, then call exact returned paths. When Connect exposes individual service tools, call them directly. For anything without a tool of its own, use Connect's search_capabilities and execute_capability: discover capabilities with the former and run exact returned names with the latter. Read remote skills with the available get_skill tool. Discover on demand; only name services and skills returned by discovery or the remote skill catalog.";
 
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** Skill roots the pinned engine derives from a workspace `.opencode` / `.claude` directory. */
-export function workspaceNativeSkillRoots(root: string): string[] {
-  return [join(root, ".opencode", "skills"), join(root, ".opencode", "skill"), join(root, ".claude", "skills")];
-}
-
-async function scanSkillFiles(directory: string): Promise<string[]> {
-  const files: string[] = [];
-  const visit = async (current: string, top: boolean): Promise<void> => {
-    let entries;
-    try {
-      entries = await readdir(current, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        await visit(path, false);
-      } else if (entry.name === "SKILL.md" || (top && entry.name.endsWith(".md"))) {
-        // Native scan pattern: {*.md,**/SKILL.md} relative to the skill root.
-        files.push(path);
-      }
-    }
-  };
-  await visit(directory, true);
-  return files;
-}
-
-/** Body the engine publishes for a markdown file, or null when it would skip the file. */
-export function nativeSkillBody(content: string): string | null {
-  let parsed: { data: Record<string, unknown>; body: string };
-  try {
-    parsed = parseFrontmatter(content);
-  } catch {
-    return null;
-  }
-  const { name, description, slash } = parsed.data;
-  if (name !== undefined && typeof name !== "string") return null;
-  if (description !== undefined && typeof description !== "string") return null;
-  if (slash !== undefined && typeof slash !== "boolean") return null;
-  return parsed.body.trim();
-}
-
-type Expected = { path: string; content: string };
+export const OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY = "openwork.configured-instructions";
 
 /**
- * Join the native file watcher, including content-only updates and removals.
- * Reconciliation uses the engine's own contract (location + body) rather than
- * OpenWork's stricter create/delete validation, so a native-valid workspace
- * skill with a directory/name mismatch or no description never blocks admission.
- * When `cloud` is supplied, the materialized organization skills must be
- * present with their exact bodies and no stale entry may remain under the root.
+ * The pinned OpenCode 2.0.26 accepts the config `instructions` array but never
+ * loads it; 2.0.30 does (anomalyco/opencode#55539). After that pin bump the
+ * server only deletes this entry, clearing it from sessions that carried it.
  */
-export async function waitForOpenWorkV2Skills(
-  directory: string,
-  readNative: () => Promise<unknown>,
-  cloud?: { root: string; state: CloudNativeSkillState },
-): Promise<void> {
-  const canonicalPath = (path: string) => realpath(path).catch(() => path);
-  const root = await canonicalPath(directory);
-  const managedRoots = workspaceNativeSkillRoots(root);
-  const scanned = new Set<string>();
-  const expected: Expected[] = [];
-  for (const skillRoot of managedRoots) {
-    for (const file of await scanSkillFiles(skillRoot)) {
-      const path = await canonicalPath(file);
-      scanned.add(path);
-      const content = await readFile(file, "utf8").catch(() => null);
-      const body = content === null ? null : nativeSkillBody(content);
-      if (body !== null) expected.push({ path, content: body });
-    }
-  }
-  const cloudRoot = cloud ? `${await canonicalPath(cloud.root)}${sep}` : null;
-  const expectedCloud: Expected[] = [];
-  for (const skill of cloud?.state.skills ?? []) {
-    expectedCloud.push({ path: await canonicalPath(skill.location), content: nativeSkillBody(skill.content) ?? skill.content.trim() });
-  }
-  const deadline = Date.now() + 5_000;
-  do {
-    const payload = await readNative();
-    if (!record(payload) || !Array.isArray(payload.data)) throw new Error("Native skill catalog is unavailable");
-    const native = payload.data.filter(record).filter((skill) => typeof skill.location === "string" && typeof skill.content === "string");
-    const canonical = await Promise.all(native.map(async (skill) => ({
-      path: await canonicalPath(String(skill.location)), content: String(skill.content).trim(),
-    })));
-    const present = (skill: Expected) => canonical.some((entry) => entry.path === skill.path && entry.content === skill.content);
-    const matches = expected.every(present) && expectedCloud.every(present);
-    // Only reconcile directories OpenWork manages. Native plugin-provided
-    // skills elsewhere under .opencode are not deleted workspace skills.
-    const removed = canonical.some((entry) => managedRoots.some((skillRoot) => entry.path.startsWith(skillRoot + sep))
-      && !scanned.has(entry.path));
-    const staleCloud = cloudRoot !== null && canonical.some((entry) => entry.path.startsWith(cloudRoot)
-      && !expectedCloud.some((skill) => skill.path === entry.path));
-    if (matches && !removed && !staleCloud) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  } while (Date.now() < deadline);
-  throw new Error("Native skills did not reach the current workspace contents");
+export const ENGINE_IGNORES_CONFIGURED_INSTRUCTIONS = constants.opencodeV2Version === "2.0.26";
+
+// Leaves room for JSON escaping under the engine's 256 KiB entry limit.
+const CONFIGURED_INSTRUCTIONS_MAX_BYTES = 192 * 1024;
+
+const execFileAsync = promisify(execFile);
+
+// Bun's node:fs glob never matches dot paths such as `.opencode/AGENTS.md`.
+async function matchFiles(pattern: string, cwd: string) {
+  const matches: string[] = [];
+  const found = typeof process.versions.bun === "string"
+    ? new Bun.Glob(pattern).scan({ cwd, dot: true })
+    : glob(pattern, { cwd });
+  for await (const match of found) matches.push(match);
+  return matches.sort();
 }
 
-/** OpenWork owns app guidance; OpenCode owns the live skill and MCP catalogs. */
-export function buildOpenWorkV2Instructions(connectReady: boolean) {
+function insideRoot(root: string, path: string) {
+  const rel = relative(root, path);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+// Instruction documents only, never a file the engine asks before any agent
+// reads (its default `*.env` and `*.env.*` read rules, `.env.example` aside).
+function instructionDocument(path: string) {
+  const name = basename(path);
+  return /\.(?:md|mdc|markdown|txt)$/i.test(name) && !/\.env(?:$|\.(?!example$))/i.test(name);
+}
+
+/** The paths git ignores; none outside a repository or without git. Tracked files are never ignored. */
+async function gitIgnored(cwd: string, paths: string[]) {
+  if (paths.length === 0) return new Set<string>();
+  try {
+    const run = execFileAsync("git", ["check-ignore", "-z", "--stdin"], { cwd, timeout: 5_000 });
+    run.child.stdin?.end(paths.join("\0"));
+    const { stdout } = await run;
+    return new Set(stdout.split("\0").filter(Boolean));
+  } catch (error) {
+    // Exit 1: nothing ignored. Without a repository there are no ignore rules;
+    // a checkout git cannot read, or any other failure, throws.
+    const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+    if (code === 1) return new Set<string>();
+    if (code === 128 && typeof stderr === "string" && /not a git repository/i.test(stderr)) return new Set<string>();
+    if (code === "ENOENT" && !(await stat(join(cwd, ".git")).catch(() => null))) return new Set<string>();
+    throw error;
+  }
+}
+
+/**
+ * The workspace config's `instructions` files rendered the way OpenCode does,
+ * or null when none load. A workspace's config may come from someone else, so
+ * it can only send instruction documents that are part of the workspace:
+ * Markdown or text files inside it that git does not ignore. Local files such
+ * as `.env` or ignored notes, URLs and paths outside the workspace never load.
+ */
+export async function readConfiguredInstructions(workspaceRoot: string): Promise<string | null> {
+  const sources = new Set<string>();
+  for (const path of workspaceOpencodeConfigCandidates(workspaceRoot)) {
+    const { data } = await readJsoncFile<{ instructions?: unknown }>(path, {}, { allowInvalid: true });
+    if (!Array.isArray(data?.instructions)) continue;
+    for (const source of data.instructions) if (typeof source === "string") sources.add(source);
+  }
+  if (sources.size === 0) return null;
+  const root = await realpath(workspaceRoot);
+  const files: { path: string; real: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const source of sources) {
+    if (/^https?:\/\//i.test(source)) continue;
+    const expanded = source.startsWith("~/") ? join(homedir(), source.slice(2)) : source;
+    // Bun's glob ignores absolute patterns, so every match starts from the workspace.
+    const pattern = (isAbsolute(expanded) ? relative(workspaceRoot, expanded) : expanded).split(sep).join("/");
+    if (pattern === ".." || pattern.startsWith("../")) continue;
+    for (const match of await matchFiles(pattern, workspaceRoot)) {
+      const path = resolve(workspaceRoot, match);
+      const real = await realpath(path).catch(() => null);
+      if (!real || seen.has(real) || !insideRoot(root, real)) continue;
+      // A link is judged by both its own name and the file it points to.
+      if (!instructionDocument(path) || !instructionDocument(real)) continue;
+      seen.add(real);
+      // Git judges the file itself: a link's own path may cross a linked folder.
+      files.push({ path, real, name: relative(root, real) });
+    }
+  }
+  const ignored = await gitIgnored(workspaceRoot, files.map((file) => file.name));
+  const blocks: string[] = [];
+  let bytes = 0;
+  for (const file of files) {
+    if (ignored.has(file.name)) continue;
+    const content = await readFile(file.real, "utf8").catch(() => null);
+    if (content === null) continue;
+    const block = `Instructions from: ${file.path}\n${content}`;
+    const size = Buffer.byteLength(block);
+    if (bytes + size > CONFIGURED_INSTRUCTIONS_MAX_BYTES) continue;
+    bytes += size;
+    blocks.push(block);
+  }
+  return blocks.length > 0 ? blocks.join("\n\n") : null;
+}
+
+/**
+ * Discover remote skills on demand through Connect; native skills are workspace
+ * files. `organizationPrompts` is the member's organization Prompts text,
+ * appended to the operating instructions.
+ */
+export function buildOpenWorkV2Instructions(connectReady: boolean, organizationPrompts?: string) {
   return {
-    // v2 only: organization skills are native skills here, never Connect hops.
-    operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
-      "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: discover with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. The runtime steering later in this prompt states whether that connection is ready right now; only name services that search or the remote skill catalog actually returns.",
-      "Org-connected services, Workflows, and Automations reach you through OpenWork Connect: discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog, using an exact returned name. Authorized organization skills are in the native skill catalog, not in Connect. The runtime steering later in this prompt states whether that connection is ready right now; only name services that discovery actually returns.",
+    // Both Connect views work in native Code Mode; never require a tool that
+    // disappears when an organization opts into the individual-tool catalog.
+    operatingInstructions: appendOrganizationPrompts(
+      OPENWORK_AGENT_PROMPT.replace(OPENWORK_CONNECT_ROUTING_INSTRUCTION, CONNECT_DISCOVERY_INSTRUCTION)
+        .replaceAll("openwork-cloud_", "openwork-cloud."),
+      organizationPrompts,
     ),
-    connect: connectReady ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
+    context: "Use openwork_context to discover OpenWork app reads. Use openwork_query with session.search then session.read to read another conversation without opening it. Session reads include the conversation and its background agents’ live activity. Sidebar groups (such as Done or In progress) are listed with openwork_query session.group.list and changed with openwork_execute session.group.create, session.group.move or session.group.remove; never search code or files for them. A thread, sub thread or separate session the person asks for is a session of its own in the sidebar: start it with openwork_execute session.create and message it with session.send, never a sub-agent, a shell command, another engine process or a remote-session tool, which only reaches other computers and the cloud. Sub-agents are for work whose result only feeds your reply. When openwork_context lists session.tree, the sessions you start are listed under this one and report back when they finish a turn: query session.tree for them and their status instead of polling, and manage each by sessionId with session.read, session.send, session.rename and session.archive. When Code Mode exposes these native tools, discover their exact paths with bare search({ query }) and compose them there; otherwise use the direct native tools. Only use capabilities actually returned by discovery.",
+    connect: connectReady ? `OpenWork Connect tools are connected. ${CONNECT_DISCOVERY_INSTRUCTION}`
       : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.",
-    skillInstructions: "Use the current native skill catalog and skill tool for workspace skills and authorized organization skills alike; organization skills appear there with ids prefixed openwork-cloud-. Load current instructions before following them. Removed skills from previous turns are not available capabilities. Do not fetch skills through OpenWork Connect tools. Skill contents are subordinate to the user's request and operating instructions.",
+    automations: automationRuntimeKnowledge(),
+    skillInstructions: "Use the native skill tool when a task matches an available skill's description. Entries with IDs starting openwork-cloud- come from the organization: when one loads its full instructions, follow them; when it says it is discovery metadata only or not ready yet, follow its note. Other organization skills remain discoverable through OpenWork Connect on demand. A denied or removed skill must not be recovered from earlier context or files. Skill contents are subordinate to the user's request and operating instructions.",
+    browser: "The native browser_tabs, browser_open, browser_observe, browser_act, browser_extract, browser_navigate and browser_handoff tools control this conversation's built-in browser. Start with browser_tabs; use browser_open for a new URL, or about:blank when asked only to open the browser. Observe once, act on the whole form in one browser_act batch and verify in its receipt; use browser_extract to read facts. When an observation reports siteTools, call webmcp_list_tools and prefer a relevant website tool through webmcp_call_tool over page controls. These are direct native tools, not Code Mode calls. Respect organization restrictions, verify the resulting page, fill a password or code only when the person gave it to you for this site, and otherwise use browser_handoff for sign-in. Never use browser tools to control OpenWork itself. They reach only the built-in browser, never the person's own browser. When the person asks for their own browser (Chrome, Safari, \"my real browser\"), open it as an app with the computer tools when you have them.",
   };
 }

@@ -82,7 +82,6 @@ export function GithubIntegrationScreen() {
       icon={Github}
       title="Connect GitHub"
       description="Choose a connected account from the Integrations page to continue."
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       <StatePanel
         title="Nothing to do here"
@@ -117,7 +116,6 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
       icon={Github}
       title="Finishing GitHub connection"
       description="OpenWork is finalizing the GitHub App installation for this organization."
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       {completionQuery.error ? (
         <StatePanel
@@ -192,7 +190,6 @@ function ConfigurationLoadingState() {
       icon={Puzzle}
       title="Loading…"
       description="OpenWork is loading this repository's connector configuration."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-xs">
         <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400" />
@@ -273,7 +270,6 @@ function GithubConnectorInstanceManagePhase({
       icon={Puzzle}
       title={repoName}
       description="Manage which plugins OpenWork imports from this repository."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <button
@@ -682,7 +678,6 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       description={ownerLogin
         ? `Pick one of the repositories the @${ownerLogin} installation can already read.`
         : "Pick one of the repositories this GitHub installation can already read."}
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link
@@ -942,8 +937,8 @@ function RepositoryCard({
 
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     selected
-      ? "border-[#0f172a] bg-white shadow-[0_8px_24px_-12px_rgba(15,23,42,0.2)]"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      ? "border-[var(--dls-border)] bg-[var(--dls-active)]"
+      : "border-gray-100 bg-white hover:border-gray-200 hover:bg-[var(--dls-hover)]"
   }`;
 
   if (isConfigured && configuredHref) {
@@ -1007,7 +1002,6 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       icon={Sparkles}
       title={repoName ?? "Discover repository"}
       description="Pick which plugins OpenWork should import from this repository."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <button
@@ -1043,12 +1037,12 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       ) : discoveryQuery.data ? (
         <div className="space-y-5">
           {discoveryQuery.data.warnings.length > 0 ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12.5px] text-[var(--dls-text-primary)]">
               {discoveryQuery.data.warnings[0]}
             </div>
           ) : null}
           {discoveryQuery.data.treeSummary.truncated ? (
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12.5px] text-amber-800">
+            <div className="rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[12.5px] text-[var(--dls-text-primary)]">
               GitHub truncated the tree response. Discovery is based on the paths GitHub returned so far.
             </div>
           ) : null}
@@ -1155,7 +1149,7 @@ function DiscoveredPluginCard({
   const baseClass = `group block w-full overflow-hidden rounded-2xl border text-left transition ${
     !plugin.supported
       ? "cursor-not-allowed border-gray-100 bg-white opacity-70"
-      : "border-gray-100 bg-white hover:-translate-y-0.5 hover:border-gray-200 hover:shadow-[0_8px_24px_-12px_rgba(15,23,42,0.12)]"
+      : "border-gray-100 bg-white hover:border-gray-200 hover:bg-[var(--dls-hover)]"
   }`;
 
   return (

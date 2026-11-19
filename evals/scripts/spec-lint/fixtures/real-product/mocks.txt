@@ -1,0 +1,7 @@
+// path: proofs/model-filters.proof.test.ts
+import { spec } from "@openwork/testkit";
+import { vi, expect } from "vitest";
+import { core } from "../worlds/core-web.ts";
+vi.mock("../worlds/core-web.ts");
+const test = spec.world(core);
+test("a member hides a model", async ({ user }) => { const send = vi.fn(); expect(send).not.toHaveBeenCalled(); await user.see("composer"); });

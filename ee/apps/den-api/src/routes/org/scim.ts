@@ -3,11 +3,18 @@ import { describeRoute, resolver } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationScimConnection, getOrganizationScimConnection, getOrganizationScimHealth, getScimBaseUrl, reconcileOrganizationScimDrift, rotateOrganizationScimToken } from "../../scim.js"
 import { setScimGroupMappingMode } from "../../scim-groups.js"
+import { db } from "../../db.js"
 import { hasEnabledOrganizationSsoConnection } from "../../sso.js"
-import { ORGANIZATION_AUDIT_ACTIONS, recordOrganizationAuditEvent } from "../../audit-events.js"
-import { jsonValidator, orgMemberRoute } from "../../middleware/index.js"
+import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
+import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
+import { scimReconciledEvent, scimTokenRotatedEvent } from "../../audit/domain/scim.js"
+import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
+import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
+import { checkEntitlement } from "../../entitlements.js"
+import { enterprisePlanRequiredSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureScimManager, ensureScimReader, orgAccessFailureStatus } from "./shared.js"
+import { permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
+import { PermissionRevokedError } from "../../permissions/in-transaction.js"
 
 const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
@@ -101,6 +108,37 @@ function serializeHealth(health: Awaited<ReturnType<typeof getOrganizationScimHe
   }
 }
 
+type ScimConnection = NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>
+type ScimOrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
+
+/**
+ * PATCH /v1/scim's write: the group mapping mode with its audit trail
+ * (scim.manage re-checked inside the transaction). Also used by config-blob
+ * imports (config-blobs/areas/settings-auth-security.ts).
+ */
+export async function updateScimGroupMappingMode(input: {
+  payload: ScimOrganizationPayload
+  connection: ScimConnection
+  mode: "metadata_only" | "create_teams"
+  capture: AuditChangeCapture | null
+}): Promise<{ ok: true } | { ok: false; permission: PermissionRevokedError["key"] }> {
+  const { payload, capture } = input
+  let auditEventIds: string[]
+  try {
+    auditEventIds = await setScimGroupMappingMode({ provider: input.connection, mode: input.mode, actorMemberId: payload.currentMember.id }, capture)
+  } catch (error) {
+    if (!(error instanceof PermissionRevokedError)) throw error
+    return { ok: false, permission: error.key }
+  }
+  await finishLegacyAuditAction(capture, {
+    organizationId: payload.organization.id,
+    actorUserId: payload.currentMember.userId,
+    action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
+    payload: { groupMappingMode: input.mode },
+  }, auditEventIds)
+  return { ok: true }
+}
+
 export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/scim",
@@ -135,7 +173,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and admins can read SCIM.",
+          description: "The caller needs the View SCIM provisioning permission.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -152,13 +190,8 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("scim.view"),
     async (c) => {
-      const access = ensureScimReader(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const [connection, health, ssoReady] = await Promise.all([
         getOrganizationScimConnection(payload.organization.id),
@@ -209,10 +242,18 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and super-admins can manage SCIM.",
+          description: "The caller needs the Manage SCIM provisioning permission and a recent sign-in.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
+            },
+          },
+        },
+        402: {
+          description: "SCIM provisioning requires an Enterprise plan.",
+          content: {
+            "application/json": {
+              schema: resolver(enterprisePlanRequiredSchema),
             },
           },
         },
@@ -234,14 +275,13 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("scim.manage"),
     async (c) => {
-      const access = ensureScimManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
+      const entitlement = checkEntitlement(payload.organization.metadata, "scim")
+      if (!entitlement.ok) {
+        return c.json(entitlement.response, entitlement.status)
+      }
       const ssoReady = await hasEnabledOrganizationSsoConnection(payload.organization.id)
       if (!ssoReady) {
         return c.json({
@@ -254,9 +294,15 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         organizationId: payload.organization.id,
         headers: c.req.raw.headers,
       })
+      // better-auth wrote the token on its own adapter: the after-snapshot (no
+      // token, rotation marker only) is appended in a fresh transaction.
+      const capture = auditChangeCapture(c)
+      const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.token_rotated", async () => [
+        scimTokenRotatedEvent(payload.organization.id, rotated.previous, rotated.connection),
+      ])
       const health = await getOrganizationScimHealth(payload.organization.id)
 
-      await recordOrganizationAuditEvent({
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated,
@@ -264,7 +310,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           scimProviderId: rotated.connection.id,
           providerId: rotated.connection.providerId,
         },
-      })
+      }, auditEventIds)
 
       return c.json({
         baseUrl: getScimBaseUrl(),
@@ -289,18 +335,13 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           content: { "application/json": { schema: resolver(scimConnectionResponseSchema) } },
         },
         401: { description: "Unauthorized" },
-        403: { description: "Only workspace owners and super-admins can manage SCIM." },
+        403: { description: "The caller needs the Manage SCIM provisioning permission and a recent sign-in." },
         404: { description: "SCIM connection not found" },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("scim.manage"),
     jsonValidator(updateScimSettingsSchema),
     async (c) => {
-      const access = ensureScimManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const connection = await getOrganizationScimConnection(payload.organization.id)
       if (!connection) {
@@ -308,16 +349,15 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const input = c.req.valid("json")
-      await setScimGroupMappingMode({ provider: connection, mode: input.groupMappingMode })
-      await recordOrganizationAuditEvent({
-        organizationId: payload.organization.id,
-        actorUserId: payload.currentMember.userId,
-        action: ORGANIZATION_AUDIT_ACTIONS.scimGroupMappingUpdated,
-        payload: { groupMappingMode: input.groupMappingMode },
-      })
+      const mappingUpdated = await updateScimGroupMappingMode({ payload, connection, mode: input.groupMappingMode, capture: auditChangeCapture(c) })
+      if (!mappingUpdated.ok) {
+        const denied = permissionDeniedResponse(mappingUpdated.permission)
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
 
       const [updated, health, ssoReady] = await Promise.all([
-        getOrganizationScimConnection(payload.organization.id),
+        // primary: reads back the mode written above.
+        getOrganizationScimConnection(payload.organization.id, db.$primary),
         getOrganizationScimHealth(payload.organization.id),
         hasEnabledOrganizationSsoConnection(payload.organization.id),
       ])
@@ -358,7 +398,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and super-admins can manage SCIM.",
+          description: "The caller needs the Manage SCIM provisioning permission and a recent sign-in.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -375,21 +415,21 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("scim.manage"),
     async (c) => {
-      const access = ensureScimManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
       const result = await reconcileOrganizationScimDrift(payload.organization.id)
-      await recordOrganizationAuditEvent({
+      // Repairs are individual autocommit writes; the run summary is appended after them.
+      const capture = auditChangeCapture(c)
+      const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.reconciled", async () => [
+        capture ? scimReconciledEvent(capture, await getOrganizationScimConnection(payload.organization.id), result) : null,
+      ])
+      await finishLegacyAuditAction(capture, {
         organizationId: payload.organization.id,
         actorUserId: payload.currentMember.userId,
         action: ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun,
         payload: result,
-      })
+      }, auditEventIds)
       return c.json(result)
     },
   )
@@ -422,7 +462,7 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
           },
         },
         403: {
-          description: "Only workspace owners and super-admins can manage SCIM.",
+          description: "The caller needs the Manage SCIM provisioning permission and a recent sign-in.",
           content: {
             "application/json": {
               schema: resolver(forbiddenSchema),
@@ -439,21 +479,24 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         },
       },
     }),
-    orgMemberRoute(),
+    orgPermissionRoute("scim.manage"),
     async (c) => {
-      const access = ensureScimManager(c)
-      if (!access.ok) {
-        return c.json(access.response, orgAccessFailureStatus(access.response))
-      }
-
       const payload = c.get("organizationContext")
-      const deleted = await deleteOrganizationScimConnection(payload.organization.id)
+      const capture = auditChangeCapture(c)
+      let deleted: Awaited<ReturnType<typeof deleteOrganizationScimConnection>>
+      try {
+        deleted = await deleteOrganizationScimConnection(payload.organization.id, capture, payload.currentMember.id)
+      } catch (error) {
+        if (!(error instanceof PermissionRevokedError)) throw error
+        const denied = permissionDeniedResponse(error.key)
+        return c.json(denied, 403, permissionFailureHeaders(denied))
+      }
       if (deleted) {
-        await recordOrganizationAuditEvent({
+        await finishLegacyAuditAction(capture, {
           organizationId: payload.organization.id,
           actorUserId: payload.currentMember.userId,
           action: ORGANIZATION_AUDIT_ACTIONS.scimConnectionDeleted,
-        })
+        }, deleted.auditEventIds)
       }
       return c.body(null, 204)
     },

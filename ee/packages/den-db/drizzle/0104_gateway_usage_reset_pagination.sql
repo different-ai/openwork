@@ -1,0 +1,3 @@
+CREATE INDEX `gateway_usage_reset_queue` ON `gateway_usage_reset_request` (`organization_id`,`status`,`reset_at`,`created_at`,`id`);--> statement-breakpoint
+CREATE INDEX `gateway_usage_reset_own_queue` ON `gateway_usage_reset_request` (`organization_id`,`member_id`,`status`,`reset_at`,`created_at`,`id`);--> statement-breakpoint
+CREATE INDEX `gateway_usage_reset_own_history` ON `gateway_usage_reset_request` (`organization_id`,`member_id`,`created_at`,`id`);

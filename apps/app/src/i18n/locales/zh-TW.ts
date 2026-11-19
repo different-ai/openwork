@@ -1,11 +1,3 @@
-/**
- * 中文（繁體）翻譯
- * 產品名稱保留英文：OpenCode、OpenPackage、OpenWork
- * Skills：標題用"Skills（技能）"，正文用"skills"
- * MCP：協定名稱保留英文，不翻譯為"應用"
- * 翻譯的術語：指令(Commands)、外掛(Plugins)、對話(Sessions)、應用程式(Apps)
- */
-
 export default {
   "account.mcp_connected": "{count} 個 MCP 伺服器",
   "account.providers_connected": "{count} 個模型提供商",

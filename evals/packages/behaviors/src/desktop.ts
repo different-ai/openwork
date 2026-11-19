@@ -51,7 +51,14 @@ export async function quitDesktop(app: Surface): Promise<void> {
   while (Date.now() < deadline) {
     const stopped = await fetch(`${app.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
       signal: AbortSignal.timeout(1_000),
-    }).then(() => false, () => true);
+    }).then((response) => {
+      if (response.ok) return false;
+      // Daytona's proxy stays reachable after the native CDP listener exits.
+      // Do not mistake its missing-backend response for a still-running app,
+      // or unrelated proxy/auth failures for a successful quit.
+      if (app.handle.hostKind === "daytona" && response.status === 502) return true;
+      throw new Error(`Could not verify desktop quit: CDP endpoint returned HTTP ${response.status}.`);
+    }, () => true);
     if (stopped) return;
     await sleep(POLL_INTERVAL_MS);
   }
@@ -293,7 +300,24 @@ export async function go(app: Surface, hashPath: string, opts: { timeoutMs?: num
   // desktops on one host) makes those bursts routine, and a bare 20s evaluate
   // here was the single most common way a long journey died near its end.
   const timeoutMs = opts.timeoutMs ?? 60_000;
-  await waitFor(app, browserScript((inputHash) => { window.location.hash = inputHash; return true; }, [hash]), {
+  // The desktop routes by hash; the app in a browser routes by path, and its
+  // router follows history changes announced with popstate.
+  await waitFor(app, browserScript((inputHash) => {
+    if (window.__OPENWORK_ELECTRON__) {
+      window.location.hash = inputHash;
+      return true;
+    }
+    // Right after a load the router may not be listening yet, and a popstate it
+    // misses leaves the old page on screen under the new address. The control
+    // API is installed after the router subscribes, so wait for it first.
+    if (!window.__openworkControl) return false;
+    const path = inputHash.slice(1);
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState(window.history.state, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: window.history.state }));
+    }
+    return true;
+  }, [hash]), {
     timeoutMs,
     label: `navigate to ${hash}`,
   });

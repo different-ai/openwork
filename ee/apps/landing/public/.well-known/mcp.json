@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "transport": "streamable-http",
+  "url": "https://api.openworklabs.com/mcp/agent",
+  "serverCard": "https://openworklabs.com/.well-known/mcp/server-card.json",
+  "servers": [
+    {
+      "name": "openwork",
+      "title": "OpenWork MCP Gateway",
+      "url": "https://api.openworklabs.com/mcp/agent",
+      "transport": "streamable-http",
+      "authentication": "oauth2",
+      "protectedResourceMetadata": "https://api.openworklabs.com/.well-known/oauth-protected-resource/mcp/agent",
+      "serverCard": "https://openworklabs.com/.well-known/mcp/server-card.json"
+    }
+  ]
+}

@@ -18,6 +18,11 @@ const usageResponseSchema: z.ZodType<GatewayUsageResponse> = z.object({
     to: z.iso.date(),
     timezone: z.literal("UTC"),
     emptyReason: z.literal("no_teams").optional(),
+    requestCount: countSchema.optional(),
+    uncountableRequests: z.object({
+      ok: countSchema.nullable(), upstream_error: countSchema.nullable(), upstream_unreachable: countSchema.nullable(),
+      client_aborted: countSchema.nullable(), rejected: countSchema.nullable(),
+    }).optional(),
     totalTokens: countSchema,
     totalCostMicroUsd: countSchema,
     unreportedRequests: countSchema.nullable(),
@@ -34,9 +39,9 @@ const usageResponseSchema: z.ZodType<GatewayUsageResponse> = z.object({
   }),
 });
 
-export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, filterIds: string[]) {
+export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, filterIds: string[], memberId?: string) {
   return useQuery<GatewayUsageResponse["usage"]>({
-    queryKey: ["gateway-usage", orgId, groupBy, [...filterIds].sort()],
+    queryKey: ["gateway-usage", orgId, groupBy, [...filterIds].sort(), memberId ?? null],
     gcTime: 0,
     staleTime: 0,
     retry: false,
@@ -47,6 +52,7 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ groupBy, days: "31" });
       if (filterIds.length) params.set("filterIds", [...filterIds].sort().join(","));
+      if (memberId) params.set("memberId", memberId);
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (signal.aborted) abort();
@@ -70,6 +76,16 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
       const daily = [...usage.daily].sort((a, b) => a.date.localeCompare(b.date));
       // Reject incomplete days or mismatched stacks rather than inventing zeros or totals.
       if (usage.groupBy !== groupBy || usage.days !== 31 || daily.length !== usage.days
+        || (usage.requestCount !== undefined && (
+          (usage.unreportedRequests !== null && usage.unreportedRequests > usage.requestCount)
+          || (usage.unpricedRequests !== null && usage.unpricedRequests > usage.requestCount)))
+        || (usage.uncountableRequests !== undefined && (() => {
+          const counts = Object.values(usage.uncountableRequests);
+          const known = counts.reduce((sum: number, count) => sum + (count ?? 0), 0);
+          return (usage.requestCount !== undefined && known > usage.requestCount)
+            || (usage.unreportedRequests !== null && (known > usage.unreportedRequests
+              || (counts.every((count) => count !== null) && known !== usage.unreportedRequests)));
+        })())
         || seriesIds.size !== usage.series.length
         || new Set(usage.filterOptions.map((option) => option.id)).size !== usage.filterOptions.length
         || daily[daily.length - 1]?.date !== usage.to
@@ -85,4 +101,31 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
       return { ...usage, daily };
     },
   });
+}
+
+export type GatewayUsageTotal = { id: string; label: string; costMicroUsd: number; tokens: number; unpriced: boolean };
+
+/** Totals per series over the whole period, highest cost first. */
+export function gatewayUsageTotals(usage: GatewayUsageResponse["usage"]): GatewayUsageTotal[] {
+  return usage.series.map((series) => {
+    let costMicroUsd = 0;
+    let tokens = 0;
+    let unpriced = false;
+    for (const day of usage.daily) {
+      tokens += day.values[series.id] ?? 0;
+      const cost = day.costValues[series.id];
+      if (cost === null) unpriced = true;
+      else costMicroUsd += cost ?? 0;
+    }
+    return { id: series.id, label: series.label, costMicroUsd, tokens, unpriced };
+  }).filter((total) => total.costMicroUsd > 0 || total.tokens > 0)
+    .sort((a, b) => b.costMicroUsd - a.costMicroUsd || b.tokens - a.tokens || a.label.localeCompare(b.label));
+}
+
+/** The upstream provider id encoded in a model series id (`model:<hex family>:<hex model>`). */
+export function gatewayUsageModelFamily(seriesId: string): string | null {
+  const [kind, familyHex] = seriesId.split(":");
+  if (kind !== "model" || !familyHex || !/^[0-9A-Fa-f]*$/.test(familyHex) || familyHex.length % 2) return null;
+  const bytes = familyHex.match(/../g)?.map((pair) => Number.parseInt(pair, 16)) ?? [];
+  return new TextDecoder().decode(new Uint8Array(bytes)) || null;
 }

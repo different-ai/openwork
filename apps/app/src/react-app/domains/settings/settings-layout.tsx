@@ -61,19 +61,6 @@ export function LayoutSectionDescription({ children, className }: LayoutSectionD
   );
 }
 
-interface LayoutSectionContentProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function LayoutSectionContent({ children, className }: LayoutSectionContentProps) {
-  return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      {children}
-    </div>
-  );
-}
-
 interface LayoutSectionItemProps {
   children: React.ReactNode;
   className?: string;
@@ -134,19 +121,6 @@ interface LayoutSectionItemHeaderActionsProps {
 export function LayoutSectionItemHeaderActions({ children, className }: LayoutSectionItemHeaderActionsProps) {
   return (
     <div data-slot="item-header-actions" className={cn("col-start-2 row-span-2 row-start-1 flex flex-wrap items-center gap-2 self-start justify-self-end", className)}>
-      {children}
-    </div>
-  );
-}
-
-interface LayoutSectionItemContentProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function LayoutSectionItemContent({ children, className }: LayoutSectionItemContentProps) {
-  return (
-    <div className={cn("flex flex-col gap-1", className)}>
       {children}
     </div>
   );

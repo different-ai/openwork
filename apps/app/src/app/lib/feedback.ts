@@ -1,13 +1,17 @@
+import { isDesktopRuntime } from "./runtime-env";
+
 const ENV_FEEDBACK_URL = String(import.meta.env.VITE_OPENWORK_FEEDBACK_URL ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
+const ENV_BUILD_SHA = String(import.meta.env.VITE_OPENWORK_BUILD_SHA ?? "").trim();
 
 export const DEFAULT_FEEDBACK_URL =
   ENV_FEEDBACK_URL || "https://openworklabs.com/feedback";
 
 type FeedbackUrlOptions = {
   entrypoint: string;
-  deployment?: string | null;
+  deployment?: "desktop" | "web";
   appVersion?: string | null;
+  buildSha?: string | null;
   openworkServerVersion?: string | null;
   opencodeVersion?: string | null;
 };
@@ -83,13 +87,21 @@ function parseClientOsContext(): ClientOsContext {
 export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
   const url = new URL(DEFAULT_FEEDBACK_URL);
   const osContext = parseClientOsContext();
+  const deployment = options.deployment ?? (isDesktopRuntime() ? "desktop" : "web");
+  const version = options.appVersion?.trim() || ENV_APP_VERSION;
+  const buildSha = options.buildSha?.trim() ?? ENV_BUILD_SHA;
+  // Web releases are identified by the UI bundle's commit, independently of
+  // the desktop package and the connected server's version.
+  const appVersion = deployment === "web"
+    ? (buildSha ? `web@${buildSha}` : "")
+    : (/^0\.0\.0(?:$|[-+])/.test(version) ? "" : version);
 
   url.searchParams.set("source", "openwork-app");
   url.searchParams.set("entrypoint", options.entrypoint);
 
   const entries = {
-    deployment: options.deployment?.trim() ?? "",
-    appVersion: options.appVersion?.trim() || ENV_APP_VERSION,
+    deployment,
+    appVersion,
     openworkServerVersion: options.openworkServerVersion?.trim() ?? "",
     opencodeVersion: options.opencodeVersion?.trim() ?? "",
     osName: osContext.osName?.trim() ?? "",

@@ -1,102 +1,119 @@
 "use client";
 
-import Link from "next/link";
+import { FileText, MessageSquare } from "lucide-react";
+import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ArrowLeft, FileText, Pencil, Trash2, X } from "lucide-react";
-import { DenButton, buttonVariants } from "../../_components/ui/button";
-import { getEditPluginSkillRoute, getPluginRoute } from "../../_lib/den-org";
+import { DenButton } from "../../_components/ui/button";
+import { getEditPluginSkillRoute, getLibraryPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDeleteSkill, useSkill } from "./skill-data";
+import { BackLink, ItemHeader, ItemPage, SectionTitle } from "./item-header";
+import { ItemMenu, removeEntry } from "./item-list";
+import { usePlugin } from "./plugin-data";
+import { pluginChatDeepLink, skillTitle } from "./plugin-page-screen";
+import { SkillInstructions } from "./skill-instructions";
 
-export function SkillDetailScreen({ pluginId, skillId }: { pluginId: string; skillId: string }) {
+/** Admin mode edits and removes; member mode (from My Library) only reads. */
+export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { pluginId: string; skillId: string; mode?: "admin" | "member" }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
   const { data: skill, isLoading, error } = useSkill(pluginId, skillId);
+  const plugin = usePlugin(pluginId);
   const deleteSkill = useDeleteSkill(pluginId);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const pluginHref = mode === "admin" ? getPluginRoute(orgSlug, pluginId) : getLibraryPluginRoute(orgSlug, pluginId);
+  const back = { href: pluginHref, label: plugin.data?.name ?? "Back to plugin" };
 
-  if (isLoading && !skill) {
-    return <DetailMessage>Loading skill…</DetailMessage>;
+  // The query waits for the workspace; until it answers, this is still loading.
+  if (!skill && (isLoading || !error)) {
+    return (
+      <ItemPage>
+        <SkillHeader back={back} title={<span className="block h-6 w-48 animate-pulse rounded-md bg-gray-100" />} description={<span className="mt-1 block h-4 w-72 max-w-full animate-pulse rounded bg-gray-100" />} />
+        <InstructionsSection>
+          <div className="flex flex-col gap-3" role="status" aria-label="Loading skill">
+            {["w-full", "w-11/12", "w-4/5", "w-2/3"].map((width) => <span key={width} className={`block h-3.5 animate-pulse rounded bg-gray-100 ${width}`} />)}
+          </div>
+        </InstructionsSection>
+      </ItemPage>
+    );
   }
 
   if (!skill) {
-    return <DetailMessage error>{error instanceof Error ? error.message : "That skill could not be found."}</DetailMessage>;
+    return (
+      <ItemPage>
+        <ItemHeader
+          compact
+          back={back}
+          title="It did not load"
+          description={error instanceof Error ? error.message : "That skill may have been removed from this plugin."}
+        />
+      </ItemPage>
+    );
   }
 
+  const title = skillTitle(skill.name);
+  const chat = (
+    <DenButton icon={MessageSquare} href={pluginChatDeepLink({ name: `the ${title} skill` })}>
+      Use in chat
+    </DenButton>
+  );
+
   return (
-    <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <Link href={getPluginRoute(orgSlug, pluginId)} className="inline-flex items-center gap-1.5 text-[13px] text-gray-500 hover:text-gray-900">
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Back to plugin
-        </Link>
-        <div className="flex items-center gap-2">
-          <Link href={getEditPluginSkillRoute(orgSlug, pluginId, skill.id)} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-            Edit
-          </Link>
-          <DenButton variant="destructive" size="sm" icon={Trash2} onClick={() => setConfirmingDelete(true)}>
-            Delete
-          </DenButton>
+    <ItemPage testId="skill-detail">
+      <SkillHeader
+        back={back}
+        title={title}
+        description={skill.description || undefined}
+        actions={mode === "member" ? chat : (
+          <>
+            <ItemMenu size="md" label={`More for ${title}`} entries={[
+              { label: "Edit", href: getEditPluginSkillRoute(orgSlug, pluginId, skill.id) },
+              removeEntry(title, async () => {
+                await deleteSkill.mutateAsync(skill.id);
+                router.push(pluginHref);
+              }),
+            ]} />
+            {chat}
+          </>
+        )}
+      />
+      <InstructionsSection>
+        <SkillInstructions markdown={skill.body} title={title} />
+      </InstructionsSection>
+    </ItemPage>
+  );
+}
+
+/** Title with its description directly beneath, so the two read as one unit. */
+function SkillHeader({ back, title, description, actions }: {
+  back: { href: string; label: string };
+  title: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-5">
+      <BackLink href={back.href} label={back.label} />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3.5">
+          <span aria-hidden className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-gray-100 bg-white text-gray-500">
+            <FileText className="size-[18px]" strokeWidth={1.6} />
+          </span>
+          <div className="min-w-0 flex-1 pt-0.5">
+            <h1 className="break-words text-[20px] font-semibold leading-7 tracking-[-0.3px] text-gray-950">{title}</h1>
+            {description ? <div className="mt-0.5 max-w-[68ch] text-[14px] leading-5 text-gray-500">{description}</div> : null}
+          </div>
         </div>
+        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
       </div>
-
-      <header className="rounded-2xl border border-gray-100 bg-white px-6 py-6 md:px-8">
-        <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
-            <FileText className="h-5 w-5" aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="break-words text-[24px] font-semibold tracking-[-0.03em] text-gray-950">{skill.name}</h1>
-            <p className="mt-2 text-[14px] leading-6 text-gray-500">{skill.description}</p>
-          </div>
-        </div>
-      </header>
-
-      <article className="mt-5 rounded-2xl border border-gray-100 bg-white px-6 py-6 md:px-8">
-        <h2 className="mb-4 text-[12px] font-semibold tracking-[0.14em] text-gray-400">Complete skill body</h2>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-gray-200 bg-gray-50 px-5 py-5 font-mono text-[13px] leading-6 text-gray-800">{skill.body}</pre>
-      </article>
-
-      {confirmingDelete ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/30 px-4" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title">
-          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 id="delete-skill-title" className="text-[18px] font-semibold text-gray-950">Delete “{skill.name}”?</h2>
-                <p className="mt-2 text-[13px] leading-5 text-gray-500">This removes the skill from its owning plugin. Its version history is retained by Den.</p>
-              </div>
-              <button type="button" onClick={() => setConfirmingDelete(false)} aria-label="Close delete confirmation" className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-            {deleteSkill.error instanceof Error ? (
-              <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">{deleteSkill.error.message}</p>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <DenButton variant="secondary" onClick={() => setConfirmingDelete(false)}>Cancel</DenButton>
-              <DenButton
-                variant="destructive"
-                loading={deleteSkill.isPending}
-                onClick={() => deleteSkill.mutate(skill.id, { onSuccess: () => router.push(getPluginRoute(orgSlug, pluginId)) })}
-              >
-                Delete “{skill.name}”
-              </DenButton>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function DetailMessage({ children, error = false }: { children: React.ReactNode; error?: boolean }) {
+function InstructionsSection({ children }: { children: ReactNode }) {
   return (
-    <div className="mx-auto max-w-[900px] px-6 py-8 md:px-8">
-      <div className={`rounded-2xl border px-5 py-8 text-[14px] ${error ? "border-red-200 bg-red-50 text-red-700" : "border-gray-100 bg-white text-gray-500"}`}>
-        {children}
-      </div>
-    </div>
+    <section className="flex flex-col gap-2.5">
+      <SectionTitle title="Instructions" />
+      <div className="rounded-2xl border border-gray-100 bg-white px-6 py-5 md:px-7 md:py-6">{children}</div>
+    </section>
   );
 }

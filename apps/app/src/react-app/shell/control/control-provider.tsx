@@ -20,6 +20,7 @@ import {
   type OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+import { undeclaredArgsError } from "./undeclared-args";
 import { useUiControlMailbox } from "./use-ui-control-mailbox";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
@@ -494,6 +495,8 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         revision,
       };
     }
+    const argsError = undeclaredArgsError(action, request.args);
+    if (argsError) return { ok: false, id: request.id, error: argsError, code: "invalid-args", revision };
     try {
       const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
       const result = await action.execute(effectiveArgs, { setNarration: () => undefined, bridged: false });
@@ -806,7 +809,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
+            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | computer | updates | recovery | debug | cloud-account | usage | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },
@@ -851,7 +854,6 @@ export function OpenworkRouteControlActions() {
           { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
-          { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },

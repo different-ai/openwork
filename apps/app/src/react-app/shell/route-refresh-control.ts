@@ -196,24 +196,22 @@ export function createRouteWorkspaceLoadCoalescer(): RouteWorkspaceLoadCoalescer
   };
 }
 
-/** Unknown local routing is not v1. Remote inventories retain their native transport. */
+/** Unknown local routing is not v1. */
 export function routeWorkspaceSessionLoadScope(
   workspace: RouteWorkspace,
   endpoint: ResolvedWorkspaceEndpoint | null,
   engineV2ChatRouting: boolean | undefined,
 ): string | null {
-  const remote = workspace.workspaceType === "remote";
-  if (!remote && (!endpoint || engineV2ChatRouting === undefined)) return null;
+  if (!endpoint || engineV2ChatRouting === undefined) return null;
   return JSON.stringify([
     workspace.workspaceType,
-    workspace.remoteType,
     workspace.path,
-    endpoint?.baseUrl,
-    endpoint?.workspaceId,
-    endpoint?.mountedBaseUrl,
-    endpoint?.opencodeBaseUrl,
-    endpoint?.token,
-    remote ? false : engineV2ChatRouting,
+    endpoint.baseUrl,
+    endpoint.workspaceId,
+    endpoint.mountedBaseUrl,
+    endpoint.opencodeBaseUrl,
+    endpoint.token,
+    engineV2ChatRouting,
   ]);
 }
 
@@ -299,4 +297,16 @@ export function planRouteConnectionGap(input: { desktopRuntime: boolean }): Rout
     return { retainExistingState: true, markRouteReady: false };
   }
   return { retainExistingState: false, markRouteReady: true };
+}
+
+export async function publishSettingsShellAndLoadHistory<T>({ isCurrent, publishShell, loadHistory, publishHistory }: {
+  isCurrent: () => boolean;
+  publishShell: () => void;
+  loadHistory: () => Promise<T>;
+  publishHistory: (history: T) => void;
+}) {
+  if (!isCurrent()) return;
+  publishShell();
+  const history = await loadHistory();
+  if (isCurrent()) publishHistory(history);
 }

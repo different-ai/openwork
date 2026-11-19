@@ -20,7 +20,7 @@ remain unchanged.
 | Use OpenCode models | Existing provider policy | Model dispatch rejects the built-in provider when blocked |
 | Manage extensions | Existing Library restrictions | Local extension, skill and MCP mutation routes |
 | Change app settings | Existing settings visibility | Server configuration mutation routes |
-| Create more workspaces | Existing workspace visibility | Local and remote workspace creation routes |
+| Create more workspaces | Existing workspace visibility | Local workspace creation routes |
 | Alpha updates / welcome page | Existing desktop controls | UI behavior, not engine permissions |
 | Token accounting | Existing inference usage records and engine message usage | No new budget or spending policy |
 
@@ -55,7 +55,7 @@ tool hooks, so their entry point must also be guarded.
 
 ## Verification
 
-Extend `evals/specs/desktop-policy-restricted-mode.e2e.test.ts`: one Den admin,
+Cover this with a desktop policy e2e spec built on `evals/worlds/desktop-policies.ts`: one Den admin,
 one team member, and a second member outside that team, each in an isolated real
 desktop. The admin saves in Den. The test checks persisted and effective policy,
 UI restrictions, direct API bypass attempts, browser requests and uploads, and

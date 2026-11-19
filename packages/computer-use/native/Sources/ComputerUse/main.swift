@@ -1,8 +1,12 @@
 import AppKit
+import ApplicationServices
 import Foundation
 
 setbuf(stdout, nil)
-let command = CommandLine.arguments.dropFirst().first ?? "setup"
+let command = CommandLine.arguments.dropFirst().first ?? ""
+// Opened by macOS itself (Quit & Reopen after a grant): OpenWork starts it when needed.
+if command.isEmpty && getppid() == 1 { exit(0) }
+Responsibility.relaunchDisclaimed(requireTrustedHost: command == "mcp" || command == "mcp-embedded")
 
 @MainActor
 func printJSON(_ payload: [String: Any]) {
@@ -15,16 +19,38 @@ MainActor.assumeIsolated {
 switch command {
 case "--check":
     printJSON(SessionRuntime.permissions())
-case "--list-apps":
-    let apps = NSWorkspace.shared.runningApplications
-        .filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
-        .compactMap(\.localizedName).sorted()
-    printJSON(["ok": true, "apps": apps])
-case "relay":
-    guard CommandLine.arguments.count == 3 else { exit(1) }
-    runDesktopRelay(CommandLine.arguments[2])
-case "mcp", "mcp-hosted":
-    SessionControls.hosted = command == "mcp-hosted"
+case "permissions":
+    guard CommandLine.arguments.count == 3,
+          ["accessibility", "screenRecording"].contains(CommandLine.arguments[2]) else { exit(1) }
+    // Host apps own the explainer; only the signed helper requests its OS access.
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let accessibility = CommandLine.arguments[2] == "accessibility"
+    if accessibility {
+        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    } else {
+        CGRequestScreenCaptureAccess()
+    }
+    let pane = accessibility ? "Privacy_Accessibility" : "Privacy_ScreenCapture"
+    let opened = NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!)
+    // Opening settings is not evidence that the person granted permission.
+    printJSON(["opened": opened])
+    if !opened { exit(1) }
+case "permissions-guide":
+    guard CommandLine.arguments.count == 3,
+          let permission = GuidePermission(rawValue: CommandLine.arguments[2]) else { exit(1) }
+    NSApplication.shared.setActivationPolicy(.accessory)
+    let coach = PermissionCoach(permission: permission)
+    NSApplication.shared.delegate = coach
+    withExtendedLifetime(coach) { NSApplication.shared.run() }
+case "mcp", "mcp-embedded":
+    // mcp-embedded: the OpenWork desktop hosts Take over, Continue and Stop over the
+    // private openwork/ui channel. mcp: standalone, with native controls.
+    SessionControls.embedded = command == "mcp-embedded"
+    if !HostTrust.embeddedHostIsTrusted() {
+        fputs("Computer control requires the signed OpenWork desktop app as its host.\n", stderr)
+        exit(1)
+    }
+    if SessionControls.embedded { MCPOutput.shared.enableNonblocking() }
     NSApplication.shared.setActivationPolicy(.accessory)
     let server = MCPServer()
     signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN)
@@ -58,22 +84,8 @@ case "mcp", "mcp-hosted":
         await MainActor.run { server.shutdown(); NSApp.terminate(nil) }
     }
     withExtendedLifetime([termination, interruption]) { NSApplication.shared.run() }
-case "setup":
-    NSApplication.shared.setActivationPolicy(.regular)
-    let delegate = PermissionSetup()
-    NSApplication.shared.delegate = delegate
-    signal(SIGUSR1, SIG_IGN)
-    let reopen = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
-    reopen.setEventHandler {
-        MainActor.assumeIsolated {
-            NSApp.windows.first?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-        }
-    }
-    reopen.resume()
-    withExtendedLifetime((delegate, reopen)) { NSApplication.shared.run() }
 default:
-    fputs("Usage: ComputerUse [mcp|--check|--list-apps|setup]\n", stderr)
+    fputs("Usage: ComputerUse [mcp-embedded|mcp|--check|permissions accessibility|permissions screenRecording|permissions-guide accessibility|permissions-guide screenRecording]\n", stderr)
     exit(1)
 }
 }

@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 ARG OPENWORK_SERVER_VERSION=0.18.4
 ARG OPENCODE_VERSION=1.17.11

@@ -28,6 +28,7 @@ import {
   type CloudMcpScope,
   type CloudMcpUserState,
 } from "./cloud-mcp-user-state";
+import { markCloudCredentialRefreshed } from "./cloud-credential-revision";
 
 export const OPENWORK_CLOUD_EXPECTED_TOOLS = [
   "openwork-cloud_search_capabilities",
@@ -44,6 +45,10 @@ export type CloudMcpClient = {
   reconcileOpenworkCloudMcp: (
     workspaceId: string,
     payload: OpenworkCloudMcpReconcilePayload,
+  ) => Promise<OpenworkCloudMcpHealth>;
+  refreshOpenworkCloudMcpCatalog?: (
+    workspaceId: string,
+    providerModel?: OpenworkCloudMcpProviderModelContext,
   ) => Promise<OpenworkCloudMcpHealth>;
   refreshOpenworkCloudMcpEngine?: (
     workspaceId: string,
@@ -269,12 +274,26 @@ function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudM
   return null;
 }
 
+/**
+ * After an organization switch the previous organization's entry still works,
+ * so it is only usable here when it was minted for this scope's organization.
+ * Older servers omit the organization; trust their health as before.
+ */
+function usableForOrganization(
+  health: OpenworkCloudMcpHealth | null,
+  scope: CloudMcpScope,
+): health is OpenworkCloudMcpHealth {
+  if (!health?.usable) return false;
+  const organizationId = health.desired.token.metadata.organizationId ?? health.desired.org?.id;
+  return typeof organizationId !== "string" || !organizationId.trim() || organizationId.trim() === scope.orgId;
+}
+
 function writeUsableMarker(input: {
   health: OpenworkCloudMcpHealth | null;
   scope: CloudMcpScope;
   expiresAt: string | null;
 }): boolean {
-  if (!input.health?.usable || !input.expiresAt) return false;
+  if (!usableForOrganization(input.health, input.scope) || !input.expiresAt) return false;
   writeCloudMcpSyncMarker({ ...input.scope, expiresAt: input.expiresAt });
   return true;
 }
@@ -321,16 +340,27 @@ function needsAppHostAuthorizationRepair(health: OpenworkCloudMcpHealth, scope: 
   return elapsed < 0 || elapsed >= APP_HOST_AUTHORIZATION_RETRY_MS;
 }
 
+async function refreshHealthyCloudCatalog(
+  input: CloudMcpReconcilerInput,
+  scope: CloudMcpScope,
+  result: CloudMcpOperationResult,
+): Promise<CloudMcpOperationResult> {
+  if (result.health?.appHostAuthorizationReady !== true || !input.client.refreshOpenworkCloudMcpCatalog) return result;
+  const health = await input.client.refreshOpenworkCloudMcpCatalog(scope.workspaceId, input.context.providerModel);
+  const refreshed = health.connectCatalogDiagnostic === "ready" || health.connectCatalogDiagnostic === "empty";
+  return { ...result, health, status: !health.usable ? "failed" : refreshed ? "repaired" : "unchanged" };
+}
+
 async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpScope): Promise<CloudMcpOperationResult> {
   const now = input.now ?? Date.now();
   let appHostOnlyHealth: OpenworkCloudMcpHealth | null = null;
   if (!input.force) {
     const healthResult = await probeHealth(input, scope, { writeFreshnessMarker: true });
     if (healthResult.health?.appHostAuthorizationReady === true) clearCloudMcpUnhealthyRemintAttempt(scope);
-    if (healthResult.health?.usable && !needsAppHostAuthorizationRepair(healthResult.health, scope, now)) {
-      return { ...healthResult, status: "unchanged" };
+    if (usableForOrganization(healthResult.health, scope) && !needsAppHostAuthorizationRepair(healthResult.health, scope, now)) {
+      return refreshHealthyCloudCatalog(input, scope, { ...healthResult, status: "unchanged" });
     }
-    if (healthResult.health?.usable) appHostOnlyHealth = healthResult.health;
+    if (usableForOrganization(healthResult.health, scope)) appHostOnlyHealth = healthResult.health;
   }
 
   const marker = readCloudMcpSyncMarker(scope);
@@ -340,10 +370,10 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     refreshMarginMs: input.refreshMarginMs,
   })) {
     const health = await input.client.getOpenworkCloudMcpHealth(scope.workspaceId, input.context.providerModel);
-    if (health.usable && !needsAppHostAuthorizationRepair(health, scope, now)) {
-      return { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false };
+    if (usableForOrganization(health, scope) && !needsAppHostAuthorizationRepair(health, scope, now)) {
+      return refreshHealthyCloudCatalog(input, scope, { status: "unchanged", health, attempts: 0, markerWritten: false, reminted: false });
     }
-    appHostOnlyHealth = health.usable ? health : null;
+    appHostOnlyHealth = usableForOrganization(health, scope) ? health : null;
   }
 
   const deferAppHostRepair = (): CloudMcpOperationResult => {
@@ -382,8 +412,12 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
     clearCloudMcpUnhealthyRemintAttempt(scope);
   }
   const markerWritten = writeUsableMarker({ health, scope, expiresAt: token.expiresAt });
+  const repaired = health?.usable === true && health.appHostAuthorizationReady !== false;
+  // This path minted and installed a usable token. Catalog-only refreshes
+  // return earlier and must not wake views waiting for new credentials.
+  if (repaired) markCloudCredentialRefreshed(scope);
   return {
-    status: health?.usable && health.appHostAuthorizationReady !== false ? "repaired" : "failed",
+    status: repaired ? "repaired" : "failed",
     health,
     attempts,
     markerWritten,

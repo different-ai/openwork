@@ -10,6 +10,8 @@ import {
 import { workflowArtifactSnapshotSchema } from "@openwork/types/workflows";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
 
+const ACTIVE_RUN_STATUSES = ["queued", "claimed", "running"];
+
 async function payload(path: string, init: RequestInit = { method: "GET" }) {
   const result = await requestJson(path, init, 170_000);
   if (!result.response.ok) throw new Error(getErrorMessage(result.payload, `Automation request failed (${result.response.status}).`));
@@ -41,7 +43,9 @@ export function useAutomationRuns(automationId: string | null) {
       return value.items.map((item) => automationRunSchema.parse(item));
     },
     enabled: Boolean(automationId),
-    refetchInterval: 5_000,
+    // Fast while a run is in flight; otherwise often enough to pick up scheduled runs.
+    // Starting or cancelling a run here refetches at once.
+    refetchInterval: (query) => query.state.data?.some((run) => ACTIVE_RUN_STATUSES.includes(run.status)) ? 5_000 : 60_000,
   });
 }
 
@@ -52,7 +56,7 @@ export function useAutomationRun(runId: string | null) {
     enabled: Boolean(runId),
     refetchInterval: (query) => {
       const status = query.state.data?.run.status;
-      return status && ["queued", "claimed", "running"].includes(status) ? 2_000 : false;
+      return status && ACTIVE_RUN_STATUSES.includes(status) ? 2_000 : false;
     },
   });
 }

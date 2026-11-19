@@ -16,7 +16,7 @@ policy so the package does not absorb database, environment, or UI opinions.
 | Expiry was stored but not part of the contract | Token, client-secret, authorization, lifecycle, and documentation expirations are explicit and validated. | Package contract |
 | Refresh response omitted a rotated refresh token | The package preserves the existing refresh token only on the refresh path. | Package |
 | 401 credential failure and 403 provider permission were confused | Den's structured HTTP diagnostics keep resource authentication separate from provider authorization. | Merged Den diagnostics |
-| MCP `isError` looked successful | `isError: true` throws a typed provider-operation error with only allowlisted status/category/request-id signals. | Package |
+| MCP `isError` looked successful | `isError: true` throws a typed provider-operation error with allowlisted status/category/request-id signals and the provider's text, which Den redacts and shortens before showing it. | Package + Den diagnostic adapter |
 | Unbounded response/catalog/SSE/redirect behavior | Catalog limits live in the package; guarded redirect, response/SSE size, cross-origin secret stripping, and body cancellation remain mandatory injected network policy. | Package + Den network adapter |
 | Deleting a connection raced credential work | Delete and enterprise credential transactions lock the same connection row and clean dependent credentials/client state atomically. | Den persistence layer |
 | Catalog Ready was mistaken for provider readiness | This package reports successful catalog retrieval only. The mock/test UI must continue to label operation/mutation readiness separately. | Mock/UI PR, not this package |

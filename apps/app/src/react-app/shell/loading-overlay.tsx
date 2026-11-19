@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import type { RecoveryActionResult, RecoveryRelease } from "@/app/lib/desktop";
 import type { DenAppVersionMetadata, DenDesktopConfig } from "@/app/lib/den";
 import { readFreshDenAppVersionMetadata } from "@/app/lib/version-gate";
@@ -8,6 +9,7 @@ import { bootOverlayCanHide, useBootState, useBootOverlayVisible } from "./boot-
 import { useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import { shouldSuppressBootOverlayForGateway } from "./cloud-workspace-status";
 import { OwDotTicker } from "./dot-ticker";
+import { useOrgOnboardingOnScreen } from "./org-onboarding-visibility";
 
 async function loadRecoveryPolicy(
   refreshDesktopConfig: () => Promise<DenDesktopConfig>,
@@ -27,9 +29,12 @@ async function loadRecoveryPolicy(
  * boot hook and the first route load are ready.
  */
 export function LoadingOverlay() {
+  const { pathname } = useLocation();
+  const permissionsOnScreen = /^(?:\/workspace\/[^/]+)?\/settings\/permissions(?:\/|$)/.test(pathname);
   const visible = useBootOverlayVisible();
   const { phase, routeReady, message, error } = useBootState();
   const cloudWorkspace = useCloudWorkspaceStatus();
+  const orgOnboardingOnScreen = useOrgOnboardingOnScreen();
   const suppressForGateway = shouldSuppressBootOverlayForGateway({
     gatewayMode: cloudWorkspace.gatewayMode,
     signedIn: cloudWorkspace.visible,
@@ -94,7 +99,7 @@ export function LoadingOverlay() {
 
   const useRelease = window.__OPENWORK_ELECTRON__?.recovery?.use;
 
-  if (!visible || (suppressForGateway && !error)) return null;
+  if (!visible || ((permissionsOnScreen || suppressForGateway || orgOnboardingOnScreen) && !error)) return null;
 
   const fading = bootOverlayCanHide(phase, routeReady);
 
@@ -163,7 +168,7 @@ export function LoadingOverlay() {
             {actionState ? <div className="text-dls-secondary">{actionState}</div> : null}
             <details className="text-left text-dls-secondary">
               <summary className="cursor-pointer">Technical details</summary>
-              <div className="mt-2 break-words">{error}</div>
+              <div className="mt-2 break-words" data-testid="boot-error-detail">{error}</div>
             </details>
           </div>
         ) : (

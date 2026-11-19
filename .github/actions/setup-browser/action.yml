@@ -1,0 +1,21 @@
+name: Setup Linux browser
+description: Install a virtual display and Chrome, optionally verifying the system OAuth handoff
+inputs:
+  oauth-handoff:
+    description: Register and verify a system HTTP handler for isolated Electron homes (true or false)
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install Linux browser
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        OAUTH_HANDOFF: ${{ inputs.oauth-handoff }}
+      run: bash "$ACTION_PATH/setup.sh"
+    - name: Verify real OAuth browser handoff
+      if: inputs.oauth-handoff == 'true'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: xvfb-run -a node "$ACTION_PATH/probe-handoff.mjs"

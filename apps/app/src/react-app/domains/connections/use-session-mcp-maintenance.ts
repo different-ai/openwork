@@ -29,6 +29,7 @@ import {
   runOpenworkCloudMcpReconciler,
   type CloudMcpClient,
 } from "./cloud-mcp-reconciler";
+import { CLOUD_INVENTORY_CHANGED_EVENT } from "./cloud-inventory-cache";
 
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
@@ -83,12 +84,13 @@ function genericCloudMcpMaintenanceIssue(input?: {
   code?: string;
   message?: string;
   retryable?: boolean;
+  recommendedAction?: string;
 }): CloudMcpMaintenanceIssue {
   return {
     code: input?.code ?? "cloud_mcp_maintenance_failed",
     stage: "engine_delivery",
     retryable: input?.retryable ?? true,
-    recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
+    recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
     message: input?.message ?? "OpenWork could not verify connected service tools for this workspace.",
   };
 }
@@ -107,7 +109,20 @@ function failedCloudMcpBackgroundSync(input: {
   };
 }
 
-function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+export function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+  // A full disk fails every attempt the same way until space is freed, so
+  // retrying only repeats the failure. The server's message says what to do.
+  if (error instanceof OpenworkServerError && error.code === "insufficient_storage") {
+    return failedCloudMcpBackgroundSync({
+      health: null,
+      issue: genericCloudMcpMaintenanceIssue({
+        code: error.code,
+        message: error.message,
+        retryable: false,
+        recommendedAction: "Free up disk space on this computer, then try again.",
+      }),
+    });
+  }
   return failedCloudMcpBackgroundSync({
     health: null,
     issue: error instanceof OpenworkServerError || error instanceof DenApiError
@@ -277,12 +292,14 @@ export async function syncCloudControlMcpInBackground(input: {
   }
   const configuredUrl = typeof configured?.config.url === "string" ? configured.config.url : null;
 
+  const refreshCatalog = input.client.refreshOpenworkCloudMcpCatalog;
   const result = await runOpenworkCloudMcpReconciler({
     mode: "repair",
     client: {
       baseUrl: input.client.baseUrl,
       getOpenworkCloudMcpHealth: (...args) => guarded(() => input.client.getOpenworkCloudMcpHealth(...args)),
       reconcileOpenworkCloudMcp: (...args) => guarded(() => input.client.reconcileOpenworkCloudMcp(...args)),
+      ...(refreshCatalog ? { refreshOpenworkCloudMcpCatalog: (...args: Parameters<typeof refreshCatalog>) => guarded(() => refreshCatalog(...args)) } : {}),
     },
     context: {
       ...scope,
@@ -462,6 +479,7 @@ export function useSessionMcpMaintenance(input: {
         && current.authToken === settings.authToken && current.activeOrgId === settings.activeOrgId;
     };
     let busyRetryTimer: number | null = null;
+    let rerunRequested = false;
     setCloudMcpState(input.cloudSignedIn
       ? { ...IDLE_CLOUD_MCP_MAINTENANCE_STATE, status: "checking" }
       : IDLE_CLOUD_MCP_MAINTENANCE_STATE);
@@ -543,7 +561,10 @@ export function useSessionMcpMaintenance(input: {
         },
       });
       running = false;
-      if (!started) scheduleBusyRetry();
+      if (!started || rerunRequested) {
+        rerunRequested = false;
+        scheduleBusyRetry();
+      }
     };
 
     void tick();
@@ -551,14 +572,24 @@ export function useSessionMcpMaintenance(input: {
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();
     };
+    // Archiving, restoring or creating a Library plugin changes which org
+    // connections this member gets; refresh the direct MCP catalog right away.
+    // A change made while a run is in flight must not be dropped: that run may
+    // have read the catalog before the change.
+    const handleCloudInventoryChanged = () => {
+      if (running) rerunRequested = true;
+      else void tick();
+    };
     window.addEventListener("online", handleOnline);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, handleCloudInventoryChanged);
     const interval = window.setInterval(() => void tick(), SESSION_MCP_MAINTENANCE_INTERVAL_MS);
     return () => {
       cancelled = true;
       controller.abort();
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener(CLOUD_INVENTORY_CHANGED_EVENT, handleCloudInventoryChanged);
       window.clearInterval(interval);
       if (busyRetryTimer !== null) window.clearTimeout(busyRetryTimer);
     };

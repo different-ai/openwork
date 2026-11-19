@@ -11,6 +11,7 @@ import {
 } from "@codemirror/view";
 
 import { renderMarkdownHtml } from "@/components/markdown/markdown-primitive";
+import { selectionIntersectsElement } from "@/components/markdown/selection-stability";
 
 /**
  * Obsidian-style "merged" markdown view for CodeMirror 6: the document stays
@@ -261,7 +262,13 @@ class TableWidget extends WidgetType {
     wrapper.className = "cm-md-table";
     // renderMarkdownHtml sanitizes its output.
     wrapper.innerHTML = renderMarkdownHtml(this.source, "surface");
-    wrapper.addEventListener("mousedown", (event) => {
+    wrapper.addEventListener("click", (event) => {
+      if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest("td, th")) return;
+      if (target.closest("a, button, input, select, textarea")) return;
+      if (selectionIntersectsElement(wrapper, wrapper.ownerDocument.getSelection())) return;
+
       event.preventDefault();
       const doc = view.state.doc;
       const lineNumber = doc.lineAt(this.from).number + clickedRowOffset(event.target);
@@ -377,7 +384,7 @@ const livePreviewTheme = EditorView.baseTheme({
   ".cm-md-bullet": { paddingRight: "0.4em", color: "hsl(var(--muted-foreground))" },
   // `contain: inline-size` keeps a wide table from stretching the editor (which
   // would stop every other paragraph from wrapping); the table scrolls in place.
-  ".cm-md-table": { cursor: "text", overflowX: "auto", contain: "inline-size" },
+  ".cm-md-table": { cursor: "text", overflowX: "auto", contain: "inline-size", userSelect: "text" },
   // Size columns to their content rather than squeezing words apart in a narrow panel.
   ".cm-md-table table": { fontSize: "0.95em", width: "max-content", minWidth: "100%" },
 });

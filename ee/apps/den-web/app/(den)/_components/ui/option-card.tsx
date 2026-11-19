@@ -29,7 +29,7 @@ export function DenOptionCard({
   return (
     <label
       className={`flex cursor-pointer items-start gap-3 rounded-[22px] border px-4 py-3 transition-colors ${
-        checked ? "border-gray-900 bg-white" : "border-gray-200 bg-gray-50 hover:border-gray-300"
+        checked ? "border-[var(--dls-border)] bg-[var(--dls-active)]" : "border-[var(--dls-border)] bg-[var(--dls-surface)] hover:bg-[var(--dls-hover)]"
       } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
     >
       <input
@@ -42,7 +42,7 @@ export function DenOptionCard({
         disabled={disabled}
       />
       <span className="min-w-0">
-        <span className="block text-[14px] font-medium text-gray-950">{title}</span>
+        <span className={`block text-[14px] text-gray-950 ${checked ? "font-semibold" : "font-medium"}`}>{title}</span>
         {description ? <span className="mt-1 block text-[13px] leading-6 text-gray-500">{description}</span> : null}
       </span>
     </label>

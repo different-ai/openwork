@@ -12,16 +12,30 @@ jobs:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
+
+      # Keep the previous snapshot for deltas without writing to the branch.
+      # A cache miss starts from the committed historical reports.
+      - name: Restore stats history
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            STATS.md
+            STATS_V2.md
+          key: download-stats-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            download-stats-${{ github.ref }}-
 
       - name: Run stats script
         env:
@@ -34,10 +48,12 @@ jobs:
           GITHUB_REPO: different-ai/openwork
         run: node scripts/stats.mjs
 
-      - name: Commit stats
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add STATS.md STATS_V2.md
-          git diff --staged --quiet || git commit -m "ignore: update download stats $(date -I)"
-          git push
+      - name: Upload stats reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: download-stats
+          path: |
+            STATS.md
+            STATS_V2.md
+          if-no-files-found: error
+          retention-days: 90

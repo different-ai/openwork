@@ -19,3 +19,5 @@ export * from "./live-openai.ts";
 export { observeText, textProgressFailures } from "./text-observation.ts";
 export * from "./typing.ts";
 export { observeSidebarExpansion, readSidebarOverflow } from "./sidebar-observation.ts";
+export * from "./core-mcp-journeys.ts";
+export * from "./core-agent-journeys.ts";

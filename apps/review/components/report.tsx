@@ -1,62 +1,121 @@
+"use client";
+
+import { useState } from "react";
+import { CopyButton } from "./copy-button";
+import { EvidenceMap } from "./evidence-map";
+import { EvidenceViewer } from "./evidence-viewer";
+import { Icon } from "./icons";
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
+import { LaunchPreview } from "./launch-preview";
+import { MarkedShot } from "./marked-shot";
+import { CheckpointProvider } from "./open-checkpoint";
+import { StatusIcon } from "./status-icon";
+import type { PreviewProviderOption } from "../lib/preview-options";
+import { composeSections, designNotesLabel, visualState, type Verdict } from "../lib/sections";
+import { closesStep, describeChange, isRepeat, stepChecks, stepFound } from "../lib/change";
 
-function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
+/** One sentence of state per verdict: what is true, and where to look first (P1, C6). */
+function verdictLine(verdict: Verdict, failedSections: number, incompleteSections: number, gaps: number) {
+  if (verdict === "Failed") return `${failedSections} ${failedSections === 1 ? "section has" : "sections have"} a failing check. Start there.`;
+  if (verdict === "Incomplete") {
+    const parts = [
+      incompleteSections > 0 ? `${incompleteSections} ${incompleteSections === 1 ? "section is" : "sections are"} missing evidence or waiting for a judgment` : "",
+      gaps > 0 ? `${gaps} declared ${gaps === 1 ? "gap" : "gaps"}` : "",
+    ].filter(Boolean);
+    return `Nothing failed, but ${parts.join(" and ") || "some evidence is still pending"}.`;
+  }
+  if (verdict === "Reference") return "Reference images only. Nothing here was tested.";
+  return "Every recorded check passed.";
+}
+
+export function Judgments({ items }: { items: ReviewEvidence["judgments"] }) {
   return (
     <ul className="assertions">
       {items.map((item, index) => (
-        <li key={index}>
-          <span className={`dot ${item.state}`} aria-label={item.state} />
+        <li key={index} className={item.state}>
+          <StatusIcon state={item.state} />
           <div>
             <strong>{item.expectation}</strong>
-            <p>{item.reasoning}</p>
+            {item.reasoning && <p>{item.reasoning}</p>}
           </div>
-          <span className={`result ${item.state}`}>{item.state}</span>
+          {item.state !== "passed" && <span className={`result ${item.state}`}>{item.state}</span>}
         </li>
       ))}
     </ul>
   );
 }
 
-export function Report({ report, id }: { report: ReviewReport; id: string }) {
+const formatUtc = (value: string) => new Date(value).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
+
+export function Report({ report, id, connected, providerLabel, checkpointProviders, previewProviders }: {
+  report: ReviewReport; id: string; connected: boolean;
+  /** The provider new previews launch on, e.g. "Freestyle". */
+  providerLabel: string;
+  previewProviders?: readonly PreviewProviderOption[];
+  /** Providers whose saved checkpoints this server can open. */
+  checkpointProviders: readonly string[];
+}) {
+  const [filter, setFilter] = useState("All");
+  const [sandboxOpen, setSandboxOpen] = useState(false);
   const summary = summarizeReview(report);
   const assetUrl = (name: string) => `/r/${id}/assets/${name}`;
-  const evidenceById = new Map(report.evidence.map((item) => [item.id, item]));
+  const sections = composeSections(report);
+  const visibleSections = sections.filter((section) => filter === "All" || section.verdict === filter);
+  const failures = sections.filter((section) => section.verdict === "Failed");
+  const incompletes = sections.filter((section) => section.verdict === "Incomplete");
+  /** Clears the filter so the target exists, then scrolls to and focuses it. */
+  function jumpTo(sectionId: string) {
+    setFilter("All");
+    requestAnimationFrame(() => {
+      window.location.hash = sectionId;
+      document.getElementById(sectionId)?.focus();
+    });
+  }
+  function nextFailure() {
+    const current = failures.findIndex((section) => `#${section.id}` === window.location.hash);
+    const next = failures[(current + 1) % failures.length];
+    if (next) jumpTo(next.id);
+    else setFilter("All");
+  }
+  const verdictKey = summary.verdict.toLowerCase();
   return (
-    <main className="report">
-      <div className="intro">
-        <p className="eyebrow">
-          Change verification <span> / {report.gitSha.slice(0, 7)}</span>
-        </p>
-        <h1>{report.title}</h1>
-        <div className="summary">
-          <span className={`badge ${summary.verdict.toLowerCase()}`}>
-            {summary.verdict}
-          </span>
-          {summary.tests > 0 && (
-            <span>
-              {summary.passedTests} of {summary.tests} tests passed
-            </span>
-          )}
-          {summary.assertions > 0 && (
-            <span>
-              {summary.passedAssertions} of {summary.assertions} assertions
-              passed
-            </span>
-          )}
-          <span>{summary.images} images</span>
+    <CheckpointProvider><main className={`report${sandboxOpen ? " sandbox-open" : ""}`}>
+      <header className="intro">
+        <div className="hero">
+          <div className="hero-text">
+            <p className="eyebrow"><Icon name="fileText" size={14} />Evidence report</p>
+            <h1>{report.title}</h1>
+            {report.notice && <p>{report.notice}</p>}
+            <div className="report-toolbar">
+              <span className="tag commit"><Icon name="commit" size={13} /><code title={report.gitSha}>{report.gitSha.slice(0, 7)}</code></span>
+              <CopyButton label="Copy commit" value={report.gitSha} />
+              <span className="tag"><Icon name="clock" size={13} /><time dateTime={report.createdAt} className="scope">{formatUtc(report.createdAt)} UTC</time></span>
+            </div>
+            <div className="hero-actions">
+              <button type="button" aria-expanded={sandboxOpen} aria-controls="sandbox-panel" onClick={() => setSandboxOpen(!sandboxOpen)}>
+                <Icon name="panelRight" size={15} />{sandboxOpen ? "Hide sandbox" : "Show sandbox"}
+              </button>
+              <a className="button-link" href={assetUrl("report.json")}><Icon name="download" size={15} />Download report</a>
+            </div>
+          </div>
+          <div className={`verdict ${verdictKey}`} role="status">
+            <div className="verdict-head">
+              <span className={`verdict-tile ${verdictKey}`}><StatusIcon state={summary.verdict} size={20} /></span>
+              <div>
+                <strong className={`badge ${verdictKey}`} title="The result of the evidence selected for this report, not a merge approval.">
+                  Selected evidence: {summary.verdict}
+                </strong>
+                <p>{verdictLine(summary.verdict, failures.length, incompletes.length, report.gaps.length)}</p>
+              </div>
+            </div>
+            <dl className="summary">
+              {summary.tests > 0 && <div><dt>Tests</dt><dd>{summary.passedTests}/{summary.tests}</dd></div>}
+              {summary.assertions > 0 && <div><dt>Checks</dt><dd>{summary.passedAssertions}/{summary.assertions}</dd></div>}
+              <div><dt>Screenshots</dt><dd>{summary.images}</dd></div>
+            </dl>
+          </div>
         </div>
-        <p className="scope">
-          Results cover the selected evidence below.{" "}
-          <time dateTime={report.createdAt}>
-            {new Date(report.createdAt).toLocaleString("en-US", {
-              dateStyle: "medium",
-              timeStyle: "short",
-              timeZone: "UTC",
-            })}{" "}
-            UTC
-          </time>
-        </p>
         {(report.gaps.length > 0 || summary.pendingVisual > 0) && (
           <aside className="gaps">
             <strong>Still to verify</strong>
@@ -65,149 +124,151 @@ export function Report({ report, id }: { report: ReviewReport; id: string }) {
                 <li key={index}>{gap}</li>
               ))}
               {summary.pendingVisual > 0 && (
-                <li>{summary.pendingVisual} visual judgment(s) pending.</li>
+                <li>{`${summary.pendingVisual} visual ${summary.pendingVisual === 1 ? "judgment" : "judgments"} pending.`}</li>
               )}
             </ul>
           </aside>
         )}
-      </div>
+      </header>
+      <aside id="sandbox-panel" className="sandbox-sidebar" aria-label="Your sandbox" hidden={!sandboxOpen}>
+        <LaunchPreview id={id} connected={connected} providerLabel={providerLabel} providers={previewProviders} />
+      </aside>
+      {sections.length > 1 && <EvidenceMap sections={sections} onJump={jumpTo} />}
       <div className="report-body">
+        <div className="filter-bar" aria-label="Filter evidence">
+          <div className="segmented">
+            {["All", "Failed", "Incomplete"].map((value) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{value} <span className="count">{value === "All" ? sections.length : sections.filter((section) => section.verdict === value).length}</span></button>)}
+          </div>
+          <button type="button" className="quiet" disabled={!failures.length} onClick={nextFailure}><Icon name="arrowDown" size={14} />Next failure</button>
+          <span role="status">{visibleSections.length} of {sections.length} sections</span>
+        </div>
+        <label className="section-picker">Jump to section
+          <select aria-label="Jump to section" value="" onChange={(event) => { window.location.hash = event.target.value; document.getElementById(event.target.value)?.focus(); }}>
+            <option value="" disabled>Choose a section</option>
+            {visibleSections.map((section) => <option key={section.id} value={section.id}>{section.title} — {section.verdict}</option>)}
+          </select>
+        </label>
         <nav className="contents" aria-label="Report sections">
-          <p className="eyebrow">In this review</p>
-          {report.sections.map((section, index) => (
-            <a key={section.id} href={`#${section.id}`}>
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              {section.title}
+          <p className="contents-title">Sections</p>
+          {visibleSections.map((section) => (
+            <a key={section.id} href={`#${section.id}`} className={section.verdict.toLowerCase()}>
+              <span className="nav-number">{section.number}</span>
+              <StatusIcon state={section.verdict} size={14} />
+              <span className="nav-title">{section.title}<span className="visually-hidden"> — {section.verdict}</span></span>
             </a>
           ))}
-          <a className="download" href={assetUrl("report.json")}>
-            Download report ↗
-          </a>
         </nav>
         <div className="sections">
-          {report.sections.map((section, index) => {
-            const source = report.sources.find(
-              (item) => item.id === section.sourceId,
-            );
-            if (!source) return null;
-            const items = section.evidenceIds.flatMap((key) => {
-              const item = evidenceById.get(key);
-              return item ? [item] : [];
-            });
-            const assertions = items
-              .filter((item) => item.kind === "assertion")
-              .flatMap((item) => item.judgments);
-            const verdict = summarizeReview({
-              sources: [source],
-              evidence: items,
-              gaps: [],
-            }).verdict;
+          {visibleSections.length === 0 && <p className="empty">No {filter.toLowerCase()} sections. <button type="button" onClick={() => setFilter("All")}>Show all evidence</button></p>}
+          {visibleSections.map((section) => {
+            const { source, assertions, images, verdict } = section;
+            const passed = assertions.filter((item) => item.state === "passed").length;
+            const key = verdict.toLowerCase();
             return (
-              <section className="section" id={section.id} key={section.id}>
+              <section className={`section ${key}`} id={section.id} key={section.id} tabIndex={-1} aria-labelledby={`${section.id}-title`}>
                 <div className="section-heading">
-                  <span className="number">
-                    {String(index + 1).padStart(2, "0")}
-                  </span>
+                  <span className="section-number" aria-hidden="true">{section.number}</span>
                   <div>
-                    <p className="eyebrow">
+                    <h2 id={`${section.id}-title`}>{section.title}</h2>
+                    <div className="section-tags">
+                      <span className={`result ${key}`}><StatusIcon state={verdict} size={13} />{verdict}</span>
                       {source.kind === "docshot"
-                        ? "Documentation reference"
-                        : "Test run"}
-                    </p>
-                    <h2>{section.title}</h2>
+                        ? <span className="eyebrow">Documentation reference</span>
+                        : <span className="tag-muted">Test run</span>}
+                      {images.length > 0 && <span className="tag-muted">{images.length} {images.length === 1 ? "screenshot" : "screenshots"}</span>}
+                    </div>
                   </div>
-                  <span className={`result ${verdict.toLowerCase()}`}>
-                    {verdict}
-                  </span>
                 </div>
                 {source.kind === "test-run" && source.outcome !== "passed" && (
-                  <p className="empty">
+                  <p className="outcome">
                     Execution {source.outcome}
                     {source.failure ? `: ${source.failure}` : ""}
                   </p>
                 )}
                 {assertions.length > 0 && (
-                  <details
-                    className="checks"
-                    open={assertions.some((item) => item.state !== "passed")}
-                  >
+                  <details className="checks" open={assertions.some((item) => item.state !== "passed")}>
                     <summary>
-                      {assertions.length} recorded assertion
-                      {assertions.length === 1 ? "" : "s"}
-                      <span>Inspect results</span>
+                      {passed} of {assertions.length} {assertions.length === 1 ? "check" : "checks"} passed
                     </summary>
                     <Judgments items={assertions} />
                   </details>
                 )}
                 {source.kind === "test-run" && assertions.length === 0 && (
-                  <p className="empty">
+                  <p className="outcome missing">
                     No assertion evidence was recorded for this run.
                   </p>
                 )}
-                {items
-                  .filter((item) => item.kind === "image")
-                  .map((item) => (
-                    <figure key={item.id}>
-                      <a
-                        className="image-link"
-                        href={assetUrl(item.asset)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <img
-                          src={assetUrl(item.asset)}
-                          alt={item.caption}
-                          loading="lazy"
-                        />
-                      </a>
-                      <figcaption>
-                        <strong>{item.caption}</strong>
-                        {item.description && <p>{item.description}</p>}
-                      </figcaption>
-                      {item.judgments.length > 0 && (
-                        <details
-                          className="visual"
-                          open={item.judgments.some(
-                            (judgment) => judgment.state !== "passed",
+                {images.length > 0 && <ol className="gallery" aria-label="Screenshots">
+                  {images.map((item, index) => {
+                    const visual = visualState(item);
+                    const notes = designNotesLabel(item);
+                    const repeat = isRepeat(item);
+                    const change = describeChange(item, index);
+                    const closing = closesStep(images, index);
+                    const checks = closing ? stepChecks(report, item).flatMap((entry) => entry.judgments) : [];
+                    const found = closing ? stepFound(images, item) : [];
+                    return (
+                      <li key={item.id} className={repeat ? "repeat" : undefined}>
+                        <figure>
+                          <figcaption>
+                            <span className="step-number">{index + 1}</span>
+                            <strong>{item.caption}</strong>
+                          </figcaption>
+                          {!repeat && <a className="image-link" href={`#evidence-${item.id}`} aria-label={`Inspect ${item.caption}`}>
+                            <MarkedShot image={item} src={assetUrl(item.asset)} alt={item.caption} loading="lazy" maxChanges={2} />
+                            {item.checkpoint && <span className="saved-browser" title="Open the screenshot to enter a private copy of this browser."><Icon name="globe" size={12} />Saved browser</span>}
+                            {item.failure && <span className="failed-here">Failed here</span>}
+                          </a>}
+                          {change && <p className="change">{change}{repeat && <> <a href={`#evidence-${item.id}`}>View</a></>}</p>}
+                          {item.settled === false && <p>Still changing when captured.</p>}
+                          {(item.description || visual || notes) && (
+                            <div className="figure-meta">
+                              {item.description && <p>{item.description}</p>}
+                              {(visual || notes) && <div className="figure-chips">
+                                {visual && (
+                                  <span className={visual === "failed" ? "result failed" : visual === "pending" ? "result pending" : "visual-passed"}>
+                                    <StatusIcon state={visual} size={12} />
+                                    Visual checks {item.judgments.filter((judgment) => judgment.state === "passed").length}/{item.judgments.length} passed
+                                  </span>
+                                )}
+                                {notes && <span className={`design-notes-count${item.designNotes?.some((note) => note.severity === "medium") ? " medium" : ""}`}>{notes}</span>}
+                              </div>}
+                            </div>
                           )}
-                        >
-                          <summary>
-                            Visual checks ·{" "}
-                            {
-                              item.judgments.filter(
-                                (judgment) => judgment.state === "passed",
-                              ).length
-                            }
-                            /{item.judgments.length} passed
-                          </summary>
-                          <Judgments items={item.judgments} />
-                        </details>
-                      )}
-                    </figure>
-                  ))}
+                          {checks.length > 0 && <ul className="proof" aria-label="Checked in this step">
+                            {checks.map((judgment, checkIndex) => (
+                              <li key={checkIndex} className={judgment.state}>
+                                <StatusIcon state={judgment.state} />
+                                <span>{judgment.expectation}{judgment.reasoning && <span className="observed">{judgment.reasoning}</span>}</span>
+                              </li>
+                            ))}
+                          </ul>}
+                          {found.length > 0 && <p className="found">Found on screen: {found.slice(0, 3).map((label) => `“${label}”`).join(", ")}{found.length > 3 ? ` and ${found.length - 3} more` : ""}.</p>}
+                          {closing && item.step !== undefined && checks.length === 0 && found.length === 0 && item.judgments.length === 0 && <p className="unchecked">Nothing was checked in this step.</p>}
+                        </figure>
+                      </li>
+                    );
+                  })}
+                </ol>}
                 <details className="provenance">
                   <summary>Source and diagnostics</summary>
-                  <p>
-                    Commit <code>{source.gitSha}</code>
-                  </p>
-                  <p>Captured {source.createdAt}</p>
-                  <a href={assetUrl(source.asset)}>
-                    Open original{" "}
-                    {source.kind === "test-run"
-                      ? "test record, steps, and trace"
-                      : "DocShot receipt"}{" "}
-                    ↗
-                  </a>
+                  <div className="source-row">
+                    {source.name !== section.title && <span>{source.name}</span>}
+                    <code title={source.gitSha}>{source.gitSha.slice(0, 7)}</code>
+                    <span>Captured {formatUtc(source.createdAt)} UTC</span>
+                    <CopyButton label="Copy section link" value={`#${section.id}`} link />
+                    <a href={assetUrl(source.asset)} target="_blank" rel="noreferrer">{source.kind === "test-run" ? "View record and trace" : "View receipt"}<Icon name="externalLink" size={12} /></a>
+                  </div>
                 </details>
               </section>
             );
           })}
         </div>
       </div>
+      <EvidenceViewer report={report} id={id} checkpointProviders={checkpointProviders} />
       <footer>
-        Recorded evidence · Human discussion and approval remain on the pull
-        request.
+        Recorded evidence. Discussion and approval stay on the pull request.
       </footer>
-    </main>
+    </main></CheckpointProvider>
   );
 }

@@ -1,36 +1,51 @@
+import type { OpenworkSessionActivityInventory } from "@openwork/types/openwork-affordance";
 import { z } from "zod";
 
 const engineSessionStatusesSchema = z.record(z.string(), z.object({ type: z.string() }).passthrough());
 const enginePendingRequestsSchema = z.array(z.object({ sessionID: z.string() }).passthrough());
 
-/** Engine vocabulary; `working` is the cross-surface contract agents key decisions on. */
-export type SessionActivity = { status: "idle" | "busy" | "retry" | "waiting"; working: boolean };
+export type SessionActivity = OpenworkSessionActivityInventory & {
+  status: "idle" | "busy" | "retry" | "waiting" | "error" | "compacting" | "thinking" | "responding" | "unknown";
+};
 
-/**
- * Live activity for one session from the engine: its run status plus any
- * unanswered permission or question addressed to it or to one of its
- * delegated descendants (a blocked child blocks the parent, and the person
- * answers from the parent). An unreadable probe reports working=true with
- * status "busy" so a caller never archives on a guess.
- */
 export function sessionActivityFrom(
   statuses: unknown,
   permissions: unknown,
   questions: unknown,
   sessionId: string,
   descendantIds: readonly string[] = [],
+  unknownDescendants = 0,
 ): SessionActivity {
   const parsedStatuses = engineSessionStatusesSchema.safeParse(statuses);
   const parsedPermissions = enginePendingRequestsSchema.safeParse(permissions);
   const parsedQuestions = enginePendingRequestsSchema.safeParse(questions);
-  if (!parsedStatuses.success || !parsedPermissions.success || !parsedQuestions.success) {
-    return { status: "busy", working: true };
+  const probesComplete = parsedStatuses.success && parsedPermissions.success && parsedQuestions.success;
+  const waiting = new Set([
+    ...parsedPermissions.success ? parsedPermissions.data.map((request) => request.sessionID) : [],
+    ...parsedQuestions.success ? parsedQuestions.data.map((request) => request.sessionID) : [],
+  ]);
+  const statusFor = (id: string): SessionActivity["status"] => {
+    const type = parsedStatuses.success ? parsedStatuses.data[id]?.type : undefined;
+    if (type === "error") return "error";
+    if (waiting.has(id) || type === "waiting") return "waiting";
+    if (type === "busy" || type === "running") return "busy";
+    if (type === "retry" || type === "compacting" || type === "thinking" || type === "responding") return type;
+    return probesComplete && (type === undefined || type === "idle") ? "idle" : "unknown";
+  };
+  const descendantActivity = { busy: 0, waiting: 0, unknown: unknownDescendants };
+  for (const id of new Set(descendantIds)) {
+    if (id === sessionId) continue;
+    const status = statusFor(id);
+    if (status === "unknown") descendantActivity.unknown += 1;
+    else if (status === "waiting") descendantActivity.waiting += 1;
+    else if (status !== "idle" && status !== "error") descendantActivity.busy += 1;
   }
-  const tree = new Set([sessionId, ...descendantIds]);
-  const waiting = [...parsedPermissions.data, ...parsedQuestions.data].some((request) => tree.has(request.sessionID));
-  if (waiting) return { status: "waiting", working: true };
-  const type = parsedStatuses.data[sessionId]?.type;
-  if (type === "busy" || type === "running") return { status: "busy", working: true };
-  if (type === "retry") return { status: "retry", working: true };
-  return { status: "idle", working: false };
+  const own = statusFor(sessionId);
+  return {
+    status: own !== "error" && descendantActivity.waiting > 0 ? "waiting" : own,
+    working: own !== "idle" && own !== "error" && own !== "unknown"
+      || descendantActivity.busy > 0 || descendantActivity.waiting > 0,
+    descendantActivity,
+    inventoryComplete: probesComplete && own !== "unknown" && descendantActivity.unknown === 0,
+  };
 }

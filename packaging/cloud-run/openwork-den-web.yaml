@@ -1,0 +1,34 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: openwork-den-web
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "10"
+    spec:
+      serviceAccountName: openwork-cloud-run@REPLACE_PROJECT_ID.iam.gserviceaccount.com
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: REPLACE_REGION-docker.pkg.dev/REPLACE_PROJECT_ID/openwork/openwork-den-web:REPLACE_OPENWORK_VERSION
+          ports:
+            - name: http1
+              containerPort: 3005
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          env:
+            - { name: NODE_ENV, value: production }
+            - { name: CI, value: "true" }
+            - { name: DEN_BASE_URL, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_WEB_PUBLIC_ORIGIN, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_AUTH_ORIGIN, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_WEB_OPENWORK_AUTH_CALLBACK_URL, value: REPLACE_WEB_ORIGIN }
+            - { name: DEN_API_BASE, value: REPLACE_API_ORIGIN }
+            - { name: DEN_API_PUBLIC_URL, value: REPLACE_API_ORIGIN }

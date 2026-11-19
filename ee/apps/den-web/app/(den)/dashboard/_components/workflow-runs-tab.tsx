@@ -11,6 +11,7 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
 import { workflowDiagramInput } from "./use-workflow-detail-state";
+import { workflowFailureSummary } from "./library-view";
 
 export type WorkflowRunsTabProps = {
   detail: WorkflowDetail;
@@ -83,9 +84,12 @@ export function WorkflowRunsTab({
                     </>
                   }
                   meta={
-                    <span>
-                      {snapshot.source === "manual" ? "Manual" : "Scheduled"}
-                      {technical ? ` · ${snapshot.receiptId}` : ""}
+                    <span className="flex min-w-0 flex-wrap items-center gap-x-2">
+                      <span>{snapshot.source === "manual" ? "Run by you" : "Ran on schedule"}</span>
+                      {snapshot.status === "failed" ? (
+                        <span className="min-w-0 truncate text-gray-600" data-run-failure-summary>{workflowFailureSummary(snapshot.errorMessage)}</span>
+                      ) : null}
+                      {technical ? <span className="font-mono">{snapshot.receiptId}</span> : null}
                     </span>
                   }
                   action={
@@ -114,7 +118,7 @@ export function WorkflowRunsTab({
       <DenCard>
         <DenSectionHeader
           title="Selected run"
-          description={selectedSnapshot ? `${formatDate(selectedSnapshot.finishedAt)} · ${selectedSnapshot.source === "manual" ? "Manual" : "Scheduled"}` : "Choose a past run above."}
+          description={selectedSnapshot ? `${formatDate(selectedSnapshot.finishedAt)}, ${selectedSnapshot.source === "manual" ? "run by you" : "ran on schedule"}` : "Choose a past run above."}
           action={selectedSnapshot ? (
             <span className="flex items-center gap-2 text-[12px] text-gray-500">
               Show technical details

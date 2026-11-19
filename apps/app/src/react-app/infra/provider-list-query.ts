@@ -1,12 +1,19 @@
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
-import { dispatchNewProviders } from "../../app/lib/provider-events";
-import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
+import { dispatchNewProviders, subscribeProviderCatalogChanges, type ProviderCatalogScope } from "../../app/lib/provider-events";
+import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "../domains/connections/provider-auth/live-provider-sync";
+import type { ConfigProvidersResponse, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
+// Connected providers only: what pickers, availability checks and defaults read.
 const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
+// Every provider the engine knows (~6 MB on v1), for connecting a new one.
+const PROVIDER_CATALOG_QUERY_ROOT = ["opencode-provider-catalog"] as const;
+const SAVED_PROVIDER_LIST_PREFIX = "openwork.providerList.v1:";
 
 export type ConnectedProviderSnapshot = Array<{
   id: string;
@@ -39,30 +46,172 @@ export function providerListQueryKey(input: {
   ] as const;
 }
 
+export function providerCatalogQueryKey(input: {
+  baseUrl?: string | null;
+  directory?: string | null;
+}) {
+  return [
+    ...PROVIDER_CATALOG_QUERY_ROOT,
+    input.baseUrl?.trim() ?? "",
+    input.directory?.trim() ?? "",
+  ] as const;
+}
+
 export async function refreshProviderListQueries(queryClient: QueryClient) {
   await queryClient.invalidateQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
+  await queryClient.invalidateQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
   await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
 }
 
 /** Drop account-sensitive provider snapshots when the Den session ends. */
 export function clearProviderListQueries(queryClient: QueryClient) {
   queryClient.removeQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
+  queryClient.removeQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
   connectedProviderSnapshots.clear();
   connectedProviderSnapshotChanges.clear();
+  clearSavedProviderLists();
 }
 
+/** The connected providers as the `{all, connected, default}` shape every reader already uses. */
+export function providerListFromConnected(value: ConfigProvidersResponse): ProviderListResponse {
+  const all = value.providers ?? [];
+  return { all, connected: all.map((provider) => provider.id), default: value.default ?? {} };
+}
+
+/**
+ * Connected providers only. On v1 `/config/providers` answers in a few
+ * milliseconds with ~30 KB, where `/provider` sends the whole ~6 MB catalog.
+ */
 export async function fetchProviderList(input: {
   client: Client;
   baseUrl?: string | null;
   directory?: string | null;
 }): Promise<ProviderListResponse> {
-  const value = unwrap(
+  const value = providerListFromConnected(unwrap(
+    await input.client.config.providers({
+      directory: input.directory?.trim() || undefined,
+    }),
+  ));
+  recordConnectedProviderSnapshot(input, value);
+  saveProviderList(input.directory, value);
+  return value;
+}
+
+/** Every provider the engine knows, connected or not. Only for connecting a new provider. */
+export async function fetchProviderCatalog(input: {
+  client: Client;
+  directory?: string | null;
+}): Promise<ProviderListResponse> {
+  return unwrap(
     await input.client.provider.list({
       directory: input.directory?.trim() || undefined,
     }),
   );
-  recordConnectedProviderSnapshot(input, value);
-  return value;
+}
+
+export function ensureProviderCatalogQuery(
+  queryClient: QueryClient,
+  input: {
+    client: Client;
+    baseUrl?: string | null;
+    directory?: string | null;
+  },
+) {
+  const options = {
+    queryKey: providerCatalogQueryKey(input),
+    queryFn: () => fetchProviderCatalog(input),
+    gcTime: PROVIDER_LIST_CACHE_MS,
+  };
+  const state = queryClient.getQueryState(options.queryKey);
+  const baseUrl = input.baseUrl ?? "";
+  const liveProviderSync = usesLiveProviderSync({
+    baseUrl,
+    status: queryClient.getQueryData<LiveProviderSyncStatus>(liveProviderSyncStatusQueryKey(baseUrl)),
+  });
+  if (liveProviderSync && (state?.isInvalidated || state?.fetchStatus === "fetching")) {
+    return queryClient.fetchQuery({ ...options, staleTime: 0 });
+  }
+  return queryClient.ensureQueryData({ ...options, staleTime: PROVIDER_LIST_CACHE_MS });
+}
+
+const savedProviderSchema = z.custom<ProviderListItem>(
+  (value) => typeof value === "object" && value !== null
+    && "id" in value && typeof value.id === "string"
+    && "models" in value && typeof value.models === "object" && value.models !== null,
+);
+const savedProviderListSchema = z.object({
+  savedAt: z.number(),
+  value: z.object({
+    all: z.array(savedProviderSchema),
+    connected: z.array(z.string()),
+    default: z.record(z.string(), z.string()),
+  }),
+});
+
+function savedProviderListKey(directory?: string | null) {
+  return `${SAVED_PROVIDER_LIST_PREFIX}${directory?.trim() ?? ""}`;
+}
+
+function providerListStorage(): Storage | null {
+  try {
+    return typeof window !== "undefined" ? window.localStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remember the last connected providers per folder, so the next launch can
+ * show them while the engine is still starting. Keyed by folder, not engine
+ * URL: the engine port changes on every launch.
+ */
+function saveProviderList(directory: string | null | undefined, value: ProviderListResponse) {
+  const storage = providerListStorage();
+  if (!storage) return;
+  const all = getConnectedProviderItems(value);
+  const ids = new Set(all.map((provider) => provider.id));
+  const saved = {
+    savedAt: Date.now(),
+    value: {
+      all,
+      connected: all.map((provider) => provider.id),
+      default: Object.fromEntries(Object.entries(value.default ?? {}).filter(([id]) => ids.has(id))),
+    },
+  };
+  try {
+    storage.setItem(savedProviderListKey(directory), JSON.stringify(saved));
+  } catch {
+    // Storage full or unavailable: the next launch simply waits for the engine.
+  }
+}
+
+/** The connected providers last seen for this folder, or undefined. Never fresh: always revalidate. */
+export function readSavedProviderList(directory?: string | null): ProviderListResponse | undefined {
+  const storage = providerListStorage();
+  if (!storage) return undefined;
+  try {
+    const raw = storage.getItem(savedProviderListKey(directory));
+    if (!raw) return undefined;
+    const parsed = savedProviderListSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function clearSavedProviderLists() {
+  const storage = providerListStorage();
+  if (!storage) return;
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const key = storage.key(index);
+      if (key?.startsWith(SAVED_PROVIDER_LIST_PREFIX)) keys.push(key);
+    }
+    for (const key of keys) storage.removeItem(key);
+  } catch {
+    // ignore storage failures
+  }
 }
 
 export function getConnectedProviderItems(value: ProviderListResponse | null | undefined) {
@@ -196,7 +345,8 @@ export function ensureProviderListQuery(
     queryFn: () => fetchProviderList(input),
     gcTime: PROVIDER_LIST_CACHE_MS,
   };
-  if (input.force) {
+  const state = queryClient.getQueryState(options.queryKey);
+  if (input.force || state?.status === "error" || state?.isInvalidated || state?.fetchStatus === "fetching") {
     return queryClient.fetchQuery({
       ...options,
       staleTime: 0,
@@ -208,17 +358,64 @@ export function ensureProviderListQuery(
   });
 }
 
+const pendingCatalogInvalidations = new WeakMap<QueryClient, Set<string>>();
+
+/** Many model/provider events and mounted pickers can describe one catalog write. */
+function invalidateProviderCatalogScope(queryClient: QueryClient, scope: {
+  baseUrl: string;
+  directory?: string;
+}) {
+  let pending = pendingCatalogInvalidations.get(queryClient);
+  if (!pending) {
+    pending = new Set();
+    pendingCatalogInvalidations.set(queryClient, pending);
+  }
+  const key = JSON.stringify(providerListQueryKey(scope));
+  if (pending.has(key)) return;
+  pending.add(key);
+  setTimeout(() => {
+    pending.delete(key);
+    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope), exact: true });
+    void queryClient.invalidateQueries({ queryKey: providerCatalogQueryKey(scope), exact: true });
+  }, 50);
+}
+
+export function handleProviderCatalogChange(queryClient: QueryClient, scope: ProviderCatalogScope) {
+  if (!scope.reason) {
+    // Existing catalog.updated behavior is unchanged, including when off.
+    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
+    return;
+  }
+  if (!usesLiveProviderSync({
+    baseUrl: scope.baseUrl,
+    status: queryClient.getQueryData<LiveProviderSyncStatus>(liveProviderSyncStatusQueryKey(scope.baseUrl)),
+  })) return;
+  invalidateProviderCatalogScope(queryClient, scope);
+}
+
 export function useProviderListQuery(input: {
   client: Client | null;
   baseUrl?: string | null;
   directory?: string | null;
   enabled?: boolean;
+  /**
+   * Show the providers last seen for this folder until the engine answers.
+   * Only for pickers: `isPlaceholderData` is true meanwhile, and nothing that
+   * changes a selection automatically should act on it.
+   */
+  showSavedWhileLoading?: boolean;
 }) {
+  const queryClient = useQueryClient();
+  useEffect(() => subscribeProviderCatalogChanges((scope) => {
+    if (scope.baseUrl !== input.baseUrl || (scope.directory ?? "") !== (input.directory ?? "")) return;
+    handleProviderCatalogChange(queryClient, scope);
+  }), [input.baseUrl, input.directory, queryClient]);
   return useQuery({
     queryKey: providerListQueryKey(input),
     enabled: Boolean(input.client) && (input.enabled ?? true),
     staleTime: PROVIDER_LIST_CACHE_MS,
     gcTime: PROVIDER_LIST_CACHE_MS,
+    placeholderData: input.showSavedWhileLoading ? () => readSavedProviderList(input.directory) : undefined,
     queryFn: () => {
       if (!input.client) {
         return {

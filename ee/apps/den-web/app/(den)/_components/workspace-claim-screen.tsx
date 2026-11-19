@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { freePlanUserLimitMessage, getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../_lib/den-flow";
 import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getOrgDashboardRoute,
@@ -68,6 +68,16 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+// Teammates saved with the workspace come back on accept, so invites survive a
+// sign-up or verification round trip that drops the `invite` URL parameter.
+function teammatesToInvite(fromUrl: readonly string[], payload: unknown): string[] {
+  const saved =
+    typeof payload === "object" && payload !== null && Array.isArray((payload as { teammateEmails?: unknown }).teammateEmails)
+      ? (payload as { teammateEmails: unknown[] }).teammateEmails.filter((email): email is string => typeof email === "string")
+      : [];
+  return [...new Set([...fromUrl, ...saved].map((email) => email.trim().toLowerCase()).filter(Boolean))].slice(0, 10);
+}
+
 async function inviteTeammates(inviteEmails: readonly string[]): Promise<string> {
   const results = await Promise.allSettled(
     inviteEmails.map((email) =>
@@ -77,6 +87,21 @@ async function inviteTeammates(inviteEmails: readonly string[]): Promise<string>
 
   const succeeded = results.filter((result) => result.status === "fulfilled" && result.value.response.ok).length;
   const failed = inviteEmails.length - succeeded;
+  const freePlanLimit = results
+    .map((result) => (result.status === "fulfilled" ? getOrgPaymentRequiredError(result.value.payload) : null))
+    .find((limit) => limit !== null);
+  if (freePlanLimit) {
+    const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
+    return `${invited}${freePlanUserLimitMessage(freePlanLimit.freeSeatCount)}`;
+  }
+  // A full Team or Enterprise plan set by OpenWork: the server says how many users it includes.
+  const planLimit = results
+    .map((result) => (result.status === "fulfilled" ? getOrgLimitError(result.value.payload) : null))
+    .find((limit) => limit !== null);
+  if (planLimit) {
+    const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
+    return `${invited}${planLimit.message}`;
+  }
 
   if (failed === 0) {
     return `Invited ${pluralize(succeeded, "teammate")}.`;
@@ -163,14 +188,15 @@ export function WorkspaceClaimScreen({
         window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
       }
 
-      if (inviteEmails.length > 0) {
+      const toInvite = teammatesToInvite(inviteEmails, payload);
+      if (toInvite.length > 0) {
         // The claim above just made this account the owner (and set it as
         // the session's active organization), so it can now invite
         // teammates through the same endpoint Manage Members uses. Show the
         // result briefly before moving on - this is best-effort: a failed
         // invite never blocks the claim, the owner can always retry from
         // Manage Members.
-        const summary = await inviteTeammates(inviteEmails);
+        const summary = await inviteTeammates(toInvite);
         setInviteSummary(summary);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 1400));
       }
@@ -334,7 +360,7 @@ export function WorkspaceClaimScreen({
             <p className={`den-eyebrow ${isLoopback ? "text-blue-700" : ""}`}>{isLoopback ? "Demo workspace ready" : "Workspace ready"}</p>
             <h1 className="den-title-lg max-w-[22ch]">{claimedOrg.organizationName} is yours.</h1>
             <p className="den-copy max-w-[46ch]">
-              Copy the OpenWork link, open OpenWork Enterprise, and paste it to connect. You will not need to enter your password again.
+              Copy the OpenWork link, open OpenWork, and paste it under Paste sign-in code. You will not need to enter your password again.
             </p>
           </div>
 
@@ -373,7 +399,7 @@ export function WorkspaceClaimScreen({
 
           {linkCopied ? (
             <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-800">
-              Open OpenWork Enterprise and paste the OpenWork link to connect.
+              Open OpenWork and paste the OpenWork link under Paste sign-in code.
             </div>
           ) : null}
 

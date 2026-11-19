@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
-import { WorkspaceFileError, openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
+import { WorkspaceFileError, openWorkspaceFileForReading, openWorkspaceFileForWriting } from "../workspace-file-identity.js";
 import {
   MAX_COMPRESSED_BYTES,
   XLSX_WRITE_MAX_CELLS,

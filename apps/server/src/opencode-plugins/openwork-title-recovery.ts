@@ -1,5 +1,5 @@
 /** Recover only explicitly rejected, optional title-generation parameters.
- * The private correlation header is removed before every provider request.
+ * The correlation header is removed unless already covered by an AWS signature.
  * No prompts, response bodies, URLs, or credentials enter diagnostics.
  */
 const HEADER = "x-openwork-title-attempt";
@@ -57,7 +57,8 @@ async function errorBody(response: Response): Promise<unknown> {
       if (size > MAX_ERROR_BYTES) return null;
       text += decoder.decode(chunk.value, { stream: true });
     }
-    return JSON.parse(text + decoder.decode());
+    text += decoder.decode();
+    try { return JSON.parse(text); } catch { return text; }
   } catch {
     return null;
   } finally {
@@ -94,7 +95,12 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   return { body: JSON.stringify(parsed), parameter };
 }
 
-function failure(status: number): string {
+function failure(status: number, value?: unknown): string {
+  const messages = typeof value === "string" ? [value] : record(value) ? [value.message, value.__type] : [];
+  if (status === 403 && messages.some((part) =>
+    typeof part === "string" && /SignatureDoesNotMatch|signature we calculated does not match/i.test(part))) {
+    return "signature_rejected";
+  }
   if (status === 401 || status === 403) return "access_rejected";
   if (status === 404) return "model_or_endpoint_missing";
   if (status === 429) return "rate_or_quota_limited";
@@ -110,19 +116,21 @@ function install() {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const id = headers.get(HEADER);
     if (!id) return base(input, init);
-    headers.delete(HEADER);
+    // Removing a signed header here invalidates SigV4's canonical request.
+    if (!/^AWS4-HMAC-SHA256\s/i.test(headers.get("authorization") ?? "")) headers.delete(HEADER);
     const externalSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const deadline = AbortSignal.timeout(DEADLINE_MS);
     const options = { ...init, headers, signal: externalSignal ? AbortSignal.any([externalSignal, deadline]) : deadline };
     const attempt = attempts.get(id);
-    // Unknown/expired markers must still never reach a provider.
+    // Unknown/expired markers are stripped too, except when already signed.
     if (!attempt) return base(input, options);
     try {
       const response = await base(input, options);
       if (!response.ok) {
-        report(attempt, failure(response.status), response.status);
+        const value = response.status === 400 || response.status === 403 ? await errorBody(response) : null;
+        report(attempt, failure(response.status, value), response.status);
         if (!attempt.retried && response.status === 400 && typeof init?.body === "string") {
-          const recovered = correction(init.body, await errorBody(response));
+          const recovered = correction(init.body, value);
           if (recovered && attempts.get(id) === attempt && !options.signal.aborted) {
             attempt.retried = true;
             report(attempt, "retrying_parameter", response.status, recovered.parameter);
@@ -130,7 +138,8 @@ function install() {
             const retryHeaders = new Headers(headers);
             retryHeaders.delete("content-length");
             const retry = await base(input, { ...options, headers: retryHeaders, body: recovered.body });
-            report(attempt, retry.ok ? "accepted_after_recovery" : failure(retry.status), retry.status);
+            const retryError = retry.status === 403 ? await errorBody(retry) : null;
+            report(attempt, retry.ok ? "accepted_after_recovery" : failure(retry.status, retryError), retry.status);
             return retry;
           }
         }

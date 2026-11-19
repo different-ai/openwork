@@ -215,6 +215,7 @@ export const generatedArtifactViewRevisionSchema = z.object({
 export type GeneratedArtifactViewRevision = z.infer<typeof generatedArtifactViewRevisionSchema>
 
 export const generatedArtifactViewSchema = z.object({
+  dataMode: z.enum(["live", "snapshot"]).optional(),
   id: idSchema,
   configObjectId: idSchema,
   title: z.string().trim().min(1).max(255),
@@ -241,6 +242,7 @@ export const savedAppDetailSchema = savedAppSummarySchema.extend({
   html: z.string().nullable(),
   payload: workflowArtifactPayloadSchema.nullable(),
   previewNotice: z.string().nullable(),
+  runError: z.record(z.string(), z.unknown()).optional(),
 })
 export type SavedAppDetail = z.infer<typeof savedAppDetailSchema>
 

@@ -1,4 +1,5 @@
 import { GatewayRequestLogTable } from "@openwork-ee/den-db"
+import { GatewayUsageError, startGatewayUsageLog, safeUsageDatabaseCode, type GatewayUsageSnapshot } from "@openwork-ee/den-db/gateway-usage-limits"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type {
@@ -12,10 +13,11 @@ import type { InferenceContext } from "./middleware/inference-auth.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { estimateCostMicroUsd, loadPricingCatalogFromFile } from "./pricing.js"
 import type { PricingCatalog } from "./pricing.js"
+import { gatewayUsageWrites, UsageWriteAdmissionError } from "./usage-write-queue.js"
 
 export type GatewayRequestLogRow = typeof GatewayRequestLogTable.$inferInsert
 
-export type InsertRequestLog = (row: GatewayRequestLogRow) => Promise<void>
+export type InsertRequestLog = (row: GatewayRequestLogRow, options?: { signal?: AbortSignal }) => Promise<void>
 export type UpdateRequestLog = (row: GatewayRequestLogRow) => Promise<boolean>
 
 export type RequestLogStartInput = {
@@ -28,6 +30,7 @@ export type RequestLogStartInput = {
   upstreamPath: string
   method: string
   requestedModel: string | null
+  requestedModelSource?: "request" | "header"
   upstreamModel: string | null
   stream: boolean
   gatewayProviderId?: GatewayRequestLogRow["gateway_provider_id"]
@@ -37,9 +40,18 @@ export type RequestLogStartInput = {
   accessGrantId?: GatewayRequestLogRow["access_grant_id"]
   requestBytes?: number | null
   startedAt?: Date
+  gatewayUsage?: GatewayUsageSnapshot
+  /** The headless runner conversation that made the call (parseHeadlessSessionHeader); the rollup attributes it to Workbot. */
+  headlessSession?: string | null
+  signal?: AbortSignal
+  /** Per-request prices that override the models.dev snapshot (synced LiteLLM models). */
+  pricing?: PricingCatalog
+  /** False records tokens without pricing or charging them (per-user LiteLLM keys). */
+  spendTracking?: boolean
 }
 
 export type RequestLogUsageInput = {
+  complete?: boolean
   usageSource: GatewayUsageSource
   upstreamModel?: string | null
   inputTokens?: number | null
@@ -69,6 +81,31 @@ export type RequestLogRecorderDependencies = {
   reporter: InferenceReporter
   now?: () => Date
   pricing?: PricingCatalog
+  /** How long a request waits for its write-ahead row before the gateway gives up. */
+  startDeadlineMs?: number
+}
+
+/** A request is held, never forwarded, until its usage row is written or this much time has passed. */
+export const REQUEST_LOG_START_DEADLINE_MS = 30_000
+/** Answer sent when the write-ahead row could not be written in time. The request never reached a provider. */
+export const REQUEST_LOG_UNAVAILABLE_MESSAGE = "AI Gateway unavailable."
+
+const START_RETRY_DELAYS_MS = [25, 100, 250, 500, 1000, 2000]
+
+// Conflicts (member removed, request identity owned by someone else, stale
+// capture epoch) will not change by waiting. Everything else, including
+// database errors and a congested write queue, is retried until the deadline.
+function isPermanentStartFailure(error: unknown) {
+  return error instanceof GatewayUsageError && error.status < 500
+}
+
+function waitOrAbort(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve() }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener("abort", done, { once: true })
+  })
 }
 
 export type RequestLogRecorder = {
@@ -81,14 +118,21 @@ export type RequestLogRecorder = {
   finish(input: RequestLogFinishInput): Promise<void>
 }
 
-export const insertRequestLogIntoDb: InsertRequestLog = async (row) => {
-  const { db } = await import("./db.js")
+export const insertRequestLogIntoDb: InsertRequestLog = async (row, options) => {
+  const { db, usageWriteDatabase } = await import("./db.js")
+  if (row.route === "org_provider") {
+    return gatewayUsageWrites.start(row.org_membership_id, row.openwork_request_id, () => usageWriteDatabase().transaction((tx) => startGatewayUsageLog(tx, row, new Date(), options?.signal)), options?.signal)
+  }
   await db.insert(GatewayRequestLogTable).values(row)
     .onDuplicateKeyUpdate({ set: { id: sql`${GatewayRequestLogTable.id}` } })
 }
 
 export async function updateRequestLogInDb(row: GatewayRequestLogRow): Promise<boolean> {
-  const { db } = await import("./db.js")
+  const { db, usageWriteDatabase } = await import("./db.js")
+  if (row.route === "org_provider") {
+    const { createGatewayUsageLimits } = await import("@openwork-ee/den-db/gateway-usage-limits")
+    return gatewayUsageWrites.settle(row.org_membership_id, row.openwork_request_id, () => createGatewayUsageLimits(usageWriteDatabase()).record(row))
+  }
   // A transaction/locking read also distinguishes a no-op retry from a missing
   // row without relying on driver-specific affectedRows/CLIENT_FOUND_ROWS.
   return db.transaction(async (tx) => {
@@ -158,13 +202,44 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
     }
   }
 
-  async function persist(write: () => Promise<boolean>, reason: string) {
+  async function persist(write: () => Promise<boolean>, reason: string, signal?: AbortSignal) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      try { return await write() } catch {
+      const started = performance.now()
+      try { return await write() } catch (error) {
+        console.warn("[gateway-usage]", { stage: "request_log_persist", durationMs: Math.round(performance.now() - started), code: error instanceof UsageWriteAdmissionError ? error.code : safeUsageDatabaseCode(error) })
+        if (signal?.aborted || error instanceof UsageWriteAdmissionError) { report(reason); return false }
         if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 25 : 100))
       }
     }
     report(reason)
+    return false
+  }
+
+  // Write-ahead: the request waits here and is never forwarded without its row.
+  // Retries back off up to 2s between attempts until the row is written, the
+  // client goes away, a failure that waiting cannot fix, or the deadline.
+  async function persistStart(write: (signal: AbortSignal) => Promise<void>, clientSignal?: AbortSignal) {
+    const deadline = AbortSignal.timeout(dependencies.startDeadlineMs ?? REQUEST_LOG_START_DEADLINE_MS)
+    const signal = clientSignal ? AbortSignal.any([clientSignal, deadline]) : deadline
+    for (let attempt = 0; ; attempt += 1) {
+      const began = performance.now()
+      try {
+        await write(signal)
+        return true
+      } catch (error) {
+        console.warn("[gateway-usage]", {
+          stage: "request_log_persist",
+          attempt: attempt + 1,
+          durationMs: Math.round(performance.now() - began),
+          code: error instanceof UsageWriteAdmissionError ? error.code : safeUsageDatabaseCode(error),
+        })
+        if (signal.aborted || isPermanentStartFailure(error)) break
+      }
+      const delay = START_RETRY_DELAYS_MS[Math.min(attempt, START_RETRY_DELAYS_MS.length - 1)] ?? 2000
+      await waitOrAbort(Math.round(delay * (0.75 + Math.random() * 0.5)), signal)
+      if (signal.aborted) break
+    }
+    report("request_log_insert_failed")
     return false
   }
 
@@ -178,7 +253,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         organization_id: input.identity.organizationId,
         org_membership_id: input.identity.orgMembershipId,
         inference_key_id: input.identity.kind === "models" ? input.identity.inferenceKeyId : null,
-        gateway_key_id: input.identity.kind === "gateway" ? input.identity.gatewayKeyId : null,
+        gateway_key_id: input.identity.kind === "gateway" && input.identity.keySource === "member" ? input.identity.gatewayKeyId : null,
+        gateway_api_key_id: input.identity.kind === "gateway" && input.identity.keySource === "api_key" ? input.identity.gatewayKeyId : null,
         gateway_provider_id: input.identity.kind === "gateway" ? input.gatewayProviderId ?? null : null,
         gateway_provider_credential_id: input.identity.kind === "gateway" ? input.gatewayProviderCredentialId ?? null : null,
         model_group_id: input.identity.kind === "gateway" ? input.modelGroupId ?? null : null,
@@ -192,9 +268,14 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         // Existing enum placeholder; completed_at NULL is the pending marker.
         outcome: "client_aborted", usage_source: "missing",
         openwork_request_id: input.openworkRequestId, request_bytes: input.requestBytes ?? null,
+        metadata: {
+          ...(input.requestedModelSource ? { requested_model_source: input.requestedModelSource } : {}),
+          ...(input.gatewayUsage ? { gateway_usage: input.gatewayUsage } : {}),
+          ...(input.headlessSession ? { headless_session: input.headlessSession } : {}),
+        },
       }
       const row = pending
-      startWrite = persist(async () => { await dependencies.insertRequestLog(row); return true }, "request_log_insert_failed")
+      startWrite = persistStart((signal) => dependencies.insertRequestLog(row, { signal }), input.signal)
     },
     whenStarted() {
       return startWrite
@@ -210,7 +291,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       if (finished || !started || !startedAt || !pending) return Promise.resolve()
       finished = true
       let pricing: PricingCatalog
-      try { pricing = dependencies.pricing ?? loadPricingCatalogFromFile() } catch {
+      try { pricing = started.pricing ?? dependencies.pricing ?? loadPricingCatalogFromFile() } catch {
         report("request_log_pricing_unavailable")
         pricing = { getModelPrice: () => null }
       }
@@ -222,6 +303,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         org_membership_id: started.identity.orgMembershipId,
         inference_key_id: pending.inference_key_id,
         gateway_key_id: pending.gateway_key_id,
+        gateway_api_key_id: pending.gateway_api_key_id,
         gateway_provider_id: pending.gateway_provider_id,
         gateway_provider_credential_id: pending.gateway_provider_credential_id,
         model_group_id: pending.model_group_id,
@@ -254,13 +336,21 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         completed_at: now(),
         request_bytes: started.requestBytes ?? null,
         response_bytes: input.responseBytes ?? null,
-        metadata: { cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
+        metadata: { ...pending.metadata, cost_source: costMicroUsd(usage?.costUsd) !== null ? "upstream" : "catalog_estimate" },
       }
-      if (row.cost_micro_usd === null) row.metadata = { cost_source: "unknown" }
+      if (row.cost_micro_usd === null) row.metadata = { ...pending.metadata, cost_source: "unknown" }
+      row.metadata = { ...row.metadata, cost_complete: row.outcome === "ok" && row.cost_micro_usd !== null && usage?.complete !== false && (costMicroUsd(usage?.costUsd) !== null || typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number") }
+      if (started.spendTracking === false) {
+        // The upstream (LiteLLM) owns this spend: keep tokens, never price or charge them.
+        row.cost_micro_usd = null
+        row.metadata = { ...pending.metadata, cost_source: "unknown", cost_complete: false, spend_tracking: "disabled" }
+      }
       finishWrite = (async () => {
-        if (!await startWrite) return
-        const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")
-        if (!saved) report("request_log_not_finalized")
+        try {
+          if (!await startWrite) return
+          const saved = await persist(() => (dependencies.updateRequestLog ?? updateRequestLogInDb)(row), "request_log_update_failed")
+          if (!saved) report("request_log_not_finalized")
+        } finally { gatewayUsageWrites.releaseFailedSettlement(row.openwork_request_id) }
       })()
       return finishWrite
     },

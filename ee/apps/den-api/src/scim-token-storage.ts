@@ -16,3 +16,37 @@ export function verifyStoredScimToken(input: {
   const expectedBytes = Uint8Array.from(Buffer.from(expectedToken))
   return storedBytes.length === expectedBytes.length && timingSafeEqual(storedBytes, expectedBytes)
 }
+
+function decodeScimBearerToken(bearerToken: string): { rawToken: string; providerId: string; organizationId: string } | null {
+  let decoded: string
+  try {
+    const normalized = bearerToken.replace(/-/g, "+").replace(/_/g, "/")
+    const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4))
+    decoded = Buffer.from(`${normalized}${padding}`, "base64").toString("utf8")
+  } catch {
+    return null
+  }
+  const [rawToken, providerId, ...organizationParts] = decoded.split(":")
+  const organizationId = organizationParts.join(":")
+  return rawToken && providerId && organizationId ? { rawToken, providerId, organizationId } : null
+}
+
+/**
+ * The organization id embedded in a SCIM bearer token, UNVERIFIED: only for
+ * selecting which organization's audit flag to read before verifying the token.
+ */
+export function scimTokenOrganizationId(bearerToken: string): string | null {
+  return decodeScimBearerToken(bearerToken)?.organizationId ?? null
+}
+
+export async function resolveStoredScimProvider<Provider extends { scimToken: string }>(
+  bearerToken: string,
+  lookup: (providerId: string, organizationId: string) => Promise<Provider | null>,
+): Promise<Provider | null> {
+  const decoded = decodeScimBearerToken(bearerToken)
+  if (!decoded) return null
+  // Decoded identifiers only select a row. No caller may use them as authority
+  // until the stored token's hash matches in constant time.
+  const provider = await lookup(decoded.providerId, decoded.organizationId)
+  return provider && verifyStoredScimToken({ storedToken: provider.scimToken, rawToken: decoded.rawToken }) ? provider : null
+}

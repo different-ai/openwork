@@ -1,37 +1,47 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { waitUntilInteractive } from "@openwork/behaviors";
-import { navigate } from "@openwork/cdp";
+import { addInitScript, evaluate, navigate } from "@openwork/cdp";
 import type { AttachedSurface } from "@openwork/cdp";
 import {
   chrome,
-  defaultDaytonaExec,
-  execInSandbox,
   prepareSandboxRepo,
   readSandboxRepoSourceReceipt,
   startMockOnSandbox,
 } from "@openwork/hosts";
 import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
-import { launchHeadlessWeb, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
-import { resolveEvalEngine } from "./eval-engine.ts";
+import { startLocalRuntime, startRemoteRuntime } from "./app-web-runtime.ts";
+import type { AppWebRuntime, AppWebRuntimeOptions } from "./app-web-runtime.ts";
 import type { MockBoot, MockHandle } from "./mock.ts";
 import type { Place } from "./place.ts";
+import { observeAppWebNetwork } from "./app-web-network.ts";
+import { reloadOnceIfEntryFails } from "./app-web-entry.ts";
+
+declare global {
+  interface Window { __openworkEvalBootErrors?: string[] }
+}
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
-const REMOTE_REPO_ROOT = "/workspace";
 const MOCK_SCRIPT_PATH = join(REPO_ROOT, "scripts", "mock-oauth-mcp-server.mjs");
-const EXECUTABLE_ENV_KEYS = ["PATH", "PNPM_HOME", "TMPDIR", "SHELL", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR"];
 
 export interface SeedAppWebOptions {
   workspacePath: string;
+  engine?: AppWebRuntimeOptions["engine"];
+  den?: AppWebRuntimeOptions["den"];
+  webPort?: number;
+  emptyWorkspace?: boolean;
+  /** Explicit fixture runtime settings; the normal isolated environment is retained. */
+  env?: Record<string, string>;
+  syntheticPreactivatedDenOrigin?: string;
   name?: string;
   mocks?: Record<string, MockBoot>;
   headless?: boolean;
+  /** Report a hover-capable mouse even where headless Chrome finds no pointer device. See `ChromeSurfaceOptions.mouse`. */
+  mouse?: boolean;
 }
 
 /** A test-owned real app-web stack. This is distinct from seed.web(), which drives Den. */
@@ -42,68 +52,6 @@ export interface AppWeb extends AttachedSurface {
   mocks: Record<string, MockHandle>;
   actualSourceSha: string | null;
   source: SandboxRepoSourceReceipt | null;
-}
-
-interface AppWebRuntime {
-  webUrl: string;
-  openworkUrl: string;
-  runtimeDirectory: string;
-  fixtureRoot: string;
-  source: SandboxRepoSourceReceipt | null;
-  stop(): Promise<void>;
-}
-
-function executableEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  // Executable discovery only: never copy provider keys, auth, or personal app state.
-  for (const key of EXECUTABLE_ENV_KEYS) {
-    const value = source[key];
-    if (value) env[key] = value;
-  }
-  return env;
-}
-
-function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
-  const home = join(root, "home");
-  const data = join(root, "data");
-  const config = join(root, "config");
-  return {
-    HOME: home,
-    USERPROFILE: home,
-    XDG_CACHE_HOME: join(root, "cache"),
-    XDG_CONFIG_HOME: config,
-    XDG_DATA_HOME: data,
-    XDG_STATE_HOME: join(root, "state"),
-    OPENWORK_DATA_DIR: join(data, "openwork"),
-    OPENWORK_ENV_STORE: join(config, "openwork", "env.json"),
-    OPENWORK_SERVER_STATE_PATH: join(data, "openwork", "server-state.json"),
-    OPENWORK_SERVER_TOKEN_STORE_PATH: join(data, "openwork", "server-tokens.json"),
-    OPENCODE_CONFIG_DIR: join(config, "opencode"),
-    OPENCODE_DB: join(data, "opencode", "opencode.db"),
-    OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "0",
-    OPENWORK_ENGINE_V2_PREVIEW: resolveEvalEngine() === "v2" ? "1" : "0",
-    OPENWORK_PORT: "0",
-    OPENWORK_WEB_PORT: "0",
-    OPENWORK_REMOTE_ACCESS: "0",
-    HOST: "127.0.0.1",
-    VITE_HOST: "127.0.0.1",
-    VITE_DISABLE_OPENWORK_MODELS: "1",
-    VITE_OPENWORK_POSTHOG_KEY: "",
-    VITE_OPENWORK_SENTRY_DSN: "",
-    NO_PROXY: "127.0.0.1,localhost",
-  };
-}
-
-function runtimeDirectories(root: string): string[] {
-  return [
-    "home",
-    "cache",
-    "config/openwork",
-    "config/opencode",
-    "data/openwork",
-    "data/opencode",
-    "state",
-  ].map((path) => join(root, path));
 }
 
 function safeWorldSegment(value: string): string {
@@ -178,165 +126,6 @@ async function cleanupAppWeb(input: {
   }
 
   if (errors.length > 0) throw new AggregateError(errors, "Hermetic app-web cleanup failed");
-}
-
-async function startLocalRuntime(worldName: string, workspaceRoot: string): Promise<AppWebRuntime> {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "openwork-eval-app-web-"));
-  const runtimeDirectory = resolveHeadlessWorldRuntimePaths(REPO_ROOT, worldName).directory;
-  try {
-    await Promise.all([
-      mkdir(workspaceRoot, { recursive: true }),
-      ...runtimeDirectories(fixtureRoot).map((path) => mkdir(path, { recursive: true })),
-    ]);
-    const runtime = await launchHeadlessWeb({
-      repoRoot: REPO_ROOT,
-      name: worldName,
-      state: "isolated",
-      workspace: workspaceRoot,
-      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot) },
-    });
-    return {
-      webUrl: runtime.manifest.webUrl,
-      openworkUrl: runtime.manifest.openworkUrl,
-      runtimeDirectory,
-      fixtureRoot,
-      source: null,
-      stop: () => runtime.stop(),
-    };
-  } catch (error) {
-    await rm(fixtureRoot, { recursive: true, force: true }).catch(() => undefined);
-    throw error;
-  }
-}
-
-function parseRemoteRuntime(output: string): Pick<AppWebRuntime, "webUrl" | "openworkUrl"> & { runtimeManifestPath: string } {
-  const line = output.split(/\r?\n/).map((entry) => entry.trim()).filter(Boolean).at(-1) ?? "";
-  let value: unknown;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    throw new Error(`Remote app-web launcher did not return a JSON receipt. Output tail: ${output.slice(-1_000)}`);
-  }
-  if (typeof value !== "object" || value === null
-    || !("webUrl" in value) || typeof value.webUrl !== "string"
-    || !("openworkUrl" in value) || typeof value.openworkUrl !== "string"
-    || !("runtimeManifestPath" in value) || typeof value.runtimeManifestPath !== "string") {
-    throw new Error("Remote app-web launcher returned an invalid receipt.");
-  }
-  return { webUrl: value.webUrl, openworkUrl: value.openworkUrl, runtimeManifestPath: value.runtimeManifestPath };
-}
-
-function assertLoopbackRuntimeUrl(label: string, value: string): void {
-  const url = new URL(value);
-  if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || !url.port) {
-    throw new Error(`${label} must be a sandbox-loopback HTTP URL, received ${JSON.stringify(value)}.`);
-  }
-}
-
-async function runRemoteModule(
-  sandbox: string,
-  modulePath: string,
-  source: string,
-  payload: unknown,
-  context: string,
-  timeoutMs: number,
-): Promise<string> {
-  const encodedSource = Buffer.from(source, "utf8").toString("base64");
-  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const result = await execInSandbox(
-    defaultDaytonaExec,
-    sandbox,
-    `printf %s ${encodedSource} | base64 -d > ${modulePath}; node ${modulePath} ${encodedPayload}`,
-    { context, timeoutMs },
-  );
-  return result.stdout;
-}
-
-const REMOTE_LAUNCH_SOURCE = `
-import { constants } from "node:fs";
-import { access, mkdir, readdir, symlink } from "node:fs/promises";
-import { launchHeadlessWeb } from "/workspace/packages/world/src/headless-web.ts";
-const input = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("utf8"));
-await Promise.all(input.directories.map((path) => mkdir(path, { recursive: true })));
-const executable = {};
-for (const key of input.executableEnvKeys) if (process.env[key]) executable[key] = process.env[key];
-const toolBin = input.fixtureRoot + "/bin";
-await mkdir(toolBin, { recursive: true });
-const versionsRoot = "/usr/local/share/nvm/versions/node";
-const versions = await readdir(versionsRoot).catch(() => []);
-for (const tool of ["bun", "opencode"]) {
-  for (const version of versions.sort().reverse()) {
-    const source = versionsRoot + "/" + version + "/bin/" + tool;
-    if (!await access(source, constants.X_OK).then(() => true, () => false)) continue;
-    await symlink(source, toolBin + "/" + tool).catch(() => undefined);
-    break;
-  }
-}
-executable.PATH = [toolBin, executable.PATH].filter(Boolean).join(":");
-const handle = await launchHeadlessWeb({
-  repoRoot: input.repoRoot,
-  name: input.name,
-  state: "isolated",
-  workspace: input.workspace,
-  env: { ...executable, ...input.env },
-});
-await handle.detach();
-console.log(JSON.stringify({
-  webUrl: handle.manifest.webUrl,
-  openworkUrl: handle.manifest.openworkUrl,
-  runtimeManifestPath: handle.manifest.runtimeManifestPath,
-}));
-`;
-
-const REMOTE_STOP_SOURCE = `
-import { rm } from "node:fs/promises";
-import { readHeadlessRuntimeManifest, stopHeadlessRuntime } from "/workspace/packages/world/src/headless-web.ts";
-const input = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("utf8"));
-const manifest = await readHeadlessRuntimeManifest(input.runtimeManifestPath);
-if (!manifest) throw new Error("Owned remote app-web runtime manifest is missing");
-await stopHeadlessRuntime(manifest);
-await Promise.all(input.remove.map((path) => rm(path, { recursive: true, force: true })));
-`;
-
-async function startRemoteRuntime(
-  sandbox: string,
-  worldName: string,
-  workspaceRoot: string,
-  source: SandboxRepoSourceReceipt,
-): Promise<AppWebRuntime> {
-  const fixtureRoot = `/tmp/openwork-eval-app-web-${worldName}`;
-  const runtimeDirectory = posix.join(REMOTE_REPO_ROOT, "tmp", "worlds", "runtime", worldName);
-  const launchModulePath = `/tmp/${worldName}-launch.mjs`;
-  const stopModulePath = `/tmp/${worldName}-stop.mjs`;
-  const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
-    directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
-    env: isolatedRuntimeEnvironment(fixtureRoot),
-    executableEnvKeys: EXECUTABLE_ENV_KEYS,
-    fixtureRoot,
-    name: worldName,
-    repoRoot: REMOTE_REPO_ROOT,
-    workspace: workspaceRoot,
-  }, `launch remote app-web runtime ${worldName}`, 120_000);
-  const receipt = parseRemoteRuntime(output);
-  const expectedManifest = posix.join(runtimeDirectory, "runtime.json");
-  if (receipt.runtimeManifestPath !== expectedManifest) {
-    throw new Error(`Remote app-web runtime manifest mismatch: expected ${expectedManifest}, received ${receipt.runtimeManifestPath}.`);
-  }
-  assertLoopbackRuntimeUrl("Remote app-web webUrl", receipt.webUrl);
-  assertLoopbackRuntimeUrl("Remote app-web openworkUrl", receipt.openworkUrl);
-  return {
-    webUrl: receipt.webUrl,
-    openworkUrl: receipt.openworkUrl,
-    runtimeDirectory,
-    fixtureRoot,
-    source,
-    stop: async () => {
-      await runRemoteModule(sandbox, stopModulePath, REMOTE_STOP_SOURCE, {
-        runtimeManifestPath: receipt.runtimeManifestPath,
-        remove: [runtimeDirectory, fixtureRoot, launchModulePath, stopModulePath],
-      }, `stop remote app-web runtime ${worldName}`, 60_000);
-    },
-  };
 }
 
 async function bootLocalMocks(place: Place, definitions: Record<string, MockBoot>): Promise<Record<string, MockHandle>> {
@@ -440,6 +229,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         host: options.place.host(),
         startUrl: "about:blank",
         headless: options.headless ?? true,
+        mouse: options.mouse,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       const sandbox = browser.handle.sandboxId;
@@ -461,8 +251,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         sourcePreparedFingerprint: source.preparedFingerprint,
       };
       mocks = await bootRemoteMocks(sandbox, options.mocks ?? {});
-      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source);
-      await navigate(browser.client, runtime.webUrl);
+      runtime = await startRemoteRuntime(sandbox, worldName, workspaceRoot, source, { engine: options.engine, den: options.den, webPort: options.webPort, syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
     } else {
       // Capture only the commit identity, before mocks or app processes launch.
       // Do not expose git stderr, checkout paths, or environment in evidence.
@@ -480,17 +269,78 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         throw new Error("Invalid local app-web source SHA receipt.");
       }
       mocks = await bootLocalMocks(options.place, options.mocks ?? {});
-      runtime = await startLocalRuntime(worldName, workspaceRoot);
+      runtime = await startLocalRuntime(worldName, workspaceRoot, { engine: options.engine, den: options.den, webPort: options.webPort, syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin, env: options.env, emptyWorkspace: options.emptyWorkspace });
       browser = await chrome({
         name: worldName,
         host: options.place.host(),
-        startUrl: runtime.webUrl,
+        startUrl: "about:blank",
         headless: options.headless ?? true,
+        mouse: options.mouse,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       browser.handle.meta = { ...browser.handle.meta, actualSourceSha: localSourceSha };
     }
-    await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+    // A person's app window has focus. Headless Chrome otherwise reports an
+    // unfocused page, and keyboard shortcuts pressed before any click are lost.
+    await browser.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    await browser.client.send("Page.bringToFront");
+    // Observe entry-bundle failures before navigation. The static startup page
+    // survives a broken module load, so a DOM timeout alone hides the cause.
+    await addInitScript(browser.client, () => {
+      window.__openworkEvalBootErrors = [];
+      window.addEventListener("error", event => {
+        const target = event.target;
+        const source = target instanceof HTMLScriptElement ? new URL(target.src).pathname : event.filename?.split("?")[0];
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(`${event.message || "Resource failed"} (${source || "unknown"})`.slice(0, 1000));
+      }, true);
+      window.addEventListener("unhandledrejection", event => {
+        const reason = event.reason;
+        if ((window.__openworkEvalBootErrors?.length ?? 0) < 10) window.__openworkEvalBootErrors?.push(String(reason instanceof Error ? reason.message : reason).slice(0, 1000));
+      });
+    });
+    const network = await observeAppWebNetwork(browser.client.webSocketDebuggerUrl, runtime.webUrl);
+    const surface = browser;
+    const entry = reloadOnceIfEntryFails({
+      client: () => surface.client,
+      url: runtime.webUrl,
+      describe: () => `Network failures: ${JSON.stringify(network.failures)} Page timeline: ${JSON.stringify(network.summary())}`,
+    });
+    try {
+      await navigate(browser.client, runtime.webUrl);
+      try {
+        await waitUntilInteractive(browser, { timeoutMs: 60_000 });
+      } finally {
+        await entry.stop();
+      }
+    } catch (error) {
+      const boot = await evaluate(browser.client, () => ({
+        errors: (window.__openworkEvalBootErrors ?? []).slice(0, 10),
+        failedResources: performance.getEntriesByType("resource")
+          .filter(entry => entry instanceof PerformanceResourceTiming && entry.responseStatus >= 400)
+          .map(entry => ({ path: new URL(entry.name).pathname,
+            status: entry instanceof PerformanceResourceTiming ? entry.responseStatus : 0 })).slice(0, 20),
+      })).catch(() => null);
+      const logTail = async (path: string | undefined, lines: number) => path
+        ? (await readFile(path, "utf8").catch(() => "")).split("\n").filter(line => line.trim())
+          .slice(-lines).map(line => line.replace(/https?:\/\/\S+/g, "[url]").slice(0, 300))
+        : [];
+      const viteEvents = remote ? [] : await logTail(join(runtime.runtimeDirectory, "web.log"), 25);
+      const chromeLog = browser.handle.meta?.log;
+      const chromeEvents = remote ? [] : await logTail(typeof chromeLog === "string" ? chromeLog : undefined, 15);
+      const webUrl = runtime.webUrl;
+      const moduleProbes = remote ? [] : await Promise.all([...new Set(network.failures.map(failure => failure.path))].slice(0, 3).map(async path => {
+        try {
+          const response = await fetch(new URL(path, webUrl), { signal: AbortSignal.timeout(5_000) });
+          const bytes = (await response.arrayBuffer()).byteLength;
+          return { path, status: response.status, type: response.headers.get("content-type"), bytes };
+        } catch {
+          return { path, unavailable: true };
+        }
+      }));
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Entry reloaded after a dropped module graph: ${entry.reloaded()}. Startup diagnostics: ${JSON.stringify(boot)} Network failures: ${JSON.stringify(network.failures)} Browser errors: ${JSON.stringify(network.browserErrors)} Page timeline: ${JSON.stringify(network.summary())} Vite events: ${JSON.stringify(viteEvents)} Chrome log: ${JSON.stringify(chromeEvents)} Module probes: ${JSON.stringify(moduleProbes)}`, { cause: error });
+    } finally {
+      network.close();
+    }
 
     const originalBrowserStop = browser.stop.bind(browser);
     let stopped = false;

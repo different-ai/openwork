@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { Archive, ArrowLeft, Code2, FileText, MoreHorizontal, Pencil, Plus, Server, Store, Terminal, Users, Webhook } from "lucide-react";
+import { useState } from "react";
+import { Plus } from "lucide-react";
 
 import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
-import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenButton } from "../../_components/ui/button";
+import { DASHBOARD_PAGE_CLASS, SETTINGS_MEASURE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -15,7 +15,6 @@ import {
   type PluginHook,
   type PluginMcp,
   type PluginWorkflow,
-  type PluginSkill,
   type PluginAgent,
   type PluginCommand,
   formatPluginTimestamp,
@@ -24,8 +23,11 @@ import {
   usePlugin,
   useUpdatePlugin,
 } from "./plugin-data";
-import { CatalogIdentityTile } from "./catalog-identity-tile";
-import { type PluginAccessGrant, usePluginAccess } from "./plugin-access-data";
+import { ItemHeader, SectionTitle } from "./item-header";
+import { DetailRows, ItemMenu, ItemPanel, ItemRow, removeEntry } from "./item-list";
+import { ConnectorLogo, KindTile, PluginLogo } from "./item-logo";
+import { SkillPreview } from "./skill-preview";
+import { usePluginAccess } from "./plugin-access-data";
 import { PluginAccessSection } from "./plugin-access-section";
 import { WorkflowDetailPanel } from "./workflow-detail-panel";
 import { useLibrary, type LibraryWorkflowItem } from "./library-data";
@@ -44,33 +46,19 @@ export function PluginDetailScreen({
   const archivePlugin = useArchivePlugin();
   const attachWorkflow = useAttachWorkflowToPlugin(pluginId);
   const libraryQuery = useLibrary();
-  const [actionsOpen, setActionsOpen] = useState(false);
   const [editPlugin, setEditPlugin] = useState<{ name: string; description: string } | null>(null);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [addWorkflowOpen, setAddWorkflowOpen] = useState(false);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
-  const actionsRef = useRef<HTMLDivElement | null>(null);
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles ?? [],
+    orgContext?.currentMember.permissions,
   );
-
-  useEffect(() => {
-    if (!actionsOpen) return;
-    function handlePointerDown(event: MouseEvent) {
-      if (actionsRef.current && !event.composedPath().includes(actionsRef.current)) {
-        setActionsOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [actionsOpen]);
 
   if (isLoading && !plugin) {
     return (
-      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-gray-100 bg-white px-5 py-8 text-[13px] text-gray-400">
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <div className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           Loading plugin details…
         </div>
       </div>
@@ -79,8 +67,8 @@ export function PluginDetailScreen({
 
   if (!plugin) {
     return (
-      <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-        <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-3.5 text-[13px] text-red-600">
+      <div className={DASHBOARD_PAGE_CLASS}>
+        <div role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {error instanceof Error ? error.message : "That plugin could not be found."}
         </div>
       </div>
@@ -95,156 +83,50 @@ export function PluginDetailScreen({
     );
   }
 
-  const marketplaces = plugin.marketplaces ?? [];
+  const libraryItem = libraryQuery.data?.find((item) => item.type === "plugin" && item.id === plugin.id);
+  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
+  const canManagePlugin = (plugin.createdByOrgMembershipId !== null && plugin.createdByOrgMembershipId === orgContext?.currentMember.id)
+    || (libraryItem?.type === "plugin" && libraryItem.role === "manager")
+    || access.canManageAllShared;
   const creator = orgContext?.members.find((member) => member.id === plugin.createdByOrgMembershipId) ?? null;
-  const accessBlastRadius = getPluginAccessBlastRadius(
-    pluginAccessQuery.data ?? [],
-    orgContext?.teams ?? [],
-    orgContext?.currentMember.id ?? null,
-  );
-  const missingLabels: string[] = [];
-  if (plugin.agents.length === 0) missingLabels.push("agents");
-  if (plugin.commands.length === 0) missingLabels.push("commands");
-  if (plugin.hooks.length === 0) missingLabels.push("hooks");
-  if (plugin.mcps.length === 0) missingLabels.push("MCP servers");
-  if (plugin.workflows.length === 0) missingLabels.push("Workflows");
-
-  async function handleArchivePlugin() {
-    try {
-      await archivePlugin.mutateAsync(pluginId);
-      setArchiveOpen(false);
-      router.push(getPluginsRoute(orgSlug));
-      router.refresh();
-    } catch {
-      // The mutation error is rendered in the confirmation dialog.
-    }
-  }
 
   return (
-    <div className="mx-auto max-w-[860px] px-6 py-8 md:px-8">
-      <div className="mb-6 flex items-center justify-between gap-4">
-        <Link
-          href={backHref ?? getPluginsRoute(orgSlug)}
-          className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Link>
-        {access.isAdmin ? (
-          <div ref={actionsRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setActionsOpen((current) => !current)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
-              aria-label={`More actions for ${plugin.name}`}
-              aria-haspopup="menu"
-              aria-expanded={actionsOpen}
-              data-testid="plugin-actions-trigger"
-            >
-              <MoreHorizontal className="h-4 w-4" aria-hidden />
-            </button>
-            {actionsOpen ? (
-              <div
-                role="menu"
-                aria-label={`Actions for ${plugin.name}`}
-                className="absolute right-0 top-10 z-30 w-44 overflow-hidden rounded-2xl border border-gray-100 bg-white p-1.5 text-[13px] shadow-xl shadow-gray-900/10"
-              >
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setActionsOpen(false);
-                    setEditPlugin({ name: plugin.name, description: plugin.description });
-                  }}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
-                >
-                  <Pencil className="h-3.5 w-3.5" aria-hidden />
-                  Edit
-                </button>
-                <div className="my-1 border-t border-gray-100" />
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setActionsOpen(false);
-                    archivePlugin.reset();
-                    setArchiveOpen(true);
-                  }}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-red-600 transition hover:bg-red-50"
-                  data-testid="archive-plugin-action"
-                >
-                  <Archive className="h-3.5 w-3.5" aria-hidden />
-                  Archive
-                </button>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+    <div className={DASHBOARD_PAGE_CLASS}><div className={`${SETTINGS_MEASURE_CLASS} flex flex-col gap-6`}>
+      <ItemHeader compact back={{ href: backHref ?? getPluginsRoute(orgSlug), label: "Plugins" }} logo={<PluginLogo name={plugin.name} size="lg" />} title={plugin.name} actions={canManagePlugin ? <ItemMenu size="md" label={`More actions for ${plugin.name}`} entries={[
+        { label: "Edit", onSelect: () => setEditPlugin({ name: plugin.name, description: plugin.description }) },
+        removeEntry(plugin.name, async () => { await archivePlugin.mutateAsync(pluginId); router.push(getPluginsRoute(orgSlug)); router.refresh(); }),
+      ]} /> : undefined} />
+      <DetailRows rows={[
+        ...(plugin.description ? [{ label: "About", value: plugin.description, wrap: true }] : []),
+        { label: "Made by", value: creator?.user.name ?? "Your organization" },
+        { label: "Updated", value: formatPluginTimestamp(plugin.updatedAt) },
+        ...(plugin.version ? [{ label: "Version", value: plugin.version }] : []),
+      ]} />
 
-      <article className="flex items-start gap-4">
-        <CatalogIdentityTile name={plugin.name} size="lg" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-[18px] font-semibold tracking-[-0.02em] text-gray-950">
-              {plugin.name}
-            </h1>
-            {plugin.version ? (
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
-                v{plugin.version}
-              </span>
-            ) : null}
-          </div>
-          {plugin.description ? (
-            <p className="mt-1 text-[13px] leading-[1.55] text-gray-500">{plugin.description}</p>
-          ) : null}
-          <p className="mt-1.5 text-[11.5px] text-gray-400">
-            Added by {creator?.user.name ?? "Unknown member"} · {formatPluginTimestamp(plugin.createdAt)}
-          </p>
-          <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px] text-gray-400">
-            {marketplaces.length > 0 ? (
-              <>
-                <Store className="h-3 w-3" aria-hidden />
-                <span className="truncate">
-                  {marketplaces.map((marketplace) => marketplace.name).join(" · ")}
-                </span>
-                <span>·</span>
-              </>
-            ) : null}
-            <span>Updated {formatPluginTimestamp(plugin.updatedAt)}</span>
-          </p>
-        </div>
-      </article>
-
-      <div className="mt-6 space-y-6">
+      <div className="flex flex-col gap-6">
         <PluginAccessSection
           pluginId={plugin.id}
           pluginCreatedByOrgMembershipId={plugin.createdByOrgMembershipId}
+          canManage={canManagePlugin}
           grants={pluginAccessQuery.data ?? []}
           isLoading={pluginAccessQuery.isLoading}
           error={pluginAccessQuery.error}
         />
-        <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={access.isAdmin} />
+        <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={canManagePlugin} />
         <WorkflowsSection
           plugin={plugin}
-          canEdit={access.isAdmin}
+          canEdit={canManagePlugin}
           onAdd={() => {
             attachWorkflow.reset();
             setAddWorkflowOpen(true);
           }}
           onOpen={(workflowId) => setSelectedWorkflowId(workflowId)}
         />
-        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
-        <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
-        <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
-        <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
+        <PrimitiveSection label="Agents" items={plugin.agents} render={renderAgentRow} />
+        <PrimitiveSection label="Commands" items={plugin.commands} render={renderCommandRow} />
+        <PrimitiveSection label="Hooks" items={plugin.hooks} render={renderHookRow} />
+        <PrimitiveSection label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
       </div>
-
-      {missingLabels.length > 0 ? (
-        <p className="mt-6 text-center text-[12px] text-gray-400">
-          No {formatMissingList(missingLabels)} detected in this plugin.
-        </p>
-      ) : null}
 
       {editPlugin ? (
         <EditPluginDialog
@@ -258,18 +140,6 @@ export function PluginDetailScreen({
           }}
         />
       ) : null}
-      <ArchivePluginDialog
-        open={archiveOpen}
-        pluginName={plugin.name}
-        affectedPeopleCount={accessBlastRadius.peopleCount}
-        affectedTeamCount={accessBlastRadius.teamCount}
-        busy={archivePlugin.isPending}
-        error={archivePlugin.error}
-        onClose={() => {
-          if (!archivePlugin.isPending) setArchiveOpen(false);
-        }}
-        onConfirm={() => void handleArchivePlugin()}
-      />
       <AddWorkflowDialog
         open={addWorkflowOpen}
         plugin={plugin}
@@ -283,7 +153,7 @@ export function PluginDetailScreen({
           void attachWorkflow.mutateAsync(workflowId).then(() => setAddWorkflowOpen(false)).catch(() => undefined);
         }}
       />
-    </div>
+    </div></div>
   );
 }
 
@@ -378,104 +248,11 @@ function EditPluginDialog({
   );
 }
 
-function ArchivePluginDialog({
-  open,
-  pluginName,
-  affectedPeopleCount,
-  affectedTeamCount,
-  busy,
-  error,
-  onClose,
-  onConfirm,
-}: {
-  open: boolean;
-  pluginName: string;
-  affectedPeopleCount: number;
-  affectedTeamCount: number;
-  busy: boolean;
-  error: unknown;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6" onClick={busy ? undefined : onClose}>
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="archive-plugin-title"
-        aria-describedby="archive-plugin-description"
-        className="w-full max-w-md rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <h2 id="archive-plugin-title" className="text-[17px] font-semibold tracking-[-0.02em] text-gray-950">
-          Archive “{pluginName}”?
-        </h2>
-        <p id="archive-plugin-description" className="mt-2 text-[13px] leading-6 text-gray-500">
-          This removes the plugin from active Den lists without deleting its historical skills, marketplace relationships, or audit trail.
-        </p>
-        {affectedPeopleCount > 0 ? (
-          <p className="mt-3 text-[12.5px] font-medium text-amber-700">
-            This removes it for {affectedPeopleCount} people across {affectedTeamCount} {affectedTeamCount === 1 ? "team" : "teams"}.
-          </p>
-        ) : null}
-        {error ? (
-          <p className="mt-3 text-[12.5px] text-red-600">
-            {error instanceof Error ? error.message : "Failed to archive plugin."}
-          </p>
-        ) : null}
-        <div className="mt-5 flex items-center justify-end gap-2">
-          <DenButton variant="secondary" onClick={onClose} disabled={busy}>
-            Cancel
-          </DenButton>
-          <DenButton variant="destructive" loading={busy} onClick={onConfirm} data-testid="archive-plugin-confirm">
-            Archive plugin
-          </DenButton>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function getPluginAccessBlastRadius(
-  grants: PluginAccessGrant[],
-  teams: Array<{ id: string; memberIds: string[] }>,
-  currentMemberId: string | null,
-) {
-  const people = new Set<string>();
-  const teamIds = new Set<string>();
-  const teamsById = new Map(teams.map((team) => [team.id, team]));
-
-  for (const grant of grants) {
-    if (grant.orgMembershipId) people.add(grant.orgMembershipId);
-    if (grant.teamId) teamIds.add(grant.teamId);
-  }
-  for (const teamId of teamIds) {
-    for (const memberId of teamsById.get(teamId)?.memberIds ?? []) {
-      people.add(memberId);
-    }
-  }
-  if (currentMemberId) people.delete(currentMemberId);
-
-  return { peopleCount: people.size, teamCount: teamIds.size };
-}
-
-function formatMissingList(labels: string[]) {
-  if (labels.length === 0) return "";
-  const lowered = labels.map((label) => label.toLowerCase());
-  if (lowered.length === 1) return lowered[0];
-  if (lowered.length === 2) return `${lowered[0]} or ${lowered[1]}`;
-  return `${lowered.slice(0, -1).join(", ")}, or ${lowered[lowered.length - 1]}`;
-}
-
 function PrimitiveSection<T>({
-  icon: Icon,
   label,
   items,
   render,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
   label: string;
   items: T[];
   render: (item: T) => React.ReactNode;
@@ -483,154 +260,35 @@ function PrimitiveSection<T>({
   if (items.length === 0) {
     return null;
   }
+  return <section className="flex flex-col gap-3"><SectionTitle title={label} /><ItemPanel>{items.map((item) => render(item))}</ItemPanel></section>;
 
-  return (
-    <section>
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-          <Icon className="h-3.5 w-3.5" />
-          {label}
-        </h2>
-        <p className="text-[11px] text-gray-400">
-          {items.length} {items.length === 1 ? "item" : "items"}
-        </p>
-      </div>
-      <div className="grid gap-2">{items.map((item) => render(item))}</div>
-    </section>
-  );
 }
 
 function SkillsSection({ orgSlug, plugin, canEdit }: { orgSlug: string | null; plugin: DenPlugin; canEdit: boolean }) {
   return (
-    <section>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-            <FileText className="h-3.5 w-3.5" />
-            Skills
-          </h2>
-          <p className="mt-1 text-[12px] text-gray-400">Reusable instructions included in this plugin.</p>
-        </div>
-        {canEdit ? (
-          <Link href={getNewPluginSkillRoute(orgSlug, plugin.id)} className={buttonVariants({ size: "sm" })}>
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-            Add skill
-          </Link>
-        ) : null}
-      </div>
-      {plugin.skills.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
-          <p className="text-[14px] font-medium text-gray-900">No skills in this plugin yet.</p>
-          <p className="mt-1 text-[12.5px] text-gray-500">Add reusable guidance without leaving this plugin.</p>
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {plugin.skills.map((skill) => (
-            <SkillRow key={skill.id} orgSlug={orgSlug} pluginId={plugin.id} skill={skill} href={canEdit} />
-          ))}
-        </div>
-      )}
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3"><SectionTitle title="Skills" />{canEdit ? <DenButton size="sm" variant="secondary" href={getNewPluginSkillRoute(orgSlug, plugin.id)} icon={Plus}>Add skill</DenButton> : null}</div>
+      <ItemPanel>
+        {plugin.skills.length === 0 ? <p className="px-3 py-4 text-[13px] text-[var(--dls-text-secondary)]">No skills yet.</p> : plugin.skills.map((skill) => <SkillPreview key={skill.id} skill={skill} editHref={canEdit ? getPluginSkillRoute(orgSlug, plugin.id, skill.id) : undefined} />)}
+      </ItemPanel>
     </section>
   );
 }
 
-function SkillRow({
-  orgSlug,
-  pluginId,
-  skill,
-  href,
-}: {
-  orgSlug: string | null;
-  pluginId: string;
-  skill: PluginSkill;
-  href: boolean;
-}) {
-  const className = "block rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200";
-  const body = (
-    <>
-      <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{skill.name}</p>
-      {skill.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{skill.description}</p>
-      ) : null}
-    </>
-  );
-  if (href) {
-    return (
-      <Link href={getPluginSkillRoute(orgSlug, pluginId, skill.id)} className={className}>
-        {body}
-      </Link>
-    );
-  }
-  return <div className={className}>{body}</div>;
-}
-
 function renderHookRow(hook: PluginHook) {
-  return (
-    <div
-      key={hook.id}
-      className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-[13px] font-semibold text-gray-900">{hook.event}</p>
-        {hook.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{hook.description}</p>
-        ) : null}
-      </div>
-      {hook.matcher ? (
-        <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-          matcher: {hook.matcher}
-        </span>
-      ) : null}
-    </div>
-  );
+  return <div key={hook.id}><ItemRow compact title={hook.event} description={hook.description} />{hook.matcher ? <details className="px-3 pb-3 text-[13px] text-[var(--dls-text-secondary)]"><summary>Technical details</summary><DetailRows rows={[{ label: "Matcher", value: hook.matcher, wrap: true }]} /></details> : null}</div>;
 }
 
 function renderMcpRow(mcp: PluginMcp) {
-  const label = mcp.connectionId ? "Connector" : mcp.transport === "stdio" ? "Desktop only" : "Remote";
-  return (
-    <div
-      key={mcp.id}
-      className="flex items-start justify-between gap-3 rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
-    >
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{mcp.name}</p>
-        {mcp.description ? (
-          <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{mcp.description}</p>
-        ) : null}
-      </div>
-      <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-        {label}{mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}
-      </span>
-    </div>
-  );
+  return <div key={mcp.id}><ItemRow compact logo={<ConnectorLogo name={mcp.name} url={mcp.url} />} title={mcp.name} description={mcp.description} /><details className="px-3 pb-3 text-[13px] text-[var(--dls-text-secondary)]"><summary>Technical details</summary><DetailRows rows={[{ label: "Transport", value: mcp.transport }, { label: "Tools", value: mcp.toolCount }]} /></details></div>;
 }
 
 function renderAgentRow(agent: PluginAgent) {
-  return (
-    <div
-      key={agent.id}
-      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
-    >
-      <p className="truncate text-[14px] font-semibold tracking-[-0.01em] text-gray-900">{agent.name}</p>
-      {agent.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{agent.description}</p>
-      ) : null}
-    </div>
-  );
+  return <ItemRow compact key={agent.id} logo={<PluginLogo name={agent.name} />} title={agent.name} description={agent.description} />;
 }
 
 function renderCommandRow(command: PluginCommand) {
-  return (
-    <div
-      key={command.id}
-      className="rounded-xl border border-gray-100 bg-white px-4 py-3 transition hover:border-gray-200"
-    >
-      <p className="truncate font-mono text-[13px] font-semibold text-gray-900">{command.name}</p>
-      {command.description ? (
-        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-[1.55] text-gray-500">{command.description}</p>
-      ) : null}
-    </div>
-  );
+  return <ItemRow compact key={command.id} logo={<KindTile kind="command" />} title={command.name} description={command.description} />;
 }
 
 function WorkflowsSection({
@@ -647,21 +305,15 @@ function WorkflowsSection({
   return (
     <section>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">
-            <Code2 className="h-3.5 w-3.5" />
-            Workflows
-          </h2>
-          <p className="mt-1 text-[12px] text-gray-400">Reusable Workflows shared with this Plugin and its collection audiences.</p>
-        </div>
+        <SectionTitle title="Workflows" />
         {canEdit ? (
-          <DenButton size="sm" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Workflow</DenButton>
+          <DenButton size="sm" variant="secondary" onClick={onAdd}><Plus className="h-3.5 w-3.5" aria-hidden />Add Workflow</DenButton>
         ) : null}
       </div>
       {plugin.workflows.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center">
-          <p className="text-[14px] font-medium text-gray-900">No Workflows in this Plugin yet.</p>
-          <p className="mt-1 text-[12.5px] text-gray-500">Create a Workflow from a successful Code Mode run and choose this Plugin, or attach an existing Workflow.</p>
+        <div className="border-y border-[var(--den-list-line)] py-4">
+          <p className="text-[13px] font-medium text-[var(--dls-text-primary)]">No Workflows in this Plugin yet.</p>
+          <p className="mt-0.5 text-[12px] leading-4 text-[var(--dls-text-secondary)]">Create a Workflow from a successful Code Mode run and choose this Plugin, or attach an existing Workflow.</p>
         </div>
       ) : (
         <div className="grid gap-2">{plugin.workflows.map((workflow) => renderWorkflowRow(workflow, () => onOpen(workflow.id)))}</div>

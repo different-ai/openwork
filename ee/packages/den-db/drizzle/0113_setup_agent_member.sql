@@ -1,0 +1,2 @@
+ALTER TABLE `member` ADD `is_setup_agent` boolean DEFAULT false NOT NULL;--> statement-breakpoint
+UPDATE `member` INNER JOIN `workspace_bootstrap` ON `workspace_bootstrap`.`setup_member_id` = `member`.`id` SET `member`.`is_setup_agent` = true WHERE `workspace_bootstrap`.`agent_user_id` IS NOT NULL AND `member`.`user_id` = `workspace_bootstrap`.`agent_user_id`;

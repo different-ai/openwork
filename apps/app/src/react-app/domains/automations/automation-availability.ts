@@ -15,6 +15,15 @@ export function useAutomationDeploymentEnabled() {
 }
 
 /**
+ * Whether this desktop may run, and members may create, Desktop Automations. A Den that predates the
+ * organization setting omits the field; then it follows the deployment-level availability as before.
+ */
+export function useDesktopAutomationsEnabled() {
+  const { config, loading } = useDesktopConfig()
+  return !loading && config.automationsEnabled === true && config.desktopAutomationsEnabled !== false
+}
+
+/**
  * The surface that creates an Automation fixes its execution placement for
  * life: Desktop creates Desktop Automations that its signed-in runner claims;
  * every browser surface creates Cloud Automations that Den runs headlessly.
