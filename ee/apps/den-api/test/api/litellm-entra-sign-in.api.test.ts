@@ -20,7 +20,12 @@ const CLIENT = "66666666-7777-4888-8999-aaaaaaaaaaaa"
 const CLIENT_SECRET = "entra-client-secret-fixture"
 const API_SCOPE = `api://${CLIENT}/access`
 const COGNITIVE_SIGN_IN = "https://cognitiveservices.azure.com/.default offline_access openid profile email"
-const ACCESS_TOKEN = "entra-access-token-fixture"
+/** An Entra-shaped access token for `aud`. Den reads its audience; the proxy verifies the signature. */
+function entraAccessToken(aud: string) {
+  const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
+  return `${part({ alg: "RS256", typ: "JWT" })}.${part({ aud, iss: `https://login.microsoftonline.com/${TENANT}/v2.0`, name: "entra-access-token-fixture" })}.signature-fixture`
+}
+const ACCESS_TOKEN = entraAccessToken(CLIENT)
 const REFRESH_TOKEN = "entra-refresh-token-fixture"
 const LITELLM_ADMIN_KEY = "sk-litellm-admin-fixture"
 const TOKEN_URL = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`
@@ -45,6 +50,7 @@ const tokenRequests: URLSearchParams[] = []
 /** The `state` of the sign-in each test is completing, so the stand-in can answer with the nonce OpenWork expects. */
 let signInState = ""
 let grantedScope = API_SCOPE
+let accessAudience = CLIENT
 let beforeTokenResponse: (() => Promise<void>) | undefined
 const realFetch = globalThis.fetch
 globalThis.fetch = async (input, init) => {
@@ -64,7 +70,7 @@ globalThis.fetch = async (input, init) => {
     const idToken = await new SignJWT({ tid: TENANT, oid: "object-id-fixture", nonce, preferred_username: "person@example.test" })
       .setProtectedHeader({ alg: "RS256", kid: "fixture-key" }).setIssuer(`https://login.microsoftonline.com/${TENANT}/v2.0`).setAudience(CLIENT)
       .setSubject("subject-fixture").setIssuedAt().setExpirationTime("5m").sign(signing.privateKey)
-    return Response.json({ token_type: "Bearer", expires_in: 3600, access_token: ACCESS_TOKEN, refresh_token: REFRESH_TOKEN, id_token: idToken, scope: grantedScope })
+    return Response.json({ token_type: "Bearer", expires_in: 3600, access_token: accessAudience === CLIENT ? ACCESS_TOKEN : entraAccessToken(accessAudience), refresh_token: REFRESH_TOKEN, id_token: idToken, scope: grantedScope })
   }
   return realFetch(input, init)
 }
@@ -282,6 +288,16 @@ test("a sign-in answered for another API is not stored", async () => {
   grantedScope = "https://graph.microsoft.com/User.Read"
   const { callback } = await signIn(other, entraProviderId)
   grantedScope = API_SCOPE
+  assert.equal(callback.status, 400, summary(callback))
+  assert.equal((await usable(other, entraProviderId))?.credentialStatus, "member_auth_required")
+})
+
+test("a sign-in whose token works for another Microsoft API is not stored", async () => {
+  // The scope check names what an admin may type; the token's audience is what Microsoft actually issued.
+  const other = await den.newMember(workspace.owner, workspace.orgId, "Entra Elsewhere")
+  accessAudience = "https://management.azure.com"
+  const { callback } = await signIn(other, entraProviderId)
+  accessAudience = CLIENT
   assert.equal(callback.status, 400, summary(callback))
   assert.equal((await usable(other, entraProviderId))?.credentialStatus, "member_auth_required")
 })

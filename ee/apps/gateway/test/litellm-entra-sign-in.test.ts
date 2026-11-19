@@ -7,7 +7,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { isInferenceCredentialKindSupported } from "@openwork-ee/utils/inference-credentials"
 import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
-import { microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { isMicrosoftAccessTokenForApp, microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { resolveFeatures, type FeatureContext } from "@openwork/features"
 import { createLiteLlmEntraFeatureCheck } from "../src/litellm-entra-feature.js"
@@ -46,8 +46,15 @@ function liteLlmSettings(keySource: "personal" | "issued" | "entra", mode: "org"
   return { upstreamBaseUrl: "https://litellm.example.com/v1", litellm: { version: 1, mode, keySource, entraScope: scope } }
 }
 
+/** An Entra-shaped access token for `aud`; the gateway reads its claims, the proxy verifies it. */
+function accessTokenFor(aud: string | string[], name: string) {
+  const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url")
+  return `${part({ alg: "RS256", typ: "JWT" })}.${part({ aud, iss: `https://login.microsoftonline.com/${tenantId}/v2.0`, name })}.signature-fixture`
+}
+const ACCESS_NEW = accessTokenFor(clientId, "entra-access-new")
+
 function tokenResponse(scope?: string) {
-  return { token_type: "Bearer", expires_in: 3600, access_token: "entra-access-fixture", refresh_token: "entra-refresh-fixture", ...(scope === undefined ? {} : { scope }) }
+  return { token_type: "Bearer", expires_in: 3600, access_token: accessTokenFor(clientId, "entra-access-fixture"), refresh_token: "entra-refresh-fixture", ...(scope === undefined ? {} : { scope }) }
 }
 
 test("Microsoft Foundry still requests the Azure Cognitive Services scope", () => {
@@ -183,14 +190,14 @@ function refreshInput(secret = memberSecret(apiScope)) {
   }
 }
 
-async function refresh(input: { secret: string; configuredScope: string | null; granted?: string }) {
+async function refresh(input: { secret: string; configuredScope: string | null; granted?: string; accessToken?: string }) {
   const requests: Array<{ url: string; body: URLSearchParams }> = []
   const { store, current } = memoryStore(expiringRow(input.secret))
   const refresher = createOauthRefresher({
     store,
     tokenFetch: async (url, init) => {
       requests.push({ url: String(url), body: new URLSearchParams(String(init?.body)) })
-      return Response.json({ token_type: "Bearer", expires_in: 3600, access_token: "entra-access-new", refresh_token: "entra-refresh-new", ...(input.granted === undefined ? {} : { scope: input.granted }) })
+      return Response.json({ token_type: "Bearer", expires_in: 3600, access_token: input.accessToken ?? ACCESS_NEW, refresh_token: "entra-refresh-new", ...(input.granted === undefined ? {} : { scope: input.granted }) })
     },
   })
   const row = accessRow()
@@ -217,7 +224,7 @@ test("a LiteLLM member's token is renewed with the provider's configured API sco
   assert.equal(requests[0]?.body.get("refresh_token"), "entra-refresh-old")
   assert.equal(requests[0]?.body.get("client_id"), clientId)
   const stored: unknown = JSON.parse(current().secret)
-  assert.deepEqual(stored, { accessToken: "entra-access-new", refreshToken: "entra-refresh-new", tokenType: "Bearer", microsoftIdentity: {
+  assert.deepEqual(stored, { accessToken: ACCESS_NEW, refreshToken: "entra-refresh-new", tokenType: "Bearer", microsoftIdentity: {
     tenantId, objectId: "object-fixture", userName: "person@example.test", clientId, authorizationRevision: revision, scope: apiScope,
   } })
 })
@@ -227,7 +234,7 @@ test("a Microsoft Foundry member's token is still renewed for Azure Cognitive Se
   assert.equal(outcome.kind, "refreshed")
   assert.equal(requests[0]?.body.get("scope"), COGNITIVE_REFRESH)
   // The stored secret gains no scope: it is exactly what Foundry sign-in has always stored.
-  assert.deepEqual(JSON.parse(current().secret), { accessToken: "entra-access-new", refreshToken: "entra-refresh-new", tokenType: "Bearer", microsoftIdentity: {
+  assert.deepEqual(JSON.parse(current().secret), { accessToken: ACCESS_NEW, refreshToken: "entra-refresh-new", tokenType: "Bearer", microsoftIdentity: {
     tenantId, objectId: "object-fixture", userName: "person@example.test", clientId, authorizationRevision: revision,
   } })
 })
@@ -248,7 +255,29 @@ test("a renewal answered for another API is not stored", async () => {
   assert.equal(requests.length, 1)
   assert.equal(outcome.kind, "retry")
   assert.equal(current().last_error, "invalid_token_response")
-  assert.doesNotMatch(current().secret, /entra-access-new/)
+  assert.ok(!current().secret.includes(ACCESS_NEW))
+})
+
+test("a LiteLLM member token is kept only when it works for the provider's own app registration", async () => {
+  assert.ok(isMicrosoftAccessTokenForApp(accessTokenFor(clientId, "v2"), clientId))
+  assert.ok(isMicrosoftAccessTokenForApp(accessTokenFor(`api://${clientId.toUpperCase()}`, "v1"), clientId))
+  for (const aud of ["https://management.azure.com", "https://vault.azure.net", "https://outlook.office.com", "00000003-0000-0000-c000-000000000000", [clientId, "https://management.azure.com"], []]) {
+    assert.equal(isMicrosoftAccessTokenForApp(accessTokenFor(aud, "other"), clientId), false, JSON.stringify(aud))
+  }
+  assert.equal(isMicrosoftAccessTokenForApp("opaque-access-token", clientId), false)
+  assert.equal(isMicrosoftAccessTokenForApp(accessTokenFor(clientId, "v2"), "not-a-client-id"), false)
+
+  const management = accessTokenFor("https://management.azure.com", "entra-access-management")
+  const { outcome, requests, current } = await refresh({ secret: memberSecret(apiScope), configuredScope: apiScope, granted: apiScope, accessToken: management })
+  assert.equal(requests.length, 1)
+  assert.equal(outcome.kind, "auth_required")
+  assert.equal(current().last_error, "invalid_token_response")
+  assert.ok(!current().secret.includes(management))
+})
+
+test("a Microsoft Foundry renewal does not need an app-registration audience", async () => {
+  const { outcome } = await refresh({ secret: memberSecret(undefined), configuredScope: null, granted: "https://cognitiveservices.azure.com/user_impersonation", accessToken: "opaque-foundry-access" })
+  assert.equal(outcome.kind, "refreshed")
 })
 
 test("concurrent renewals exchange one refresh token and both reuse the winner", async () => {

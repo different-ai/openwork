@@ -76,6 +76,12 @@ comes back to a confirmation.
 - **Refused scopes.** Microsoft Graph (including bare names such as
   `User.Read`) and Azure Cognitive Services, because LiteLLM cannot validate
   those tokens.
+- **Only tokens for the provider's own app.** A member's access token is sent
+  to the proxy URL the admin chose, so it must work for nothing else. At
+  sign-in and at every renewal, the token's audience (`aud`) must be the app
+  registration's client ID (v2 tokens) or `api://<client-id>` (v1 tokens).
+  A token for Azure management, Key Vault, Outlook or any other API is not
+  stored, and a renewal that returns one signs the person out.
 - **Desktop.** No change: it already shows **Connect** for
   `member_auth_required` providers and opens the connect page that
   `oauth/start` returns.

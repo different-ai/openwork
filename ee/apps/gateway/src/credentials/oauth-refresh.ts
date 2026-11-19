@@ -9,7 +9,7 @@ import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } fro
 import { AwsSsoError, refreshAwsSsoToken, type FetchLike } from "@openwork-ee/utils/aws-identity-center"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
-import { classifyMicrosoftTokenError, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { classifyMicrosoftTokenError, isMicrosoftAccessTokenForApp, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
 import { parseGatewayProviderSecret, type GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
 import { loadGatewayAccess, sameGatewaySelection, selectGatewayGrant } from "../provider-access.js"
 import type { GatewayCredentialLookup } from "../provider-credentials.js"
@@ -160,6 +160,8 @@ const refreshMicrosoft: RefreshProtocol = async ({ secret, client, fetchToken })
   }
   const tokens = readMicrosoftTokens(body, apiScope)
   if (!tokens) return { kind: "failed", error: "invalid_token_response", permanent: false }
+  // A provider's own API scope: keep only a token for its app registration, never one for another Microsoft API.
+  if (apiScope !== null && !isMicrosoftAccessTokenForApp(tokens.accessToken, client.oauth_client_id ?? "")) return { kind: "failed", error: "invalid_token_response", permanent: true }
   // Entra ID rotates refresh tokens: always keep the newest.
   return { kind: "refreshed", expiresIn: tokens.expiresIn, secret: JSON.stringify({
     accessToken: tokens.accessToken, refreshToken: tokens.refreshToken ?? refreshToken, tokenType: "Bearer", microsoftIdentity: identity,
