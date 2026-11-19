@@ -12,7 +12,7 @@ import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { untaggedAutoEnabled, type AutoConfig } from "../shared/config.js"
-import { freeIdentityHash, type GuestPrincipal } from "../shared/principal.js"
+import { freeIdentityHash, freeSafetyIdentifier, type GuestPrincipal } from "../shared/principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./gate.js"
 import { releaseKeyFingerprint, sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
@@ -148,7 +148,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const auth = await authenticate(c, parsed.bodyHash)
     if (auth.error) return auth.error
     if (auth.versionError) return versionResponse(auth.versionError)
-    const prepared = prepareFreeRequest(parsed.value, config, c.req.path === DESKTOP_FREE_RESPONSES_PATH ? "responses" : "chat")
+    const prepared = prepareFreeRequest(parsed.value, config, freeSafetyIdentifier(auth.principal), c.req.path === DESKTOP_FREE_RESPONSES_PATH ? "responses" : "chat")
     return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal: auth.principal,
       prepared, signal, controller })
   }))

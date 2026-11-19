@@ -11,7 +11,7 @@ import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/all
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
-import { findMemberFreePrincipal, readFreePrincipalDefaultPinned } from "../shared/principal.js"
+import { findMemberFreePrincipal, freeSafetyIdentifier, readFreePrincipalDefaultPinned } from "../shared/principal.js"
 import { FreeAutoBusyError } from "../shared/capacity.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
@@ -69,7 +69,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const controller = new AbortController()
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
       const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
-      const prepared = prepareFreeRequest(parsed.value, config, path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
+      const prepared = prepareFreeRequest(parsed.value, config, freeSafetyIdentifier(principal), path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
       const usageLog = dependencies.usageLog
       const upstream = new URL(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL)
       return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, prepared, signal, controller,
