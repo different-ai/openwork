@@ -7,16 +7,17 @@ import { LpSectionHeader, LpTonalCard } from "../../components/lp-primitives";
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
+import { withSocialMetadata } from "../../lib/seo";
 
 const CLOUD_SIGNUP_URL = "https://app.openworklabs.com";
 const MCP_APPS_URL = "https://github.com/modelcontextprotocol/ext-apps/tree/main";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = withSocialMetadata({
   title: "OpenWork Dashboard — build dashboards out of MCP Apps",
   description:
     "Every MCP App is a widget. Compose a dashboard from the apps your team relies on and share it with the whole organization.",
   alternates: { canonical: "/dashboard" }
-};
+});
 
 const dashboardFeatures = [
   {

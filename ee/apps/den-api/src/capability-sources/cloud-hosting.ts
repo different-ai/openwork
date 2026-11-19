@@ -1,21 +1,21 @@
 /**
  * Deployment-level availability of OpenWork Cloud.
  *
- * Cloud is hosted-only: it is offered on multi-org Den deployments and never
- * on self-hosted single-org installs. Whether a specific organization may
- * actually run Cloud work is an entitlement question answered by OpenWork
- * Web access (a paid subscription or the platform-admin complimentary grant),
- * not by a per-organization rollout flag. Keep this as the one place to relax
- * the hosting boundary if Cloud is later offered to self-hosted deployments.
+ * Multi-org Den deployments (hosted OpenWork Cloud) always offer Cloud. A
+ * self-hosted single-org install offers it only when its operator turns on
+ * OpenWork Web (DEN_OPENWORK_WEB_ENABLED); the routes still need a configured
+ * runtime provider (cloudRuntimeAvailable). Whether a specific organization may
+ * actually run Cloud work is an entitlement question answered by OpenWork Web
+ * access (a paid subscription or the platform-admin complimentary grant), not
+ * by a per-organization rollout flag. Keep this as the one place that decides
+ * the hosting boundary.
  *
- * Wire behavior for published desktops is unchanged: the retired rollout gate
- * also returned false for every non-multi_org deployment, so single-org
- * installs already received 404 cloud_not_found from the Cloud routes
- * regardless of provisioner or organization metadata.
+ * Single-org installs that leave OpenWork Web off keep receiving 404
+ * cloud_not_found from the Cloud routes, as before.
  */
 
 import type { DenOrgMode } from "../env.js"
 
-export function cloudHostingAvailable(options: { orgMode: DenOrgMode }): boolean {
-  return options.orgMode === "multi_org"
+export function cloudHostingAvailable(options: { orgMode: DenOrgMode; openworkWebEnabled: boolean }): boolean {
+  return options.orgMode === "multi_org" || options.openworkWebEnabled
 }

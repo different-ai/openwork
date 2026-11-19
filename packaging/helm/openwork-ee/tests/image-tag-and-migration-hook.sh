@@ -92,4 +92,48 @@ assert_contains "$default_rendered" '"helm.sh/hook-delete-policy": "before-hook-
 assert_contains "$default_rendered" 'activeDeadlineSeconds: 1800'
 assert_contains "$default_rendered" 'backoffLimit: 2'
 
+# 6. Recovery always uses normal Job cleanup in both Secret modes.
+# All values below are synthetic; no deployment credentials are read.
+for mode in check apply; do
+  recovery_created="$tmp_dir/recovery-created-$mode.yaml"
+  helm template openwork-ee "$chart_dir" --show-only templates/migration-job.yaml \
+    --set secret.create=true --set config.administratorRecovery.mode="$mode" \
+    --set config.administratorRecovery.team=admins > "$recovery_created"
+  assert_contains "$recovery_created" '"helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"'
+  assert_not_contains "$recovery_created" '"helm.sh/hook-delete-policy": before-hook-creation'
+
+  recovery_existing="$tmp_dir/recovery-existing-$mode.yaml"
+  helm template openwork-ee "$chart_dir" --show-only templates/migration-job.yaml \
+    --set secret.create=false --set secret.existingSecret=recovery-test-secret \
+    --set config.administratorRecovery.mode="$mode" \
+    --set config.administratorRecovery.team=admins > "$recovery_existing"
+  assert_contains "$recovery_existing" '"helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"'
+  assert_not_contains "$recovery_existing" '"helm.sh/hook-delete-policy": before-hook-creation'
+  credentials="$tmp_dir/recovery-existing-$mode-credential-env.yaml"
+  sed -n '/- name: DATABASE_URL/,$p' "$recovery_existing" > "$credentials"
+  assert_contains "$credentials" 'name: DATABASE_URL'
+  assert_contains "$credentials" 'name: DEN_DB_ENCRYPTION_KEY'
+  assert_contains "$credentials" 'name: recovery-test-secret'
+  [[ "$(grep -c 'secretKeyRef:' "$credentials")" -eq 2 ]]
+  assert_not_contains "$credentials" 'value:'
+done
+
+# Recovery never overrides a custom or omitted normal deletion policy.
+for create in true false; do
+  recovery_custom="$tmp_dir/recovery-$create-custom-policy.yaml"
+  helm template openwork-ee "$chart_dir" --show-only templates/migration-job.yaml \
+    --set secret.create="$create" --set secret.existingSecret=recovery-test-secret \
+    --set config.administratorRecovery.team=admins \
+    --set migrations.hookDeletePolicy=hook-succeeded > "$recovery_custom"
+  assert_contains "$recovery_custom" '"helm.sh/hook-delete-policy": "hook-succeeded"'
+  assert_not_contains "$recovery_custom" 'before-hook-creation'
+
+  recovery_no_policy="$tmp_dir/recovery-$create-no-policy.yaml"
+  helm template openwork-ee "$chart_dir" --show-only templates/migration-job.yaml \
+    --set secret.create="$create" --set secret.existingSecret=recovery-test-secret \
+    --set config.administratorRecovery.team=admins \
+    --set-string migrations.hookDeletePolicy= > "$recovery_no_policy"
+  assert_not_contains "$recovery_no_policy" '"helm.sh/hook-delete-policy"'
+done
+
 printf 'image-tag-and-migration-hook chart checks passed\n'

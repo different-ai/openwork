@@ -1,5 +1,70 @@
 import { z } from "zod";
 
+/** Desktop feature-policy enforcement is suspended pending redesign. This is
+ * not a Cloud authorization switch: schemas, assignments and resource
+ * entitlements remain authoritative in Den. Keep all desktop feature-policy
+ * entry points on this flag.
+ *
+ * Two controls are deliberately NOT behind this flag:
+ * - Required sign-in is a property of the build (enterprise and cloud always
+ *   require it; a public build can opt in through desktop-bootstrap.json).
+ * - `allowedDesktopVersions` is an organization setting, not a desktop policy,
+ *   so the projection below keeps it and the updater keeps honouring it.
+ * - Model access (below) is the AI Gateway's own setting; it only happens to
+ *   be stored in the default desktop policy. */
+export const DESKTOP_POLICY_ENFORCEMENT_ENABLED: boolean = false;
+
+/**
+ * Model access: the AI Gateway's "Who can use models" setting. "Only models
+ * you provide" is stored as `allowCustomProviders: false` in the
+ * organization's default desktop policy, and "Admins may still add their own
+ * keys" as a policy for the admin role. The desktop and web app enforce this
+ * key on its own; every other desktop policy, including `allowZenModel`,
+ * stays off with the flag above.
+ * Enforcement never blocks startup, sign-in or chat: callers apply the last
+ * known setting and allow when none is known (see #5131).
+ */
+export const MODEL_ACCESS_POLICY_KEYS = ["allowCustomProviders", "allowLocalModels"] as const;
+
+/**
+ * Models that run on the member's own computer (Ollama, LM Studio), by the
+ * provider ids OpenWork's own setup writes. Governed by `allowLocalModels`
+ * independently of `allowCustomProviders`. A local server
+ * someone adds under another id through Connect a provider is a custom
+ * provider and follows "Only models you provide".
+ */
+export const LOCAL_MODEL_PROVIDER_IDS = ["ollama", "lmstudio"] as const;
+
+export function isLocalModelProviderId(providerId: string): boolean {
+  return (LOCAL_MODEL_PROVIDER_IDS as readonly string[]).includes(providerId.trim().toLowerCase());
+}
+
+/**
+ * Whether local models may run. A config without the key (an older Den, or
+ * the feature off) keeps what `allowCustomProviders` always meant for them.
+ */
+export function localModelsAllowed(config: { allowLocalModels?: boolean; allowCustomProviders?: boolean } | null | undefined): boolean {
+  return (config?.allowLocalModels ?? config?.allowCustomProviders) !== false;
+}
+
+export function isModelAccessPolicyKey(key: string): boolean {
+  return (MODEL_ACCESS_POLICY_KEYS as readonly string[]).includes(key);
+}
+
+export function desktopPolicyKeyEnforced(key: string): boolean {
+  return DESKTOP_POLICY_ENFORCEMENT_ENABLED || isModelAccessPolicyKey(key);
+}
+
+/** Runtime-only projection; never persist this over the control-plane config. */
+export function desktopCapabilityConfig(config: DesktopConfig): DesktopConfig {
+  if (DESKTOP_POLICY_ENFORCEMENT_ENABLED) return config;
+  const { execution: _execution, ...effective } = config;
+  for (const key of desktopPolicyKeys) {
+    if (key !== "showWelcomePage" && !desktopPolicyKeyEnforced(key)) delete effective[key];
+  }
+  return effective;
+}
+
 type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;
@@ -45,12 +110,27 @@ export const desktopPolicyDefinitions = [
     restrictedValue: false,
   },
   {
-    id: "allowZenModel",
-    teamLabel: "Use OpenCode models",
+    id: "allowLocalModels",
+    // A policy stored before this key existed inherits `allowCustomProviders`
+    // (see normalizeDesktopPolicyValue): "Only models you provide" already
+    // blocked local models, and an admin exception already allowed them.
+    teamLabel: "Use local models",
     group: "ai",
-    name: "Enable OpenCode Zen Models",
-    description: "Allow users to use the built in models provided by OpenCode.",
-    userNotice: "Your administrator has disabled access to OpenCode Models.",
+    name: "Local models (Ollama, LM Studio)",
+    description: "Allow users to run models on their own computer with Ollama or LM Studio.",
+    userNotice: "Your organization administrator has turned off local models.",
+    defaultValue: true,
+    restrictedValue: false,
+  },
+  {
+    id: "allowZenModel",
+    // Historical key name. OpenCode Zen is retired in every OpenWork app
+    // regardless of this value; it now only controls the free Auto model.
+    teamLabel: "Use the free starter model",
+    group: "ai",
+    name: "Free starter model (Auto)",
+    description: "Allow users to use OpenWork's free, rate-limited Auto model. OpenCode Zen models are retired and never offered.",
+    userNotice: "Your administrator has turned off the free starter model.",
     defaultValue: true,
     restrictedValue: false,
   },
@@ -327,6 +407,51 @@ export const brandAccentColorValues = [
 
 export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 
+/**
+ * The member's agent permissions as ordered OpenCode permission rules, last
+ * match wins. ./agent-permissions.ts owns the catalog and checks each rule
+ * strictly where it is enforced; a value import from it here would break the
+ * Den web build, which cannot resolve relative `.js` imports.
+ */
+export const desktopAgentPermissionsSchema = z
+  .object({
+    rules: z
+      .array(
+        z.object({
+          action: z.string().min(1).max(64),
+          resource: z.string().min(1).max(500),
+          effect: z.enum(["allow", "ask", "deny"]),
+          source: z.string().min(1).max(255),
+        }),
+      )
+      .max(2_000),
+  })
+  .meta({ ref: "DenDesktopAgentPermissions" });
+
+export type DesktopAgentPermissionRule = z.infer<typeof desktopAgentPermissionsSchema>["rules"][number];
+
+/**
+ * The model new desktop chats start with on the OpenCode v2 engine, chosen by
+ * the organization or one of the member's teams.
+ * Mirrors `desktopDefaultModelSchema` in ./default-model.ts, which owns the
+ * resolution rules; kept inline for the same reason as agent permissions.
+ */
+export const desktopConfigDefaultModelSchema = z
+  .object({
+    providerID: z.string().min(1).max(128),
+    modelID: z.string().min(1).max(255),
+    source: z.enum(["team", "organization"]),
+    teamName: z.string().max(255).optional(),
+  })
+  .meta({ ref: "DenDesktopConfigDefaultModel" });
+
+/** Verified account scope for browser upload consent; never inferred from cached tokens. */
+export const desktopBrowserUploadPermissionsSchema = z.object({
+  enabled: z.boolean(),
+  organizationId: z.string().min(1).max(255),
+  memberId: z.string().min(1).max(255),
+}).meta({ ref: "DenDesktopBrowserUploadPermissions" });
+
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
     execution: effectiveDesktopExecutionPolicySchema.optional(),
@@ -338,10 +463,28 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     brandIconUrl: z.string().url().max(2048).optional(),
     brandAccentColor: z.enum(brandAccentColorValues).optional(),
     automationsEnabled: z.boolean().optional(),
+    /** This desktop may run the member's Desktop Automations. Missing means: follow automationsEnabled. */
+    desktopAutomationsEnabled: z.boolean().optional(),
+    /** The organization can create Cloud Automations. Missing means: ask the execution target list. */
+    cloudAutomationsEnabled: z.boolean().optional(),
     dashboardEnabled: z.boolean().optional(),
     connectEnabled: z.boolean().optional(),
+    /** The opencodeV2Only rollout: OpenCode v2 serves every chat and switching to v1 is off. Missing means off. */
+    opencodeV2Only: z.boolean().optional(),
+    /** Compatibility for older clients: true. Current hosts always mirror personal API keys into OpenCode v2. */
+    localProviderMirror: z.boolean().optional(),
+    /** Compatibility for older clients: true. Current clients always remove retired OpenCode Zen models. */
+    removeOpencodeZen: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
+    /** The member's agent permissions, present when the organization has them on. */
+    agentPermissions: desktopAgentPermissionsSchema.optional(),
+    /** Present only for clients supporting browser upload permissions. */
+    browserUploadPermissions: desktopBrowserUploadPermissionsSchema.optional(),
+    /** Verified account scope for files sent to connected accounts, as for browser uploads. */
+    fileSendPermissions: desktopBrowserUploadPermissionsSchema.optional(),
+    /** The member's default model for new chats, present when the organization has one and the feature is on. */
+    defaultModel: desktopConfigDefaultModelSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
 
@@ -433,13 +576,19 @@ export function normalizeDesktopPolicyValue(
 ): DesktopPolicyValue {
   const parsed = desktopPolicyValueSchema.safeParse(coerceJsonRecord(value));
   if (parsed.success) {
-    return Object.fromEntries(
+    const result = Object.fromEntries(
       desktopPolicyKeys.flatMap((key) =>
         typeof parsed.data[key] === "boolean"
           ? [[key, parsed.data[key]] as const]
           : [],
       ),
     ) as DesktopPolicyValue;
+    // Written before local models had their own switch: keep what the
+    // provider setting already meant for them.
+    if (result.allowLocalModels === undefined && typeof result.allowCustomProviders === "boolean") {
+      result.allowLocalModels = result.allowCustomProviders;
+    }
+    return result;
   }
 
   return {};
@@ -734,6 +883,10 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
   const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
+  const agentPermissions = desktopAgentPermissionsSchema.safeParse(raw?.agentPermissions);
+  const browserUploadPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.browserUploadPermissions);
+  const fileSendPermissions = desktopBrowserUploadPermissionsSchema.safeParse(raw?.fileSendPermissions);
+  const defaultModel = desktopConfigDefaultModelSchema.safeParse(raw?.defaultModel);
 
   return {
     ...policy,
@@ -744,8 +897,32 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(brandIconUrl !== undefined ? { brandIconUrl } : {}),
     ...(brandAccentColor !== undefined ? { brandAccentColor } : {}),
     ...(automationsEnabled !== undefined ? { automationsEnabled } : {}),
+    ...(typeof raw?.desktopAutomationsEnabled === "boolean" ? { desktopAutomationsEnabled: raw.desktopAutomationsEnabled } : {}),
+    ...(typeof raw?.cloudAutomationsEnabled === "boolean" ? { cloudAutomationsEnabled: raw.cloudAutomationsEnabled } : {}),
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
+    ...(typeof raw?.opencodeV2Only === "boolean" ? { opencodeV2Only: raw.opencodeV2Only } : {}),
+    ...(typeof raw?.localProviderMirror === "boolean" ? { localProviderMirror: raw.localProviderMirror } : {}),
+    ...(typeof raw?.removeOpencodeZen === "boolean" ? { removeOpencodeZen: raw.removeOpencodeZen } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(agentPermissions.success ? { agentPermissions: agentPermissions.data } : {}),
+    ...(browserUploadPermissions.success ? { browserUploadPermissions: browserUploadPermissions.data } : {}),
+    ...(fileSendPermissions.success ? { fileSendPermissions: fileSendPermissions.data } : {}),
+    ...(defaultModel.success ? { defaultModel: defaultModel.data } : {}),
   };
+}
+
+/**
+ * Role assignments a member matches. Assignments include built-in parent
+ * roles (an owner also matches `admin`), every member matches `member`, and
+ * `admin` matches effective admins: a direct admin or super-admin role or
+ * membership of a team that grants organization admin (`adminViaTeam`).
+ */
+export function matchingDesktopPolicyAssignmentRoles(memberRole: string, options: { adminViaTeam?: boolean } = {}) {
+  const levels = new Map<string, number>([["owner", 2], ["super-admin", 1], ["admin", 1], ["member", 0]]);
+  const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
+  if (options.adminViaTeam) roles.push("admin");
+  return (["owner", "admin", "member"] as const).filter((required) => required === "member" || roles.some((role) =>
+    (levels.get(role) ?? -1) >= (levels.get(required) ?? 0),
+  ));
 }

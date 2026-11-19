@@ -3,6 +3,7 @@ export {
   MAX_ENTRY_UNCOMPRESSED_BYTES,
   buildZip,
   listZipEntries,
+  parsedXmlText,
   readZipEntryData,
   readZipTextEntry,
   utf8Bytes,
@@ -45,3 +46,13 @@ export {
   type XlsxWorkbook,
   type XlsxWriteResult,
 } from "./xlsx-workbook.js";
+export {
+  DOCX_MIME,
+  MAX_OFFICE_TEXT_CHARS,
+  PPTX_MIME,
+  XLSX_MIME,
+  extractOfficeText,
+  officeKindFromMimeOrFilename,
+  type OfficeKind,
+  type OfficeTextOptions,
+} from "./office-text.js";

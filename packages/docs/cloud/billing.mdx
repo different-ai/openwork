@@ -1,0 +1,71 @@
+---
+title: "Billing"
+description: "See your OpenWork plan and how many people it covers, start the Team plan by card, and manage payment details in Settings › Billing."
+keywords: ["billing", "plan", "seats", "Free plan", "Team plan", "Enterprise", "subscription", "invoice", "payment", "Stripe", "upgrade"]
+---
+
+**Settings › Billing** in OpenWork Cloud shows your organization's plan, how
+many people it counts, and what you pay each month. For what each plan
+includes, see [Pricing and licensing](/start-here/pricing-and-licensing).
+
+## Plans
+
+| Plan | Who it's for | How you get it |
+| --- | --- | --- |
+| **Free** | Up to 5 people | Every new organization starts here |
+| **Team** | Any number of people, $10 per person a month | Start it on this page, paid by card |
+| **Enterprise** | Any number of people, with SCIM, audit logs, analytics, required single sign-on and desktop policies | [Talk to sales](mailto:sales@openworklabs.com). OpenWork invoices it; it isn't bought by card |
+
+## Who counts
+
+Your plan counts **people who joined and invitations still waiting**. The
+**Plan** card shows both, for example `6 people (5 joined, 1 invited)`.
+
+On OpenWork Cloud's Free plan, when 5 people are counted, inviting a sixth
+asks you to start Team. This applies to every way people join: invitations, single
+sign-on, and SCIM.
+
+On Enterprise, the number of people is set in your agreement. If you need more,
+ask your OpenWork contact to add them.
+
+## Start the Team plan
+
+1. Open **Settings › Billing**.
+2. On the **Plan** card, set **People on Team**. It starts at everyone counted
+   today, and you can add room for up to 50 more.
+3. Check the monthly total shown next to it.
+4. Click **Start Team** and pay by card.
+
+Team bills every person counted, including pending invitations.
+
+## Manage or cancel
+
+When you pay for Team by card, click **Manage plan** to open the billing portal.
+There you can change payment details, see invoices, and change or cancel the
+subscription.
+
+## Add-ons
+
+Add-ons such as AI model access (OpenWork Models) are billed separately from
+your plan. They appear under **Your subscriptions**, with an **Expected monthly
+total** for everything you pay. See
+[Pricing and licensing](/start-here/pricing-and-licensing#add-ons).
+
+## Who can do what
+
+| Action | Permission | Who has it by default |
+| --- | --- | --- |
+| See this page | **View billing** | Owner and admins |
+| Start a subscription | **Start a subscription** | Owner and admins |
+| Open the billing portal: payment details, invoices, change or cancel | **Open the billing portal** | Owner only |
+
+Starting a subscription and opening the portal ask you to sign in again if you
+haven't signed in recently. The owner can give these permissions to others by
+editing a role; see [Roles](/cloud/members-and-rbac#roles).
+
+## Self-hosted installations
+
+Card payments only work where the installation has Stripe billing set up. If it
+doesn't, the page says **The Team plan isn't sold on this deployment.** Your
+license terms still apply; see
+[Pricing and licensing](/start-here/pricing-and-licensing#how-licensing-works).

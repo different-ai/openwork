@@ -1,7 +1,9 @@
 import "./load-env.js";
-import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
+import { readReplicaCredentialsFromEnv, type DenDbMode, type PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
+import { parseFeatureEnvironment } from "@openwork/features";
+import { readAutoConfig } from "./free/shared/config.js";
 
 const EnvSchema = z
   .object({
@@ -12,16 +14,25 @@ const EnvSchema = z
     DATABASE_HOST: z.string().min(1).optional(),
     DATABASE_USERNAME: z.string().min(1).optional(),
     DATABASE_PASSWORD: z.string().optional(),
+    DATABASE_READ_USERNAME: z.string().optional(),
+    DATABASE_READ_PASSWORD: z.string().optional(),
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
     GATEWAY_STREAM_IDLE_MS: z.number().int().min(1000).max(900000),
+    GATEWAY_SHUTDOWN_DRAIN_MS: z.number().int().min(0).max(600000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     GATEWAY_ADMIN_TOKEN: z.string().optional(),
     GATEWAY_UPSTREAM_TIMEOUT_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
+    GATEWAY_RESPONSE_START_MS: z.number().int().min(1000).max(24 * 60 * 60_000),
+    GATEWAY_RESPONSE_HEARTBEAT_MS: z.number().int().min(1000).max(90000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
+    TYPESAFE_API_KEY: z.string().optional(),
+    TYPESAFE_BASE_URL: z.string().optional(),
+    AUTO_ROUTER_JEV_MODEL: z.string().optional(),
+    AUTO_ROUTER_JEV_TIMEOUT_MS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -61,6 +72,14 @@ const input = {
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
   GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
   GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
+  // A proxy in front of the gateway (Cloudflare: ~100s) answers 524 when response
+  // headers take longer than its limit. Streaming requests commit their response
+  // after this long and keep it alive with SSE comments; keep it well below that limit.
+  GATEWAY_RESPONSE_START_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_START_MS, "GATEWAY_RESPONSE_START_MS", 20000, 1000, 24 * 60 * 60_000),
+  GATEWAY_RESPONSE_HEARTBEAT_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_HEARTBEAT_MS, "GATEWAY_RESPONSE_HEARTBEAT_MS", 15000, 1000, 90000),
+  // Keep below the host's SIGKILL grace (Render: maxShutdownDelaySeconds, default 30s)
+  // minus ~5s for usage writes and telemetry flush.
+  GATEWAY_SHUTDOWN_DRAIN_MS: gatewayInteger(process.env.GATEWAY_SHUTDOWN_DRAIN_MS, "GATEWAY_SHUTDOWN_DRAIN_MS", 25000, 0, 600000),
   GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
     process.env.DATABASE_URL ??
@@ -76,6 +95,10 @@ const input = {
   GATEWAY_WEBHOOK_SECRET:
     process.env.GATEWAY_WEBHOOK_SECRET ?? process.env.INFERENCE_WEBHOOK_SECRET ??
     (isDevMode ? "local-dev-webhook-secret" : undefined),
+  TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,
+  TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL,
+  AUTO_ROUTER_JEV_MODEL: process.env.AUTO_ROUTER_JEV_MODEL,
+  AUTO_ROUTER_JEV_TIMEOUT_MS: process.env.AUTO_ROUTER_JEV_TIMEOUT_MS,
 };
 const gatewayDeployment = parseGatewayDeploymentEnv({ ...process.env,
   DATABASE_URL: input.DATABASE_URL,
@@ -110,6 +133,11 @@ function normalizeUrl(value: string) {
   return value.replace(/\/+$/, "");
 }
 
+function parseJevTimeout(value: string | undefined) {
+  const timeout = Number(value ?? "4000");
+  return Number.isInteger(timeout) && timeout >= 200 && timeout <= 30000 ? timeout : 4000;
+}
+
 function parseCreditsPerDollar(value: string | undefined) {
   const credits = Number(value ?? "1000000");
   if ((value !== undefined && !/^\d+(?:\.\d+)?$/.test(value)) || !Number.isFinite(credits) || credits <= 0) {
@@ -130,17 +158,23 @@ const planetscale: PlanetScaleCredentials | null =
     : null;
 
 export const env = {
+  freeAuto: readAutoConfig(process.env),
   gatewayEnabled: gatewayDeployment.enabled,
   upstreamTimeoutMs: parsed.GATEWAY_UPSTREAM_TIMEOUT_MS,
   port: parsed.PORT,
   managedUpstreamTimeoutMs: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS !== undefined || process.env.INFERENCE_UPSTREAM_TIMEOUT_MS !== undefined
     ? parsed.GATEWAY_UPSTREAM_TIMEOUT_MS : 120000,
   streamIdleMs: parsed.GATEWAY_STREAM_IDLE_MS,
+  responseStartMs: parsed.GATEWAY_RESPONSE_START_MS,
+  responseHeartbeatMs: parsed.GATEWAY_RESPONSE_HEARTBEAT_MS,
+  shutdownDrainMs: parsed.GATEWAY_SHUTDOWN_DRAIN_MS,
   corsOrigins: splitCsv(parsed.CORS_ORIGINS).map((origin) => gatewayDeployment.enabled ? gatewayOrigin(origin, "CORS_ORIGINS", !isDevMode, true) : origin),
   databaseUrl: parsed.DATABASE_URL,
   dbMode: (parsed.DB_MODE ??
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
+  // Optional read-replica credentials; reads stay on the primary without both.
+  readReplica: readReplicaCredentialsFromEnv(parsed),
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
   proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
   openRouterUpstreamUrl,
@@ -148,4 +182,13 @@ export const env = {
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
+  /** Feature rollout environment (DEN_DEPLOYMENT, DEN_FEATURE_*), the same den-api reads. */
+  features: parseFeatureEnvironment(process.env),
+  autoRouter: {
+    /** TypeSafe (Jev) API key; without it Auto always uses the fallback route. */
+    typesafeApiKey: optionalString(parsed.TYPESAFE_API_KEY),
+    typesafeBaseUrl: normalizeUrl(optionalString(parsed.TYPESAFE_BASE_URL) ?? "https://api.typesafe.ai"),
+    jevModel: optionalString(parsed.AUTO_ROUTER_JEV_MODEL) ?? "jev-latest",
+    jevTimeoutMs: parseJevTimeout(parsed.AUTO_ROUTER_JEV_TIMEOUT_MS),
+  },
 };

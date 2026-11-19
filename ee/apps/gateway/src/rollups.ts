@@ -1,12 +1,16 @@
 // Rollup job (plan §4.8): raw request logs older than rawRetention fold into
 // hour rollups, hour rollups older than hourlyRetention fold into day rollups.
+// The same run folds Library usage events into day rollups
+// (capability-usage-rollups.ts).
 // One bounded source batch per bucket/transaction. Retried runs consume only
 // remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { timingSafeEqual } from "node:crypto"
-import { GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
+import { foldWorkbotUsage, GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
+import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-limits"
 import { gatewayRollupDimensionKey } from "@openwork-ee/utils/gateway-rollups"
 import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { runCapabilityUsageRollups, type CapabilityUsageRollupRepository } from "./capability-usage-rollups.js"
 import type { Hono } from "hono"
 import { z } from "zod"
 
@@ -61,6 +65,8 @@ export type RollupStore = {
   aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
   deleteRawIds(ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<number>
+  /** Adds the batch's Workbot-tagged rows to workbot_usage_day (den-db workbot-usage.ts). Optional for test stores. */
+  foldWorkbotUsage?(dayStart: Date, ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<void>
   deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
 
@@ -78,6 +84,8 @@ export type RunRollupsInput = {
   hourlyRetentionMs?: number
   maxBucketsPerRun?: number
   maxSourceRowsPerBucket?: number
+  /** Library usage (capability_usage_event) folds in the same run; see capability-usage-rollups.ts. */
+  capabilityUsageRepository?: CapabilityUsageRollupRepository
 }
 
 export type RollupRunSummary = {
@@ -86,6 +94,9 @@ export type RollupRunSummary = {
   rawRowsDeleted: number
   hourRowsDeleted: number
   oauthStatesDeleted: number
+  capabilityUsageDayBuckets: number
+  capabilityUsageBatches: number
+  capabilityUsageRowsDeleted: number
 }
 
 export const HOUR_MS = 60 * 60 * 1000
@@ -93,6 +104,9 @@ export const DAY_MS = 24 * HOUR_MS
 const DEFAULT_RAW_RETENTION_MS = 2 * DAY_MS
 const DEFAULT_HOURLY_RETENTION_MS = 90 * DAY_MS
 const DEFAULT_MAX_BUCKETS_PER_RUN = 48
+// Matches the hosted hourly caller. A bucket larger than this is finished over
+// several runs; the sustained ceiling is buckets x rows per run.
+const DEFAULT_MAX_SOURCE_ROWS_PER_BUCKET = 5000
 
 export function floorToHour(date: Date) {
   return new Date(Math.floor(date.getTime() / HOUR_MS) * HOUR_MS)
@@ -197,7 +211,7 @@ const hourSums = {
   source_row_count: sum(sql`${rollup.source_row_count}`),
 }
 
-function createDbRollupStore(executor: DbExecutor): RollupStore {
+function createDbRollupStore(executor: Parameters<Parameters<typeof import("./db.js").db.transaction>[0]>[0]): RollupStore {
   return {
     async aggregateRawHour(bucketStart, limit) {
       const end = new Date(bucketStart.getTime() + HOUR_MS)
@@ -262,8 +276,12 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
       const set = Object.fromEntries([...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS].map((column) => [column, sql`${rollup[column]} + values(${sql.identifier(column)})`]))
       await executor.insert(rollup).values(rows).onDuplicateKeyUpdate({ set })
     },
+    foldWorkbotUsage(dayStart, ids) {
+      return foldWorkbotUsage(executor, dayStart, ids)
+    },
     async deleteRawIds(ids) {
       if (!ids.length) return 0
+      await assertUsageRetentionSafe(executor, ids)
       const result = await executor.delete(raw).where(inArray(raw.id, ids))
       return affectedRows(result)
     },
@@ -329,12 +347,15 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
   const rawRetentionMs = input.rawRetentionMs ?? DEFAULT_RAW_RETENTION_MS
   const hourlyRetentionMs = input.hourlyRetentionMs ?? DEFAULT_HOURLY_RETENTION_MS
   const maxBucketsPerRun = input.maxBucketsPerRun ?? DEFAULT_MAX_BUCKETS_PER_RUN
-  const maxSourceRowsPerBucket = input.maxSourceRowsPerBucket ?? 1000
+  const maxSourceRowsPerBucket = input.maxSourceRowsPerBucket ?? DEFAULT_MAX_SOURCE_ROWS_PER_BUCKET
   if (!Number.isInteger(maxBucketsPerRun) || maxBucketsPerRun < 1 || maxBucketsPerRun > 1000
     || !Number.isInteger(maxSourceRowsPerBucket) || maxSourceRowsPerBucket < 1 || maxSourceRowsPerBucket > 5000
     || !Number.isFinite(now.getTime()) || !Number.isFinite(rawRetentionMs) || rawRetentionMs < 0
     || !Number.isFinite(hourlyRetentionMs) || hourlyRetentionMs < rawRetentionMs) throw new Error("Invalid rollup bounds")
-  const summary: RollupRunSummary = { hourBuckets: 0, dayBuckets: 0, rawRowsDeleted: 0, hourRowsDeleted: 0, oauthStatesDeleted: 0 }
+  const summary: RollupRunSummary = {
+    hourBuckets: 0, dayBuckets: 0, rawRowsDeleted: 0, hourRowsDeleted: 0, oauthStatesDeleted: 0,
+    capabilityUsageDayBuckets: 0, capabilityUsageBatches: 0, capabilityUsageRowsDeleted: 0,
+  }
 
   // Only closed buckets: the whole hour/day must be older than the retention.
   const hourCutoff = floorToHour(new Date(now.getTime() - rawRetentionMs))
@@ -342,6 +363,8 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
     summary.rawRowsDeleted += await repository.transaction(async (store) => {
       const { ids, groups } = await store.aggregateRawHour(bucketStart, maxSourceRowsPerBucket)
       await store.upsertRollups(buildRollupRows("hour", bucketStart, groups))
+      // Before the rows are deleted: the hour rollups drop the conversation tag.
+      await store.foldWorkbotUsage?.(floorToDay(bucketStart), ids)
       return store.deleteRawIds(ids)
     })
     summary.hourBuckets += 1
@@ -358,6 +381,18 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
   }
 
   summary.oauthStatesDeleted = await repository.deleteExpiredOauthStates(now)
+
+  // Library usage: raw rows older than the same raw retention fold straight into day rows.
+  const capabilityUsage = await runCapabilityUsageRollups({
+    repository: input.capabilityUsageRepository,
+    now,
+    rawRetentionMs,
+    maxBucketsPerRun,
+    maxSourceRowsPerBucket,
+  })
+  summary.capabilityUsageDayBuckets = capabilityUsage.dayBuckets
+  summary.capabilityUsageBatches = capabilityUsage.batches
+  summary.capabilityUsageRowsDeleted = capabilityUsage.rawRowsDeleted
   return summary
 }
 

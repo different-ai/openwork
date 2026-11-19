@@ -17,7 +17,37 @@ export const TelemetryEventType = [
   "task.started",
   "task.completed",
   "task.failed",
+  // Server-only Workbot adoption facts. The generic client ingest rejects these.
+  "workbot.signed_in",
+  "workbot.greeting_started",
+  "workbot.greeting_completed",
+  "workbot.greeting_failed",
+  "workbot.message_sent",
+  "workbot.turn_completed",
+  "connection.connected",
+  // Server-only Get set up facts (one row per member, stable id), written by
+  // POST /v1/me/activation/events. The generic client ingest rejects these.
+  "activation.first_response",
+  "activation.use_skill",
+  "activation.own_provider",
+  "activation.dismissed",
 ] as const
+
+/**
+ * Covering index for org analytics windows (`org_id = ? and event_timestamp >= ?`).
+ * It holds every column those aggregates and their session-dimension joins read,
+ * so a window scan touches only the window's index entries and never the rows.
+ * The other org-leading indexes put a column before `event_timestamp`, so they
+ * can only narrow by org and make the scan walk the org's whole history.
+ */
+export const TELEMETRY_EVENT_ORG_WINDOW_INDEX = "telemetry_event_org_ts_window"
+
+/**
+ * Covering index for platform-wide windows (`event_timestamp >= ?` across every
+ * organization), used by the admin Control Center refresh job. Every other
+ * index leads with org or member, so those queries would otherwise scan the table.
+ */
+export const TELEMETRY_EVENT_PLATFORM_WINDOW_INDEX = "telemetry_event_ts_window"
 
 /**
  * One telemetry event, org-scoped and attributed to a member. Rows carry only
@@ -44,6 +74,22 @@ export const TelemetryEventTable = mysqlTable(
     index("telemetry_event_org_id_member_id").on(table.org_id, table.member_id),
     index("telemetry_event_member_ts").on(table.member_id, table.event_timestamp),
     index("telemetry_event_org_session_ts").on(table.org_id, table.session_id, table.event_timestamp),
+    index(TELEMETRY_EVENT_ORG_WINDOW_INDEX).on(
+      table.org_id,
+      table.event_timestamp,
+      table.event_type,
+      table.member_id,
+      table.session_id,
+      table.source,
+      table.duration_ms,
+    ),
+    index(TELEMETRY_EVENT_PLATFORM_WINDOW_INDEX).on(
+      table.event_timestamp,
+      table.event_type,
+      table.source,
+      table.member_id,
+      table.session_id,
+    ),
   ],
 )
 

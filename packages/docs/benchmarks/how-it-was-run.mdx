@@ -1,0 +1,197 @@
+---
+title: "How the knowledge-work cost benchmark was run"
+sidebarTitle: "How it was run"
+description: "The task, the data, the planted facts, the grading rules, the skill and the router behind the knowledge-work cost benchmark."
+---
+
+This page describes how the [knowledge-work cost benchmark](/benchmarks/overview) was run, in enough detail to run the same comparison on your own work. The corpus itself is private.
+
+## The task
+
+Every run got the same working folder and the same one-sentence request:
+
+```text
+Update our customer knowledge base in kb/ with everything new in sources/ (calls, Slack and email from Oct 27 to Nov 10, 2026). For each customer, add the new facts to its update-log.md, then refresh its knowledge-base.md.
+```
+
+Each of the seven customers has two files. The update log is append-only: one row per dated, sourced fact, with a topic, a status and the file the fact came from. The knowledge-base page is the summary people read, with sections such as deployment, people, models and security. The pages started as they stood on the first day of the two weeks.
+
+## The data
+
+| Source | Amount |
+| --- | --- |
+| Call transcripts | 33 |
+| Slack, one file per channel per day | 36 |
+| Email threads | 30 |
+| Total | About 1.55 million characters |
+
+- The sources are two weeks of one team's real work. Calls were kept when they involved one of the seven customers.
+- Automated notes that already summarized knowledge-base changes were removed, because they contain the answers.
+- Everything was anonymized before any run. A model listed the identifying strings in each file and a script made every replacement, so no model rewrote the sources. People, companies, places, emails, links and long numbers were swapped for invented ones.
+- This is name swapping, not formal de-identification, which is why the corpus is not published.
+
+## The planted facts
+
+Twenty facts with known answers were added to the sources as extra lines in calls, Slack threads and one email. Each uses an invented name that appears nowhere else.
+
+| Kind | Count | What it tests |
+| --- | --- | --- |
+| Plain fact | 8 | A new fact stated once, about one customer |
+| Changed fact | 4 | A date, number or choice stated in one source and corrected in a later one. The final value must be current and the old one must not be |
+| Wrong customer, then corrected | 3 | A fact first pinned on one customer, then corrected to another. It must end up on the right customer only |
+| Not a fact | 3 | An idea that was turned down, a decision against, and a hypothetical. None may be recorded as true |
+| Repeated fact | 2 | The same fact in two or three sources. It must be recorded once |
+
+## The setups
+
+The models are Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5 and DeepSeek V4.1 Flash.
+
+| Setup | Lead | Workers | Skill |
+| --- | --- | --- | --- |
+| Opus alone | Opus | none | no |
+| DeepSeek alone | DeepSeek | none | no |
+| DeepSeek + skill | DeepSeek | none | yes |
+| Haiku + skill | Haiku | none | yes |
+| Sonnet + skill | Sonnet | none | yes |
+| Opus + skill | Opus | none | yes |
+| Opus + DeepSeek workers | Opus | DeepSeek | no |
+| Opus + Haiku workers | Opus | Haiku | no |
+| Opus + Sonnet workers | Opus | Sonnet | no |
+| Opus + DeepSeek workers + skill | Opus | DeepSeek | yes |
+| Router | Router, reads the prompt | Router picks | no |
+| Router + skill | Router, reads the prompt | Router picks | yes |
+| Skill-aware router + skill | Router, reads the prompt and the skills | Router picks | yes |
+| Router + DeepSeek workers | Router, reads the prompt | DeepSeek | no |
+| All three | Router, reads the prompt and the skills | DeepSeek | yes |
+
+- **Lead** is the model that receives the request. **Workers** are the model its subagents use; "none" means subagents were left on the lead's model.
+- Runs used OpenCode 1.19.4 without a UI, each in its own empty folder and home directory inside a sandbox, with no access to the answer key or to other runs. Web access was off.
+- In the setups with workers, subagents were set to the worker model and one instruction was added to the folder:
+
+> You lead; subagents do the reading. For source files, start `general` subagents with the task tool and give each a small batch of files to read in full and report back on, with the file path for every finding. Run several at once. Do not read source files yourself except to check a specific finding. You decide what is correct and you write the final files.
+
+## Grading
+
+**Planted facts.** A script reads the seven update logs and checks each planted fact by its kind, as in the table above. A row counts when it names the planted fact or states the fact itself.
+
+**Not backed.** A second model from a different vendor, Gemini 3.8 Flash, reads 15 random log rows per run together with every file each row cites. A row is backed only if the source states that fact, about that customer, with a status that fits. Otherwise it is marked as wrong customer, not a fact, contradicted or not found.
+
+**The quality rule.** A setup holds quality when its averages are at most one planted fact and one sampled row worse than Opus alone. The rule was fixed before the runs.
+
+### Changes to grading during the benchmark
+
+Four fixes were made to the script and the judge after runs had started. None changed what counts as a pass, and every run was regraded with the final version.
+
+1. The script first matched planted facts only by their invented names. It marked correct rows as missing when a model left the name out, for example "Pilot group cut from 40 to 25 users". It now also recognizes the fact itself.
+2. The judge first read only the first file a row cited. It now reads all of them.
+3. A note in the wrong customer's log that only records the correction no longer counts as putting the fact there. This changed one run.
+4. "Out of pilot scope" was not recognized as turning an idea down. This changed two runs.
+
+## Cost
+
+Cost is token usage times OpenRouter list prices, read between 10 and 12 November 2026, for every model call in a run including subagents.
+
+| Model | Input | Output | Cached read | Cache write |
+| --- | --- | --- | --- | --- |
+| Opus 5.5 | $4.00 | $20.00 | $0.20 | $5.00 |
+| Sonnet 5.5 | $2.00 | $10.00 | $0.10 | $2.50 |
+| Haiku 5.5 | $0.10 | $0.50 | $0.01 | $0.125 |
+| DeepSeek V4.1 Flash | $0.051 | $0.567 | $0.018 | none |
+
+Prices are in US dollars per million tokens. For the router setups, the per-call cost the provider reported was within 3% of this calculation when Opus led and within about 30% either way when DeepSeek led. The router's own judgment calls are not included; each took 0.2 to 0.6 seconds.
+
+## The skill
+
+One generic skill was written by hand from the rules already printed on the knowledge-base pages. It was written once and not tuned against the results.
+
+<Accordion title="The full skill">
+
+````markdown
+---
+name: update-knowledge-base
+description: Update the customer knowledge base in kb/ from new calls, Slack threads and emails in sources/. Use when asked to update, refresh or sync the customer knowledge base, a customer's update log, or a customer summary page.
+---
+
+# Update the customer knowledge base
+
+Each customer folder in `kb/` has two files. `update-log.md` is the source of truth: one row per dated, sourced fact, append-only. `knowledge-base.md` is the summary people read, derived from the log. Always write the log first, then the summary.
+
+## 1. Read every source, in date order
+
+- List `sources/` and work through every file, oldest first. Do not skip long calls and do not stop at a summary or the first screen of a file: facts and corrections often sit in the middle or near the end.
+- Keep a scratch file `notes.md`. After each source, write down the candidate facts with customer, date and file. Work from the notes, not from memory.
+- Many sources mention several customers, and some mention none. A customer with nothing new gets no rows.
+
+## 2. Decide what counts as a fact
+
+Record something only if someone who would know states it as true, decided or done.
+
+- Do not record ideas, questions, wishes, jokes or "what if" talk.
+- Do not record a proposal that was turned down or dropped as if it were true. Leave it out.
+- Keep states apart and say which one it is: deployed or live, announced, planned, unverified. "We plan to" is not "we did".
+- Use `To verify` when a claim is second-hand or uncertain, never `Current`.
+
+## 3. Put each fact on the right customer
+
+- Attribute by what the source says, not by where it was said. A fact in one customer's channel or call can be about another customer.
+- Watch for corrections such as "sorry, that was X, not Y", in the same source or a later one. The correction wins: the fact belongs to X only, and nothing is recorded for Y.
+
+## 4. Handle changes and repeats
+
+- When a later source changes an earlier fact (a date moves, a number changes, a choice is reversed), the latest statement wins. Add one row with the new value marked `Current`. If you already added a row for the old value, mark that row `Superseded` and name it in `Supersedes`.
+- When the same fact appears in several sources, write one row. Cite the earliest source and add the others in the same Source cell.
+- Before adding a row, check the summary page: if the fact is already there with the same value, do not add it again.
+
+## 5. Write the log rows
+
+Append to the table in `kb/<customer>/update-log.md`, continuing the numbering:
+
+`| Entry | Date | Topic | Fact | Status | Source type | Source | Supersedes |`
+
+- Date: the date of the source, as YYYY-MM-DD.
+- Topic and Status: only the values listed at the top of the log.
+- Fact: one short sentence with the concrete value (name, number, date, version). Name the thing exactly as the source does.
+- Source: the file path, for example `sources/slack/slack-12.md`. Every row needs one.
+
+## 6. Refresh the summary
+
+- For each new `Current` row, update the matching field in `knowledge-base.md`: short, factual, with the source type and date in brackets. Replace the old value; replace _Unknown_ only with confirmed information.
+- Put unverified items under "To verify", not into the main fields.
+- Update the **Last updated** line with today's review date and the sources covered.
+
+## 7. Check before you finish
+
+- Every source file was read to the end.
+- Every row has a customer, a date, a status and a source file that exists.
+- No fact sits on two customers, no fact appears twice, no superseded value is still marked `Current`.
+- Every `Current` row is reflected in that customer's summary.
+- Delete `notes.md`.
+````
+
+</Accordion>
+
+## The router
+
+The router in this benchmark is a prototype. It is not the [Smart Model Router](/ai-gateway/auto-model-routing), which routes by the tasks an admin names and does not read skills.
+
+It sits between the agent and the model provider and decides once per session. A session is the main request or one subagent's task; later steps in that session keep the same model.
+
+For each new session it asks [Jev](https://docs.typesafe.ai), a small judgment model, whether the prompt is clearly each of four kinds of work:
+
+| Model | Kinds of work |
+| --- | --- |
+| Opus 5.5 | Judging what is true across many documents when sources disagree, and owning the final result. Planning and coordinating a large job with many steps |
+| DeepSeek V4.1 Flash | Reading given documents and reporting or extracting what they say. Following written step-by-step instructions |
+
+The model whose two kinds score higher gets the session. Ties go to Opus, and so does any failure to get an answer.
+
+In skill-aware mode the router also sends the name and description of every skill in the workspace and asks one more question: does one of these skills cover the work asked for? If yes, DeepSeek gets the session whatever the other scores say.
+
+## Limits
+
+- One task and one corpus. Everything here is one kind of work: turning calls, messages and email into structured records.
+- Two or three runs per setup. Single runs led by DeepSeek ranged from 16 to 20 planted facts.
+- Twenty planted facts cover five ways the task goes wrong. They do not measure how many real facts a run found, or whether a row was worth adding.
+- The judge samples 15 rows per run, and different runs produce different rows.
+- The skill and the router's four descriptions were each written once. Different wording would give different results.
+- Minutes are not comparable between runs, because runs shared sandboxes.

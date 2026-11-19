@@ -80,7 +80,7 @@ export function checkBrowserCode(program, root, include) {
   }
   for (const file of program.getSourceFiles()) {
     if (include && !include(file.fileName)) continue;
-    if (!(file.fileName.startsWith(resolve(root, "evals")) || file.fileName.endsWith("/packages/handsfree/test/e2e/browser.ts")) || file.fileName.includes("node_modules") || file.isDeclarationFile) continue;
+    if (!file.fileName.startsWith(resolve(root, "evals")) || file.fileName.includes("node_modules") || file.isDeclarationFile) continue;
     function visit(node) {
       if (ts.isCallExpression(node)) {
         let name = ts.isIdentifier(node.expression) ? node.expression.text : ts.isPropertyAccessExpression(node.expression) ? node.expression.name.text : "";

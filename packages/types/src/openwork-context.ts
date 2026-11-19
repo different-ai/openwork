@@ -75,6 +75,9 @@ export const openworkContextSnapshotSchema = z.object({
   schemaVersion: z.literal(OPENWORK_CONTEXT_SCHEMA_VERSION),
   revision: z.number().int().nonnegative(),
   capturedAt: z.string(),
+  features: z.object({
+    connectionQuestions: z.boolean().optional(),
+  }).optional(),
   screen: openworkScreenSchema,
   conversations: z.object({
     tabs: z.array(openworkSessionRefSchema),

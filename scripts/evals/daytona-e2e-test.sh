@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run ONE E2E test inside a Daytona sandbox, with the environment app tests need.
 #
-#   daytona exec <sandbox> -- bash -lc "cd /workspace && bash scripts/evals/daytona-e2e-test.sh specs/app-den-tls-fault.e2e.test.ts"
+#   daytona exec <sandbox> -- bash -lc "cd /workspace && bash scripts/evals/daytona-e2e-test.sh core/core-chat.e2e.test.ts"
 #
 # Logs land in the workspace so they are readable from any exec session and over
 # the results HTTP server.

@@ -1,4 +1,4 @@
-import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
+import { GITHUB_ISSUES_URL, TEAM_EMAIL, buildResponseHeaders, formRequiresBrowserBody, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 import { createPlainFormClient } from "../_lib/plain";
 import { ForbiddenError } from "@team-plain/graphql";
 import { buildFeedbackThreadFields, type FeedbackContext } from "../../../lib/plain-feedback-fields";
@@ -50,7 +50,10 @@ export async function POST(request: Request) {
 
   const botProtection = await verifyFormBotProtection();
   if (!botProtection.ok) {
-    return jsonResponse(request, { error: botProtection.error }, botProtection.status);
+    return jsonResponse(request, formRequiresBrowserBody(
+      `This form only accepts browser submissions. Email ${TEAM_EMAIL} or open an issue at ${GITHUB_ISSUES_URL}.`,
+      { email: TEAM_EMAIL, issues: GITHUB_ISSUES_URL },
+    ), botProtection.status);
   }
 
   let payload: FeedbackPayload;
@@ -104,7 +107,7 @@ export async function POST(request: Request) {
   const apiKey = process.env.PLAIN_API_KEY?.trim();
   if (!apiKey) {
     return jsonResponse(request, {
-      error: "This form is temporarily unavailable. Please email team@openworklabs.com.",
+      error: `This form is temporarily unavailable. Please email ${TEAM_EMAIL}.`,
     }, 503);
   }
 
@@ -148,7 +151,7 @@ export async function POST(request: Request) {
         : undefined,
     });
     return jsonResponse(request, {
-      error: "We couldn't send your message. Please try again or email team@openworklabs.com.",
+      error: `We couldn't send your message. Please try again or email ${TEAM_EMAIL}.`,
     }, 502);
   }
 

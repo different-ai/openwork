@@ -14,7 +14,7 @@
 //   (apps/server/src/types.ts `Capabilities.providerSync: true`) — and carry
 //   the live host token so the store can PUT /den-session and
 //   POST /cloud-provider-sync/run;
-// - remote workspaces and non-loopback local URL overrides stay config-only:
+// - non-loopback local URL overrides stay config-only:
 //   a local workspace label does not authorize forwarding desktop credentials.
 import {
   createOpenworkServerClient,
@@ -27,14 +27,17 @@ import type { ProviderAuthOpenworkServer } from "./store";
 
 type SessionOpenworkServerSnapshot = ReturnType<ProviderAuthOpenworkServer["getSnapshot"]>;
 
+/** The local server that owns the workspace, or the engine root before any workspace exists. */
+export type SessionServerEndpoint = Pick<ResolvedWorkspaceEndpoint, "baseUrl" | "token" | "client">;
+
 export type CreateSessionOpenworkServerInput = {
-  endpoint: () => ResolvedWorkspaceEndpoint | null;
+  endpoint: () => SessionServerEndpoint | null;
   /** Live host token from the desktop runtime (openworkServerInfo). */
   hostToken?: () => string;
   generation?: () => number | null;
 };
 
-function resolveHostToken(endpoint: ResolvedWorkspaceEndpoint, live: string): string {
+function resolveHostToken(endpoint: SessionServerEndpoint, live: string): string {
   // Fallback mirrors openwork-server-store's getAuth(): persisted settings may
   // hold the host token (ensureDesktopLocalOpenworkConnection writes it), but
   // both live and stored host tokens must stay on loopback servers.
@@ -49,7 +52,7 @@ export function createSessionOpenworkServer(
   let clientCacheKey = "";
   let clientCacheValue: OpenworkServerClient | null = null;
 
-  const hostAwareClient = (endpoint: ResolvedWorkspaceEndpoint, hostToken: string): OpenworkServerClient => {
+  const hostAwareClient = (endpoint: SessionServerEndpoint, hostToken: string): OpenworkServerClient => {
     if (!hostToken) return endpoint.client;
     const key = `${endpoint.baseUrl}\u001f${endpoint.token}\u001f${hostToken}`;
     if (key !== clientCacheKey || !clientCacheValue) {
@@ -73,7 +76,7 @@ export function createSessionOpenworkServer(
           openworkServerCapabilities: null,
         };
       }
-      if (endpoint.isRemote || !isLoopbackOpenworkServerUrl(endpoint.baseUrl)) {
+      if (!isLoopbackOpenworkServerUrl(endpoint.baseUrl)) {
         return {
           openworkServerStatus: "connected",
           openworkServerClient: endpoint.client,

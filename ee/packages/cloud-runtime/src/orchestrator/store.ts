@@ -1,4 +1,4 @@
-import type { SandboxRef, SandboxState } from "../contract/provider"
+import type { SandboxRef, SandboxState } from "@openwork/sandbox"
 
 /**
  * Den's durable view of one worker's Cloud instance. Provider-neutral: the

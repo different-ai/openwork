@@ -3,13 +3,15 @@
     "target": "ES2022",
     "useDefineForClassFields": true,
     "module": "ESNext",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,
@@ -24,7 +26,6 @@
     "src/components/**/*",
     "src/i18n/**/*",
     "src/lib/**/*",
-    "src/overlay/**/*",
     "src/react-app/**/*",
     "src/app/lib/**/*",
     "src/app/cloud/**/*",

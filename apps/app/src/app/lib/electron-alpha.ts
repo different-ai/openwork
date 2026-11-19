@@ -1,4 +1,3 @@
-import { desktopFetch } from "./desktop";
 
 export type ElectronAlphaArtifact = {
   arch: "arm64" | "x64";
@@ -63,18 +62,4 @@ export function parseElectronLatestMacYml(
     version,
     sha512,
   };
-}
-
-export async function resolveElectronAlphaArtifact(
-  arch: "arm64" | "x64" = "arm64",
-): Promise<ElectronAlphaArtifact> {
-  const response = await desktopFetch(ELECTRON_ALPHA_LATEST_MAC_YML_URL, {
-    headers: { Accept: "text/yaml, text/plain, */*" },
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch latest-mac.yml (${response.status} ${response.statusText}).`,
-    );
-  }
-  return parseElectronLatestMacYml(await response.text(), arch);
 }

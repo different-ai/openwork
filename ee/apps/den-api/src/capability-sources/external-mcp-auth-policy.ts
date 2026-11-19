@@ -1,4 +1,4 @@
-import { EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "./external-mcp-presets.js"
+import { ALL_EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "./external-mcp-presets.js"
 
 export type PluginMcpAuthType = "apikey" | "none" | "oauth"
 
@@ -14,11 +14,17 @@ function normalizedRemoteMcpUrl(value: string) {
 
 export function matchExternalMcpPresetForUrl(
   url: string,
-  presets: readonly ExternalMcpPreset[] = EXTERNAL_MCP_PRESETS,
+  presets: readonly ExternalMcpPreset[] = ALL_EXTERNAL_MCP_PRESETS,
 ): ExternalMcpPreset | null {
   const normalizedUrl = normalizedRemoteMcpUrl(url)
   if (normalizedUrl === null) return null
   return presets.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl) ?? null
+}
+
+/** Public, pre-registered app identifiers only; never preset client secrets. */
+export function externalMcpPresetOAuthClient(url: string): { clientId: string; tokenEndpointAuthMethod: "none" } | undefined {
+  const clientId = matchExternalMcpPresetForUrl(url)?.defaultOAuthClientId
+  return clientId ? { clientId, tokenEndpointAuthMethod: "none" } : undefined
 }
 
 export function externalMcpOAuthConfigurationDefaults(input: {

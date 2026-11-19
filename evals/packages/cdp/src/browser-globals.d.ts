@@ -4,6 +4,7 @@ import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
 /** Test-facing browser protocols. State is installed by the corresponding world before use. */
 declare global {
   interface Window {
+    [key: `command-observer-${string}`]: { requests: { method: string; path: string }[]; stop(): void } | undefined;
     __openworkControl: {
       listActions(): { id: string; disabled: boolean; args?: unknown; [key: string]: unknown }[];
       execute(action: string, args?: unknown): Promise<{ ok: boolean; error?: string; result?: unknown; value?: unknown }>;
@@ -15,13 +16,6 @@ declare global {
     __reauthOriginalOpen?: typeof window.open;
     __OPENWORK_ELECTRON__: {
       shell: { relaunch(): Promise<void> };
-      browserLogins: {
-        testWitnessUrl(): Promise<string>;
-        writeTestStore(request: { path: string; cookies: unknown[] }): Promise<unknown>;
-        signedInSites(): Promise<unknown>;
-        state(): Promise<unknown>;
-        pause(): Promise<unknown>;
-      };
       invokeDesktop<C extends DesktopCommandName>(command: C, ...args: DesktopCommandArgs<C>): Promise<DesktopCommandResult<C>>;
       /** Development-only native popup observation; absent from packaged builds. */
       contextMenu: {

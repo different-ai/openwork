@@ -18,11 +18,10 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const [subscription] = await db.select({ status: OrgSubscriptionTable.status })
     .from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, orgId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
   const metadata = record(org?.metadata)
-  const available = record(metadata.capabilities).modelsAnalytics === true
+  const available = org !== undefined
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
-  // Unreleased organizations do not touch the new tables. This also keeps
-  // existing Models traffic working during an application-first rollout.
+  // An unknown organization does not touch the tables.
   const settings = available ? (await db.select().from(ModelsAnalyticsSettingsTable)
     .where(eq(ModelsAnalyticsSettingsTable.org_id, orgId)).limit(1))[0] : undefined
   return {

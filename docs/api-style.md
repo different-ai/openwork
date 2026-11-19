@@ -1,7 +1,7 @@
 # Den API style guide
 
 This page records the conventions the Den API (`ee/apps/den-api`) follows and
-how each one is enforced. The published contract is
+how each one is enforced. The local build contract is
 `packages/docs/openapi.json`, generated from `describeRoute()` metadata and Zod
 schemas by `pnpm api:snapshot`; `pnpm api:lint` runs the Spectral ruleset in
 `.spectral.yaml`, and the **API Contract** workflow runs both on every pull
@@ -11,11 +11,36 @@ The document is also consumed at runtime: `src/mcp/catalog.ts` derives the MCP
 `search_capabilities` catalog from it, so summaries, descriptions, tags and
 request schemas are user-facing text for agents, not just for Swagger.
 
+## Build contract workflow
+
+OpenAPI and SDK files are generated build artifacts, ignored by Git. Change the
+route metadata, shared schemas or feature registry and commit the source only.
+`pnpm features:sync` updates Helm values/schema without launching API generation.
+
+`pnpm sdk:build` and SDK typechecks generate missing or stale artifacts before
+compilation. `pnpm den:contract` forces generation: build prerequisites once,
+export the API once, and generate the SDK from that snapshot. It creates,
+prepares and removes a disposable localhost MySQL database, including on failure.
+Start MySQL with `pnpm dev:den:mysql`; `DATABASE_URL` is ignored. Alternate
+localhost credentials/ports use `OPENWORK_CONTRACT_MYSQL_URL`.
+
+CI regenerates from the PR checkout, runs Spectral and SDK typechecks, and
+uploads the resulting contract/SDK as `den-api-contract`. The optional commit
+hook validates staged source without adding generated files to the index.
+Resolve source conflicts normally; there are no generated outputs to merge.
+Never regenerate historical migration snapshots to resolve conflicts.
+
+Hosted docs consume `https://api.openworklabs.com/openapi.json?public=1`, the
+normalized deployed public contract. It applies the same filtering and metadata
+normalization as local generation. The raw endpoint is unchanged. Remote
+OpenAPI changes need a docs rebuild to refresh Mintlify's generated pages.
+
 ## How the gate works
 
 | Check | Where | Fails the build when |
 |---|---|---|
-| Snapshot drift | `.github/workflows/api-contract.yml` | `pnpm api:snapshot` changes `packages/docs/openapi.json` |
+| Contract generation | CI contract lane / `pnpm den:contract` | route source cannot generate OpenAPI or SDK |
+| SDK types | `pnpm sdk:check` | generated client or handwritten wrapper fails typechecking |
 | Spectral errors | `pnpm api:lint` (`scripts/api-lint.mjs`) | any rule at `error` severity fires |
 | Warning ratchet | `pnpm api:lint` | the warning count exceeds `.spectral-baseline.json` |
 

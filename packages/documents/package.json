@@ -1,0 +1,93 @@
+{
+  "name": "@openwork/documents",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable connected-document browser: provider contracts, Google Drive adapter and React browser.",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "browser": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": {
+        "openwork-build": "./dist/types/src/browser.d.ts",
+        "default": "./src/browser.tsx"
+      },
+      "development": "./src/browser.tsx",
+      "browser": "./src/browser.tsx",
+      "default": "./dist/browser.js"
+    },
+    "./styles.css": "./src/styles.css",
+    "./model": {
+      "types": {
+        "openwork-build": "./dist/types/src/model.d.ts",
+        "default": "./src/model.ts"
+      },
+      "development": "./src/model.ts",
+      "browser": "./src/model.ts",
+      "default": "./dist/model.js"
+    },
+    "./office": {
+      "types": {
+        "openwork-build": "./dist/types/src/office.d.ts",
+        "default": "./src/office.ts"
+      },
+      "development": "./src/office.ts",
+      "browser": "./src/office.ts",
+      "default": "./dist/office.js"
+    },
+    "./office-engine": {
+      "types": {
+        "openwork-build": "./dist/types/src/office-engine.d.ts",
+        "default": "./src/office-engine.ts"
+      },
+      "development": "./src/office-engine.ts",
+      "browser": "./src/office-engine.ts",
+      "default": "./dist/office-engine.js"
+    },
+    "./office-server": {
+      "types": {
+        "openwork-build": "./dist/types/src/office-server.d.ts",
+        "default": "./src/office-server.ts"
+      },
+      "development": "./src/office-server.ts",
+      "default": "./dist/office-server.js"
+    }
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "scripts": {
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p collabora/tsconfig.json --noEmit",
+    "build:collabora-theme": "tsc -p collabora/tsconfig.json"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.4.1",
+    "zod": "^4.6.6",
+    "lucide-react": "^0.577.0",
+    "@openwork/workbook": "workspace:*",
+    "htmlparser2": "8.0.2"
+  },
+  "peerDependencies": {
+    "react": "catalog:",
+    "@tanstack/react-query": "^5.96.2",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "@types/react": "19.2.14",
+    "react": "catalog:",
+    "@tanstack/react-query": "^5.96.2",
+    "typescript": "^5.9.3",
+    "react-dom": "catalog:",
+    "@types/react-dom": "19.2.3"
+  },
+  "license": "MIT"
+}

@@ -36,12 +36,12 @@ module.exports = {
       from: { path: "^packages(?:/|$)" },
       to: { path: "^runner(?:/|$)" },
     },
-    // Specs use the capability-restricted fixture layer, never implementation rails.
+    // Journeys use the fixture layer and named behaviors, never implementation rails.
     {
       name: "specs-use-testkit-only",
       severity: "error",
-      from: { path: "^(?:specs/.*\\.e2e\\.test\\.ts|\\.\\./scenarios/.*/e2e\\.test\\.ts)$" },
-      to: { path: "^@openwork/(?:hosts|cdp|behaviors|test-evidence|labs|env)(?:/|$)" },
+      from: { path: "^(?:core/.*\\.e2e\\.test\\.ts|proofs/.*\\.proof\\.test\\.ts|\\.\\./scenarios/.*/e2e\\.test\\.ts)$" },
+      to: { path: "^@openwork/(?:hosts|cdp|test-evidence|labs|env)(?:/|$)" },
     },
     // Imperative worlds stay framework-free and arrange only through lower layers.
     {

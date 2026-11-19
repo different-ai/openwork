@@ -1,6 +1,6 @@
 import DOMPurify from "dompurify";
-import emojiKeywords from "emojilib";
-import { Marked, type MarkedExtension, type Token, type Tokens } from "marked";
+import { gemoji } from "gemoji";
+import { Marked, Renderer, TextRenderer, type MarkedExtension, type Token, type Tokens } from "marked";
 import { markedEmoji } from "marked-emoji";
 import {
   transformerMetaHighlight,
@@ -14,10 +14,20 @@ import {
 import { bundledLanguages, codeToHtml } from "shiki";
 
 import { faviconUrlForHref } from "@/lib/favicon";
+import { localPathName, parseLocalPathReference } from "@/react-app/domains/session/artifacts/local-path";
+import { directoryReference } from "@/react-app/domains/session/artifacts/path-reference-context";
 
 import { markdownMath } from "./markdown-math";
+import { parseSessionReference } from "@/components/chat/session-reference";
+import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
-export type MarkdownPresentation = "chat" | "surface";
+/**
+ * `remote` is chat prose written somewhere we do not trust (a task on another
+ * computer): raw HTML is dropped, images and video links render as plain links
+ * and links carry no favicon, so viewing it never makes the browser fetch a
+ * URL the remote side chose (localhost, private network, tracking pixels).
+ */
+export type MarkdownPresentation = "chat" | "surface" | "remote";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
   | { kind: "single"; theme: string }
@@ -27,11 +37,11 @@ type MarkdownProfile = {
   rawHtmlMode: RawHtmlMode;
   headingClassName: (depth: number) => string;
   listClassName: (ordered: boolean) => string;
-  blockquoteClassName: string;
+  blockquoteHtml: (html: string, copyText: string | null) => string;
   codeBlockHtml: (text: string, lang: string | undefined) => string;
   codeSpanClassName: string;
   linkPresentation: "chat" | "simple";
-  imagePresentation: "chat" | "simple";
+  imagePresentation: "chat" | "simple" | "link";
   tableHeaderClassName: string;
   tableCellClassName: string;
   shikiContainer: string;
@@ -44,14 +54,13 @@ const CODE_COPY_ICON = `<svg data-openwork-code-copy-icon="" xmlns="http://www.w
 const CODE_COPIED_ICON = `<svg data-openwork-code-copy-check-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true" hidden><path d="M20 6 9 17l-5-5"/></svg>`;
 const CODE_WRAP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-3"/><path d="m12 18-3 3 3 3"/></svg>`;
 const INLINE_CODE_FILE_EXTENSIONS = new Set([
-  "mp4", "webm", "mov", "m4v", "ogv",
+  "mp4", "webm", "mov", "m4v", "ogv", "mp3", "wav", "m4a", "csv",
   "astro", "bash", "c", "cc", "cpp", "cs", "css", "dart", "docx", "ex", "exs", "gif", "go", "graphql",
   "h", "hpp", "htm", "html", "java", "jpeg", "jpg", "js", "json", "jsonc", "jsx", "key", "kt", "kts",
   "lua", "markdown", "md", "mdx", "mmd", "mjs", "cjs", "odp", "ods", "pdf", "php", "png", "pot", "potx",
   "ppt", "pptm", "pptx", "prisma", "py", "rb", "rs", "scss", "sh", "sql", "svelte", "svg", "swift",
   "toml", "ts", "tsv", "tsx", "txt", "log", "vue", "webp", "xls", "xlsx", "xml", "yaml", "yml", "zig",
 ]);
-const INLINE_CODE_LINE_SUFFIX = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/i;
 
 function escapeHtml(value: string) {
   return value
@@ -66,29 +75,29 @@ function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
+/**
+ * The file an inline code span names, or null when it should stay plain code.
+ * Only spans that read as one file reference with a known file extension are
+ * clickable; the shared path reader removes `:line[:col]` and quotes and turns
+ * away anything that is not a local path (URLs, `~user/`, `../` escapes), so a
+ * span that could never open is never shown as a link.
+ */
 export function inlineCodeArtifactPath(value: string): string | null {
-  const trimmed = value.trim();
-  const path = trimmed.replace(INLINE_CODE_LINE_SUFFIX, "");
-
-  if (
-    !path ||
-    path.length > 500 ||
-    /[\u0000-\u001f<>"'`|?*]/.test(path) ||
-    /^(?:https?|wss?|ftp|mailto|tel|file):/i.test(path)
-  ) {
-    return null;
-  }
+  // Code is literal text: a `file://` span is a URL to read, not a link to follow.
+  if (/^\s*(?:https?|wss?|ftp|mailto|tel|file):/i.test(value)) return null;
+  const reference = parseLocalPathReference(value);
+  if (!reference) return null;
+  const { path } = reference;
+  if (path.length > 500 || /[<>"`|?*]/.test(path)) return null;
 
   const normalized = path.replace(/[\\]+/g, "/");
   const withoutDrive = normalized.replace(/^[A-Za-z]:\//, "/");
+  // Leftover colons mean code (`a:b.ts`), not a path with a line suffix.
   if (withoutDrive.slice(1).includes(":")) return null;
 
-  const segments = withoutDrive.split("/").filter(Boolean);
-  const filename = segments.at(-1);
-  if (!filename || segments.some((segment) => segment === "." || segment === "..")) return null;
-
+  const filename = localPathName(normalized);
   const extensionIndex = filename.lastIndexOf(".");
-  const extension = extensionIndex >= 0 ? filename.slice(extensionIndex + 1).toLowerCase() : "";
+  const extension = extensionIndex > 0 ? filename.slice(extensionIndex + 1).toLowerCase() : "";
   return INLINE_CODE_FILE_EXTENSIONS.has(extension) ? path : null;
 }
 
@@ -126,24 +135,50 @@ function codeLanguageClass(lang: string | undefined) {
   return normalized ? ` class="language-${escapeAttribute(normalized)}"` : "";
 }
 
-function createEmojiAliases() {
-  const aliases: Record<string, string> = {};
+// GitHub's shortcode list (":tada:", ":fire:", ":+1:"): one emoji per name, and no
+// plain words or bare numbers, so text like ":home:" or "14:18:07" stays as written.
+const emojiAliases = Object.fromEntries(gemoji.flatMap(({ emoji, names }) => names.map((name) => [name, emoji])));
 
-  for (const [emoji, names] of Object.entries(emojiKeywords)) {
-    for (const name of names) {
-      if (!aliases[name]) {
-        aliases[name] = emoji;
-      }
-    }
-  }
+// emojilib names include numbers ("18" is 🔞), so a shortcode glued to a letter or
+// digit, like the ":18:" in "14:18:07", is part of the surrounding text and stays
+// as written.
+const SHORTCODE_NEIGHBOR = /[A-Za-z0-9]/;
 
-  return aliases;
+function emojiShortcodes(): MarkedExtension<string, string> {
+  const { extensions } = markedEmoji({
+    emojis: emojiAliases,
+    renderer: (token) => escapeHtml(token.emoji),
+  });
+
+  return {
+    extensions: (extensions ?? []).map((extension) => {
+      if (!("tokenizer" in extension) || !extension.tokenizer) return extension;
+      const tokenize = extension.tokenizer;
+      return {
+        ...extension,
+        tokenizer(src, tokens) {
+          const token = tokenize.call(this, src, tokens);
+          if (!token) return token;
+          const before = tokens.at(-1)?.raw.at(-1) ?? "";
+          const after = src.charAt(token.raw.length);
+          return SHORTCODE_NEIGHBOR.test(before) || SHORTCODE_NEIGHBOR.test(after) ? undefined : token;
+        },
+      };
+    }),
+  };
 }
 
-const emojiAliases = createEmojiAliases();
+const COPY_LABELS = {
+  code: { copy: "Copy code block", copied: "Code block copied" },
+  quote: { copy: "Copy quote", copied: "Quote copied" },
+};
+
+function copyButton(attribute: string, label: string) {
+  return `<button type="button" ${attribute} class="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="${label}" title="${label}">${CODE_COPY_ICON}${CODE_COPIED_ICON}<span data-openwork-code-copy-label="" class="sr-only" aria-live="polite">${label}</span></button>`;
+}
 
 function codeCopyButton() {
-  return `<button type="button" data-openwork-code-copy="" class="absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Copy code block" title="Copy code block">${CODE_COPY_ICON}${CODE_COPIED_ICON}<span data-openwork-code-copy-label="" class="sr-only" aria-live="polite">Copy code block</span></button>`;
+  return copyButton(`data-openwork-code-copy=""`, COPY_LABELS.code.copy);
 }
 
 function codeWrapButton() {
@@ -163,6 +198,18 @@ function chatCodeBlockHtml(text: string, lang: string | undefined) {
   );
 }
 
+// A quote is often a draft meant to be pasted elsewhere: it copies its own
+// Markdown, bullets included.
+function chatBlockquoteHtml(html: string, copyText: string | null) {
+  const button = copyText === null ? "" : copyButton(`data-openwork-quote-copy="${escapeAttribute(copyText)}"`, COPY_LABELS.quote.copy);
+  const padding = copyText === null ? "pr-4" : "pr-11";
+  return `<blockquote data-openwork-quote="" class="relative my-4 rounded-r-lg border-l border-border bg-muted/40 py-1 pl-4 ${padding} italic text-muted-foreground">${button}${html}</blockquote>`;
+}
+
+function surfaceBlockquoteHtml(html: string) {
+  return `<blockquote class="my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-muted-foreground">${html}</blockquote>`;
+}
+
 function surfaceCodeBlockHtml(text: string, lang: string | undefined) {
   return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
 }
@@ -176,7 +223,7 @@ function mermaidBlockHtml(text: string, presentation: MarkdownPresentation) {
   const backgroundClass = presentation === "surface" ? "bg-gray-1/80" : "bg-gray-2/60";
   const buttonClass = "rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50";
 
-  return `<div data-openwork-mermaid="" data-openwork-mermaid-state="source" aria-busy="false" class="my-4 overflow-hidden rounded-[18px] border ${borderClass} ${backgroundClass}"><div class="flex min-h-10 items-center gap-2 border-b ${borderClass} px-3 py-2"><span class="me-auto text-xs font-medium text-muted-foreground">Mermaid diagram</span><div role="group" aria-label="Diagram view" class="flex items-center gap-1"><button type="button" data-openwork-mermaid-view="rendered" class="${buttonClass}" aria-pressed="false" disabled>Rendered</button><button type="button" data-openwork-mermaid-view="source" class="${buttonClass}" aria-pressed="true">Source</button><button type="button" data-openwork-mermaid-download="" class="${buttonClass}" aria-label="Download diagram as SVG" hidden>Download SVG</button></div></div><div data-openwork-mermaid-rendered="" class="overflow-auto p-4 [&amp;&gt;svg]:mx-auto [&amp;&gt;svg]:h-auto [&amp;&gt;svg]:max-w-full" hidden></div><pre data-openwork-mermaid-source="" class="overflow-x-auto p-4 text-xs leading-6 text-foreground"><code class="language-mermaid">${escapeHtml(text)}</code></pre><p data-openwork-mermaid-status="" class="border-t ${borderClass} px-3 py-2 text-xs text-muted-foreground" aria-live="polite">Diagram source</p></div>`;
+  return `<div data-openwork-mermaid="" data-openwork-mermaid-state="source" aria-busy="false" class="my-4 overflow-hidden rounded-[18px] border ${borderClass} ${backgroundClass}"><div class="flex min-h-10 items-center gap-2 border-b ${borderClass} px-3 py-2"><span class="me-auto text-xs font-medium text-muted-foreground">Mermaid diagram</span><div role="group" aria-label="Diagram view" class="flex items-center gap-1"><button type="button" data-openwork-mermaid-view="rendered" class="${buttonClass}" aria-pressed="false" disabled>Rendered</button><button type="button" data-openwork-mermaid-view="source" class="${buttonClass}" aria-pressed="true">Source</button><button type="button" data-openwork-mermaid-download="" class="${buttonClass}" aria-label="Download diagram as SVG" hidden>Download SVG</button></div></div><div data-openwork-mermaid-rendered="" class="overflow-auto p-4 [&amp;&gt;svg]:mx-auto [&amp;&gt;svg]:h-auto [&amp;&gt;svg]:max-w-full" hidden></div><div data-openwork-mermaid-interactive="" hidden></div><pre data-openwork-mermaid-source="" class="overflow-x-auto p-4 text-xs leading-6 text-foreground"><code class="language-mermaid">${escapeHtml(text)}</code></pre><p data-openwork-mermaid-status="" class="border-t ${borderClass} px-3 py-2 text-xs text-muted-foreground" aria-live="polite">Diagram source</p></div>`;
 }
 
 function parseShikiLanguage(lang: string) {
@@ -202,15 +249,16 @@ export function syncMarkdownImagePreviews(root: HTMLElement) {
   }
 }
 
-export function setCodeCopyButtonState(button: HTMLButtonElement, copied: boolean) {
+export function setCopyButtonState(button: HTMLButtonElement, copied: boolean) {
+  const labels = button.hasAttribute("data-openwork-quote-copy") ? COPY_LABELS.quote : COPY_LABELS.code;
   const label = button.querySelector("[data-openwork-code-copy-label]");
-  if (label) label.textContent = copied ? "Code block copied" : "Copy code block";
+  if (label) label.textContent = copied ? labels.copied : labels.copy;
 
   button.querySelector("[data-openwork-code-copy-icon]")?.toggleAttribute("hidden", copied);
   button.querySelector("[data-openwork-code-copy-check-icon]")?.toggleAttribute("hidden", !copied);
 
-  button.title = copied ? "Copied" : "Copy code block";
-  button.setAttribute("aria-label", copied ? "Code block copied" : "Copy code block");
+  button.title = copied ? "Copied" : labels.copy;
+  button.setAttribute("aria-label", copied ? labels.copied : labels.copy);
 }
 
 export function codeWrapClassStates(wrapped: boolean) {
@@ -264,10 +312,14 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-code-wrap",
       "aria-label",
       "aria-pressed",
+      "data-openwork-image",
+      "data-openwork-image-fallback",
       "data-openwork-image-preview",
       "data-openwork-inline-code-path",
       "data-openwork-link-href",
       "data-openwork-link-chevron",
+      "data-openwork-quote",
+      "data-openwork-quote-copy",
       "data-openwork-shiki",
       "decoding",
       "disabled",
@@ -284,6 +336,9 @@ function sanitizeMarkdownHtml(value: string) {
 }
 
 function markdownProfileForPresentation(presentation: MarkdownPresentation): MarkdownProfile {
+  if (presentation === "remote") {
+    return { ...markdownProfileForPresentation("chat"), rawHtmlMode: "shiki-only", linkPresentation: "simple", imagePresentation: "link" };
+  }
   if (presentation === "surface") {
     return {
       rawHtmlMode: "shiki-only",
@@ -293,7 +348,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
           ? "my-4 text-lg font-semibold"
           : "my-3 text-base font-semibold",
       listClassName: (ordered) => ordered ? "my-3 list-decimal pl-6" : "my-3 list-disc pl-6",
-      blockquoteClassName: "my-4 rounded-r-lg border-l border-dls-border bg-dls-hover/40 pl-4 italic text-muted-foreground",
+      blockquoteHtml: surfaceBlockquoteHtml,
       codeBlockHtml: surfaceCodeBlockHtml,
       codeSpanClassName: "rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground",
       linkPresentation: "simple",
@@ -313,7 +368,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
         ? "font-semibold my-4 text-lg"
         : "font-semibold my-3 text-base",
     listClassName: (ordered) => ordered ? "my-3 pl-6 list-decimal" : "my-3 pl-6 list-disc",
-    blockquoteClassName: "my-4 rounded-r-lg border-l border-border bg-muted/40 pl-4 italic text-muted-foreground",
+    blockquoteHtml: chatBlockquoteHtml,
     codeBlockHtml: chatCodeBlockHtml,
     codeSpanClassName: "rounded-md bg-gray-2/70 px-1.5 py-0.5 font-mono text-sm text-foreground",
     linkPresentation: "chat",
@@ -325,26 +380,43 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
   };
 }
 
-function renderVideo(href: string, label: string) {
+function renderVideo(href: string, label: string, fallbackHtml: string, decode = true) {
   if (!/\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i.test(href)) return null;
+  // Only the workspace can stream a video; a home-folder file stays a reference that reveals it.
+  if (/^~[\\/]/.test(href)) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(?:https?|file):/i.test(href) && !/^[A-Za-z]:[\\/]/.test(href)) return null;
   const remote = /^https?:/i.test(href);
   const source = remote ? ` src="${escapeAttribute(safeHref(href))}"` : "";
   const fileLink = remote
     ? `href="${escapeAttribute(safeHref(href))}" target="_blank" rel="noopener noreferrer"`
-    : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}"`;
-  return `<span class="my-4 inline-block w-full max-w-lg align-top"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><span data-openwork-video-error="" hidden class="text-sm text-muted-foreground">Video preview unavailable. Open the file to play it.</span><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a></span>`;
+    : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"`;
+  // A block-level box: inside a sentence, an inline-block video left the rest
+  // of the sentence floating beside its top edge. When the video cannot load
+  // (a bare file name, a deleted file) the box is swapped for the hidden
+  // inline fallback, so the sentence reads as if no player had been tried.
+  return `<span data-openwork-video="" class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a><span data-openwork-video-fallback="" hidden>${fallbackHtml}</span></span>`;
 }
 
 function renderLink(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
-  const video = profile.linkPresentation === "chat" ? renderVideo(href, href) : null;
-  if (video) return video;
+  const html = renderLinkHtml(profile, href, title, text);
+  return (profile.linkPresentation === "chat" ? renderVideo(href, href, html) : null) ?? html;
+}
+
+function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
   const safe = escapeAttribute(safeHref(href));
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
   if (profile.linkPresentation === "chat") {
     const originalHref = escapeAttribute(href);
-    const isFilePath = !/^(https?|wss?|ftp|mailto|tel|file):/i.test(href);
+    const isFilePath = !/^(https?|wss?|ftp|mailto|tel):/i.test(href);
+
+    // A destination that is neither a web address nor a local file (`#top`,
+    // `javascript:`, a network share) keeps its words but is not a link.
+    if (isFilePath && (href.trim().startsWith("#") || !parseLocalPathReference(href, { decode: true }))) {
+      const directory = directoryReference(href, true);
+      const context = directory ? ` data-openwork-directory-path="${escapeAttribute(directory)}"` : "";
+      return `<span${titleAttr}${context}>${text}</span>`;
+    }
 
     if (isFilePath) {
       const fileIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0 text-muted-foreground"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/></svg>`;
@@ -365,34 +437,61 @@ function renderLink(profile: MarkdownProfile, href: string, title: string | null
 }
 
 function renderImage(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {
-  const video = profile.linkPresentation === "chat" ? renderVideo(href, href) : null;
+  if (profile.imagePresentation === "link") return renderLinkHtml(profile, href, title, escapeHtml(text || href));
+  const video = profile.linkPresentation === "chat" ? renderVideo(href, href, renderLinkHtml(profile, href, title, escapeHtml(text || href))) : null;
   if (video) return video;
   const safe = escapeAttribute(safeHref(href));
   const titleAttr = title ? ` title="${escapeAttribute(title)}"` : "";
 
   if (profile.imagePresentation === "chat") {
-    return `<button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button>`;
+    const fallback = renderLinkHtml(profile, href, title, escapeHtml(text || href));
+    // A local file has no address the window can load: the chat reads it into the
+    // image once it can, and shows the file reference until then (or for good).
+    if (!/^https?:/i.test(href.trim())) {
+      if (!parseLocalPathReference(href, { decode: true })) return fallback;
+      return `<span data-openwork-image=""><span data-openwork-image-loaded="" hidden><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img data-openwork-image-path="${escapeAttribute(href)}" data-openwork-path-decode="true" alt="${escapeAttribute(text)}"${titleAttr} decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button></span><span data-openwork-image-fallback="">${fallback}</span></span>`;
+    }
+    // An image that cannot load (a page URL, a dead or blocked link) falls
+    // back to its plain link instead of an empty broken-image box.
+    return `<span data-openwork-image=""><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button><span data-openwork-image-fallback="" hidden>${fallback}</span></span>`;
   }
 
   return `<img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="my-4 max-w-full rounded-[18px] border border-dls-border/70">`;
 }
 
-function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPresentation, isAsync: boolean) {
+function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPresentation, isAsync: boolean, resolveReference?: ResolveSessionReference, unsafeReferenceTokens = new WeakSet<object>(), generatedHtmlTokens = new WeakSet<object>()) {
+  let suppressReferences = 0;
+  let quoteDepth = 0;
+  const withoutReferences = (render: () => string) => {
+    suppressReferences++;
+    try { return render(); } finally { suppressReferences--; }
+  };
+  const inline = (tokens: Token[], render: () => string) => containsInlineHtml(tokens) ? withoutReferences(render) : render();
   return {
     async: isAsync,
-    breaks: false,
+    // Chat text is written line by line, so a single newline stays a line break.
+    // File previews keep CommonMark wrapping for hard-wrapped Markdown files.
+    breaks: presentation !== "surface",
     gfm: true,
     pedantic: false,
     silent: true,
+    hooks: {
+      processAllTokens(tokens) {
+        if (resolveReference) markUnsafeReferenceTokens(tokens, unsafeReferenceTokens);
+        return tokens;
+      },
+    },
     renderer: {
-      html({ text }) {
-        return profile.rawHtmlMode === "shiki-only" && !text.includes('data-openwork-shiki="true"') ? "" : text;
+      html(token) {
+        const { text } = token;
+        if (generatedHtmlTokens.has(token)) return text;
+        return profile.rawHtmlMode === "shiki-only" && !text.includes('data-openwork-shiki="true"') ? "" : stripSessionReferenceAttributes(text);
       },
       paragraph({ tokens }) {
-        return `<p class="my-3 leading-relaxed">${this.parser.parseInline(tokens)}</p>`;
+        return `<p class="my-3 leading-relaxed">${inline(tokens, () => this.parser.parseInline(tokens))}</p>`;
       },
       heading({ tokens, depth }) {
-        return `<h${depth} class="${profile.headingClassName(depth)}">${this.parser.parseInline(tokens)}</h${depth}>`;
+        return `<h${depth} class="${profile.headingClassName(depth)}">${inline(tokens, () => this.parser.parseInline(tokens))}</h${depth}>`;
       },
       list(token) {
         const tag = token.ordered ? "ol" : "ul";
@@ -402,38 +501,55 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         return `<${tag}${start} class="${profile.listClassName(token.ordered)}">${token.items.map((item) => this.listitem(item)).join("")}</${tag}>`;
       },
       listitem(item) {
-        const checkbox = item.task
-          ? `<input disabled="" type="checkbox"${item.checked ? " checked=\"\"" : ""}> `
-          : "";
-
-        return `<li class="my-1">${checkbox}${this.parser.parse(item.tokens)}</li>`;
+        // Marked includes the task checkbox in item.tokens; render it only once.
+        return `<li class="my-1">${this.parser.parse(item.tokens)}</li>`;
       },
-      blockquote({ tokens }) {
-        return `<blockquote class="${profile.blockquoteClassName}">${this.parser.parse(tokens)}</blockquote>`;
+      blockquote({ tokens, text }) {
+        quoteDepth++;
+        let html: string;
+        try { html = this.parser.parse(tokens); } finally { quoteDepth--; }
+        // Only the outermost quote gets a copy button; a nested one is copied with it.
+        return profile.blockquoteHtml(html, quoteDepth === 0 ? text.trim() : null);
       },
       code({ text, lang }) {
         if (isMermaidLanguage(lang)) return mermaidBlockHtml(text, presentation);
         return profile.codeBlockHtml(text, lang);
       },
-      codespan({ text }) {
-        const path = profile.linkPresentation === "chat" ? inlineCodeArtifactPath(text) : null;
-        const video = path ? renderVideo(path, path) : null;
-        if (video) return video;
+      text(token) {
+        const tokens = token.type === "text" ? token.tokens : undefined;
+        if (tokens) return inline(tokens, () => this.parser.parseInline(tokens));
+        return resolveReference && !suppressReferences && !unsafeReferenceTokens.has(token) ? renderSessionReferenceText(token, resolveReference) : false;
+      },
+      codespan(token) {
+        const { text } = token;
+        const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference?.(text) : undefined;
+        if (reference) return sessionReferenceHtml(reference);
+        const path = profile.linkPresentation === "chat" && !suppressReferences ? inlineCodeArtifactPath(text) : null;
         const pathAttributes = path
           ? ` data-openwork-inline-code-path="${escapeAttribute(path)}" role="button" tabindex="0" aria-label="Open ${escapeAttribute(path)}"`
           : "";
         const pathClassName = path ? " cursor-pointer transition-colors hover:bg-gray-3/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" : "";
-        return `<code${pathAttributes} class="${profile.codeSpanClassName}${pathClassName}">${escapeHtml(text)}</code>`;
+        const html = `<code${pathAttributes} class="${profile.codeSpanClassName}${pathClassName}">${escapeHtml(text)}</code>`;
+        return (path ? renderVideo(path, path, html, false) : null) ?? html;
       },
       del({ raw, tokens }) {
         if (!raw.startsWith("~~")) {
           return escapeHtml(raw);
         }
 
-        return `<del>${this.parser.parseInline(tokens)}</del>`;
+        return `<del>${inline(tokens, () => this.parser.parseInline(tokens))}</del>`;
       },
-      link({ href, title, tokens }) {
-        return renderLink(profile, href, title, this.parser.parseInline(tokens));
+      link(token) {
+        const { href, title, tokens } = token;
+        if (resolveReference && parseSessionReference(href)) {
+          const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference(href) : undefined;
+          if (reference) return sessionReferenceHtml(reference);
+          // A recognized but unavailable internal destination must not fall
+          // through to file handling or the browser. Keep its original label.
+          const label = this.parser.parseInline(tokens, new TextRenderer());
+          return `<span title="Task reference unavailable">${new Renderer().text({ type: "text", raw: label, text: label })}</span>`;
+        }
+        return withoutReferences(() => renderLink(profile, href, title, this.parser.parseInline(tokens)));
       },
       image({ href, title, text }) {
         return renderImage(profile, href, title, text);
@@ -451,7 +567,7 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const tag = header ? "th" : "td";
         const className = header ? profile.tableHeaderClassName : profile.tableCellClassName;
 
-        return `<${tag}${alignAttribute(align)} class="${className}">${this.parser.parseInline(tokens)}</${tag}>`;
+        return `<${tag}${alignAttribute(align)} class="${className}">${inline(tokens, () => this.parser.parseInline(tokens))}</${tag}>`;
       },
       hr() {
         return `<hr class="my-6 border-none h-px bg-gray-4">`;
@@ -502,53 +618,63 @@ async function highlightedCodeHtml(
   return profile.shikiContainer.replace("%s", html);
 }
 
-function highlightedCodeExtension(profile: MarkdownProfile): MarkedExtension<string, string> {
+function highlightedCodeExtension(profile: MarkdownProfile, generatedHtmlTokens: WeakSet<object>): MarkedExtension<string, string> {
   return {
     async: true,
     async walkTokens(token) {
       if (!isCodeToken(token) || isMermaidLanguage(token.lang)) return;
       const html = await highlightedCodeHtml(token, profile);
       Object.assign(token, { type: "html", block: true, text: `${html}\n` });
+      generatedHtmlTokens.add(token);
     },
   };
 }
 
-function createMarkdownParsers(presentation: MarkdownPresentation) {
+function createMarkdownParsers(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
   const profile = markdownProfileForPresentation(presentation);
-  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, false)).use(
-    markedEmoji({
-      emojis: emojiAliases,
-      renderer: (token) => escapeHtml(token.emoji),
-    }),
+  const unsafeReferenceTokens = new WeakSet<object>();
+  const generatedHtmlTokens = new WeakSet<object>();
+  const markdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, false, resolveReference, unsafeReferenceTokens)).use(
+    emojiShortcodes(),
     markdownMath(),
   );
   // Math must be registered on both parsers, otherwise formulas would flicker away
   // when a message containing a fenced code block upgrades to the Shiki render.
-  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, true)).use(
-    markedEmoji({
-      emojis: emojiAliases,
-      renderer: (token) => escapeHtml(token.emoji),
-    }),
+  const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, true, resolveReference, new WeakSet<object>(), generatedHtmlTokens)).use(
+    emojiShortcodes(),
     markdownMath(),
-    highlightedCodeExtension(profile),
+    highlightedCodeExtension(profile, generatedHtmlTokens),
   );
 
-  return { markdownParser, highlightedMarkdownParser };
+  return { markdownParser, highlightedMarkdownParser, unsafeReferenceTokens };
 }
 
 const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
+const remoteParsers = createMarkdownParsers("remote");
 
-function parsersForPresentation(presentation: MarkdownPresentation) {
-  return presentation === "surface" ? surfaceParsers : chatParsers;
+// One parser pair per inventory revision, shared by all message blocks. Never
+// mutate the global parsers with a workspace/user resolver.
+const referenceParsers = new WeakMap<ResolveSessionReference, ReturnType<typeof createMarkdownParsers>>();
+function parsersForPresentation(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
+  if (presentation === "surface") return surfaceParsers;
+  // Untrusted prose never resolves local session references.
+  if (presentation === "remote") return remoteParsers;
+  if (!resolveReference) return chatParsers;
+  let parsers = referenceParsers.get(resolveReference);
+  if (!parsers) {
+    parsers = createMarkdownParsers("chat", resolveReference);
+    referenceParsers.set(resolveReference, parsers);
+  }
+  return parsers;
 }
 
-export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
+export function renderMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference) {
   if (!text.trim()) {
     return "";
   }
 
-  const { markdownParser } = parsersForPresentation(presentation);
+  const { markdownParser } = parsersForPresentation(presentation, resolveReference);
   return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
 }
 
@@ -593,8 +719,8 @@ function hasReferenceDefinition(tokens: Token[]) {
  * Reference-style link definitions resolve across blocks, so a source that
  * contains one always takes the full lex.
  */
-export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat"): StreamingMarkdownRenderer {
-  const { markdownParser } = parsersForPresentation(presentation);
+export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference): StreamingMarkdownRenderer {
+  const { markdownParser, unsafeReferenceTokens } = parsersForPresentation(presentation, resolveReference);
   let state: StreamingMarkdownState | null = null;
 
   const renderBlock = (token: Token): MarkdownBlockHtml => ({
@@ -603,7 +729,9 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
 
   const renderAll = (source: string, previous: StreamingMarkdownState | null): StreamingMarkdownState => {
     const tokens = markdownParser.lexer(source);
-    const reusable = previous && !hasReferenceDefinition(tokens) && !hasReferenceDefinition(previous.tokens)
+    if (resolveReference) markUnsafeReferenceTokens(tokens, unsafeReferenceTokens);
+    const htmlScopeChanged = resolveReference && (containsInlineHtml(tokens) || (previous && containsInlineHtml(previous.tokens)));
+    const reusable = previous && !htmlScopeChanged && !hasReferenceDefinition(tokens) && !hasReferenceDefinition(previous.tokens)
       ? previous
       : null;
     const blocks = tokens.map((token, index) => {
@@ -621,7 +749,7 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
     let offset = 0;
     for (const token of previous.tokens.slice(0, keep)) offset += token.raw.length;
     const tail = markdownParser.lexer(source.slice(offset));
-    if (hasReferenceDefinition(tail)) return null;
+    if (hasReferenceDefinition(tail) || (resolveReference && (containsInlineHtml(tail) || containsInlineHtml(previous.tokens)))) return null;
 
     return {
       source,
@@ -647,8 +775,8 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
   };
 }
 
-export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
-  const { highlightedMarkdownParser } = parsersForPresentation(presentation);
+export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference) {
+  const { highlightedMarkdownParser } = parsersForPresentation(presentation, resolveReference);
   const html = await highlightedMarkdownParser.parse(text, { async: true });
   return sanitizeMarkdownHtml(html);
 }

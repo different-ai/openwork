@@ -1,368 +1,363 @@
 "use client";
 
-import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import { ChevronRight, LayoutGrid, List, Plus, RefreshCw, Search, TriangleAlert } from "lucide-react";
-
-import { DenBrandMark } from "../../_components/ui/brand-mark";
+import { useQueryClient } from "@tanstack/react-query";
+import { KeyRound, Plus } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { DenChip } from "../../_components/ui/chip";
-import { DenInput } from "../../_components/ui/input";
-import { DenList } from "../../_components/ui/list-row";
+import { DenPageHeader } from "../../_components/ui/page-header";
 import { UnderlineTabs } from "../../_components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../_components/ui/tooltip";
-import { getLibraryPluginRoute, getOrgAccessFlags, getYourConnectionsRoute } from "../../_lib/den-org";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { type LibraryItem, useLibrary } from "./library-data";
-import { DashboardHeaderActions } from "./dashboard-header-actions";
 import {
-  getLibraryAddAction,
-  getLibraryFocus,
-  getLibraryState,
-  getLibraryView,
-  hasLibraryComponent,
-  LIBRARY_DEFAULT_KIND,
-  LIBRARY_DEFAULT_STATE,
-  LIBRARY_KINDS,
-  LIBRARY_LAYOUT_KEY,
-  LIBRARY_STATES,
-  type LibraryEmptyState,
-  type LibraryKind,
-  type LibraryLayout,
-  type LibraryState,
-  parseLibraryLayout,
+  getLibraryAddConnectorRoute,
+  getLibraryConnectorRoute,
+  getLibraryConnectorShareRoute,
+  getLibraryNewPluginRoute,
+  getLibraryPluginRoute,
+  getLibraryPluginShareRoute,
+  getLibraryLlmProviderRoute,
+  getLibraryRoute,
+  getYourConnectionsRoute,
+} from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
+import { ItemPage } from "./item-header";
+import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { RowTile } from "../_features/computers/computer-rows";
+import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
+import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
+import {
+  groupLibrary,
+  isOwnedByViewer,
+  LIBRARY_FILTERS,
+  type LibraryFilter,
+  libraryItemDescription,
+  libraryFilterOf,
+  libraryItemReady,
+  needsViewerSignIn,
+  parseLibraryFilter,
+  parseNeedsSignIn,
+  receivedStatus,
+  workflowFailureSummary,
+  workflowLastRunFailed,
 } from "./library-view";
+import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, LibraryCompactSurface, LibraryKindIcon } from "./library-compact";
+import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
+import { useMemberSignIn } from "./connector-setup";
+import { matchesModelQuery } from "./library-models";
+import { useLibraryModels, useModelSignIn } from "./library-models-data";
+import { LibraryModelRow } from "./library-models-ui";
+import { MemberApiKeyDialog } from "./member-api-key-dialog";
+import { MemberGatewayApiKeysSection } from "./member-gateway-api-keys-section";
+import { useDenToast } from "./den-toast";
+import { requestJson, getRequestError } from "../../_lib/den-flow";
+import { pluginQueryKeys } from "./plugin-data";
+import { useOrgLlmProviders } from "./llm-provider-data";
+import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
+import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
+import { libraryIntroFacts } from "./library-intro-facts";
 
-function firstName(name: string | null): string {
-  if (!name) return "someone";
-  return name.trim().split(/\s+/)[0] ?? "someone";
+/** Show the name filter once a Library holds more than this many items. */
+const FILTER_AFTER = 10;
+
+function itemHref(orgSlug: string | null, item: LibraryItem): string {
+  if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
+  if (item.type === "plugin") return getLibraryPluginRoute(orgSlug, item.id);
+  return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
 }
 
 /**
- * Why the signed-in member can use this item. Every edge comes from the
- * authenticated `/v1/me/library` route, which only returns grants made to the
- * caller, the caller's teams, or the caller's organization. `sharedBy` is a
- * fellow member of that same organization and `orgName` is the member's own
- * organization; My Library is never rendered to anonymous or
- * cross-organization viewers, so these labels describe the member's own
- * access rather than an outside party.
+ * A saved workflow whose last run failed says so in its description slot: one
+ * red word and the reason, never a tinted panel (DESIGN V2, T2).
  */
-function getSource(item: LibraryItem, orgName: string): { label: string; isPerson: boolean } | null {
-  for (const edge of item.edges) {
-    if (edge.kind === "person") {
-      return { label: `Shared by ${firstName(edge.sharedBy?.name ?? null)}`, isPerson: true };
-    }
-  }
-  for (const edge of item.edges) {
-    if (edge.kind === "catalog") return { label: "Catalog", isPerson: false };
-  }
-  for (const edge of item.edges) {
-    if (edge.kind === "team") return { label: edge.team.name, isPerson: false };
-  }
-  for (const edge of item.edges) {
-    if (edge.kind === "org_wide") return { label: orgName, isPerson: false };
-  }
-  return null;
-}
-
-function getGitHubOwnerAvatar(sourceRepositoryUrl: string | null): string | undefined {
-  if (!sourceRepositoryUrl) return undefined;
-  try {
-    const url = new URL(sourceRepositoryUrl);
-    if (url.hostname !== "github.com" && url.hostname !== "www.github.com") return undefined;
-    const owner = url.pathname.split("/").filter(Boolean)[0];
-    return owner ? `https://github.com/${encodeURIComponent(owner)}.png?size=80` : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function LibraryRow({ item, isFocused, orgName, orgSlug, layout }: {
-  item: LibraryItem;
-  isFocused: boolean;
-  orgName: string;
-  orgSlug: string | null;
-  layout: LibraryLayout;
-}) {
-  const state = getLibraryState(item);
-  const source = getSource(item, orgName);
-  const rowHref = item.type === "plugin"
-    ? getLibraryPluginRoute(orgSlug, item.id)
-    : item.type === "workflow"
-      ? `/dashboard/library/workflows/${encodeURIComponent(item.id)}`
-      : `${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`;
-  const iconUrl = item.type === "connection" && item.provider === "google-workspace"
-    ? "/integrations/google.svg"
-    : item.type === "plugin"
-      ? getGitHubOwnerAvatar(item.sourceRepositoryUrl)
-      : undefined;
-  const simpleIconSlug = item.type === "connection" && item.provider === "microsoft-365" ? "microsoft" : undefined;
-  const serviceUrl = item.type === "connection" && item.transport === "mcp" ? item.url : undefined;
-  const ready = state === "ready";
-  const kindLabel = item.type === "connection" ? "MCP" : item.type === "workflow" ? "Workflow"
-    : hasLibraryComponent(item, "skill") && !hasLibraryComponent(item, "mcp") ? "Skill" : "Plugin";
-  const statusLabel = ready ? item.type === "connection" ? "Connected" : "Ready to use" : kindLabel;
-  const nextAction = state === "needs_signin" ? "Sign in"
-    : state === "needs_admin_setup" ? "Needs admin setup"
-      : state === "needs_setup" ? "Ready to set up" : "View details";
-  // Access provenance within the member's own organization (see getSource).
-  const meta = (
-    <span data-library-source>
-      {item.type === "connection" ? <span>{item.transport === "native" ? "Native" : "Cloud"} · </span> : null}
-      {source?.label ?? orgName}
+function WorkflowFailedDescription({ reason }: { reason: string | null }) {
+  const summary = workflowFailureSummary(reason);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" data-workflow-last-run="failed">
+      <span className="size-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+      <span className="shrink-0 font-medium text-red-600">Last run failed</span>
+      <span className="min-w-0 truncate" title={summary}>{summary}</span>
     </span>
   );
-  const kindBadge = <DenChip data-library-chip="" className="!rounded-md !px-1.5 !text-[10px]">{kindLabel}</DenChip>;
-
-  // Keep web links and Den provenance while matching Desktop's neutral card
-  // anatomy. A plugin's availability must never claim its MCPs are connected.
-  return (
-    <Link
-      href={rowHref}
-      data-library-item-type={item.type}
-      data-library-item-state={item.type === "connection" || item.type === "workflow" ? item.state : undefined}
-      data-library-item-key={`${item.type}-${item.id}`}
-      data-library-focused={isFocused ? "" : undefined}
-      className={`group flex min-w-0 w-full gap-3 text-left transition-colors hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900 ${layout === "grid" ? "h-full items-start rounded-xl border border-gray-200 bg-white p-4" : "items-center px-3.5 py-2"} ${isFocused ? "ring-2 ring-inset ring-blue-200" : ""}`}
-    >
-      <DenBrandMark
-        name={item.name}
-        iconUrl={iconUrl}
-        simpleIconSlug={simpleIconSlug}
-        serviceUrl={serviceUrl}
-        className={`${layout === "grid" ? "size-10" : "size-8"} rounded-lg`}
-        imageClassName={layout === "grid" ? "size-6" : "size-5"}
-      />
-      {layout === "grid" ? (
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="min-w-0 break-words text-sm font-semibold text-gray-900">{item.name}</h3>
-            <DenChip data-library-chip="" data-library-ready={ready ? "" : undefined} tone={ready ? "success" : "neutral"} className="!rounded-md !px-1.5 !text-[10px]">
-              {statusLabel}
-            </DenChip>
-            {ready && item.type === "workflow" ? kindBadge : null}
-          </div>
-          {item.description ? <p className="mt-0.5 line-clamp-2 break-words text-xs text-gray-500">{item.description}</p> : null}
-          <div className="mt-1 text-[11px] text-gray-500">{meta}</div>
-          <div className="mt-2 text-[11px] font-medium text-gray-900 group-hover:opacity-80">{nextAction}</div>
-        </div>
-      ) : (
-        <>
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:w-44 sm:flex-none">
-            <span className="truncate text-[13px] font-medium text-gray-900">{item.name}</span>
-            {ready ? <span data-library-ready="" className="size-1.5 shrink-0 rounded-full bg-emerald-600"><span className="sr-only">{statusLabel}</span></span> : null}
-          </div>
-          <div className="flex w-20 shrink-0">{kindBadge}</div>
-          <p className="hidden min-w-0 flex-1 truncate text-xs text-gray-500 sm:block">{item.description}</p>
-          <div className="hidden max-w-40 shrink-0 truncate text-[11px] text-gray-500 lg:block">{meta}</div>
-          {ready ? <ChevronRight aria-hidden className="size-3.5 shrink-0 text-gray-400" /> : (
-            <span className="inline-flex h-7 shrink-0 items-center rounded-lg border border-gray-200 px-3 text-xs font-medium text-gray-900">{nextAction}</span>
-          )}
-        </>
-      )}
-    </Link>
-  );
 }
 
-export function LibraryAddControl({ action, label, disabledReason }: {
-  action: ReturnType<typeof getLibraryAddAction>;
-  label: string;
-  disabledReason: string;
+function LibraryItemRow({ item, mine, signIn }: {
+  item: LibraryItem;
+  mine: boolean;
+  signIn: ReturnType<typeof useMemberSignIn>;
 }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={action ? <a href={action.href} /> : <button type="button" aria-disabled="true" />}
-        aria-label={action?.label ?? label}
-        title={action?.label ?? disabledReason}
-        className={`inline-flex size-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 ${action ? "" : "cursor-not-allowed opacity-70"}`}
-      >
-        <Plus aria-hidden className="size-5" />
-      </TooltipTrigger>
-      <TooltipContent>{action?.label ?? disabledReason}</TooltipContent>
-    </Tooltip>
-  );
-}
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const toast = useDenToast();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const deleteConnection = useDeleteMcpConnection();
+  const href = itemHref(orgSlug, item);
 
-export function LibraryEmpty({ empty, addAction, disabledReason, error, onAction, onRefresh }: {
-  empty: LibraryEmptyState;
-  addAction: ReturnType<typeof getLibraryAddAction>;
-  disabledReason: string;
-  error?: string;
-  onAction: (action: LibraryEmptyState["action"]) => void;
-  onRefresh: () => void;
-}) {
-  const actionLabel = empty.action === "clear_filters" ? "Clear filters"
-    : LIBRARY_STATES.find((tab) => tab.value === empty.action)?.label;
-  return (
-    <div className="flex flex-col items-center gap-3 rounded-[10px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center" data-library-empty={error ? "refresh" : empty.action}>
-      <h2 className="text-[15px] font-medium text-gray-900">{error ? "Your Library is unavailable" : empty.title}</h2>
-      <p className="max-w-md text-[13px] text-gray-500">{error ?? empty.description}</p>
-      {error ? (
-        <DenButton variant="secondary" onClick={onRefresh}>Refresh</DenButton>
-      ) : empty.action === "add" ? addAction ? (
-        <DenButton href={addAction.href} variant="secondary">{addAction.label}</DenButton>
-      ) : (
-        <p className="text-[13px] text-gray-500">{disabledReason}</p>
-      ) : (
-        <DenButton variant="secondary" onClick={() => onAction(empty.action)}>{actionLabel}</DenButton>
-      )}
-    </div>
-  );
-}
-
-export function LibraryScreen() {
-  const { orgContext, orgSlug } = useOrgDashboard();
-  const { data: items = [], isLoading, isFetching, error, refetch } = useLibrary();
-  const searchParams = useSearchParams();
-  const [activeState, setActiveState] = useState<LibraryState>(LIBRARY_DEFAULT_STATE);
-  const [activeKind, setActiveKind] = useState<LibraryKind>(LIBRARY_DEFAULT_KIND);
-  const [layout, setLayout] = useState<LibraryLayout>("grid");
-  const [query, setQuery] = useState("");
-  const [focusedKey, setFocusedKey] = useState<string | null>(null);
-  const handledFocusRef = useRef<string | null>(null);
-  const orgName = orgContext?.organization.name ?? "your organization";
-  const requestedFocus = searchParams.get("focus");
-  const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.roles);
-  const addAction = getLibraryAddAction({ kind: activeKind, isAdmin: access.isAdmin, mcpConnections: orgContext?.capabilities.mcpConnections === true, orgSlug });
-  const addLabel = activeKind === "mcps" ? "Add MCP" : activeKind === "skills" ? "Create skill" : "Add plugin";
-  const disabledReason = !orgContext ? "Loading your organization…"
-    : activeKind === "mcps" && !orgContext.capabilities.mcpConnections ? "Connections are not enabled for this organization."
-      : "An organization admin manages additions to this Library.";
-  const errorMessage = error ? error instanceof Error ? error.message : "Failed to load library." : undefined;
-  const view = getLibraryView(items, activeKind, activeState, query);
-
-  useEffect(() => {
-    try {
-      setLayout(parseLibraryLayout(window.localStorage.getItem(LIBRARY_LAYOUT_KEY)));
-    } catch {
-      // Storage can be blocked; the default view remains usable.
+  async function remove() {
+    if (item.type === "connection") {
+      await deleteConnection.mutateAsync(item.id);
+    } else if (item.type === "plugin") {
+      const { response, payload } = await requestJson(`/v1/plugins/${encodeURIComponent(item.id)}/archive`, { method: "POST", body: "{}" }, 15000);
+      if (!response.ok) throw getRequestError(payload, response, "Could not remove it.");
+      await queryClient.invalidateQueries({ queryKey: pluginQueryKeys.all });
     }
-  }, []);
-
-  useEffect(() => {
-    if (!requestedFocus || handledFocusRef.current === requestedFocus) return;
-    const focus = getLibraryFocus(items, requestedFocus);
-    if (!focus) return;
-    handledFocusRef.current = requestedFocus;
-    setActiveState(focus.state);
-    setActiveKind(focus.kind);
-    setQuery("");
-    setFocusedKey(focus.key);
-  }, [items, requestedFocus]);
-
-  useEffect(() => {
-    if (!focusedKey) return;
-    const row = [...document.querySelectorAll<HTMLElement>("[data-library-item-key]")]
-      .find((candidate) => candidate.dataset.libraryItemKey === focusedKey);
-    if (!row) return;
-    row.scrollIntoView({ block: "center" });
-    const timeout = window.setTimeout(() => setFocusedKey(null), 2_000);
-    return () => window.clearTimeout(timeout);
-  }, [focusedKey]);
-
-  function selectLayout(next: LibraryLayout) {
-    setLayout(next);
-    try {
-      window.localStorage.setItem(LIBRARY_LAYOUT_KEY, next);
-    } catch {
-      // Explicit selection still works for this visit without browser storage.
-    }
+    await queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items });
+    toast({ title: `${item.name} is removed`, description: "Nobody can use it anymore." });
   }
 
-  const rows = view.visibleItems.map((item) => (
-    <LibraryRow key={`${item.type}-${item.id}`} item={item} isFocused={focusedKey === `${item.type}-${item.id}`} orgName={orgName} orgSlug={orgSlug} layout={layout} />
-  ));
+  const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const ready = libraryItemReady(item);
+  const status = ready ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up";
+  const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
+  const action = needsSignIn && item.type === "connection" ? (
+    item.transport === "native" ? (
+      <DenButton variant="secondary" size="xs" aria-label="Sign in" href={`${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`}>Sign in</DenButton>
+    ) : (
+      <DenButton variant="secondary" size="xs" aria-label={apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : "Sign in"} loading={signIn.pendingId === item.id} onClick={() => void signIn.signIn(item)}>
+        {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : "Sign in"}
+      </DenButton>
+    )
+  ) : (
+    <ItemMenu
+      label={`More for ${item.name}`}
+      entries={[
+        { label: "Open", onSelect: () => router.push(href) },
+        ...(item.type === "workflow" ? [{ label: "See runs", onSelect: () => router.push(`${href}?tab=runs`) }] : []),
+        ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
+        ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
+        ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
+      ]}
+    />
+  );
 
   return (
-    <TooltipProvider>
-    <div className="px-4 pb-7 pt-5 sm:px-8" data-testid="den-library" data-library-kind={activeKind} data-library-layout={layout}>
-      <DashboardHeaderActions>
-        <LibraryAddControl action={addAction} label={addLabel} disabledReason={disabledReason} />
-      </DashboardHeaderActions>
-
-      <div className="mb-4 flex h-12 min-w-0 items-end justify-between gap-x-7 border-b border-gray-200">
-        <div className="-mb-px min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <UnderlineTabs
-            className="!border-0 [&>nav]:!m-0 [&>nav]:!flex-nowrap [&>nav]:!gap-7 [&_[role=tab]]:h-12 [&_[role=tab]]:shrink-0 [&_[role=tab]]:!pb-0 [&_[role=tab]]:!text-sm [&_[role=tab]]:!leading-5 [&_[role=tab]]:focus-visible:outline-2 [&_[role=tab]]:focus-visible:outline-gray-900 [&_[role=tab][aria-selected=true]]:!border-gray-900 [&_[role=tab][aria-selected=true]]:!text-gray-900"
-            tabs={view.tabs.map((tab) => ({
-              ...tab,
-              count: view.counts[tab.value],
-              countTone: tab.value === "needs_signin" || tab.value === "needs_setup" ? "warning" : tab.value === "needs_admin_setup" ? "danger" : "neutral",
-              countClassName: `!h-[22px] min-w-6 justify-center !px-1.5 !py-0 !text-xs ${view.counts[tab.value] === 0 ? "!bg-gray-100 !text-gray-500" : ""}`,
-            }))}
-            activeTab={view.activeState}
-            onChange={setActiveState}
-            showZeroCounts
-          />
-        </div>
-        <div className="w-[min(280px,40%)] shrink-0 self-center sm:ml-auto sm:w-[280px]">
-          <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your library" aria-label="Search your library" className="!h-9 !rounded-[10px]" />
-        </div>
-      </div>
-
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-2" aria-label="Library filters">
-        <div className="flex items-center gap-2">
-          {LIBRARY_KINDS.map((filter) => (
-            <button
-              key={filter.value}
-              type="button"
-              aria-pressed={activeKind === filter.value}
-              onClick={() => { setActiveKind(filter.value); setActiveState(LIBRARY_DEFAULT_STATE); }}
-              className={`inline-flex h-[30px] items-center rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 ${activeKind === filter.value ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-500 hover:border-gray-400 hover:text-gray-900"}`}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-1" role="group" aria-label="Library view">
-          {([{ value: "grid", label: "Card view", icon: LayoutGrid }, { value: "list", label: "List view", icon: List }] satisfies { value: LibraryLayout; label: string; icon: typeof List }[]).map(({ value, label, icon: Icon }) => (
-            <Tooltip key={value}>
-              <TooltipTrigger type="button" aria-label={label} title={label} aria-pressed={layout === value} onClick={() => selectLayout(value)} className={`flex h-[30px] w-8 items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 ${layout === value ? "bg-gray-100 text-gray-900" : "text-gray-500 hover:bg-gray-100"}`}>
-                <Icon aria-hidden className="size-4" />
-              </TooltipTrigger>
-              <TooltipContent>{label}</TooltipContent>
-            </Tooltip>
-          ))}
-          <button type="button" aria-label="Refresh" title="Refresh" disabled={isFetching} onClick={() => void refetch()} className="flex h-[30px] w-8 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50">
-            <RefreshCw aria-hidden className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
-          </button>
-          {errorMessage && items.length > 0 ? (
-            <Tooltip>
-              <TooltipTrigger aria-label="Library refresh failed" className="flex h-[30px] w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100">
-                <TriangleAlert aria-hidden className="size-4" />
-              </TooltipTrigger>
-              <TooltipContent>{errorMessage} Use Refresh to try again.</TooltipContent>
-            </Tooltip>
-          ) : null}
-        </div>
-      </div>
-
-      {isLoading ? (
-        <div role="status" aria-label="Loading your library" className={layout === "list" ? "flex flex-col gap-2" : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3"}>
-          {[0, 1, 2].map((index) => <div key={index} aria-hidden className={`bg-gray-100 motion-safe:animate-pulse ${layout === "list" ? "h-[42px] rounded-lg" : "h-[104px] rounded-xl"}`} />)}
-        </div>
-      ) : view.visibleItems.length === 0 ? (
-        <LibraryEmpty
-          empty={view.empty}
-          addAction={addAction}
-          disabledReason={disabledReason}
-          error={items.length === 0 ? errorMessage : undefined}
-          onRefresh={() => void refetch()}
-          onAction={(action) => {
-            if (action === "clear_filters") {
-              setQuery("");
-              setActiveState(LIBRARY_DEFAULT_STATE);
-            } else if (action !== "add") setActiveState(action);
-          }}
-        />
-      ) : (
-        <section data-library-section={view.activeState} aria-label={view.tabs.find((tab) => tab.value === view.activeState)?.label}>
-          {layout === "grid" ? <div data-library-grid className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3">{rows}</div> : <div data-library-list className="overflow-x-auto"><DenList className="min-w-[560px] !rounded-xl">{rows}</DenList></div>}
-        </section>
-      )}
-    </div>
-    </TooltipProvider>
+    <LibraryCompactRow
+      href={href}
+      kind={item.type}
+      testName={item.name}
+      logo={item.type === "connection"
+        ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
+        : item.type === "workflow" || libraryFilterOf(item) === "skills"
+          ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
+          // A plugin wears the same tile as on Manage › Plugins and on its own page.
+          : <PluginLogo name={item.name} />}
+      name={item.name}
+      description={workflowLastRunFailed(item)
+        ? <WorkflowFailedDescription reason={item.failureReason} />
+        : item.description ? libraryItemDescription(item) : undefined}
+      source={mine ? "You" : receivedStatus(item.edges)}
+      action={needsSignIn ? action : ready || item.type === "plugin" ? action : <span className="text-[12px] text-[var(--dls-text-secondary)]">{status}</span>}
+      revealAction={!needsSignIn && (ready || item.type === "plugin")}
+    />
   );
+}
+
+/** No saved workflows yet: say where they come from, in the person's words. */
+function WorkflowsEmpty() {
+  return (
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-2 px-5 py-8 text-center" data-testid="library-workflows-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">No saved workflows yet</h2>
+        <p className="max-w-sm text-[13px] text-[var(--dls-text-secondary)]">
+          Ask OpenWork to do something in chat, like a morning brief from your email and calendar. When it works, say “save this” and it shows up here.
+        </p>
+      </div>
+    </ItemPanel>
+  );
+}
+
+function LibraryEmpty({ onAdd }: { onAdd: () => void }) {
+  return (
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-3 px-5 py-8 text-center" data-testid="library-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">Nothing in your Library yet</h2>
+        <p className="text-[13px] text-[var(--dls-text-secondary)]">Add a connector, skill or plugin.</p>
+        <DenButton icon={Plus} onClick={onAdd}>Add to library</DenButton>
+        <p className="text-xs text-[var(--dls-text-secondary)]">Only you can use it until you share it.</p>
+      </div>
+    </ItemPanel>
+  );
+}
+
+// The boundary useSearchParams needs for the static build sits inside this module, not the
+// page: a boundary above the module would show its empty fallback while the module loads,
+// and React keeps a fallback up for at least 300ms.
+export function LibraryScreen() {
+  return (
+    <Suspense fallback={null}>
+      <LibraryContent />
+    </Suspense>
+  );
+}
+
+function LibraryContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { orgSlug, orgContext } = useOrgDashboard();
+  const library = useLibrary();
+  const usable = useMcpConnections("usable");
+  const signIn = useMemberSignIn();
+  const prefetchCatalog = usePrefetchConnectorCatalog();
+  const models = useLibraryModels();
+  const modelSignIn = useModelSignIn();
+  const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
+  const [query, setQuery] = useState("");
+  const filter = parseLibraryFilter(searchParams.get("show"));
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const introUnseen = useFeatureIntroUnseen();
+  // With feature intros on, the viewer's own keys load on every tab: they count toward "anything in my Library".
+  const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
+  const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
+  const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
+  const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
+  const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
+  const viewerId = orgContext?.currentMember.id ?? null;
+  const items = library.data ?? [];
+  const groups = groupLibrary({
+    items,
+    filter,
+    query,
+    isMine: (item) => isOwnedByViewer(item, viewerId, new Set(ownedConnections.keys())),
+    needsSignIn: onlyNeedsSignIn,
+  });
+
+  function setFilter(next: LibraryFilter) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "all") params.delete("show");
+    else params.set("show", next);
+    const suffix = params.toString();
+    router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
+  }
+
+  function openAdd() {
+    prefetchCatalog();
+    setAddOpen(true);
+  }
+
+  function hrefFor(choice: LibraryAddChoice): string {
+    if (choice === "connector") return getLibraryAddConnectorRoute(orgSlug);
+    return getLibraryNewPluginRoute(orgSlug, choice === "skill" ? "skill" : undefined);
+  }
+
+  const showModels = filter === "all" || filter === "models";
+  const modelRows = showModels
+    ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
+    : [];
+  const hasModels = (models.data ?? []).length > 0;
+  // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
+  const personalPending = introsEnabled && !personal.loaded && !personal.error;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
+  // Feature intros: null while anything is loading or failed, so the page shows as before.
+  const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
+    ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
+    : null;
+  // A short Library is read at a glance; the filter earns its place once the list runs long.
+  const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
+
+  // What waits on you first, then one section per kind.
+  const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
+  const visible = [...groups.mine, ...groups.received].sort((left, right) => left.name.localeCompare(right.name));
+  const kindSections: { key: string; title: string; match: (item: LibraryItem) => boolean }[] = [
+    { key: "connectors", title: "Connectors", match: (item) => libraryFilterOf(item) === "connectors" },
+    { key: "skills", title: "Skills", match: (item) => libraryFilterOf(item) === "skills" },
+    { key: "plugins", title: "Plugins", match: (item) => libraryFilterOf(item) === "plugins" },
+    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === "workflows" },
+  ];
+  const sections = [
+    { key: "attention", title: "Needs your sign-in", items: visible.filter(needsViewerSignIn), models: modelRows.filter((provider) => provider.state === "needs_signin") },
+    ...kindSections.map((section) => ({ ...section, items: visible.filter((item) => !needsViewerSignIn(item) && section.match(item)), models: [] as typeof modelRows })),
+    { key: "models", title: "Models", items: [] as LibraryItem[], models: modelRows.filter((provider) => provider.state !== "needs_signin") },
+  ].filter((section) => section.items.length + section.models.length > 0);
+
+  const listBody = (
+    <>
+      {library.isLoading || (personalPending && items.length === 0 && !hasModels) ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+
+      {filter === "models" && personalRows.length > 0 ? (
+        <LibraryCompactSurface>
+          <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
+            {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
+              logo={<RowTile icon={KeyRound} />} name={provider.name} source="You" />)}
+          </LibraryCompactSection>
+        </LibraryCompactSurface>
+      ) : null}
+
+      {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
+        {sections.map((section) => (
+          <LibraryCompactSection key={section.key} title={section.title} count={section.items.length + section.models.length} tone={section.key === "attention" ? "attention" : "default"} testId={`library-section-${section.key}`}>
+            {section.items.map((item) => (
+              <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={mineKeys.has(`${item.type}:${item.id}`)} signIn={signIn} />
+            ))}
+            {section.models.map((provider) => (
+              <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
+            ))}
+          </LibraryCompactSection>
+        ))}
+      </LibraryCompactSurface> : null}
+
+      {filter === "models" && models.error ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
+          {models.error instanceof Error ? models.error.message : "Your models did not load."}
+        </p>
+      ) : null}
+
+      {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
+          Your organization hasn't given you any models yet.
+        </p>
+      ) : null}
+
+      {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
+
+      {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
+      ) : null}
+    </>
+  );
+
+  const page = (
+    <ItemPage testId="library-screen" wide>
+      <DenPageHeader
+        title="My Library"
+        size="compact"
+        action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
+      />
+
+      {library.error ? (
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
+          {library.error instanceof Error ? library.error.message : "Your Library did not load."}
+        </p>
+      ) : null}
+
+      {empty && filter !== "models" ? <LibraryEmpty onAdd={openAdd} /> : null}
+      {filter === "models" && personal.error ? <p role="alert" className="text-sm text-red-600">{personal.error}</p> : null}
+      {(!empty || filter === "models") && !library.error ? (
+        <>
+          <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
+            <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
+            {showFilter ? (
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
+                <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
+              </div>
+            ) : null}
+          </div>
+
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
+
+          {filter === "all" || filter === "workflows"
+            ? listBody
+            : <FeatureIntroGate introKey={LIBRARY_TAB_INTROS[filter]} facts={introFacts}>{listBody}</FeatureIntroGate>}
+        </>
+      ) : null}
+
+      <LibraryAddDialog open={addOpen} onOpenChange={setAddOpen} hrefFor={hrefFor} />
+      <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
+    </ItemPage>
+  );
+
+  // With feature intros on, the Library intro replaces the page while the viewer has nothing at all, and each
+  // tab with nothing of its kind shows its box (DESIGN.md I1, I2); with the flag off the page renders as before.
+  return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

@@ -4,8 +4,10 @@ import { McpAppTile, type DashboardLaunchEndpoint } from "../dashboard/mcp-app-t
 import { liveGeneratedAppEntry, liveGeneratedAppCacheScope, nextViewerDayBoundary, viewerLocalDate } from "./live-generated-app-model";
 export { isLiveGeneratedApp } from "./live-generated-app-model";
 import { useAppsClient } from "./use-apps";
+import type { DashboardTileActions } from "../dashboard/dashboard-tile-shell";
 
-export function LiveGeneratedApp({ view, revision, fallbackEndpoints }: {
+export function LiveGeneratedApp({ view, revision, fallbackEndpoints, renderActions }: {
+  renderActions?: DashboardTileActions;
   view: GeneratedArtifactView;
   revision: GeneratedArtifactViewRevision;
   fallbackEndpoints?: DashboardLaunchEndpoint[];
@@ -15,7 +17,7 @@ export function LiveGeneratedApp({ view, revision, fallbackEndpoints }: {
   const entry = liveGeneratedAppEntry(view, revision, timeZone, now);
   const cacheScopeKey = liveGeneratedAppCacheScope(scope);
   if (!client || !orgId || !scope[1]) return null;
-  return <McpAppTile key={JSON.stringify([cacheScopeKey, entry.id])} entry={entry} cacheScopeKey={cacheScopeKey} fallbackEndpoints={fallbackEndpoints} />;
+  return <McpAppTile key={JSON.stringify([cacheScopeKey, entry.id])} entry={entry} cacheScopeKey={cacheScopeKey} fallbackEndpoints={fallbackEndpoints} renderActions={renderActions} />;
 }
 
 export function useViewerDay() {

@@ -4,6 +4,8 @@ import {
   isEquivalentOAuthDiscoveryAlias,
   type EnterpriseMcpOAuthAuthorizationHandle,
   type EnterpriseMcpOAuthClientRegistration,
+  type EnterpriseMcpOAuthCredential,
+  type EnterpriseMcpOAuthRefreshOutcome,
   type EnterpriseMcpOAuthPersistence,
   type EnterpriseMcpPersistenceContext,
   type StoredOAuthClientInformation,
@@ -63,6 +65,7 @@ function invalidCredentialHealth(
 }
 
 function oauthIssuer(configuration: ExternalMcpOAuthConfiguration | null | undefined): string | undefined {
+  if (configuration?.manualOAuthEndpoints) return new URL(configuration.manualOAuthEndpoints.authorizationEndpoint).origin
   const discovery = configuration?.discovery
   const metadata = discovery?.authorizationServerMetadata
   const metadataIssuer = metadata
@@ -228,8 +231,10 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     }
   }
 
+  // OAuth state (client registration, PKCE transactions, rotating tokens) is
+  // read back moments after it is written, so these reads use the primary.
   private async refreshConnection(): Promise<void> {
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ExternalMcpConnectionTable)
       .where(and(
@@ -244,7 +249,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
 
   private async memberAccount() {
     if (!this.member) return null
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ConnectedAccountTable)
       .where(and(
@@ -258,11 +263,37 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       : null
   }
 
+  private storedCredential(
+    row: {
+      id: string
+      updatedAt: Date
+      accessToken: string | null
+      tokenType: string | null
+      refreshToken: string | null
+      expiresAt: Date | null
+    } | null | undefined,
+    scope: string | undefined,
+  ): EnterpriseMcpOAuthCredential | undefined {
+    if (!row?.accessToken) return undefined
+    const issuer = oauthIssuer(this.connection.oauthConfiguration)
+    return {
+      tokens: {
+        access_token: row.accessToken,
+        token_type: row.tokenType ?? "Bearer",
+        refresh_token: row.refreshToken ?? undefined,
+        scope,
+        ...(issuer ? { issuer } : {}),
+      },
+      expiresAt: row.expiresAt?.getTime(),
+      revision: `${row.id}:${row.updatedAt.getTime()}`,
+    }
+  }
+
   readonly clientRegistrations = {
     load: async (context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined> => {
       assertCommitActive(context)
       await this.refreshConnection()
-      const rows = await db
+      const rows = await db.$primary
         .select()
         .from(OrgOAuthClientTable)
         .where(and(
@@ -292,7 +323,10 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           `The pre-registered OAuth client must allowlist the callback URL ${currentRedirectUri}.`,
         )
       }
-      const clientInformation = restoredClientInformation({ ...row, extra })
+      const restored = restoredClientInformation({ ...row, extra })
+      const clientInformation = this.connection.oauthConfiguration?.manualOAuthEndpoints
+        ? { ...restored, issuer: oauthIssuer(this.connection.oauthConfiguration) }
+        : restored
       return {
         clientInformation,
         revision: clientRevision(row),
@@ -619,39 +653,12 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       assertCommitActive(context)
       await this.refreshConnection()
       this.loadedRevision = undefined
-      if (this.isPerMember) {
-        const account = await this.memberAccount()
-        if (!account?.accessToken) return undefined
-        this.loadedRevision = `${account.id}:${account.updatedAt.getTime()}`
-        return {
-          tokens: {
-            access_token: account.accessToken,
-            token_type: account.tokenType ?? "Bearer",
-            refresh_token: account.refreshToken ?? undefined,
-            scope: account.scopes?.join(" ") ?? undefined,
-            ...(oauthIssuer(this.connection.oauthConfiguration)
-              ? { issuer: oauthIssuer(this.connection.oauthConfiguration) }
-              : {}),
-          },
-          expiresAt: account.expiresAt?.getTime(),
-          revision: this.loadedRevision,
-        }
-      }
-      if (!this.connection.accessToken) return undefined
-      this.loadedRevision = `${this.connection.id}:${this.connection.updatedAt.getTime()}`
-      return {
-        tokens: {
-          access_token: this.connection.accessToken,
-          token_type: this.connection.tokenType ?? "Bearer",
-          refresh_token: this.connection.refreshToken ?? undefined,
-          scope: this.connection.scope ?? undefined,
-          ...(oauthIssuer(this.connection.oauthConfiguration)
-            ? { issuer: oauthIssuer(this.connection.oauthConfiguration) }
-            : {}),
-        },
-        expiresAt: this.connection.expiresAt?.getTime(),
-        revision: this.loadedRevision,
-      }
+      const account = this.isPerMember ? await this.memberAccount() : undefined
+      const credential = this.isPerMember
+        ? this.storedCredential(account, account?.scopes?.join(" "))
+        : this.storedCredential(this.connection, this.connection.scope ?? undefined)
+      this.loadedRevision = credential?.revision
+      return credential
     },
 
     save: async (input: {
@@ -812,6 +819,96 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         assertCommitActive(input.context)
       })
       await this.refreshConnection()
+    },
+
+    refreshExclusively: async (input: {
+      context: EnterpriseMcpPersistenceContext
+      refreshToken: string
+      refresh: () => Promise<{ tokens: StoredOAuthTokens; expiresAt?: number } | undefined>
+    }): Promise<EnterpriseMcpOAuthRefreshOutcome> => {
+      // The row lock is held across the provider call, so a concurrent request
+      // waits here and then sees the rotated refresh token instead of sending
+      // the old one. Per-member refreshes lock only that member's account.
+      const outcome = await db.transaction(async (tx): Promise<EnterpriseMcpOAuthRefreshOutcome> => {
+        const connectionQuery = tx
+          .select()
+          .from(ExternalMcpConnectionTable)
+          .where(and(
+            eq(ExternalMcpConnectionTable.id, this.connection.id),
+            eq(ExternalMcpConnectionTable.organizationId, this.connection.organizationId),
+          ))
+          .limit(1)
+        const connection = (this.isPerMember ? await connectionQuery : await connectionQuery.for("update"))[0]
+        if (!connection) throw new Error("The enterprise MCP connection no longer exists.")
+        this.assertCurrentIdentity(connection)
+        const lockedAccount = this.isPerMember && this.member
+          ? (await tx
+              .select()
+              .from(ConnectedAccountTable)
+              .where(and(
+                eq(ConnectedAccountTable.organizationId, this.connection.organizationId),
+                eq(ConnectedAccountTable.orgMembershipId, this.member.orgMembershipId),
+                eq(ConnectedAccountTable.providerId, this.connection.id),
+              ))
+              .limit(1)
+              .for("update"))[0]
+          : undefined
+        const account = lockedAccount
+          ? { ...lockedAccount, scopes: normalizeConnectedAccountScopes(lockedAccount.scopes) }
+          : undefined
+        assertCommitActive(input.context)
+        const current = this.isPerMember
+          ? this.storedCredential(account, account?.scopes?.join(" "))
+          : this.storedCredential(connection, connection.scope ?? undefined)
+        if (current?.tokens.refresh_token !== input.refreshToken) {
+          return { status: "superseded", ...(current ? { credential: current } : {}) }
+        }
+
+        const refreshed = await input.refresh()
+        if (!refreshed) return { status: "not-saved" }
+        const { tokens } = refreshed
+        const selectedIssuer = oauthIssuer(connection.oauthConfiguration)
+        if (tokens.issuer && selectedIssuer && !isEquivalentOAuthDiscoveryAlias(tokens.issuer, selectedIssuer)) {
+          throw new EnterpriseMcpOAuthContractError(
+            "MCP_OAUTH_ISSUER_MISMATCH",
+            "The OAuth credential does not match the selected authorization server issuer.",
+          )
+        }
+        const expiresAt = refreshed.expiresAt === undefined ? null : new Date(refreshed.expiresAt)
+        assertCommitActive(input.context)
+        if (account) {
+          await tx
+            .update(ConnectedAccountTable)
+            .set({
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token ?? account.refreshToken ?? null,
+              tokenType: tokens.token_type ?? null,
+              ...(tokens.scope === undefined ? {} : { scopes: parseGrantedOAuthScopes(tokens.scope) }),
+              expiresAt,
+              credentialHealth: credentialHealth("ready", null),
+              updatedAt: new Date(Math.max(Date.now(), account.updatedAt.getTime()) + 1),
+            })
+            .where(eq(ConnectedAccountTable.id, account.id))
+        } else {
+          await tx
+            .update(ExternalMcpConnectionTable)
+            .set({
+              accessToken: tokens.access_token,
+              refreshToken: tokens.refresh_token ?? connection.refreshToken ?? null,
+              tokenType: tokens.token_type ?? null,
+              ...(tokens.scope === undefined ? {} : { scope: tokens.scope }),
+              expiresAt,
+              credentialHealth: credentialHealth("ready", null),
+              updatedAt: new Date(Math.max(Date.now(), connection.updatedAt.getTime()) + 1),
+              connectedAt: new Date(),
+            })
+            .where(eq(ExternalMcpConnectionTable.id, connection.id))
+        }
+        assertCommitActive(input.context)
+        return { status: "refreshed" }
+      })
+      await this.refreshConnection()
+      return outcome
     },
 
     invalidate: async (input: {

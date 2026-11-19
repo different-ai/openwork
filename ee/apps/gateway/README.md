@@ -31,6 +31,33 @@ then `PORT`, then `INFERENCE_PORT`, then `8791`. Local development scripts use
 `GATEWAY_PORT` with the deprecated `INFERENCE_PORT` fallback. Development mode
 retains its existing non-production defaults; use `.env.example` for a local setup.
 
+## Smart Model Router
+
+Smart Model Router routes each OpenAI chat
+request sent with model `openwork-smart-<router id>` to one of that Smart
+Router's models: Jev scores the prompt against the router's tasks, the model
+whose tasks score highest in total answers, at the thinking level Jev scores
+(`src/auto-router/`, `docs/features/auto-router/README.md`). Set on Gateway:
+
+| Variable | Default |
+| --- | --- |
+| `TYPESAFE_API_KEY` | Unset: Smart is off (Den reports it and refuses to save routers) |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` |
+| `AUTO_ROUTER_JEV_MODEL` | `jev-latest` |
+| `AUTO_ROUTER_JEV_TIMEOUT_MS` | `4000` (200-30000) |
+| `DEN_DEPLOYMENT` | `self_hosted`; must match Den API (`cloud`) for cloud-only features |
+
+Gateway reads features with the same rules as Den API, so also give it the
+same `DEN_FEATURE_*` operator locks.
+
+The 3rd party tool endpoints below (Cursor, Claude Code, Codex) also list each
+router that applies to the key's member and has a model they can use, as
+`openwork/smart-<router name slug>-<last 4 of the aur_ id>` (resolved like model
+names; a thinking level or `[1m]` on it is ignored), and run a request naming
+one through the same handler, with the request read as Chat Completions and the
+answer written back in the tool's protocol (`src/smart-tools.ts`). Nothing is
+listed without a TypeSafe key or while the feature is off.
+
 ## Stable Contracts
 
 The service rename keeps deployment and Models contracts stable. The Gateway
@@ -90,6 +117,53 @@ before running the new runtime. Do not deploy it against the old table names.
   original inference-key store. Gateway `/api/v1/providers/:ipr/*` only accepts
   canonical `ow_gw_` keys with active same-organization membership. Neither key
   type authenticates the other route; Gateway does not require a Models tier.
+  The shared paths are `GET /api/v1/models` and `POST /api/v1/{messages,
+  chat/completions,responses}`: an `ow_gw_` key there is handled by Gateway, and
+  every other key stays on the Models handler.
+- Provider-less invocation: `POST /api/v1/messages`, `/api/v1/chat/completions`
+  and `/api/v1/responses` take a `gwm_` alias as `model` and route to the
+  provider that owns its model, within the caller's organization. That lookup
+  only picks the route; the request then runs the same provider handler as
+  `/api/v1/providers/:ipr/*`, including grant selection, credentials and usage.
+  Raw model ids are rejected (they can be ambiguous across providers), an alias
+  no provider in the organization owns is 404 `model_not_found`, and a model
+  whose provider speaks another protocol (for example an OpenAI model on
+  `/messages`) is 400 `unsupported_model_endpoint`. Path-addressed protocols
+  (Google `generateContent`, Bedrock Converse) still need the provider path.
+- `GET /api/v1/models` with a Gateway key is a local, non-cacheable OpenAI
+  `{object: "list", data}` of every model the member's grants allow across all
+  active providers in their organization. Entries carry `id` (the `gwm_` alias),
+  `object: "model"`, `created` (Unix seconds the model was added), `owned_by`
+  (provider type), `name`, and `openwork.{provider_id, provider_name,
+  upstream_model_id}`. No grants is an empty list, not an error. Call a listed
+  model through the provider-less endpoints below, or through
+  `/api/v1/providers/{openwork.provider_id}/*`. For `ow_gw_` API keys the list
+  ends with the member's Smart Routers (`id` `openwork-smart-<router id>`, name
+  `Smart: <name>`, `openwork.provider_id` `openwork-auto`,
+  `openwork.smart_router: true`), callable only through
+  `POST /api/v1/chat/completions`; desktop keys keep the plain list (the desktop
+  learns routers from Den).
+- Cursor: `GET /api/v1/cursor/models`,
+  `POST /api/v1/cursor/chat/completions` and `POST /api/v1/cursor/responses`
+  accept only `ow_gw_` keys. Models are named
+  `openwork/<name slug>-<last 4 of the ipm_ id>[:<thinking level>]`; the name is
+  resolved against the member's grants (id ending, then slug), the request is
+  translated to the model's own protocol and run through the same provider
+  handler, and the response returns in the API it came in on. Off is 404.
+- Claude Code (same feature): `GET /api/v1/claude-code/v1/models`,
+  `POST /api/v1/claude-code/v1/messages` and `/v1/messages/count_tokens` accept
+  only `ow_gw_` keys and answer in Anthropic's shapes. Same names as Cursor, with
+  `[1m]` on 1M models; Messages providers get the request as it is, others are
+  translated through Chat Completions and back. Claude Desktop's Gateway mode
+  uses this endpoint as its Gateway base URL (its picker lists only Claude
+  models).
+- Codex CLI (same feature): `GET /api/v1/codex/models` (Codex's own catalog
+  shape, `{models: [ModelInfo]}`) and `POST /api/v1/codex/responses` accept only
+  `ow_gw_` keys. Same names as Cursor; OpenAI and Azure models get the Responses
+  request as it is (within the Gateway's resource policy), others are
+  translated through Chat Completions and back, custom and namespaced tools
+  included.
+  See `docs/features/gateway-cursor-setup/README.md`.
 - Requests resolve configured provider model rows and active group/set grants.
   Explicit aliases constrain candidates before member > team > organization
   priority. Equal-priority different sets return HTTP 409 with the shared
@@ -99,6 +173,12 @@ before running the new runtime. Do not deploy it against the old table names.
   The gateway verifies all references and rewrites body/path models to `model_id`
   before provider-specific Vertex rewrites or AWS signing. Unambiguous raw model
   IDs also work; response model fields are not rewritten.
+- Aliases hide that a model is Claude, so clients send no prompt-cache
+  breakpoints. When the resolved `model_id` names Claude and the request marks
+  none, the gateway adds them (`src/prompt-cache.ts`): `cache_control` on Chat
+  Completions (OpenRouter, LiteLLM, custom) and Anthropic Messages, `cachePoint`
+  on Bedrock Converse for the Claude models Bedrock caches. At most four: the
+  last tool (Messages and Converse), the system prompt and the last messages.
 - GET provider `/models` is a local, non-cacheable list of accessible combinations,
   not the provider-account catalog. Each entry has the alias in both `id` and
   `config.id`, raw `upstreamModelId`, and group/set IDs and names. A listed grant

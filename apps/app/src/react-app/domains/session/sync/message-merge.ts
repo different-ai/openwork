@@ -69,7 +69,7 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
   return result;
 }
 
-function messageCreated(message: UIMessage) {
+export function messageCreated(message: UIMessage) {
   const metadata = message.metadata;
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null;
 
@@ -165,12 +165,6 @@ export function upsertMessageByChronology(messages: UIMessage[], message: UIMess
   }
   result.splice(insertionIndex, 0, message);
   return result;
-}
-
-export function messageListContainsAll(container: UIMessage[], required: UIMessage[]) {
-  if (required.length === 0) return true;
-  const ids = new Set(container.map((message) => message.id));
-  return required.every((message) => ids.has(message.id));
 }
 
 export function mergeSnapshotAndLiveMessages(

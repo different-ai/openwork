@@ -1,29 +1,29 @@
-export function McpConsentPermissions({ scope }: { scope: string }) {
-  const scopes = new Set(scope.split(/\s+/).filter(Boolean));
-  const canRead = scopes.has("mcp:read");
-  const canAct = scopes.has("mcp:write");
-  const permissions = [
-    ...(scopes.has("openid") || scopes.has("profile") || scopes.has("email")
-      ? ["Access the basic profile information requested by this client."] : []),
-    ...(canRead ? ["Read information and discover available tools."] : []),
-    ...(canAct ? ["Use connected tools and take actions that may create, change, or delete data."] : []),
-    ...(scopes.has("offline_access") ? ["Keep this connection available between visits."] : []),
-  ];
+import { SetupCanList, SetupTechnicalDetails } from "../(den)/_components/setup-frame-parts";
+import type { McpRedirectDescription } from "./client-identity-model";
 
+/** Plain sentences for what an OAuth scope string lets an app do. */
+export function mcpPermissionLines(scope: string): string[] {
+  const scopes = new Set(scope.split(/\s+/).filter(Boolean));
+  return [
+    ...(scopes.has("openid") || scopes.has("profile") || scopes.has("email") ? ["See your name and email"] : []),
+    ...(scopes.has("mcp:read") ? ["Find and read what is in this workspace"] : []),
+    ...(scopes.has("mcp:write") ? ["Use your connected tools, including actions that create, change, or delete data"] : []),
+    ...(scopes.has("offline_access") ? ["Stay connected until you remove it"] : []),
+  ];
+}
+
+/** "Claude Code can" and the plain list of what it gets. */
+export function McpConsentPermissions({ scope, actor = "This app" }: { scope: string; actor?: string }) {
+  return <SetupCanList actor={actor} items={mcpPermissionLines(scope)} />;
+}
+
+/** The raw scope string and app id, behind one collapsed row. */
+export function McpTechnicalDetails({ scope, clientId, redirect }: { scope: string; clientId: string | null; redirect?: McpRedirectDescription | null }) {
   return (
-    <section aria-label="Requested access" className="grid gap-3 rounded-2xl border border-current/15 p-4 text-sm">
-      <h3 className="font-semibold">Requested access</h3>
-      {permissions.length > 0 ? (
-        <ul className="list-disc space-y-2 pl-5">
-          {permissions.map((permission) => <li key={permission}>{permission}</li>)}
-        </ul>
-      ) : <p>This client is requesting the permissions listed in Connection details.</p>}
-      {canRead && !canAct ? <p>This client cannot run external tools or make changes.</p> : null}
-      <p>Choosing Authorize grants the access shown here for this connection. Your organization's rules and existing service permissions still apply.</p>
-      <details className="text-xs">
-        <summary className="cursor-pointer">Connection details</summary>
-        <p className="mt-2 break-words font-mono">{scope || "No permissions requested"}</p>
-      </details>
-    </section>
+    <SetupTechnicalDetails>
+      <span>Permissions: {scope || "none requested"}</span>
+      {clientId ? <span>App ID: {clientId}</span> : null}
+      {redirect ? <span>Full return address: <span dir="ltr" data-testid="mcp-redirect-url">{redirect.url}</span></span> : null}
+    </SetupTechnicalDetails>
   );
 }

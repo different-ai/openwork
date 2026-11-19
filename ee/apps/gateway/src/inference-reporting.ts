@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/node"
 import { createMiddleware } from "hono/factory"
 import { shouldEmitSentryLog } from "./instrumentation.js"
+import { gatewayLog } from "./log.js"
 import type { ChatCompletionReport } from "./chat-response.js"
 
 export type PayloadLogMode = "summary"
@@ -53,11 +54,16 @@ export function safeAccessUrl(input: string) {
   try { const url = new URL(input); return `${url.origin}${url.pathname}` } catch { return "[invalid-url]" }
 }
 
+const httpLog = gatewayLog.child({ component: "http" })
+
 export const inferenceAccessLogger = createMiddleware(async (c, next) => {
   const startedAt = Date.now()
   const route = ["/api/v1/models", "/api/v1/chat/completions", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other"
   try { await next() } finally {
-    console.log("[gateway-http]", { method: c.req.method, route, status: c.res.status, durationMs: Date.now() - startedAt })
+    httpLog.info("request completed", {
+      request_id: c.res.headers.get("x-openwork-request-id") ?? undefined,
+      http_method: c.req.method, http_route: route, http_status_code: c.res.status, duration_ms: Date.now() - startedAt,
+    })
   }
 })
 

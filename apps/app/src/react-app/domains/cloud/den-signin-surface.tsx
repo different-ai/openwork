@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import type { Ref } from "react";
 import {
   ArrowUpRight,
   Cloud,
@@ -10,6 +11,7 @@ import { t } from "../../../i18n";
 import { resolveExtensionIconSrc } from "../../design-system/extension-icon-src";
 import { DEFAULT_DEN_BASE_URL } from "../../../app/lib/den";
 import { DitherBackdrop } from "@/components/dither-backdrop";
+import { PageTitlebarRegion } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
 import { OrganizationServerAffordance } from "../settings/cloud/organization-server-affordance";
@@ -18,6 +20,7 @@ import { SignInFallbackNotice } from "./signin-fallback-notice";
 export type DenSignInSurfaceVariant = "panel" | "fullscreen";
 
 export type DenSignInSurfaceProps = {
+  ref?: Ref<HTMLDivElement>;
   variant?: DenSignInSurfaceVariant;
   appName?: string;
   logoUrl?: string | null;
@@ -218,14 +221,14 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
     // Paper first-load spec: same centered welcome card as WelcomePage.
     // Forced sign-in only removes the "Use Without Cloud" option.
     return (
-      <div className="relative min-h-dvh bg-background text-foreground">
+      <div ref={props.ref} className="relative min-h-dvh bg-background text-foreground">
         {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
           <DitherBackdrop />
         </div>
 
         {/* Titlebar drag region */}
-        <div className="absolute inset-x-0 top-0 z-20 h-10 mac:titlebar-drag" />
+        <PageTitlebarRegion />
 
         <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16">
           <div className="w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">

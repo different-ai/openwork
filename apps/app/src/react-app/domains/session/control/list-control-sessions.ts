@@ -1,4 +1,5 @@
-import type { OpenworkSessionActivityInventory, OpenworkSessionModel } from "@openwork/types/openwork-affordance";
+import type { SessionLink } from "@openwork/types/session-link";
+import { labelOpenworkSessionModel, type OpenworkCatalogModel, type OpenworkSessionActivityInventory, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { SessionActivityStatus } from "../status/session-activity-store";
@@ -33,6 +34,8 @@ export type ControlSessionLike = {
     archived?: number;
   };
   model?: ControlSessionEngineModel | null;
+  /** The session this one was started from, as a side chat or by its agent. */
+  openworkSessionLink?: SessionLink | null;
 };
 
 export type ListedControlSession = OpenworkSessionActivityInventory & {
@@ -51,6 +54,7 @@ export type ListControlSessionsState = {
   workspaces: ControlSessionWorkspace[];
   sessionsByWorkspaceId: Record<string, ControlSessionLike[]>;
   pinnedIds: readonly string[];
+  modelCatalogByWorkspaceId?: Record<string, readonly OpenworkCatalogModel[]>;
   statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
 };
@@ -122,7 +126,7 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         working: activity.working,
         descendantActivity: activity.descendantActivity,
         inventoryComplete: activity.inventoryComplete,
-        model: controlSessionModel(session),
+        model: labelOpenworkSessionModel(controlSessionModel(session), state.modelCatalogByWorkspaceId?.[workspace.id] ?? []),
       });
     }
   }

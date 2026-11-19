@@ -1,33 +1,45 @@
 /** @jsxImportSource react */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import { DashboardConnectionCard } from "./dashboard-connection-card";
-import { connectionCardPayloadFromChatToolResult, reconnectActionFromChatToolResult } from "@/components/tools/error-attribution";
+import { appToolResultConnectionToolName, connectionCardFromMcpToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
-import type { ChatToolReconnectAction } from "@/components/tools/error-attribution";
+import { MCP_APP_LAUNCH_TOOL_NAME, mcpAppIdSchema, mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import { Play } from "lucide-react";
 
 import {
   OpenworkServerError,
   type OpenworkMcpAppResource,
+  type OpenworkMcpAppToolResult,
   type OpenworkServerClient,
 } from "@/app/lib/openwork-server";
-import { McpAppSandboxView, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
-import { snapshotMcpAppArguments } from "@/components/chat/mcp-app-origin";
+import { keptMcpAppResultIdentity } from "@/app/lib/mcp-app-result-cache";
+import { McpAppSandboxView, sameMcpAppDocument, type PreservedMcpAppResult } from "@/components/chat/mcp-app-frame";
+import { snapshotMcpAppArguments, type McpAppOrigin } from "@/components/chat/mcp-app-origin";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useWorkspace } from "@/react-app/shell/workspace-provider";
-import { DashboardTileShell } from "./dashboard-tile-shell";
+import { onCloudCredentialRefreshed, readCloudCredentialRevision } from "@/react-app/domains/connections/cloud-credential-revision";
+import { DashboardTileShell, type DashboardTileActions } from "./dashboard-tile-shell";
 import { resolveDashboardMcpApp } from "./dashboard-mcp-app-resolution";
+import { scheduleDashboardLaunch } from "./dashboard-launch-scheduler";
+import { memberAccessCheckPending, memberAccessConfirmed, waitForMemberAccessCheck } from "./mcp-app-member-access";
+import { useArtifactSurfaceActive } from "./retained-artifact-surface";
+import { useDashboardTileGeometry } from "./use-dashboard-tile-geometry";
 import {
   DASHBOARD_AUTO_REFRESH_INTERVAL_MS,
+  dashboardTileDocumentPending,
   dashboardTileLaunchIsApproved,
   dashboardTileRunsAutomatically,
+  loadDashboardTileDocument,
   readDashboardTileCache,
+  rememberDashboardTileRead,
   removeDashboardTileCache,
+  savedLaunchResult,
   shouldAutoRefreshDashboardTile,
   writeDashboardTileCache,
 } from "./dashboard-tile-cache";
-import type { DashboardMcpAppEntry } from "./granted-dashboard-store";
+import type { DashboardMcpAppEntry } from "./dashboard-mcp-app-entry";
 
 /** A workspace MCP runtime a tile may launch through. */
 export type DashboardLaunchEndpoint = {
@@ -41,24 +53,61 @@ export type DashboardLaunchEndpoint = {
  */
 const EMPTY_ARGUMENTS: Record<string, unknown> = {};
 
+/** A saved App usually starts faster than a placeholder can be read, so one waits this long. */
+const SAVED_VIEW_PLACEHOLDER_DELAY_MS = 250;
+
+/** When the host obtained a tile's launch result; set by OpenWork, never by the App. */
+const MCP_APP_LAUNCHED_AT_META = "openwork/launchedAt";
+
+type TileDocument = { id: number; active: boolean; failed: boolean };
+
+type ReadyTileState = {
+  phase: "ready";
+  app: OpenworkMcpAppResource;
+  result: PreservedMcpAppResult;
+  endpoint: DashboardLaunchEndpoint;
+  origin: McpAppOrigin;
+  lifetime: TileDocument;
+  argumentsSignature: string;
+  cachedAt: number;
+  autoLaunchEligible?: boolean;
+  /**
+   * The lease a saved document uses after a launch for the same App document
+   * succeeds. The saved view stays on screen and works through it, rather
+   * than being replaced by an empty copy of itself.
+   */
+  live?: LiveTarget;
+};
+
+type LiveTarget = { origin: McpAppOrigin; app: OpenworkMcpAppResource };
+
+/** The lease a ready tile's document calls through, if it has one. */
+function liveTargetOf(state: ReadyTileState): LiveTarget | null {
+  if (state.live) return state.live;
+  return state.origin.readOnly ? null : { origin: state.origin, app: state.app };
+}
+
 type TileState =
   | { phase: "idle"; revokeAutoLaunch?: boolean }
   | { phase: "loading" }
-  | {
-      phase: "ready";
-      app: OpenworkMcpAppResource;
-      result: PreservedMcpAppResult;
-      endpoint: DashboardLaunchEndpoint;
-      lifetime?: { active: boolean };
-      cachedAt: number;
-      /** True only when the successful call did not need an approval override. */
-      autoLaunchEligible?: boolean;
-    }
-  | { phase: "connection"; connection: ConnectionActionPayload; action: ChatToolReconnectAction | null; output: unknown }
+  | ReadyTileState
+  | { phase: "connection"; connection: ConnectionActionPayload; output: unknown; toolName: string }
   | { phase: "closed" }
-  | { phase: "error"; message: string };
+  | { phase: "error"; message: string; preservePrevious?: boolean };
 
-type RefreshState = "idle" | "refreshing" | "failed" | "approval-required";
+type TileAttempt = {
+  nonce: number;
+  promise: Promise<TileState> | null;
+  controller: AbortController;
+  candidates: DashboardLaunchEndpoint[];
+  admitted: boolean;
+  endpoint?: DashboardLaunchEndpoint;
+  document?: TileDocument;
+  /** The lease this launch holds as soon as it has one, before its result returns. */
+  lease?: LiveTarget;
+};
+
+type RefreshState = "idle" | "refreshing" | "failed";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -84,8 +133,12 @@ function launchFailureMessage(content: Array<Record<string, unknown>>): string |
   return text;
 }
 
-function freshnessLabel(cachedAt: number): string {
-  const ageMinutes = Math.max(0, Math.floor((Date.now() - cachedAt) / 60_000));
+function freshnessLabel({ result, cachedAt }: Pick<ReadyTileState, "result" | "cachedAt">, now = Date.now()): string {
+  const payload = result.structuredContent;
+  const artifact = payload?.schemaVersion === "1" && isRecord(payload.artifact) ? payload.artifact : null;
+  const generatedAt = typeof artifact?.generatedAt === "string" ? Date.parse(artifact.generatedAt) : NaN;
+  const updatedAt = Number.isFinite(generatedAt) ? generatedAt : cachedAt;
+  const ageMinutes = Math.max(0, Math.floor((now - updatedAt) / 60_000));
   if (ageMinutes < 1) return "Updated just now";
   if (ageMinutes === 1) return "Updated 1 minute ago";
   if (ageMinutes < 60) return `Updated ${ageMinutes} minutes ago`;
@@ -93,8 +146,84 @@ function freshnessLabel(cachedAt: number): string {
   return ageHours === 1 ? "Updated 1 hour ago" : `Updated ${ageHours} hours ago`;
 }
 
+function launchArgumentsSignature(argumentsValue: Record<string, unknown>) {
+  return JSON.stringify(argumentsValue, (_key, value: unknown) => isRecord(value)
+    ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+    : value);
+}
+
+// A new revision of an App built in OpenWork keeps the tile mounted at its size;
+// the launch effect then opens the new revision in place.
+function dashboardEntryIdentity(entry: DashboardMcpAppEntry, signature: string) {
+  return JSON.stringify([entry.id, entry.connectionId, entry.serverName, entry.toolName, mcpAppResourceIdentity(entry.resourceUri, entry.connectionId), entry.projectedToolName, signature]);
+}
+
+/** The same workspace on the same server keeps its live view when the route rebuilds its client object. */
+function sameLaunchEndpoint(left: DashboardLaunchEndpoint, right: DashboardLaunchEndpoint) {
+  return left.workspaceId === right.workspaceId && (left.client === right.client || left.client.baseUrl === right.client.baseUrl);
+}
+
+/**
+ * An App built in OpenWork loads its read-only data as it opens; it needs the
+ * viewer's time zone so that data matches what the App would ask for itself.
+ */
+function launchCallArguments(entry: DashboardMcpAppEntry, toolName: string, args: Record<string, unknown> | undefined) {
+  if (toolName !== MCP_APP_LAUNCH_TOOL_NAME || !mcpAppIdSchema.safeParse(entry.connectionId).success) return args;
+  return { ...args, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+}
+
+function appMatchesEntry(app: OpenworkMcpAppResource, entry: DashboardMcpAppEntry) {
+  return app.serverName === entry.serverName && app.toolName === entry.toolName && app.resourceUri === entry.resourceUri;
+}
+
+function tileConnectionState(entry: DashboardMcpAppEntry, value: unknown, args: Record<string, unknown>, toolName = entry.projectedToolName): Extract<TileState, { phase: "connection" }> | null {
+  const match = connectionCardFromMcpToolResult(toolName, value, args);
+  return match ? { phase: "connection", ...match, toolName } : null;
+}
+
+function invalidatesTileDocument(cause: unknown) {
+  return cause instanceof OpenworkServerError && (
+    [401, 403, 404, 410].includes(cause.status)
+    || cause.code.startsWith("invalid_resource")
+    || ["tool_denied", "tool_not_visible", "tool_not_found", "tool_resource_mismatch", "tool_requires_approval",
+      "missing_launch_context", "stale_launch_context", "inactive_session", "unsupported_resource_permissions", "resource_read_failed", "resource_too_large",
+      "mcp_app_resource_changed", "mcp_app_refresh_denied", "resource_read_failed", "unsafe_server_url",
+      "connection_required", "needs_connection", "connection_not_connected", "reauth_required", "needs_signin",
+      "connect_catalog_missing_app_host_auth", "connect_catalog_untrusted_origin", "connect_catalog_invalid_catalog",
+      "connect_catalog_invalid_proxy_descriptor"].includes(cause.code)
+  );
+}
+
+/**
+ * A tile reads its saved state as it first renders, so what that state depends
+ * on comes first: after a restart its App document is still in IndexedDB, and a
+ * check of the member's access may be under way. If either finds nothing in
+ * time the tile simply opens without it. Once open a tile stays open, whatever
+ * later checks do.
+ */
+function useSavedTileReady(scopeKey: string, entryId: string) {
+  const tile = JSON.stringify([scopeKey, entryId]);
+  const pending = dashboardTileDocumentPending(scopeKey, entryId)
+    || (memberAccessCheckPending() && readDashboardTileCache(scopeKey, entryId) !== null);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const ready = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pending || ready.current === tile) return;
+    let current = true;
+    void Promise.all([loadDashboardTileDocument(scopeKey, entryId), waitForMemberAccessCheck()])
+      .finally(() => { if (current) setLoaded(tile); });
+    return () => { current = false; };
+  }, [scopeKey, entryId, tile, pending]);
+  if (!pending || loaded === tile) ready.current = tile;
+  return ready.current === tile;
+}
+
 export function McpAppTile(props: ComponentProps<typeof McpAppTileContent>) {
-  return <McpAppTileContent key={JSON.stringify([props.cacheScopeKey, props.entry.id, props.entry.connectionId, props.entry.serverName, props.entry.toolName, props.entry.resourceUri, props.entry.projectedToolName])} {...props} />;
+  const input = props.entry.launchArguments ?? EMPTY_ARGUMENTS;
+  const signature = useMemo(() => launchArgumentsSignature(input), [input]);
+  const ready = useSavedTileReady(props.cacheScopeKey, props.entry.id);
+  if (!ready) return null;
+  return <McpAppTileContent key={JSON.stringify([props.cacheScopeKey, dashboardEntryIdentity(props.entry, signature)])} {...props} />;
 }
 
 function McpAppTileContent({
@@ -103,7 +232,19 @@ function McpAppTileContent({
   onAutoLaunchEnabled,
   onAutoLaunchDisabled,
   fallbackEndpoints,
+  renderActions,
+  actionsPlacement,
+  chromeTarget,
+  onFixChangedTool,
 }: {
+  renderActions?: DashboardTileActions;
+  actionsPlacement?: "header";
+  /**
+   * A host toolbar slot (the Artifacts detail header). When set, the refresh
+   * action and "Updating…" state render there instead of floating over the
+   * App's own content. null waits for the slot to mount.
+   */
+  chromeTarget?: HTMLElement | null;
   entry: DashboardMcpAppEntry;
   /** Per-user and per-organization scope for workspace-bound last-known-good dashboard data. */
   cacheScopeKey: string;
@@ -114,9 +255,12 @@ function McpAppTileContent({
   onAutoLaunchDisabled?: () => void;
   /** Other workspace runtimes to try when the primary one cannot resolve the app. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
+  /** Starts a conversation to update the App when one of its tools changed; only for someone who can update it. */
+  onFixChangedTool?: (tool: string) => Promise<void>;
 }) {
   const workspace = useWorkspace();
   const { openworkServerClient, workspaceId } = workspace;
+  const surfaceActive = useArtifactSurfaceActive();
   // Provider annotations are not an authorization boundary. A safe-looking
   // tile runs on load only after this user has successfully run this exact
   // element once; approval-gated tools stay run-on-request forever.
@@ -131,28 +275,52 @@ function McpAppTileContent({
     ...(openworkServerClient && workspaceId ? [{ client: openworkServerClient, workspaceId }] : []),
     ...(fallbackEndpoints ?? []),
   ].filter((endpoint, index, all) => (
-    all.findIndex((other) => other.workspaceId === endpoint.workspaceId && other.client === endpoint.client) === index
+    all.findIndex((other) => sameLaunchEndpoint(other, endpoint)) === index
   )), [fallbackEndpoints, openworkServerClient, workspaceId]);
   // Cached app HTML is interactive, so it follows the same per-user launch
   // consent as a live call and never mounts on a first visit.
-  const cached = runsAutomatically ? readDashboardTileCache(cacheScopeKey, entry.id) : null;
+  const [nonce, setNonce] = useState(0);
+  const nextLaunchArguments = entry.launchArguments ?? EMPTY_ARGUMENTS;
+  const nextArguments = useMemo(() => ({
+    signature: launchArgumentsSignature(nextLaunchArguments),
+    value: snapshotMcpAppArguments(nextLaunchArguments) ?? EMPTY_ARGUMENTS,
+  }), [nextLaunchArguments, nonce]);
+  const argumentsRef = useRef(nextArguments);
+  if (argumentsRef.current.signature !== nextArguments.signature) argumentsRef.current = nextArguments;
+  const launchArguments = argumentsRef.current.value;
+  const argumentsSignature = argumentsRef.current.signature;
+  const savedCache = runsAutomatically ? readDashboardTileCache(cacheScopeKey, entry.id) : null;
+  const cached = savedCache && savedCache.argumentsSignature === argumentsSignature && appMatchesEntry(savedCache.app, entry) ? savedCache : null;
   const cachedEndpoint = cached
     ? launchEndpoints.find((endpoint) => endpoint.workspaceId === cached.workspaceId) ?? null
     : null;
   const [started, setStarted] = useState(!manualLaunch);
-  const [nonce, setNonce] = useState(0);
-  const [failedViewNonce, setFailedViewNonce] = useState<number | null>(null);
+  const documentSequence = useRef(0);
+  const [readyDocument, setReadyDocument] = useState<TileDocument | null>(null);
   const lastHeight = useRef<number | undefined>(undefined);
   const [state, setState] = useState<TileState>(() => cached && cachedEndpoint
-    ? { phase: "ready", app: cached.app, result: cached.result, endpoint: cachedEndpoint, cachedAt: cached.cachedAt }
+    ? {
+        phase: "ready", app: cached.app, result: savedLaunchResult(cached, memberAccessConfirmed()), endpoint: cachedEndpoint, cachedAt: cached.cachedAt,
+        origin: { ...cachedEndpoint, sessionId: null, readOnly: true }, argumentsSignature,
+        lifetime: { id: ++documentSequence.current, active: true, failed: false },
+      }
     : { phase: manualLaunch ? "idle" : "loading" });
   const [refreshState, setRefreshState] = useState<RefreshState>(manualLaunch ? "idle" : "refreshing");
   const refreshStateRef = useRef(refreshState);
   refreshStateRef.current = refreshState;
-  const launchArguments = entry.launchArguments ?? EMPTY_ARGUMENTS;
   const stateRef = useRef(state);
   stateRef.current = state;
+  const initialWorkspaceId = useRef(cachedEndpoint?.workspaceId ?? launchEndpoints[0]?.workspaceId ?? workspaceId ?? "");
+  const geometryWorkspaceId = state.phase === "ready" ? state.endpoint.workspaceId : initialWorkspaceId.current || launchEndpoints[0]?.workspaceId || workspaceId || "";
+  const geometryEntryId = dashboardEntryIdentity(entry, argumentsSignature);
+  const geometry = useDashboardTileGeometry(cacheScopeKey, geometryEntryId, geometryWorkspaceId);
+  const geometryIdentity = JSON.stringify([cacheScopeKey, geometryEntryId, geometryWorkspaceId]);
+  const [measuredGeometryIdentity, setMeasuredGeometryIdentity] = useState<string | null>(null);
+  // Measure the reserved slot before a child frame consumes its initial height.
+  useLayoutEffect(() => { setMeasuredGeometryIdentity(geometryIdentity); }, [geometryIdentity]);
   const lastRefreshAtRef = useRef(cachedEndpoint ? cached?.cachedAt ?? 0 : 0);
+  const nonceRef = useRef(nonce);
+  const retiredNonceRef = useRef<number | null>(null);
   const userInitiatedNonceRef = useRef<number | null>(null);
   const launchApprovedRef = useRef(entry.launchApproved === true);
   launchApprovedRef.current = entry.launchApproved === true;
@@ -160,247 +328,387 @@ function McpAppTileContent({
   onAutoLaunchEnabledRef.current = onAutoLaunchEnabled;
   const onAutoLaunchDisabledRef = useRef(onAutoLaunchDisabled);
   onAutoLaunchDisabledRef.current = onAutoLaunchDisabled;
-  // A write-tool launch must map 1:1 to a Run/refresh press. Dependency churn
-  // reuses the same in-flight promise; a null promise marks a settled nonce so
-  // later re-renders cannot repeat an already-executed data-modifying call.
-  const launchRef = useRef<{ nonce: number; promise: Promise<TileState> | null } | null>(null);
-  const lifetime = useMemo(() => ({ active: true, controller: new AbortController() }), [cacheScopeKey, entry.id, entry.projectedToolName, entry.connectionId, entry.serverName, entry.toolName, entry.resourceUri, launchArguments, nonce]);
+  const launchRef = useRef<TileAttempt | null>(null);
+  // Wakes callers waiting for a launch they requested, or for their document to close.
+  const launchWaiters = useRef<Array<() => void>>([]);
+  const wakeLaunchWaiters = useCallback(() => { for (const wake of launchWaiters.current.splice(0)) wake(); }, []);
+  const lifetime = useRef({ active: true });
   const endpointsRef = useRef(launchEndpoints);
+  endpointsRef.current = launchEndpoints;
   const ownedLaunches = useRef(new Map<string, DashboardLaunchEndpoint>());
-  const releaseLaunches = () => {
-    for (const [id, endpoint] of ownedLaunches.current) void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
-    ownedLaunches.current.clear();
-  };
-  useLayoutEffect(() => {
-    lifetime.active = true;
-    lifetime.controller = new AbortController();
-    return () => { lifetime.active = false; lifetime.controller.abort(); releaseLaunches(); };
-  }, [lifetime]);
-  useLayoutEffect(() => {
-    endpointsRef.current = launchEndpoints;
-    for (const [id, owner] of ownedLaunches.current) {
-      if (launchEndpoints.some(endpoint => endpoint.client === owner.client && endpoint.workspaceId === owner.workspaceId)) continue;
-      lifetime.active = false;
-      lifetime.controller.abort();
-      void owner.client.releaseMcpApp(owner.workspaceId, id).catch(() => undefined);
-      ownedLaunches.current.delete(id);
-      setState(current => current.phase === "ready" ? { ...current, app: { ...current.app, launchId: undefined } } : current);
+  const updateState = useCallback((next: TileState) => { stateRef.current = next; setState(next); }, []);
+  const updateRefresh = useCallback((next: RefreshState) => { refreshStateRef.current = next; setRefreshState(next); }, []);
+  const releaseLaunch = useCallback((id: string | undefined) => {
+    const endpoint = id ? ownedLaunches.current.get(id) : undefined;
+    if (!id || !endpoint) return;
+    ownedLaunches.current.delete(id);
+    void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
+  }, []);
+  const releaseLaunches = useCallback(() => {
+    for (const id of ownedLaunches.current.keys()) releaseLaunch(id);
+  }, [releaseLaunch]);
+  const clearDocument = useCallback((next: TileState) => {
+    const current = stateRef.current;
+    if (current.phase === "ready") {
+      current.lifetime.active = false;
+      releaseLaunch(liveTargetOf(current)?.app.launchId);
     }
-  }, [launchEndpoints, lifetime]);
+    removeDashboardTileCache(cacheScopeKey, entry.id);
+    updateState(next);
+    wakeLaunchWaiters();
+  }, [cacheScopeKey, entry.id, releaseLaunch, updateState, wakeLaunchWaiters]);
+  const requestRefresh = useCallback((userInitiated: boolean) => {
+    if (!lifetime.current.active || refreshStateRef.current === "refreshing") return;
+    updateRefresh("refreshing");
+    lastRefreshAtRef.current = Date.now();
+    const next = ++nonceRef.current;
+    userInitiatedNonceRef.current = userInitiated ? next : null;
+    setStarted(true);
+    setNonce(next);
+  }, [updateRefresh]);
+  const resolveLiveActions = useCallback(async (staleLaunchId?: string, need?: "lease"): Promise<LiveTarget> => {
+    const document = stateRef.current.phase === "ready" ? stateRef.current.lifetime : null;
+    let renewing = false;
+    for (;;) {
+      const attempt = launchRef.current;
+      // Confirming a stored read needs the lease a running launch holds, not its result.
+      while (need === "lease" && attempt?.promise && !attempt.lease) {
+        await Promise.race([attempt.promise.catch(() => undefined), new Promise<void>((resolve) => { launchWaiters.current.push(resolve); })]);
+      }
+      const lease = need === "lease" && attempt?.promise ? attempt.lease : undefined;
+      // The launch's own handler settles the tile first, so the state read below is its outcome.
+      if (!lease && attempt?.promise) await attempt.promise.catch(() => undefined);
+      const current = stateRef.current;
+      // A launch for a different document retires this one; only its replacement may use the new lease.
+      if (!document?.active || current.phase !== "ready" || current.lifetime !== document) {
+        throw new Error("This artifact view has closed or changed.");
+      }
+      if (lease) return lease;
+      const live = liveTargetOf(current);
+      const leaseId = live?.app.launchId;
+      const expired = live?.app.refresh ? live.app.refresh.expiresAt <= Date.now() : false;
+      if (live && leaseId && leaseId !== staleLaunchId && !expired) return live;
+      if (launchRef.current !== attempt) continue;
+      // A lease that expired or that the host reported stale is renewed by one
+      // refresh of this tile, never handed out again.
+      if (leaseId && !renewing) {
+        renewing = true;
+        const launched = new Promise<void>((resolve) => { launchWaiters.current.push(resolve); });
+        requestRefresh(false);
+        await launched;
+        continue;
+      }
+      throw new Error("This artifact's workspace is still unavailable. Refresh the tile to reconnect.");
+    }
+  }, [requestRefresh]);
+  useLayoutEffect(() => {
+    lifetime.current.active = true;
+    if (launchRef.current?.controller.signal.aborted && !launchRef.current.admitted) launchRef.current = null;
+    // A saved document comes back; one that went live released its lease above and is replaced instead.
+    if (stateRef.current.phase === "ready" && stateRef.current.origin.readOnly && !stateRef.current.live) stateRef.current.lifetime.active = true;
+    return () => {
+      lifetime.current.active = false;
+      launchRef.current?.controller.abort();
+      if (stateRef.current.phase === "ready") stateRef.current.lifetime.active = false;
+      releaseLaunches();
+      wakeLaunchWaiters();
+    };
+  }, [releaseLaunches, wakeLaunchWaiters]);
+  useLayoutEffect(() => {
+    if (savedCache && (!cached || !cachedEndpoint)) removeDashboardTileCache(cacheScopeKey, entry.id);
+    const current = stateRef.current;
+    if (current.phase === "ready" && current.argumentsSignature !== argumentsSignature) {
+      lastHeight.current = undefined;
+      clearDocument({ phase: "loading" });
+    }
+  }, [savedCache, cached, cachedEndpoint, cacheScopeKey, entry.id, argumentsSignature, clearDocument]);
+  const policySignature = JSON.stringify([entry.requiresApproval === true, entry.launchApproved === true, entry.organizationAutoLaunch === true]);
+  const policyRef = useRef(policySignature);
+  useLayoutEffect(() => {
+    if (policyRef.current === policySignature) return;
+    policyRef.current = policySignature;
+    retiredNonceRef.current = nonceRef.current;
+    launchRef.current?.controller.abort();
+    clearDocument({ phase: "idle" });
+    releaseLaunches();
+    setStarted(false);
+    updateRefresh("idle");
+  }, [policySignature, clearDocument, releaseLaunches, updateRefresh]);
+  useLayoutEffect(() => {
+    const contains = (owner: DashboardLaunchEndpoint) => launchEndpoints.some(endpoint => sameLaunchEndpoint(endpoint, owner));
+    const current = stateRef.current;
+    const attempt = launchRef.current;
+    const ownerRemoved = current.phase === "ready" && !contains(current.endpoint);
+    const pendingOwnerRemoved = attempt?.promise && (attempt.endpoint ? !contains(attempt.endpoint) : attempt.candidates.some(endpoint => !contains(endpoint)));
+    if (!ownerRemoved && !pendingOwnerRemoved) return;
+    retiredNonceRef.current = nonceRef.current;
+    attempt?.controller.abort();
+    clearDocument({ phase: "error", message: "This artifact view is unavailable until its workspace reconnects. Use refresh to launch it again." });
+    releaseLaunches();
+    updateRefresh("failed");
+  }, [launchEndpoints, clearDocument, releaseLaunches, updateRefresh]);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!started) {
-      if (stateRef.current.phase !== "ready") setState({ phase: "idle" });
-      return;
-    }
-    const currentLaunch = launchRef.current?.nonce === nonce ? launchRef.current : null;
-    if (currentLaunch?.promise === null) return;
-    setRefreshState("refreshing");
-    if (stateRef.current.phase !== "ready") setState({ phase: "loading" });
-    // Tiles are user-scoped while MCP servers are workspace-scoped: prefer the
-    // selected workspace's runtime, then any other available one that can
-    // still resolve this app.
-    const candidates = endpointsRef.current;
-    if (candidates.length === 0) {
-      launchRef.current = { nonce, promise: null };
-      if (stateRef.current.phase === "ready") setRefreshState("failed");
-      else {
-        setState({ phase: "error", message: "No connected workspace is available to launch this app." });
-        setRefreshState("failed");
-      }
-      return;
-    }
+    if (!started || retiredNonceRef.current === nonce || launchRef.current?.nonce === nonce) return;
+    launchRef.current?.controller.abort();
+    const attempt: TileAttempt = { nonce, promise: null, controller: new AbortController(), candidates: endpointsRef.current, admitted: false };
+    launchRef.current = attempt;
+    lastRefreshAtRef.current = Date.now();
+    updateRefresh("refreshing");
+    if (stateRef.current.phase !== "ready") updateState({ phase: "loading" });
     const userInitiated = userInitiatedNonceRef.current === nonce;
-    const signal = lifetime.controller.signal;
-    const assertActive = () => {
-      if (signal.aborted || !lifetime.active || launchRef.current?.nonce !== nonce) throw new Error("This App launch has closed or changed. Run the tile again.");
+    const memberApproved = launchApprovedRef.current;
+    const requiresApproval = entry.requiresApproval === true;
+    let canRetryCredentials = !manualLaunch && !requiresApproval && !memberApproved;
+    const launchIsApproved = dashboardTileLaunchIsApproved(entry.organizationAutoLaunch === true, memberApproved);
+    const holdLease = (lease: LiveTarget | null) => {
+      attempt.lease = lease ?? undefined;
+      wakeLaunchWaiters();
     };
-    const endpointIsActive = (endpoint: DashboardLaunchEndpoint) => !signal.aborted && lifetime.active
-      && endpointsRef.current.some(current => current.client === endpoint.client && current.workspaceId === endpoint.workspaceId);
-    const promise = currentLaunch?.promise ?? (async (): Promise<TileState> => {
+    const isCurrent = () => lifetime.current.active && !attempt.controller.signal.aborted && launchRef.current === attempt && retiredNonceRef.current !== nonce;
+    const assertActive = () => {
+      if (!isCurrent()) throw new Error("This artifact launch has closed or changed. Run the tile again.");
+    };
+    const endpointIsActive = (endpoint: DashboardLaunchEndpoint) => isCurrent()
+      && endpointsRef.current.some(current => sameLaunchEndpoint(current, endpoint));
+    const discardInvalidDocument = () => {
+      const current = stateRef.current;
+      if (current.phase === "ready" && (!current.lifetime.active || current.lifetime.failed || current.argumentsSignature !== argumentsSignature || !appMatchesEntry(current.app, entry)
+        || (current.app.refresh && (!Number.isFinite(current.app.refresh.expiresAt) || current.app.refresh.expiresAt <= Date.now())))) {
+        clearDocument({ phase: "loading" });
+      }
+    };
+    discardInvalidDocument();
+    let credentialRevision = readCloudCredentialRevision();
+    // Leaving this tile cancels what it is loading, so the next App starts at
+    // once. A launch a person approved keeps running: it may be changing data.
+    const { signal } = attempt.controller;
+    const promise = scheduleDashboardLaunch<TileState>(async () => {
+      await Promise.resolve();
+      assertActive();
+      attempt.admitted = true;
+      credentialRevision = readCloudCredentialRevision();
+      discardInvalidDocument();
+      if (attempt.candidates.length === 0) throw new Error("No connected workspace is available to launch this artifact.");
       const argumentsSnapshot = snapshotMcpAppArguments(launchArguments);
-      // Connect app-host apps resolve through their connection reference; the
-      // host revalidates the live UI binding before returning the resource.
       const launch = entry.connectionId
-        ? {
-            connectionId: entry.connectionId,
-            toolName: entry.toolName,
-            resourceUri: entry.resourceUri,
-            arguments: {},
-          }
+        ? { connectionId: entry.connectionId, toolName: entry.toolName, resourceUri: entry.resourceUri, arguments: {} }
         : undefined;
-      const resolved = await resolveDashboardMcpApp({
-        endpoints: candidates,
-        projectedToolName: entry.projectedToolName,
-        expected: { serverName: entry.serverName, toolName: entry.toolName, resourceUri: entry.resourceUri },
-        launch,
-        isActive: endpointIsActive,
-      });
-      if (!resolved) {
-        return { phase: "error", message: "This tool no longer advertises an interactive app." };
-      }
-      const { endpoint, app } = resolved;
-      // The owner can retire between the resolver returning and this continuation.
-      if (!endpointIsActive(endpoint) || launchRef.current?.nonce !== nonce) {
-        if (app.launchId) void endpoint.client.releaseMcpApp(endpoint.workspaceId, app.launchId).catch(() => undefined);
-        throw new Error("This App launch has closed or changed. Run the tile again.");
-      }
-      if (app.launchId) ownedLaunches.current.set(app.launchId, endpoint);
-      assertActive();
-      if (!app.launchId) throw new Error("This App has no live launch context. Update OpenWork and run the tile again.");
-      const request = {
-        launchId: app.launchId,
-        sessionId: null,
-        serverName: app.serverName,
-        name: app.toolName,
-        resourceUri: app.resourceUri,
-        arguments: argumentsSnapshot,
-        ...(dashboardTileLaunchIsApproved(
-          entry.organizationAutoLaunch === true,
-          launchApprovedRef.current,
-        ) ? { approved: true } : {}),
-      };
-      let result;
+      let target: { endpoint: DashboardLaunchEndpoint; app: OpenworkMcpAppResource } | null = null;
+      let reused: ReadyTileState | null = null;
+      let fallbackEndpoint: DashboardLaunchEndpoint | null = null;
+      let result: OpenworkMcpAppToolResult | undefined;
       let approvalWasRequired = false;
+      let acquiredLaunchId: string | undefined;
+      let keepLaunch = false;
       try {
-        result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request);
-      } catch (cause) {
+        const current = stateRef.current;
+        const live = current.phase === "ready" ? liveTargetOf(current)?.app : undefined;
+        if (current.phase === "ready" && live && current.lifetime.active && !current.lifetime.failed
+          && current.argumentsSignature === argumentsSignature && current.autoLaunchEligible && !manualLaunch
+          && !requiresApproval && !memberApproved && live.launchId && live.refresh
+          && live.refresh.resourceDigest.length === 64 && /^[a-f0-9]{64}$/i.test(live.refresh.resourceDigest)
+          && live.refresh.expiresAt > Date.now() && endpointIsActive(current.endpoint)
+          && ownedLaunches.current.get(live.launchId) === current.endpoint) {
+          attempt.endpoint = current.endpoint;
+          attempt.document = current.lifetime;
+          holdLease(liveTargetOf(current));
+          try {
+            result = await current.endpoint.client.callMcpAppTool(current.endpoint.workspaceId, {
+              launchId: live.launchId, sessionId: null, serverName: live.serverName,
+              name: live.toolName, resourceUri: live.resourceUri, arguments: launchCallArguments(entry, live.toolName, argumentsSnapshot),
+              expectedResourceDigest: live.refresh.resourceDigest,
+            }, { signal });
+            assertActive();
+            if (!current.lifetime.active || current.lifetime.failed) throw new Error("This artifact view has closed or changed. Run the tile again.");
+            target = { endpoint: current.endpoint, app: live };
+            reused = current;
+          } catch (cause) {
+            assertActive();
+            if (!(cause instanceof OpenworkServerError) || cause.status !== 422) throw cause;
+            if (["mcp_app_resource_changed", "mcp_app_refresh_denied"].includes(cause.code)) {
+              fallbackEndpoint = current.endpoint;
+              clearDocument({ phase: "loading" });
+              attempt.document = undefined;
+            // Only the lease went stale (expired, or its connection settings changed):
+            // launch again for the same document, as an expired lease does.
+            } else if (!["stale_launch_context", "missing_launch_context"].includes(cause.code)) throw cause;
+          }
+        }
+        if (!target) {
+          if (fallbackEndpoint) {
+            const { app } = await fallbackEndpoint.client.resolveMcpApp(fallbackEndpoint.workspaceId, entry.projectedToolName, launch, { sessionId: null, readOnly: false }, { signal });
+            if (app && endpointIsActive(fallbackEndpoint) && appMatchesEntry(app, entry)) target = { endpoint: fallbackEndpoint, app };
+            else if (app?.launchId) void fallbackEndpoint.client.releaseMcpApp(fallbackEndpoint.workspaceId, app.launchId).catch(() => undefined);
+          } else {
+            target = await resolveDashboardMcpApp({
+              endpoints: attempt.candidates, projectedToolName: entry.projectedToolName,
+              expected: { serverName: entry.serverName, toolName: entry.toolName, resourceUri: entry.resourceUri },
+              launch, isActive: endpointIsActive, signal,
+            });
+          }
+          if (target && !endpointIsActive(target.endpoint)) {
+            if (target.app.launchId) void target.endpoint.client.releaseMcpApp(target.endpoint.workspaceId, target.app.launchId).catch(() => undefined);
+            target = null;
+          }
+          assertActive();
+          if (!target) return { phase: "error", message: "This tool no longer advertises an interactive artifact." };
+          const { endpoint, app } = target;
+          attempt.endpoint = endpoint;
+          if (!app.launchId) throw new OpenworkServerError(422, "missing_launch_context", "This artifact has no live launch context. Update OpenWork and run the tile again.");
+          acquiredLaunchId = app.launchId;
+          ownedLaunches.current.set(app.launchId, endpoint);
+          holdLease({ origin: { ...endpoint, sessionId: null, readOnly: false }, app });
+          const request = {
+            launchId: app.launchId, sessionId: null, serverName: app.serverName,
+            name: app.toolName, resourceUri: app.resourceUri, arguments: launchCallArguments(entry, app.toolName, argumentsSnapshot),
+            ...(!fallbackEndpoint && launchIsApproved ? { approved: true } : {}),
+          };
+          try {
+            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, request, request.approved ? undefined : { signal });
+          } catch (cause) {
+            assertActive();
+            if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
+            canRetryCredentials = false;
+            approvalWasRequired = true;
+            if (!userInitiated || fallbackEndpoint) return { phase: "idle", revokeAutoLaunch: true };
+            if (!endpointIsActive(endpoint)) throw new Error("This artifact launch has closed or changed. Run the tile again.");
+            onAutoLaunchDisabledRef.current?.();
+            result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, { ...request, approved: true });
+          }
+        }
         assertActive();
-        if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
-        approvalWasRequired = true;
-        if (!userInitiated) return { phase: "idle", revokeAutoLaunch: true };
-        if (!endpointIsActive(endpoint)) throw new Error("This App launch has closed or changed. Run the tile again.");
-        onAutoLaunchDisabledRef.current?.();
-        result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, { ...request, approved: true });
-        assertActive();
-      }
-      assertActive();
-      const connectionOutput = result.structuredContent ?? firstTextContent(result.content);
-      const connection = connectionCardPayloadFromChatToolResult(entry.projectedToolName, connectionOutput, launchArguments);
-      if (connection) return {
-        phase: "connection",
-        connection,
-        action: reconnectActionFromChatToolResult(entry.projectedToolName, connectionOutput, launchArguments),
-        output: connectionOutput,
-      };
-      if (result.isError) {
-        return {
-          phase: "error",
-          message: launchFailureMessage(result.content)
+        if (!result || !endpointIsActive(target.endpoint)) throw new Error("This artifact launch has closed or changed. Run the tile again.");
+        const connection = tileConnectionState(entry, result, launchArguments);
+        if (connection) return connection;
+        if (result.isError) return {
+          phase: "error", preservePrevious: true, message: launchFailureMessage(result.content)
             ?? (entry.launchArguments
-              ? "This app could not start with the saved launch input. Remove the tile and add it again with corrected input."
-              : "This app could not start without input, which this tile does not provide."),
+              ? "This artifact could not start with the saved launch input. Remove the tile and add it again with corrected input."
+              : "This artifact could not start without input, which this tile does not provide."),
         };
-      }
-      return {
-        phase: "ready",
-        app,
-        endpoint,
-        lifetime,
-        cachedAt: Date.now(),
-        result: {
+        // Each launch is marked with its time, so an open App receives every
+        // refresh as a new launch result and can reload its data in the background.
+        const preserved = {
           content: result.content,
           ...(typeof result.isError === "boolean" ? { isError: result.isError } : {}),
           ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
-          ...(result._meta ? { _meta: result._meta } : {}),
-        },
-        // A tile that has ever required an approval override remains manual.
-        // This also covers later runs where stored approval makes the call
-        // succeed without another tool_requires_approval response.
-        autoLaunchEligible: !approvalWasRequired && !launchApprovedRef.current,
-      };
-    })();
-    if (!currentLaunch) {
-      launchRef.current = { nonce, promise };
-      const markSettled = () => {
-        if (launchRef.current?.nonce === nonce && launchRef.current.promise === promise) {
-          launchRef.current = { nonce, promise: null };
-        }
-      };
-      void promise.then(markSettled, markSettled);
-    }
-    void promise
-      .then((next) => {
-        if (cancelled) return;
-        if (next.phase === "connection") {
-          removeDashboardTileCache(cacheScopeKey, entry.id);
-          setState(next);
-          setRefreshState("idle");
+          _meta: { ...result._meta, [MCP_APP_LAUNCHED_AT_META]: new Date().toISOString() },
+        };
+        keepLaunch = true;
+        if (reused) return { ...reused, result: preserved, cachedAt: Date.now() };
+        return {
+          phase: "ready", ...target, result: preserved, cachedAt: Date.now(), argumentsSignature,
+          origin: { ...target.endpoint, sessionId: null, readOnly: false },
+          lifetime: { id: ++documentSequence.current, active: true, failed: false },
+          autoLaunchEligible: !approvalWasRequired && !memberApproved && !requiresApproval,
+        };
+      } finally {
+        if (!keepLaunch) releaseLaunch(acquiredLaunchId);
+      }
+    }, {
+      signal: attempt.controller.signal,
+      priority: () => {
+        if (userInitiated) return 2;
+        const bounds = geometry.ref.current?.getBoundingClientRect();
+        return !document.hidden && bounds && bounds.bottom > 0 && bounds.top < window.innerHeight
+          && bounds.right > 0 && bounds.left < window.innerWidth ? 1 : 0;
+      },
+    });
+    attempt.promise = promise;
+    wakeLaunchWaiters();
+    const markSettled = () => { if (launchRef.current === attempt) attempt.promise = null; };
+    void promise.then(markSettled, markSettled);
+    void promise.then(next => {
+      if (!isCurrent()) return;
+      if (next.phase === "ready") {
+        if (!next.lifetime.active || !endpointIsActive(next.endpoint)) {
+          next.lifetime.active = false;
+          clearDocument({ phase: "error", message: "This artifact view is unavailable until its workspace reconnects. Use refresh to launch it again." });
+          releaseLaunches();
+          updateRefresh("failed");
           return;
         }
-        if (next.phase === "ready") {
-          for (const [id, endpoint] of ownedLaunches.current) {
-            if (id === next.app.launchId) continue;
-            void endpoint.client.releaseMcpApp(endpoint.workspaceId, id).catch(() => undefined);
-            ownedLaunches.current.delete(id);
-          }
-          writeDashboardTileCache(cacheScopeKey, entry.id, {
-            cachedAt: next.cachedAt,
-            workspaceId: next.endpoint.workspaceId,
-            app: next.app,
-            result: next.result,
-          });
-          lastRefreshAtRef.current = next.cachedAt;
-          setState(next);
-          setRefreshState("idle");
-          if (userInitiated && next.autoLaunchEligible && entry.autoLaunch !== true) {
-            onAutoLaunchEnabledRef.current?.();
-          }
-          return;
-        }
-        if (next.phase === "idle" && next.revokeAutoLaunch) {
-          setStarted(false);
-          setState({ phase: "idle" });
-          setRefreshState("idle");
-          onAutoLaunchDisabledRef.current?.();
-          return;
-        }
-        if (stateRef.current.phase === "ready") {
-          setRefreshState(next.phase === "idle" ? "approval-required" : "failed");
-          return;
-        }
-        setState(next);
-        setRefreshState(next.phase === "error" ? "failed" : "idle");
-      })
-      .catch((cause: unknown) => {
-        if (cancelled) return;
-        const connectionOutput = cause instanceof OpenworkServerError ? cause.details : undefined;
-        const connection = connectionCardPayloadFromChatToolResult(entry.projectedToolName, connectionOutput, launchArguments);
-        if (connection) {
-          removeDashboardTileCache(cacheScopeKey, entry.id);
-          setState({ phase: "connection", connection, output: connectionOutput,
-            action: reconnectActionFromChatToolResult(entry.projectedToolName, connectionOutput, launchArguments) });
-          setRefreshState("idle");
-          return;
-        }
-        if (cause instanceof OpenworkServerError && (cause.status === 401 || cause.status === 403)) {
-          removeDashboardTileCache(cacheScopeKey, entry.id);
-        } else if (stateRef.current.phase === "ready") {
-          setRefreshState("failed");
-          return;
-        }
-        setState({
-          phase: "error",
-          message: cause instanceof Error && cause.message ? cause.message : "The app could not be launched.",
+        const previous = stateRef.current;
+        // A saved document whose App is exactly the one just launched stays on
+        // screen and goes live in place, keeping what it already shows.
+        const settled: ReadyTileState = previous.phase === "ready" && previous.lifetime !== next.lifetime
+          && previous.origin.readOnly && !next.origin.readOnly && previous.lifetime.active && !previous.lifetime.failed
+          && previous.argumentsSignature === next.argumentsSignature && sameLaunchEndpoint(previous.endpoint, next.endpoint)
+          && sameMcpAppDocument(previous.app, next.app)
+          ? { ...next, app: previous.app, origin: previous.origin, lifetime: previous.lifetime, live: { origin: next.origin, app: next.app } }
+          : next;
+        if (previous.phase === "ready" && previous.lifetime !== settled.lifetime) previous.lifetime.active = false;
+        const live = liveTargetOf(settled)?.app ?? settled.app;
+        for (const id of ownedLaunches.current.keys()) if (id !== live.launchId) releaseLaunch(id);
+        writeDashboardTileCache(cacheScopeKey, entry.id, {
+          argumentsSignature, cachedAt: settled.cachedAt, workspaceId: settled.endpoint.workspaceId, app: live, result: settled.result,
         });
-        setRefreshState("failed");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cacheScopeKey, entry.connectionId, entry.id, entry.projectedToolName, entry.resourceUri, entry.serverName, entry.toolName, launchArguments, manualLaunch, nonce, started, lifetime]);
+        lastRefreshAtRef.current = settled.cachedAt;
+        updateState(settled);
+        updateRefresh("idle");
+        if (userInitiated && next.autoLaunchEligible && entry.autoLaunch !== true) onAutoLaunchEnabledRef.current?.();
+        return;
+      }
+      const previous = stateRef.current;
+      if (next.phase === "error" && next.preservePrevious && previous.phase === "ready"
+        && previous.lifetime.active && !previous.lifetime.failed && previous.argumentsSignature === argumentsSignature
+        && appMatchesEntry(previous.app, entry) && endpointIsActive(previous.endpoint)
+        && (previous.origin.readOnly || (previous.app.launchId && ownedLaunches.current.get(previous.app.launchId) === previous.endpoint))
+        && (!previous.app.refresh || (Number.isFinite(previous.app.refresh.expiresAt) && previous.app.refresh.expiresAt > Date.now()))) {
+        updateRefresh("failed");
+        return;
+      }
+      clearDocument(next);
+      releaseLaunches();
+      updateRefresh(next.phase === "error" ? "failed" : "idle");
+      if (next.phase === "idle" && next.revokeAutoLaunch) {
+        setStarted(false);
+        onAutoLaunchDisabledRef.current?.();
+      }
+    }).catch((cause: unknown) => {
+      if (!isCurrent()) return;
+      const connection = tileConnectionState(entry, cause instanceof OpenworkServerError ? cause.details : undefined, launchArguments);
+      if (connection) {
+        clearDocument(connection);
+        releaseLaunches();
+        updateRefresh("idle");
+        return;
+      }
+      const current = stateRef.current;
+      // A saved, still-valid view survives a transient failure; only an
+      // authority, policy or resource problem removes it.
+      if (invalidatesTileDocument(cause) || current.phase !== "ready" || !current.lifetime.active || current.lifetime.failed
+        || current.argumentsSignature !== argumentsSignature || !appMatchesEntry(current.app, entry)) {
+        clearDocument({ phase: "error", message: cause instanceof Error && cause.message ? cause.message : "The artifact could not be launched." });
+        releaseLaunches();
+      }
+      updateRefresh("failed");
+      if (cause instanceof OpenworkServerError && cause.code === "mcp_auth_required"
+        && (entry.connectionId || entry.serverName === "openwork-cloud") && canRetryCredentials) {
+        const candidates = attempt.endpoint ? [attempt.endpoint] : attempt.candidates;
+        const stopCredentialRetry = onCloudCredentialRefreshed(
+          candidates.map(endpoint => ({ serverBaseUrl: endpoint.client.baseUrl, workspaceId: endpoint.workspaceId })),
+          credentialRevision,
+          () => { if (isCurrent() && candidates.every(endpointIsActive)) requestRefresh(false); },
+        );
+        attempt.controller.signal.addEventListener("abort", stopCredentialRetry, { once: true });
+      }
+    });
+  }, [cacheScopeKey, entry, launchArguments, argumentsSignature, manualLaunch, nonce, started, geometry.ref, clearDocument, releaseLaunch, releaseLaunches, updateState, updateRefresh, requestRefresh, wakeLaunchWaiters]);
 
   useEffect(() => {
-    if (manualLaunch) return;
+    // A kept App out of view makes no calls, and catches up when it comes back.
+    if (manualLaunch || !surfaceActive) return;
     const refreshIfStale = () => {
-      if (!shouldAutoRefreshDashboardTile({
+      if (stateRef.current.phase === "idle" || stateRef.current.phase === "closed" || !shouldAutoRefreshDashboardTile({
         visible: !document.hidden,
         refreshing: refreshStateRef.current === "refreshing",
         lastRefreshAt: lastRefreshAtRef.current,
       })) return;
-      setNonce((value) => value + 1);
+      requestRefresh(false);
     };
+    refreshIfStale();
     const interval = window.setInterval(refreshIfStale, DASHBOARD_AUTO_REFRESH_INTERVAL_MS);
     window.addEventListener("focus", refreshIfStale);
     document.addEventListener("visibilitychange", refreshIfStale);
@@ -409,35 +717,47 @@ function McpAppTileContent({
       window.removeEventListener("focus", refreshIfStale);
       document.removeEventListener("visibilitychange", refreshIfStale);
     };
-  }, [manualLaunch]);
+  }, [manualLaunch, surfaceActive, requestRefresh]);
 
-  const run = () => {
-    setStarted(true);
-    setNonce((value) => {
-      const next = value + 1;
-      userInitiatedNonceRef.current = next;
-      return next;
-    });
-  };
-
-  const interactiveEndpoint = state.phase === "ready"
-    && launchEndpoints.some((endpoint) => endpoint.workspaceId === state.endpoint.workspaceId && endpoint.client === state.endpoint.client)
+  // The relative freshness label must age even when nothing else re-renders.
+  const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (state.phase !== "ready") return;
+    const tick = () => setFreshnessNow(Date.now());
+    tick();
+    const interval = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(interval);
+  }, [state.phase, state.phase === "ready" ? state.cachedAt : 0]);
+  const run = () => requestRefresh(true);
+  const interactiveEndpoint = state.phase === "ready" && state.argumentsSignature === argumentsSignature && appMatchesEntry(state.app, entry)
+    && launchEndpoints.some((endpoint) => sameLaunchEndpoint(endpoint, state.endpoint))
     ? state.endpoint
     : null;
-  const origin = useMemo(() => interactiveEndpoint
-    ? { ...interactiveEndpoint, sessionId: null, readOnly: state.phase !== "ready" || !state.app.launchId || state.lifetime !== lifetime || !lifetime.active }
-    : null, [interactiveEndpoint, state, lifetime]);
+  const origin = state.phase === "ready" && interactiveEndpoint ? state.origin : null;
+  const awaitingReady = state.phase === "ready" && !state.lifetime.failed && readyDocument !== state.lifetime;
+  const loadingDocument = state.phase === "loading" || awaitingReady || (state.phase === "ready" && state.argumentsSignature !== argumentsSignature);
+  const startingSavedView = state.phase === "ready" && awaitingReady && state.origin.readOnly ? state.lifetime : null;
+  const [slowSavedView, setSlowSavedView] = useState<TileDocument | null>(null);
+  useEffect(() => {
+    if (!startingSavedView) return;
+    const timer = window.setTimeout(() => setSlowSavedView(startingSavedView), SAVED_VIEW_PLACEHOLDER_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [startingSavedView]);
+  const holdsPlaceholder = startingSavedView !== null && slowSavedView !== startingSavedView;
+  const reservedHeight = geometry.reservedHeight ?? lastHeight.current ?? geometry.initialHeight ?? 320;
+  const currentDocument = (document: TileDocument) => lifetime.current.active && document.active
+    && stateRef.current.phase === "ready" && stateRef.current.lifetime === document
+    && stateRef.current.argumentsSignature === argumentsRef.current.signature && appMatchesEntry(stateRef.current.app, entry);
   const badge = (() => {
     if (state.phase === "ready" && !interactiveEndpoint) return "Saved locally · workspace unavailable";
-    if (state.phase === "ready" && origin?.readOnly && refreshState !== "refreshing") return "Saved locally · run required";
+    if (state.phase === "ready" && origin?.readOnly && !state.live && refreshState !== "refreshing") return "Saved locally · run required";
     if (state.phase === "ready" && refreshState === "refreshing") return "Saved locally · refreshing";
     if (state.phase === "ready" && refreshState === "failed") return "Saved locally · refresh failed";
-    if (state.phase === "ready" && refreshState === "approval-required") return "Saved locally · run required";
     if (state.phase === "ready" && entry.organizationAutoLaunch === true) {
-      return `Organization auto-run · ${freshnessLabel(state.cachedAt)}`;
+      return `Organization auto-run · ${freshnessLabel(state, freshnessNow)}`;
     }
     if (state.phase === "ready" && entry.requiresApproval === true) return "Saved locally · run on request";
-    if (state.phase === "ready") return freshnessLabel(state.cachedAt);
+    if (state.phase === "ready") return freshnessLabel(state, freshnessNow);
     if (state.phase === "loading") return "Loading";
     if (state.phase === "error") return "Refresh failed";
     if (entry.organizationAutoLaunch === true) return "Organization auto-run";
@@ -447,88 +767,147 @@ function McpAppTileContent({
   })();
 
   return (
-    <DashboardTileShell
-      title={entry.title}
-      entryId={entry.id}
-      subtitle={entry.serverName}
-      badge={badge ? (
-        <span
-          className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground"
-          role="status"
-          aria-live="polite"
-          data-dashboard-cache-state={refreshState}
-        >
+    <div ref={geometry.ref} className="relative min-w-0" data-dashboard-tile={entry.id}
+      aria-busy={refreshState === "refreshing" || loadingDocument} style={{ minHeight: loadingDocument ? reservedHeight : undefined }}>
+      <DashboardTileShell
+        title={entry.title}
+        renderActions={chromeTarget === undefined ? renderActions : undefined}
+        actionsPlacement={actionsPlacement}
+        entryId={entry.id}
+        subtitle={entry.serverName}
+        badge={badge ? (
           <span
-            className={`size-1.5 rounded-full ${state.phase === "error" || refreshState === "failed" || refreshState === "approval-required" || (state.phase === "ready" && !interactiveEndpoint) ? "bg-amber-500" : "bg-emerald-500"}`}
-            aria-hidden
-          />
-          {badge}
-        </span>
-      ) : undefined}
-      onRefresh={run}
-      refreshing={refreshState === "refreshing"}
-      compact={state.phase === "ready" && Boolean(interactiveEndpoint) && failedViewNonce !== nonce
-        && (refreshState === "refreshing" || (!origin?.readOnly && refreshState === "idle"))}
-    >
-      {state.phase === "idle" ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
-          <Play className="size-6 text-muted-foreground" aria-hidden />
-          <p className="max-w-xs text-xs text-muted-foreground">
-            {entry.requiresApproval === true
-              ? "This app modifies data when it runs, so it only runs when you ask."
-              : "Run once to enable automatic loading and refresh for this tile."}
-          </p>
-          <Button variant="outline" size="sm" onClick={run} aria-label={`Run ${entry.title}`}>
-            <Play className="size-4" /> Run
-          </Button>
-        </div>
-      ) : null}
-      {state.phase === "loading" ? (
-        <div className="space-y-2 pt-3" role="status" aria-label={`Loading ${entry.title}`}>
-          <Skeleton className="h-4 w-2/3" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-      ) : null}
-      {state.phase === "connection" ? <DashboardConnectionCard key={JSON.stringify([cacheScopeKey, state.connection.connectionId, nonce])}
-        toolName={entry.projectedToolName} toolCallId={`${entry.id}:${nonce}`} output={state.output}
-        connection={state.connection} action={state.action} onConnected={run} /> : null}
-      {state.phase === "error" ? (
-        <p className="pt-3 text-xs text-muted-foreground" role="status">{state.message}</p>
-      ) : null}
-      {state.phase === "closed" ? (
-        <p className="pt-3 text-xs text-muted-foreground" role="status">
-          This app closed its view. Use refresh to launch it again.
-        </p>
-      ) : null}
-      {state.phase === "ready" ? (
-        origin ?
-          <McpAppSandboxView
-            origin={origin}
-            key={nonce}
-            app={state.app}
-            toolName={entry.projectedToolName}
-            inputArguments={launchArguments}
-            result={state.result}
-            unavailableNotice="This app view is unavailable."
-            presentation="dashboard"
-            initialHeight={lastHeight.current}
-            onHeightChange={(height) => { lastHeight.current = height; }}
-            onError={() => setFailedViewNonce(nonce)}
-            onRequestTeardown={() => { releaseLaunches(); setState({ phase: "closed" }); }}
-          />
-        : (
+            className="inline-flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground"
+            role="status"
+            aria-live="polite"
+            data-dashboard-cache-state={refreshState}
+          >
+            <span
+              className={`size-1.5 rounded-full ${state.phase === "error" || refreshState === "failed" || (state.phase === "ready" && !interactiveEndpoint) ? "bg-amber-500" : "bg-emerald-500"}`}
+              aria-hidden
+            />
+            {badge}
+          </span>
+        ) : undefined}
+        onRefresh={run}
+        refreshing={refreshState === "refreshing" || loadingDocument}
+        compact={state.phase === "ready" && Boolean(interactiveEndpoint) && !state.lifetime.failed}
+      >
+        {state.phase === "idle" ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-2 py-6 text-center">
+            <Play className="size-6 text-muted-foreground" aria-hidden />
+            <p className="max-w-xs text-xs text-muted-foreground">
+              {entry.requiresApproval === true
+                ? "This artifact modifies data when it runs, so it only runs when you ask."
+                : "Run once to enable automatic loading and refresh for this tile."}
+            </p>
+            <Button variant="outline" size="sm" onClick={run} aria-label={`Run ${entry.title}`}>
+              <Play className="size-4" /> Run
+            </Button>
+          </div>
+        ) : null}
+        {state.phase === "connection" ? <DashboardConnectionCard key={JSON.stringify([cacheScopeKey, state.connection.connectionId, nonce])}
+          toolName={state.toolName} toolCallId={`${entry.id}:${nonce}`} output={state.output}
+          onConnected={run} /> : null}
+        {state.phase === "error" ? (
+          <p className="pt-3 text-xs text-muted-foreground" role="status">{state.message}</p>
+        ) : null}
+        {state.phase === "closed" ? (
           <p className="pt-3 text-xs text-muted-foreground" role="status">
-            This saved app view is unavailable until its workspace reconnects.
+            This artifact closed its view. Use refresh to launch it again.
           </p>
-        )
-      ) : null}
-      {state.phase === "ready" && refreshState === "approval-required" ? (
-        <div className="border-t border-border py-2 text-center">
-          <Button variant="outline" size="sm" onClick={run} aria-label={`Run ${entry.title}`}>
-            <Play className="size-4" /> Run
-          </Button>
+        ) : null}
+        {state.phase === "ready" && measuredGeometryIdentity === geometryIdentity ? (
+          origin ?
+            <div inert={awaitingReady || undefined} aria-hidden={awaitingReady || undefined}>
+              <McpAppSandboxView
+                origin={origin}
+                resolveLiveActions={origin.readOnly ? resolveLiveActions : undefined}
+                goesLiveInPlace={origin.readOnly}
+                liveReady={Boolean(state.live)}
+                key={state.lifetime.id}
+                app={state.app}
+                toolName={entry.projectedToolName}
+                inputArguments={launchArguments}
+                result={state.result}
+                updateMode="notify"
+                unavailableNotice="This artifact view is unavailable."
+                presentation="dashboard"
+                onRetry={run}
+                onFixChangedTool={onFixChangedTool}
+                onAppToolResult={(result) => {
+                  // A failed call the App makes itself gets the same connection card as a failed launch.
+                  if (!currentDocument(state.lifetime) || !isRecord(result) || result.isError !== true) return;
+                  const connection = tileConnectionState(entry, result, launchArguments,
+                    appToolResultConnectionToolName(state.app, entry.projectedToolName));
+                  if (!connection) return;
+                  clearDocument(connection);
+                  releaseLaunches();
+                  updateRefresh("idle");
+                }}
+                onKeptRead={(read, result) => {
+                  if (!currentDocument(state.lifetime)) return;
+                  const providerIdentity = result ? keptMcpAppResultIdentity(result) : null;
+                  rememberDashboardTileRead(cacheScopeKey, entry.id, read, result && providerIdentity
+                    ? { providerIdentity, result: result as PreservedMcpAppResult } : null);
+                }}
+                initialHeight={geometry.initialHeight ?? lastHeight.current}
+                onReady={() => { if (currentDocument(state.lifetime) && !state.lifetime.failed) setReadyDocument(state.lifetime); }}
+                onHeightChange={(height) => {
+                  if (!currentDocument(state.lifetime) || state.lifetime.failed) return;
+                  lastHeight.current = height;
+                  geometry.recordHeight(height);
+                }}
+                onError={() => {
+                  if (!currentDocument(state.lifetime)) return;
+                  state.lifetime.failed = true;
+                  state.lifetime.active = false;
+                  releaseLaunch(liveTargetOf(state)?.app.launchId);
+                  removeDashboardTileCache(cacheScopeKey, entry.id);
+                  if (launchRef.current?.document === state.lifetime) launchRef.current.controller.abort();
+                  if (!launchRef.current?.promise || launchRef.current.controller.signal.aborted) updateRefresh("failed");
+                  updateState({ ...stateRef.current });
+                }}
+                onRequestTeardown={() => {
+                  if (!currentDocument(state.lifetime)) return;
+                  retiredNonceRef.current = nonceRef.current;
+                  launchRef.current?.controller.abort();
+                  clearDocument({ phase: "closed" });
+                  releaseLaunches();
+                  setStarted(false);
+                  updateRefresh("idle");
+                }}
+              />
+            </div>
+          : (
+            <p className="pt-3 text-xs text-muted-foreground" role="status">
+              This saved artifact view is unavailable until its workspace reconnects.
+            </p>
+          )
+        ) : null}
+      </DashboardTileShell>
+      {holdsPlaceholder ? <span className="sr-only" role="status">Loading {entry.title}</span> : null}
+      {loadingDocument && !holdsPlaceholder ? (
+        <div className="absolute inset-0 z-10 flex flex-col gap-3 rounded-xl bg-background p-3" role="status" aria-label={`Loading ${entry.title}`} data-dashboard-loading>
+          <span className="text-xs text-muted-foreground">Loading {entry.title}</span>
+          <Skeleton className="h-4 w-2/3" />
+          <Skeleton className="min-h-24 w-full flex-1" />
         </div>
       ) : null}
-    </DashboardTileShell>
+      {chromeTarget === undefined && state.phase === "ready" && !loadingDocument && !state.lifetime.failed && refreshState !== "idle" ? (
+        <div className="pointer-events-none absolute right-10 top-1 z-10 rounded bg-background/90 px-2 py-1 text-[11px] text-muted-foreground"
+          role="status" aria-live="polite" data-dashboard-cache-state={refreshState}>
+          {refreshState === "refreshing" ? "Updating…" : "Refresh failed · showing last good data"}
+        </div>
+      ) : null}
+      {chromeTarget ? createPortal(<>
+        {state.phase === "ready" && !loadingDocument && !state.lifetime.failed && refreshState !== "idle" ? (
+          <span className="whitespace-nowrap px-1 text-xs text-muted-foreground" role="status" aria-live="polite" data-dashboard-cache-state={refreshState}>
+            {refreshState === "refreshing" ? "Updating…" : "Refresh failed · showing last good data"}
+          </span>
+        ) : null}
+        {renderActions?.({ onRefresh: run, refreshing: refreshState === "refreshing" || loadingDocument })}
+      </>, chromeTarget) : null}
+    </div>
   );
 }

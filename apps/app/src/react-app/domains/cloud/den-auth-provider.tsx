@@ -25,7 +25,14 @@ import {
   type DenUser,
 } from "../../../app/lib/den";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
+import { connectionDiagnosticHistory, type ConnectionDiagnosticReason, type ConnectionDiagnosticSource } from "../../../app/lib/connection-diagnostic-history";
 import { readOrgSelectionPending } from "../../../app/lib/den-sign-in-intent";
+import {
+  classifyStartupError,
+  failStartup,
+  markStartupStep,
+  noteStartupDenSession,
+} from "../../../app/lib/startup-diagnostics";
 import { desktopBridge, readDesktopDistributionInfo } from "../../../app/lib/desktop";
 import {
   denSessionUpdatedEvent,
@@ -36,6 +43,7 @@ import {
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { explainSignOutAfterDisconnect } from "../devices/disconnected-sign-out";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -54,6 +62,13 @@ export type DenAuthStatus =
   | "unavailable"
   | "signed_out";
 
+const authDiagnosticReasons: Record<DenAuthStatus, ConnectionDiagnosticReason> = {
+  checking: "den_auth_checking",
+  signed_in: "den_auth_signed_in",
+  unavailable: "den_auth_unavailable",
+  signed_out: "den_auth_signed_out",
+};
+
 export const DEN_AUTH_SIGNAL_RETRY_COOLDOWN_MS = 5_000;
 export const DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS = 30_000;
 export const DEN_AUTH_ORG_REPAIR_INTERVAL_MS = 30_000;
@@ -64,18 +79,29 @@ export async function resolveDenActiveOrganizationWithRetry(
   wait: (delayMs: number) => Promise<void> = (delayMs) =>
     new Promise((resolveWait) => window.setTimeout(resolveWait, delayMs)),
 ) {
-  for (const delayMs of DEN_ORG_RESOLUTION_RETRY_DELAYS_MS) {
-    if (delayMs > 0) await wait(delayMs);
+  const diagnostics = connectionDiagnosticHistory.createSource();
+  try {
+    for (const delayMs of DEN_ORG_RESOLUTION_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await wait(delayMs);
+      diagnostics.attempt("den_org_retry");
 
-    try {
-      const organization = await resolve();
-      if (organization) return organization;
-    } catch {
-      // A newly accepted membership can take a moment to become visible.
+      try {
+        const organization = await resolve();
+        if (organization) {
+          diagnostics.recovered("den_org_recovered");
+          return organization;
+        }
+      } catch {
+        // A newly accepted membership can take a moment to become visible.
+      }
+      diagnostics.failed();
+      diagnostics.record("den_org_unresolved", "failure");
     }
-  }
 
-  return null;
+    return null;
+  } finally {
+    diagnostics.dispose();
+  }
 }
 
 export function resolveDenAuthFailureStatus(
@@ -164,18 +190,20 @@ function pendingServerSwitchForDeepLink(input: {
   // control plane and activate the app in a single unattended step.
   if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
 
-  const currentApiBaseUrl = resolveDenBaseUrls(bootstrap).apiBaseUrl;
-  const newApiBaseUrl = resolveDenBaseUrls(input.denBaseUrl).apiBaseUrl;
-  const currentOrigin = denOriginComparisonKey(currentApiBaseUrl);
-  const newOrigin = denOriginComparisonKey(newApiBaseUrl);
+  // Handoff links identify Den's web origin. Its configured API may live on
+  // another origin; compare the same identity used by the handoff transaction.
+  const currentWebBaseUrl = resolveDenBaseUrls(bootstrap).baseUrl;
+  const newWebBaseUrl = resolveDenBaseUrls(input.denBaseUrl).baseUrl;
+  const currentOrigin = denOriginComparisonKey(currentWebBaseUrl);
+  const newOrigin = denOriginComparisonKey(newWebBaseUrl);
   if (!currentOrigin || !newOrigin || currentOrigin === newOrigin) return null;
 
   return {
     grant: input.grant,
     denBaseUrl: input.denBaseUrl,
     isEnterpriseActivation: input.isEnterpriseActivation,
-    currentHost: hostLabel(currentApiBaseUrl),
-    newHost: hostLabel(newApiBaseUrl),
+    currentHost: hostLabel(currentWebBaseUrl),
+    newHost: hostLabel(newWebBaseUrl),
   };
 }
 
@@ -202,7 +230,10 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const handledGrantsRef = useRef<Set<string>>(new Set());
   const [pendingServerSwitch, setPendingServerSwitch] = useState<PendingServerSwitch | null>(null);
 
+  const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
+
   const updateStatus = useCallback((nextStatus: DenAuthStatus) => {
+    diagnosticsRef.current?.transition(authDiagnosticReasons[nextStatus]);
     statusRef.current = nextStatus;
     setStatus(nextStatus);
   }, []);
@@ -238,6 +269,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     }
 
     if (!token) {
+      noteStartupDenSession(null);
       setUser(null);
       setVerifiedIdentity(null);
       setError(null);
@@ -254,25 +286,14 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       updateStatus("checking");
     }
 
+    noteStartupDenSession({ baseUrl: settings.baseUrl, organizationId: organizationId || null });
+    const diagnostics = diagnosticsRef.current;
+    diagnostics?.attempt("den_session_retry");
     try {
       const nextUser = await createDenClient({
         baseUrl: settings.baseUrl,
         token,
       }).getSession();
-
-      if (currentRun !== refreshTokenRef.current) return;
-
-      // While a desktop-initiated sign-in is waiting for the user's explicit
-      // organization choice, do not auto-resolve a default — that would
-      // silently commit an org the chooser is still asking about.
-      if (!readOrgSelectionPending().pending) {
-        await resolveDenActiveOrganizationWithRetry(() =>
-          ensureDenActiveOrganization({
-            forceServerSync:
-              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
-          })
-        );
-      }
 
       if (currentRun !== refreshTokenRef.current) return;
 
@@ -290,13 +311,37 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       setUser(nextUser);
       setError(null);
       lastSignalRetryAtRef.current = null;
+      diagnostics?.recovered("den_session_recovered");
       updateStatus("signed_in");
+      markStartupStep("signed_in", { organizationId: confirmedOrganizationId || null });
       syncDesktopSentrySession(nextUser);
+
+      // The session is verified. Organization discovery can take several
+      // request timeouts, so repair it in the background without keeping the
+      // app on "Checking your sign-in". Settings changes refresh the verified
+      // organization scope when discovery succeeds.
+      // An explicit organization chooser still owns its pending choice.
+      if (!readOrgSelectionPending().pending) {
+        await resolveDenActiveOrganizationWithRetry(() => {
+          if (currentRun !== refreshTokenRef.current || readOrgSelectionPending().pending) {
+            return Promise.resolve(null);
+          }
+          return ensureDenActiveOrganization({
+            forceServerSync:
+              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
+            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
+          });
+        });
+      }
     } catch (nextError) {
       if (currentRun !== refreshTokenRef.current) return;
 
+      diagnostics?.failed();
+      failStartup("signed_in", classifyStartupError(nextError));
       const failureStatus = resolveDenAuthFailureStatus(nextError);
       if (failureStatus === "signed_out") {
+        // Before the session is cleared: afterwards nothing says this computer was disconnected.
+        explainSignOutAfterDisconnect();
         clearDenSession();
         setUser(null);
         verifiedCredentialRef.current = null;
@@ -315,11 +360,18 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   }, [clearDesktopSentrySession, syncDesktopSentrySession, updateStatus]);
 
   useEffect(() => {
+    const resetDiagnostics = () => {
+      diagnosticsRef.current?.dispose();
+      diagnosticsRef.current = connectionDiagnosticHistory.createSource();
+      diagnosticsRef.current.transition(authDiagnosticReasons[statusRef.current]);
+    };
+    resetDiagnostics();
     void refresh();
 
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return () => diagnosticsRef.current?.dispose();
 
     const handleSessionUpdated = () => {
+      resetDiagnostics();
       void refresh();
     };
 
@@ -328,6 +380,8 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     return () => {
       window.removeEventListener(denSessionUpdatedEvent, handleSessionUpdated);
       window.removeEventListener(denSettingsChangedEvent, handleSessionUpdated);
+      diagnosticsRef.current?.dispose();
+      diagnosticsRef.current = null;
     };
   }, [refresh]);
 

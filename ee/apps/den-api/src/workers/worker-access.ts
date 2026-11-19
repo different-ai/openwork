@@ -7,6 +7,8 @@ import type { RuntimeInstanceInspection, RuntimeInstanceRecord } from "@openwork
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
 import { cloudRuntimeStore, currentCloudImageVersion, getCloudRuntime } from "./cloud-runtime.js"
 import { recoverClaimedCloudWorker, wakeCloudWorker } from "./cloud-lifecycle.js"
+import { probeCloudWorkerActivity, type ProbeCloudWorkerActivity } from "./cloud-activity.js"
+import { env } from "../env.js"
 import { fetchWithConnectRetry, previewFetch } from "./preview-fetch.js"
 import {
   cloudStartupFailureFromWorker,
@@ -80,6 +82,12 @@ export type ResolveCloudRuntimeStateOptions = {
   /** The image version new instances boot; a stopped worker on an older one is recycled. */
   currentImageVersion?: () => string | null
   forceFailedRecovery?: boolean
+  /** Asks the instance's own server; any answer proves a slow health probe wrong. */
+  probeActivity?: ProbeCloudWorkerActivity
+  /** How long a running instance must answer nothing before it is restarted. */
+  unreachableGraceMs?: number
+  /** Consecutive silent resolves required on top of the grace window. */
+  unreachableMisses?: number
 }
 
 export type ResolveCloudRuntimeAccessOptions = Partial<ResolveCloudRuntimeStateOptions> & {
@@ -96,10 +104,20 @@ const failedHealCooldownMs = 60_000
 const explicitFailedHealCooldownMs = 60_000
 const signedPreviewProbeTimeoutMs = 2_500
 const signedPreviewHealthCacheMs = 15_000
+/** Consecutive silent resolves required, on top of the grace window, before a running instance is restarted. */
+export const unreachableMissesBeforeRecovery = 3
 const explicitFailedHealAttempts = new Map<WorkerId, number>()
 const signedPreviewHealthCache = new Map<WorkerId, { url: string; healthyUntilMs: number }>()
 const wakingWorkers = new Set<WorkerId>()
 const unreachableWorkers = new Set<WorkerId>()
+// Replica-local like the caches above: the floor is "this long of silence as
+// seen by the deciding replica", never less.
+const unreachableSince = new Map<WorkerId, { firstMissAt: number; misses: number }>()
+
+/** Test seam: forget unreachable windows between scenarios. */
+export function resetCloudRuntimeUnreachableWindows() {
+  unreachableSince.clear()
+}
 
 function isUpdateResultRecord(value: unknown): value is UpdateResultRecord {
   return typeof value === "object" && value !== null
@@ -304,23 +322,24 @@ async function refreshAndProbeSignedPreview(input: {
   refreshSignedPreview: RefreshSignedPreview
   probeSignedPreview: ProbeSignedPreview
   now: () => number
-}): Promise<CloudRuntimeState | null> {
+}): Promise<{ state: CloudRuntimeState | null; endpoint: CloudRuntimeSandboxRecord | null }> {
   try {
     const refreshed = await input.refreshSignedPreview(input.workerId)
-    if (!refreshed) return null
+    if (!refreshed) return { state: null, endpoint: null }
     const expiresAtMs = refreshed.endpointExpiresAt.getTime()
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= input.now()) {
-      return { status: "failed", url: null, reason: "preview_expired" }
+      return { state: { status: "failed", url: null, reason: "preview_expired" }, endpoint: null }
     }
-    return readyFromSignedPreview({
+    const state = await readyFromSignedPreview({
       workerId: input.workerId,
       signedPreviewUrl: refreshed.endpointUrl,
       expiresAt: refreshed.endpointExpiresAt,
       probeSignedPreview: input.probeSignedPreview,
       now: input.now,
     })
+    return { state, endpoint: refreshed }
   } catch {
-    return null
+    return { state: null, endpoint: null }
   }
 }
 
@@ -353,27 +372,82 @@ async function startStaleStoppedRecycle(input: {
   return true
 }
 
+/**
+ * The health probe missed. A stopped instance wakes at once; a running one is
+ * restarted only after it has answered nothing for the grace window, because a
+ * sandbox busy with the member's own work can be slow on `/health` while its
+ * server still answers an authenticated request. Restarting it would abort
+ * that work and lose everything since the last checkpoint.
+ */
 async function recoverUnhealthyCloudSandbox(input: {
   worker: CloudRuntimeWorker
+  endpoint: CloudRuntimeSandboxRecord | null
   inspectSandbox: InspectSandbox
+  probeActivity: ProbeCloudWorkerActivity
   startRecovery: StartWake
   store: CloudRuntimeStore
+  now: () => number
+  unreachableGraceMs: number
+  unreachableMisses: number
 }): Promise<CloudRuntimeState> {
+  const workerId = input.worker.id
   let inspection: CloudRuntimeSandboxInspection = null
   try {
-    inspection = await input.inspectSandbox(input.worker.id)
+    inspection = await input.inspectSandbox(workerId)
   } catch {
     inspection = null
   }
   if (isStoppedSandboxState(inspection)) {
-    unreachableWorkers.delete(input.worker.id)
-    const claimed = await input.store.claimRecycleWorker(input.worker.id)
-    if (claimed) input.startRecovery(input.worker.id)
+    unreachableWorkers.delete(workerId)
+    unreachableSince.delete(workerId)
+    const claimed = await input.store.claimRecycleWorker(workerId)
+    if (claimed) input.startRecovery(workerId)
     return { status: "waking", url: null, reason: "stopped" }
   }
-  unreachableWorkers.add(input.worker.id)
+
+  const nowMs = input.now()
+  const endpoint = input.endpoint && input.endpoint.endpointExpiresAt.getTime() > nowMs ? input.endpoint : null
+  if (endpoint) {
+    const hostToken = tokenByScope(await input.store.getActiveTokens(workerId), "host")
+    if (hostToken) {
+      const activity = await input.probeActivity({ instanceUrl: endpoint.endpointUrl, hostToken })
+      if (activity.alive) {
+        unreachableWorkers.delete(workerId)
+        unreachableSince.delete(workerId)
+        rememberHealthyPreview(workerId, endpoint.endpointUrl, nowMs, endpoint.endpointExpiresAt.getTime())
+        logger.warn("cloud runtime health probe missed but the instance answered", {
+          worker_id: workerId,
+          activity_verdict: activity.verdict,
+          activity_reason: activity.reason,
+          busy_sessions: activity.busySessions,
+        })
+        return { status: "ready", url: endpoint.endpointUrl, expiresAt: endpoint.endpointExpiresAt }
+      }
+    }
+  }
+
+  const window = unreachableSince.get(workerId)
+  const firstMissAt = window?.firstMissAt ?? nowMs
+  const misses = (window?.misses ?? 0) + 1
+  if (nowMs - firstMissAt < input.unreachableGraceMs || misses < input.unreachableMisses) {
+    unreachableSince.set(workerId, { firstMissAt, misses })
+    logger.warn("cloud runtime instance silent; waiting before recovery", {
+      worker_id: workerId,
+      misses,
+      silent_ms: nowMs - firstMissAt,
+      grace_ms: input.unreachableGraceMs,
+    })
+    // Keep handing out the last endpoint so a live stream is not cut by a
+    // status poll; real traffic reports its own errors if the instance is gone.
+    if (endpoint) return { status: "ready", url: endpoint.endpointUrl, expiresAt: endpoint.endpointExpiresAt }
+    unreachableWorkers.add(workerId)
+    return { status: "waking", url: null, reason: "unreachable" }
+  }
+
+  unreachableSince.delete(workerId)
+  unreachableWorkers.add(workerId)
   const failure = createKnownCloudStartupFailure({ code: "runtime_unreachable", stage: "runtime" })
-  await input.store.markHealthyWorkerFailed(input.worker.id, failure)
+  await input.store.markHealthyWorkerFailed(workerId, failure)
   await startClaimedCloudRecovery(input)
   return { status: "waking", url: null, reason: "unreachable", failure }
 }
@@ -441,25 +515,37 @@ export async function resolveCloudRuntimeState(input: {
       probeSignedPreview: options.probeSignedPreview,
       now: options.now,
     })
-    if (ready) return ready
+    if (ready) {
+      unreachableSince.delete(input.worker.id)
+      return ready
+    }
   }
-  const refreshedReady = await refreshAndProbeSignedPreview({
+  const refreshed = await refreshAndProbeSignedPreview({
     workerId: input.worker.id,
     refreshSignedPreview: options.refreshSignedPreview,
     probeSignedPreview: options.probeSignedPreview,
     now: options.now,
   })
+  const refreshedReady = refreshed.state
   if (refreshedReady?.status === "failed") {
     const failure = createKnownCloudStartupFailure({ code: "preview_expired", stage: "runtime" })
     await options.store.markHealthyWorkerFailed(input.worker.id, failure)
     return { ...refreshedReady, failure }
   }
-  if (refreshedReady) return refreshedReady
+  if (refreshedReady) {
+    unreachableSince.delete(input.worker.id)
+    return refreshedReady
+  }
   return recoverUnhealthyCloudSandbox({
     worker: input.worker,
+    endpoint: refreshed.endpoint ?? sandbox,
     inspectSandbox: options.inspectSandbox,
+    probeActivity: options.probeActivity ?? probeCloudWorkerActivity,
     startRecovery: options.startRecovery,
     store: options.store,
+    now: options.now,
+    unreachableGraceMs: options.unreachableGraceMs ?? env.cloudUnreachableGraceMs,
+    unreachableMisses: options.unreachableMisses ?? unreachableMissesBeforeRecovery,
   })
 }
 
@@ -483,6 +569,9 @@ export async function resolveCloudRuntimeAccess(
     now: options.now ?? Date.now,
     currentImageVersion: options.currentImageVersion,
     forceFailedRecovery: options.forceFailedRecovery,
+    probeActivity: options.probeActivity,
+    unreachableGraceMs: options.unreachableGraceMs,
+    unreachableMisses: options.unreachableMisses,
   })
   const failure = state.status === "ready" ? null : state.failure ?? cloudStartupFailureFromWorker(worker)
   if (state.status === "provisioning") {

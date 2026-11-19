@@ -1,6 +1,7 @@
 export * from "./egress.ts";
 export * from "./den-loopback.ts";
 export * from "./idp.ts";
+export * from "./entra-stand-in.ts";
 export * from "./mock-google.ts";
 export * from "./mock-github.ts";
 export * from "./mock-cloud-runtime.ts";
@@ -11,3 +12,4 @@ export * from "./mock-planetscale.ts";
 export * from "./mock-atlassian.ts";
 export * from "./mock-inference.ts";
 export * from "./mock-cloud-skills.ts";
+export * from "./mock-cloud-startup.ts";

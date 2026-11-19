@@ -1,0 +1,58 @@
+@import "tailwindcss" source(none);
+@import "@openwork-ee/workbot-ui/styles.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../../../../packages/workbot-ui/src/**/*.{ts,tsx}";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* The same quiet defaults Den's pages have, so Workbot looks the same on its own address. */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--color-gray-400);
+  }
+
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+
+  :disabled {
+    cursor: default;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/*
+ * An explicit root colour: Safari 26 falls back to it behind its status bar and toolbar when no fixed element is at
+ * the edge (a transparent root reads as white). The page never bounces as a whole; only the conversation scrolls.
+ */
+html {
+  background: #fbfcfd;
+  overscroll-behavior: none;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: #fbfcfd;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}

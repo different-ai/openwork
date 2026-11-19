@@ -223,12 +223,19 @@ process.once("SIGTERM", () => void stopAll(143));
 if (process.env.OPENWORK_ELECTRON_SKIP_SHARED_PREPARE !== "1") {
   runSync(nodeCmd, [resolve(__dirname, "prepare-sidecar.mjs"), "--force", "--outdir", electronSidecarDir], { cwd: desktopRoot });
   runSync(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", "--outdir", electronHelperDir], { cwd: desktopRoot });
+  runSync(nodeCmd, [resolve(__dirname, "prepare-dictation-helper.mjs"), "--outdir", electronHelperDir], { cwd: desktopRoot });
 }
 
 // Build workspace packages that Electron imports from their dist output.
-console.log("[electron-dev] Building Electron workspace dependencies...");
-runSync(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
-runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+if (process.env.OPENWORK_ELECTRON_SKIP_WORKSPACE_BUILD !== "1") {
+  console.log("[electron-dev] Building Electron workspace dependencies...");
+  runSync(pnpmCmd, ["--filter", "@openwork/headless-threads", "build"], { cwd: repoRoot });
+  runSync(pnpmCmd, ["--filter", "@openwork/remote-sessions", "build"], { cwd: repoRoot });
+  runSync(pnpmCmd, ["--filter", "@openwork/computer-use", "build"], { cwd: repoRoot });
+  // Remote computers for computer use load these lazily from their builds.
+  runSync(pnpmCmd, ["--filter", "@openwork/sandbox", "--filter", "@openwork/sandbox-freestyle", "--filter", "@openwork/sandbox-daytona", "build"], { cwd: repoRoot });
+  runSync(pnpmCmd, ["--filter", "openwork-server", "build"], { cwd: repoRoot });
+}
 
 const initialProbeUrls = [startUrl, ...viteProbeUrls].filter(Boolean);
 let viteReady = false;
@@ -278,7 +285,7 @@ const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? ""
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 const blankSlateArgs = process.argv.includes("--blank-slate") ? ["--blank-slate"] : [];
-electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs", ...blankSlateArgs], {
+electronChild = run(pnpmCmd, ["exec", "electron", "./electron/entry.mjs", ...blankSlateArgs], {
   cwd: desktopRoot,
   env: {
     ...process.env,

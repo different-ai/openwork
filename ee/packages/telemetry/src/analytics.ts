@@ -1,12 +1,43 @@
-import { eq, gte, sql, type SQL } from "@openwork-ee/den-db/drizzle"
-import { TelemetryEventTable, TelemetrySessionDimensionTable } from "@openwork-ee/den-db/schema"
+import type { createDenDb } from "@openwork-ee/den-db"
+import { and, desc, eq, gte, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import {
+  TELEMETRY_EVENT_ORG_WINDOW_INDEX,
+  TelemetryEventTable,
+  TelemetrySessionDimensionTable,
+} from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { deriveDimensionValue } from "./dimension.js"
 import type { TelemetryDimensionInput } from "@openwork-ee/telemetry-contracts"
 
 export const ANALYTICS_TREND_WEEKS = 12
 
+/** Days in the daily trend, today included. */
+export const ANALYTICS_TREND_DAYS = 30
+
+const DAY_SECONDS = 24 * 60 * 60
+const WEEK_SECONDS = 7 * DAY_SECONDS
+
+type Db = ReturnType<typeof createDenDb>["db"]
+
 export type TelemetryOrgId = (typeof TelemetryEventTable.$inferSelect)["org_id"]
+
+/**
+ * Index hint for an org window scan of `telemetry_event`.
+ *
+ * Unfiltered, the scan must use the org window index: MySQL otherwise prefers
+ * `(org_id, event_type, event_timestamp)`, which can only narrow by org, so the
+ * scan walks the org's entire event history and looks up every matching row.
+ *
+ * With a session dimension filter, the cheaper plan starts from the filter's
+ * sessions and probes `(org_id, session_id, event_timestamp)` per session. The
+ * window index is hidden there, because MySQL picks it over that plan and then
+ * runs the dimension check against every event in the window.
+ */
+function orgWindowScan(filter: DimensionFilter | null) {
+  return filter
+    ? { ignoreIndex: TELEMETRY_EVENT_ORG_WINDOW_INDEX }
+    : { forceIndex: TELEMETRY_EVENT_ORG_WINDOW_INDEX }
+}
 
 export type DimensionFilter = {
   type: string
@@ -61,6 +92,29 @@ export function windowMetricsSelection() {
   }
 }
 
+/**
+ * Row shapes of the select* builders below. Their return types are declared
+ * as thenables of these rows so the published declarations stay portable:
+ * an inferred drizzle builder type names drizzle-orm, which this package does
+ * not depend on, and resolves to `any` for consumers.
+ */
+export type WindowMetricsRow = {
+  activeMembers: number
+  sessions: number
+  tasksCompleted: number
+  tasksFailed: number
+  avgTaskDurationMs: number | null
+}
+export type WeeklyActivityRow = { week: number; activeMembers: number; sessions: number; tasksCompleted: number; tasksFailed: number }
+export type DailyActivityRow = { day: number; activeMembers: number; sessions: number; tasksCompleted: number; tasksFailed: number }
+export type WeeklyActiveMembersRow = { week: number; count: number }
+export type ModelDimensionUsageRow = {
+  type: (typeof TelemetrySessionDimensionTable.$inferSelect)["dimension_type"]
+  value: (typeof TelemetrySessionDimensionTable.$inferSelect)["dimension_value"]
+  label: string
+  sessions: number
+}
+
 /** Normalize a raw window-metrics row into plain numbers. */
 export function readWindowMetrics(row: {
   activeMembers: unknown
@@ -79,9 +133,174 @@ export function readWindowMetrics(row: {
   }
 }
 
-/** SQL expression bucketing an event timestamp into a 0-based week index from `start`. */
-export function weekIndexExpression(start: Date): SQL<number> {
-  return sql<number>`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${start}) / 7)`
+/**
+ * SQL expression bucketing an event timestamp into a 0-based week index from
+ * `start`, where the trend covers the `ANALYTICS_TREND_WEEKS` full 7-day spans
+ * that end now. Buckets are measured in elapsed seconds, matching the
+ * `weekStart` labels: a calendar-day difference puts today's events in an
+ * extra 13th bucket that the response drops. Events stamped after `now` by a
+ * skewed client clock count in the latest week.
+ */
+export function weekIndexExpression(
+  start: Date,
+  eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp = TelemetryEventTable.event_timestamp,
+): SQL<number> {
+  return bucketIndexExpression(start, WEEK_SECONDS, ANALYTICS_TREND_WEEKS, eventTimestamp)
+}
+
+/**
+ * SQL expression bucketing an event timestamp into a 0-based day index from
+ * `start`, which should be a UTC midnight so each bucket is one UTC calendar
+ * day. The last bucket is today so far; events stamped after now by a skewed
+ * client clock count today.
+ */
+export function dayIndexExpression(
+  start: Date,
+  eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp = TelemetryEventTable.event_timestamp,
+): SQL<number> {
+  return bucketIndexExpression(start, DAY_SECONDS, ANALYTICS_TREND_DAYS, eventTimestamp)
+}
+
+/** Start of the daily trend: UTC midnight `ANALYTICS_TREND_DAYS - 1` days before `now`. */
+export function dailyTrendStart(now: number): Date {
+  const today = new Date(now)
+  today.setUTCHours(0, 0, 0, 0)
+  return new Date(today.getTime() - (ANALYTICS_TREND_DAYS - 1) * DAY_SECONDS * 1000)
+}
+
+function bucketIndexExpression(
+  start: Date,
+  bucketSeconds: number,
+  bucketCount: number,
+  eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp,
+): SQL<number> {
+  // Bind `start` exactly as the window's `event_timestamp >= ?` condition does.
+  const startParam = sql.param(start, TelemetryEventTable.event_timestamp)
+  const elapsedSeconds = sql`TIMESTAMPDIFF(SECOND, ${startParam}, ${eventTimestamp})`
+  return sql<number>`LEAST(FLOOR(${elapsedSeconds} / ${sql.raw(String(bucketSeconds))}), ${sql.raw(String(bucketCount - 1))})`
+}
+
+/** Org activity metrics since `since`, optionally narrowed to one session dimension. */
+export async function queryWindowMetrics(db: Db, orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): Promise<WindowMetrics> {
+  const rows = await selectWindowMetrics(db, orgId, since, filter)
+  return readWindowMetrics(rows[0])
+}
+
+export function selectWindowMetrics(db: Db, orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): PromiseLike<WindowMetricsRow[]> {
+  return db
+    .select(windowMetricsSelection())
+    .from(TelemetryEventTable, orgWindowScan(filter))
+    .where(and(...telemetryWindowConditions(orgId, since, filter)))
+}
+
+/**
+ * Per-week active members, sessions and task outcomes since `start` (see
+ * `weekIndexExpression`).
+ *
+ * The window's events are selected in a derived table that MySQL cannot merge
+ * (it has a LIMIT), and grouped outside it. Grouped in place, MySQL charges a
+ * plan that starts from the dimension filter's sessions for sorting the joined
+ * rows, so it starts from the events instead and runs the filter's lookup
+ * against every event in the window — about 9x slower for one project.
+ */
+export function selectWeeklyActivity(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null): PromiseLike<WeeklyActivityRow[]> {
+  const windowEvents = selectWindowEvents(db, orgId, start, filter)
+  const week = weekIndexExpression(start, windowEvents.eventTimestamp)
+  return db
+    .select({ week, ...bucketActivitySelection(windowEvents) })
+    .from(windowEvents)
+    .groupBy(week)
+    .orderBy(week)
+}
+
+/**
+ * Per-UTC-day active members, sessions and task outcomes since `start` (see
+ * `dayIndexExpression` and `dailyTrendStart`). Same plan as `selectWeeklyActivity`.
+ */
+export function selectDailyActivity(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null): PromiseLike<DailyActivityRow[]> {
+  const windowEvents = selectWindowEvents(db, orgId, start, filter)
+  const day = dayIndexExpression(start, windowEvents.eventTimestamp)
+  return db
+    .select({ day, ...bucketActivitySelection(windowEvents) })
+    .from(windowEvents)
+    .groupBy(day)
+    .orderBy(day)
+}
+
+function selectWindowEvents(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null) {
+  return db
+    .select({
+      eventTimestamp: sql<Date>`${TelemetryEventTable.event_timestamp}`.as("window_event_timestamp"),
+      memberId: sql<string>`${TelemetryEventTable.member_id}`.as("window_member_id"),
+      sessionId: sql<string | null>`${TelemetryEventTable.session_id}`.as("window_session_id"),
+      eventType: sql<string>`${TelemetryEventTable.event_type}`.as("window_event_type"),
+    })
+    .from(TelemetryEventTable, orgWindowScan(filter))
+    .where(and(...telemetryWindowConditions(orgId, start, filter)))
+    .limit(Number.MAX_SAFE_INTEGER)
+    .as("window_events")
+}
+
+function bucketActivitySelection(windowEvents: ReturnType<typeof selectWindowEvents>) {
+  return {
+    activeMembers: sql<number>`count(distinct ${windowEvents.memberId})`,
+    sessions: sql<number>`count(distinct ${windowEvents.sessionId})`,
+    tasksCompleted: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.completed'), 0)`,
+    tasksFailed: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.failed'), 0)`,
+  }
+}
+
+/** Per-week active members since `start` (see `weekIndexExpression`). */
+export function selectWeeklyActiveMembers(db: Db, orgId: TelemetryOrgId, start: Date): PromiseLike<WeeklyActiveMembersRow[]> {
+  const week = weekIndexExpression(start)
+  return db
+    .select({
+      week,
+      count: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
+    })
+    .from(TelemetryEventTable, orgWindowScan(null))
+    .where(and(...telemetryWindowConditions(orgId, start, null)))
+    .groupBy(week)
+    .orderBy(week)
+}
+
+/**
+ * Sessions per model and model-selection dimension value, counting sessions
+ * with any event since `since`. The window's distinct sessions are found first
+ * and then matched to their dimensions, so each session is joined once rather
+ * than once per event.
+ */
+export function selectModelDimensionUsage(db: Db, orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): PromiseLike<ModelDimensionUsageRow[]> {
+  // Aliases are unique across the join: drizzle renders a subquery's aliased
+  // fields without the subquery name.
+  const windowSessions = db
+    .selectDistinct({
+      sessionId: sql<string | null>`${TelemetryEventTable.session_id}`.as("window_session_id"),
+      source: sql<string>`coalesce(${TelemetryEventTable.source}, 'unknown')`.as("window_source"),
+    })
+    .from(TelemetryEventTable, orgWindowScan(filter))
+    .where(and(...telemetryWindowConditions(orgId, since, filter)))
+    .as("window_sessions")
+
+  return db
+    .select({
+      type: TelemetrySessionDimensionTable.dimension_type,
+      value: TelemetrySessionDimensionTable.dimension_value,
+      label: sql<string>`max(${TelemetrySessionDimensionTable.dimension_label})`,
+      sessions: sql<number>`count(distinct ${TelemetrySessionDimensionTable.session_id})`,
+    })
+    .from(windowSessions)
+    .innerJoin(TelemetrySessionDimensionTable, and(
+      eq(TelemetrySessionDimensionTable.org_id, orgId),
+      eq(TelemetrySessionDimensionTable.source, windowSessions.source),
+      eq(TelemetrySessionDimensionTable.session_id, windowSessions.sessionId),
+      sql`${TelemetrySessionDimensionTable.dimension_type} in ('model', 'model_selection')`,
+    ))
+    .groupBy(
+      TelemetrySessionDimensionTable.dimension_type,
+      TelemetrySessionDimensionTable.dimension_value,
+    )
+    .orderBy(desc(sql`count(distinct ${TelemetrySessionDimensionTable.session_id})`))
 }
 
 export type SessionDimensionUpsert = {

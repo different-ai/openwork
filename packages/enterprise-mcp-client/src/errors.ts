@@ -127,6 +127,7 @@ export type EnterpriseMcpOAuthContractErrorCode =
   | "MCP_OAUTH_CONFIGURATION_CHANGED"
   | "MCP_OAUTH_CONFIGURATION_REQUIRED"
   | "MCP_OAUTH_ISSUER_MISMATCH"
+  | "MCP_OAUTH_SIGN_IN_METADATA_MISSING"
   | "MCP_OAUTH_PERSISTENCE_INVALID"
   | "MCP_LIFECYCLE_DEADLINE"
 
@@ -144,6 +145,8 @@ export class EnterpriseMcpOAuthContractError extends Error {
 export class EnterpriseMcpToolResultError extends Error {
   readonly code = "MCP_TOOL_REPORTED_ERROR"
   readonly providerSignal: Record<string, unknown> | undefined
+  /** The provider's own explanation of the failure. Untrusted: the host redacts and shortens it before showing it, and it never enters the message or diagnostic events. */
+  readonly providerText: string[]
 
   constructor(result?: unknown) {
     super("The MCP provider completed the request but reported that the tool operation failed.")
@@ -155,13 +158,15 @@ export class EnterpriseMcpToolResultError extends Error {
     const content = typeof result === "object" && result !== null && "content" in result && Array.isArray(result.content)
       ? result.content
       : []
-    const hasStandardInputValidationError = content.some((item) => {
-      if (typeof item !== "object" || item === null || !("type" in item) || item.type !== "text" || !("text" in item) || typeof item.text !== "string") {
-        return false
-      }
-      return /^Input validation error:\s*Invalid arguments for tool\b/i.test(item.text)
-        || /^Invalid (?:tool )?(?:arguments|params)\b/i.test(item.text)
-    })
+    this.providerText = content.flatMap((item) => (
+      typeof item === "object" && item !== null && "type" in item && item.type === "text" && "text" in item && typeof item.text === "string"
+        ? [item.text]
+        : []
+    ))
+    const hasStandardInputValidationError = this.providerText.some((text) => (
+      /^Input validation error:\s*Invalid arguments for tool\b/i.test(text)
+        || /^Invalid (?:tool )?(?:arguments|params)\b/i.test(text)
+    ))
     const providerStatus = structuredContent && "providerStatus" in structuredContent && typeof structuredContent.providerStatus === "number"
       ? structuredContent.providerStatus
       : undefined

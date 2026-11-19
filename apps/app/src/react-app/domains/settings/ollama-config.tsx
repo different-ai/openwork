@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CheckCircle2, Download, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { Bot, CheckCircle2, Download, Loader2, Lock, RefreshCw, XCircle } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -45,7 +45,13 @@ import {
 import { formatFileSize } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { fetchOllamaModelSupportsVision, OLLAMA_PROVIDER_CONFIG, type LocalProviderInstallInput } from "./openai-image-extension";
+import {
+  fetchOllamaModelCapabilities,
+  fetchOllamaSyncInput,
+  OLLAMA_PROVIDER_CONFIG,
+  type LocalProviderInstallInput,
+  type LocalProviderSyncInput,
+} from "./openai-image-extension";
 import { registerExtensionConfig, type ExtensionConfigContext } from "./extension-registry";
 
 const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
@@ -54,6 +60,7 @@ const ollamaConfigFactory = (ctx: ExtensionConfigContext) => (
     status={ctx.localProvider.status}
     error={ctx.localProvider.error}
     onInstall={ctx.localProvider.onInstall}
+    onSync={ctx.localProvider.onSync}
   />
 );
 
@@ -208,11 +215,38 @@ function usePullOllamaModel(options: { onSuccess?: (model: string) => void } = {
   return { pullModel, isPulling, progress };
 }
 
+/**
+ * Local models turned off by the organization: the page stays, with a lock and
+ * who changes it, and talks to nothing (DESIGN P4, C5). Ollama is not even
+ * probed on this computer.
+ */
+export function LocalModelsBlocked({ organizationName }: { organizationName?: string }) {
+  return (
+    <Card variant="outline" size="sm" data-testid="local-models-blocked">
+      <CardHeader>
+        <CardTitle>Configuration</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Empty className="flex-none p-6" variant="ghost">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Lock /></EmptyMedia>
+            <EmptyTitle>Local models are off</EmptyTitle>
+            <EmptyDescription>
+              {organizationName ? `${organizationName} turned off Ollama and LM Studio.` : "Your organization turned off Ollama and LM Studio."} An admin can turn them on in AI Gateway.
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </CardContent>
+    </Card>
+  );
+}
+
 export type OllamaConfigProps = {
   busy: boolean;
   status: string | null;
   error: string | null;
   onInstall: (input: LocalProviderInstallInput) => void | Promise<void>;
+  onSync: (input: LocalProviderSyncInput) => void | Promise<void>;
 };
 
 export function OllamaConfig(props: OllamaConfigProps) {
@@ -221,6 +255,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
   const [pullDialogOpen, setPullDialogOpen] = useState(false);
   const [setDefault, setSetDefault] = useState(true);
   const [checkingCapabilities, setCheckingCapabilities] = useState(false);
+  const [lastAction, setLastAction] = useState<"install" | "sync" | null>(null);
 
 
   const { data, isFetching, refetch, status } = useOllamaModels();
@@ -257,10 +292,11 @@ export function OllamaConfig(props: OllamaConfigProps) {
       return; 
     }
 
+    setLastAction("install");
     void (async () => {
       setCheckingCapabilities(true);
       try {
-        const supportsVision = await fetchOllamaModelSupportsVision(activeModelId, OLLAMA_PROVIDER_CONFIG.baseURL);
+        const { supportsVision, thinkingLevels } = await fetchOllamaModelCapabilities(activeModelId, OLLAMA_PROVIDER_CONFIG.baseURL);
         await props.onInstall({
           providerId: OLLAMA_PROVIDER_CONFIG.providerId,
           name: OLLAMA_PROVIDER_CONFIG.name,
@@ -269,7 +305,26 @@ export function OllamaConfig(props: OllamaConfigProps) {
           modelName: activeModelId,
           setDefault,
           supportsVision,
+          thinkingLevels,
         });
+      } finally {
+        setCheckingCapabilities(false);
+      }
+    })();
+  };
+
+  const working = props.busy || checkingCapabilities;
+
+  /** Makes OpenWork's Ollama models match what Ollama has now, with fresh capabilities. */
+  const handleSync = () => {
+    setLastAction("sync");
+    void (async () => {
+      setCheckingCapabilities(true);
+      try {
+        const input = await fetchOllamaSyncInput();
+        // Show the list that was synced, including models pulled or removed outside OpenWork.
+        void refetch();
+        if (input) await props.onSync(input);
       } finally {
         setCheckingCapabilities(false);
       }
@@ -374,14 +429,25 @@ export function OllamaConfig(props: OllamaConfigProps) {
             {progress ? (
               <PullProgressRow progress={progress} isPulling={isPulling} />
             ) : null}
-            <Button
-              variant="link"
-              size="sm"
-              className="self-center"
-              onClick={() => setPullDialogOpen(true)}
-            >
-              Add a custom model
-            </Button>
+            <div className="flex items-center justify-center gap-2">
+              <Button
+                variant="link"
+                size="sm"
+                onClick={() => setPullDialogOpen(true)}
+              >
+                Add a custom model
+              </Button>
+              <Button
+                variant="link"
+                size="sm"
+                onClick={handleSync}
+                disabled={working || isPulling}
+                title="Add every Ollama model to OpenWork, remove deleted ones, and refresh their capabilities"
+              >
+                {working && lastAction === "sync" && <Loader2 className="size-4 animate-spin" />}
+                Sync all models
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -440,7 +506,7 @@ export function OllamaConfig(props: OllamaConfigProps) {
           onClick={handleInstall}
           disabled={props.busy || isPulling || checkingCapabilities || !activeModelId || status !== "running"}
         >
-          {(props.busy || checkingCapabilities) && <Loader2 className="size-4 animate-spin" />}
+          {working && lastAction !== "sync" && <Loader2 className="size-4 animate-spin" />}
           Add to workspace
         </Button>
       </CardFooter>

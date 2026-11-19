@@ -30,7 +30,7 @@ src/
     └── domains/               Feature-scoped code, one folder per product domain
         ├── session/           chat/ surface/ sync/ composer, sidebar/, panel/, terminal/,
         │                      artifacts/, modals/, …
-        ├── workspace/         Create/rename/share workspace flows
+        ├── workspace/         Create/rename workspace flows
         ├── settings/          state/ + pages/ + modals/ (settings shell)
         ├── connections/       MCP + provider auth UI
         ├── cloud/             Den sign-in and cloud surfaces
@@ -51,6 +51,15 @@ src/
 4. `shell/` sits on top and may import everything.
 5. Wire contracts shared with other processes live in `packages/types`
    (e.g. `WorkspaceWire`); producer types assert assignability against them.
+6. New code goes in `domains/<feature>/`. `src/components/` (except
+   `components/ui/`), `src/app/`, `src/lib/` and `src/hooks/` are closed to
+   new files, and a domain does not reach into another domain: move what two
+   features share into `design-system/`, `kernel/` or `infra/`.
+
+`pnpm check` enforces rules 1, 3 and 6 (`scripts/check-app-structure.mjs`) and
+rejects new comments and new `useEffect` calls in app code
+(`scripts/check-code-habits.mjs`). What existed before the checks is frozen in
+their baselines, which only shrink.
 
 Toasts are rendered with `sonner` (`@/components/ui/sonner`), mounted once via
 `<Toaster />` in `shell/providers.tsx`, driven imperatively with `toast()`.
@@ -61,14 +70,15 @@ Toasts are rendered with `sonner` (`@/components/ui/sonner`), mounted once via
 src/index.react.tsx                       React entry
   └─ QueryClientProvider + PlatformProvider
      └─ react-app/shell/providers.tsx     (AppProviders composition)
-        ServerProvider
-        └─ GlobalSDKProvider
-           └─ GlobalSyncProvider
-              └─ LocalProvider
-                 └─ react-app/shell/app-root.tsx → routes
-                    ├─ shell/session-route.tsx   → domains/session
-                    ├─ shell/settings-route.tsx  → domains/settings, connections
-                    └─ domains/{workspace,cloud,onboarding} flows
+        BootStateProvider
+        └─ ServerProvider
+           └─ DenAuthProvider
+              └─ ConnectLink / DesktopConfig / BrandTheme / RestrictionNotice
+                 └─ LocalProvider
+                    └─ react-app/shell/app-root.tsx → routes
+                       ├─ shell/session-route.tsx   → domains/session
+                       ├─ shell/settings-route.tsx  → domains/settings, connections
+                       └─ domains/{workspace,cloud,onboarding} flows
 ```
 
 ## State ownership
@@ -82,6 +92,11 @@ src/index.react.tsx                       React entry
   kernel, shell, and connections.
 - Feature state tightly coupled to one domain lives inside that domain
   (`domains/session/sync/`, `domains/settings/state/`).
+- Engine lifecycle and history conversion belong to the OpenWork host and
+  upstream engine, not the renderer. `shell/use-engine-routing.ts` refreshes
+  routing after a host-owned engine switch without migration progress,
+  consent, or actions. `shell/engine-switch.tsx` keeps activity confirmations
+  for manual engine switches. Legacy Den policy values cannot revert the host.
 
 ## Active workspace and session
 
@@ -179,6 +194,5 @@ an observable assertion there whenever a row changes.
 
 ## Testing
 
-- Unit: `bun test tests/` (CI-gated). Pure logic and parsers belong here.
 - Smoke/e2e: `pnpm test:e2e` and `scripts/*.mjs` (health, sessions, events).
 - UI E2E tests: `pnpm evals:e2e` from the repo root drives the real app.

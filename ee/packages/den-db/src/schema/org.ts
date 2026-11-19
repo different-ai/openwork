@@ -1,5 +1,5 @@
 import { relations, sql } from "drizzle-orm"
-import { index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import type { DesktopAppRestrictions } from "@openwork/types/den/desktop-app-restrictions"
 import type { ConnectLinkClaims } from "@openwork/types/connect-link"
 import { denTypeIdColumn, mediumBlobColumn } from "../columns"
@@ -20,6 +20,8 @@ export const DesktopHandoffGrantTable = mysqlTable(
   ],
 )
 
+// Unused since install pages stopped carrying tokens. Kept until a follow-up
+// migration drops it, so this release can still be rolled back.
 export const DesktopConnectGrantTable = mysqlTable(
   "desktop_connect_grant",
   {
@@ -47,6 +49,8 @@ export const OrganizationTable = mysqlTable(
     allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
     desktopAppRestrictions: json("desktop_app_restrictions").$type<DesktopAppRestrictions>().notNull().default(sql`(json_object())`),
     metadata: json("metadata").$type<Record<string, unknown> | null>(),
+    /** Changed atomically with team writes; makes Redis authorization entries disposable. */
+    teamMembershipRevision: varchar("team_membership_revision", { length: 36 }).notNull().default(""),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()
@@ -88,6 +92,18 @@ export const MemberTable = mysqlTable(
     joinedAt: timestamp("joined_at", { fsp: 3 }).defaultNow(),
     removedAt: timestamp("removed_at", { fsp: 3 }),
     removedByOrgMember: denTypeIdColumn("member", "removed_by_org_member"),
+    /**
+     * The sign-in-less agent user that holds a provisional workspace until a
+     * person claims it. It is never a seat, never listed as a member, and is
+     * removed when the workspace is claimed or expires.
+     */
+    isSetupAgent: boolean("is_setup_agent").notNull().default(false),
+    /**
+     * Whether this person (or pending invitation) has OpenWork Web. Web is
+     * billed per member with it on, and only they can use a Web computer.
+     * On by default, so every member keeps Web until an admin turns it off.
+     */
+    openworkWeb: boolean("openwork_web").notNull().default(true),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
@@ -122,6 +138,8 @@ export const InvitationTable = mysqlTable(
     index("invitation_team_id").on(table.teamId),
     index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
+    // Time window for the admin Control Center's invitation counts.
+    index("invitation_created_at").on(table.createdAt),
     uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],
 )
@@ -138,9 +156,24 @@ export const WorkspaceBootstrapTable = mysqlTable(
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimedAt: timestamp("claimed_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+    // Pre-claim agent identity: a sign-in-less user that is the setup member
+    // until a person claims the workspace. The assertion jti names the only
+    // live pre-claim assertion; credentialsRevokedAt ends every pre-claim
+    // credential at claim or expiry.
+    agentUserId: denTypeIdColumn("user", "agent_user_id"),
+    assertionJti: varchar("assertion_jti", { length: 64 }),
+    credentialsRevokedAt: timestamp("credentials_revoked_at", { fsp: 3 }),
+    // Optional address the person gave the setup agent. Only used to prefill
+    // the claim page and to send one claim reminder before the workspace expires.
+    ownerEmail: varchar("owner_email", { length: 255 }),
+    // Teammates the person asked to invite. Returned to the owner when the claim
+    // is accepted so the claim page sends the invites, whichever link or
+    // sign-up round trip got them there.
+    teammateEmails: json("teammate_emails").$type<string[] | null>(),
   },
   (table) => [
     index("workspace_bootstrap_organization_id").on(table.organizationId),
+    index("workspace_bootstrap_agent_user_id").on(table.agentUserId),
     index("workspace_bootstrap_status").on(table.status),
     index("workspace_bootstrap_expires_at").on(table.expiresAt),
   ],
@@ -169,6 +202,31 @@ export const WorkspaceClaimTable = mysqlTable(
   ],
 )
 
+// RFC 8628-style claim codes for a provisional workspace. Only a hash of the
+// user code is stored; each new code cancels the previous unused one.
+export const WorkspaceClaimCodeTable = mysqlTable(
+  "workspace_claim_code",
+  {
+    id: denTypeIdColumn("workspaceClaimCode", "id").notNull().primaryKey(),
+    bootstrapId: denTypeIdColumn("workspaceBootstrap", "bootstrap_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userCodeHash: varchar("user_code_hash", { length: 128 }).notNull(),
+    state: varchar("state", { length: 32 }).notNull().default("pending"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+    claimedByUserId: denTypeIdColumn("user", "claimed_by_user_id"),
+    acceptedAt: timestamp("accepted_at", { fsp: 3 }),
+    reconciledAt: timestamp("reconciled_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("workspace_claim_code_user_code_hash").on(table.userCodeHash),
+    index("workspace_claim_code_bootstrap_id").on(table.bootstrapId),
+    index("workspace_claim_code_state").on(table.state),
+  ],
+)
+
+// Unused since install pages stopped carrying tokens. Kept until a follow-up
+// migration drops it, so this release can still be rolled back.
 export const InstallLinkTable = mysqlTable(
   "install_link",
   {

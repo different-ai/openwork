@@ -1,14 +1,13 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
   AuthUserTable,
-  MemberTable,
   OrganizationTable,
   SsoConnectionTable,
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
+import { ssoDomainColumnCovers } from "./sso-domains.js"
 
 type EnterpriseAuthRequirementRow = {
   organizationId: string
@@ -60,44 +59,6 @@ function pickRequirement(rows: EnterpriseAuthRequirementRow[]) {
   return ssoRow ?? rows[0] ?? null
 }
 
-async function findEnterpriseAuthRequirement(where: ReturnType<typeof and>) {
-  const rows = await db
-    .select({
-      organizationId: OrganizationTable.id,
-      organizationSlug: OrganizationTable.slug,
-      signInPath: SsoConnectionTable.signInPath,
-      ssoProviderId: SsoProviderTable.providerId,
-    })
-    .from(AuthUserTable)
-    .innerJoin(MemberTable, eq(AuthUserTable.id, MemberTable.userId))
-    .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
-    .innerJoin(SsoConnectionTable, and(
-      eq(OrganizationTable.id, SsoConnectionTable.organizationId),
-      eq(SsoConnectionTable.status, "enabled"),
-    ))
-    .innerJoin(SsoProviderTable, and(
-      eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
-      eq(OrganizationTable.id, SsoProviderTable.organizationId),
-      eq(SsoProviderTable.domainVerified, true),
-    ))
-    .where(and(
-      where,
-      isNull(MemberTable.removedAt),
-    ))
-
-  const requirement = pickRequirement(rows)
-  return requirement ? toRequirement(requirement) : null
-}
-
-export async function findEnterpriseAuthRequirementForEmail(email: string) {
-  const normalizedEmail = normalizeEmail(email)
-  if (!normalizedEmail) {
-    return null
-  }
-
-  return findEnterpriseAuthRequirement(eq(AuthUserTable.email, normalizedEmail))
-}
-
 export async function findEnterpriseAuthRequirementForEmailDomain(email: string) {
   const domain = getEmailDomain(email)
   if (!domain) {
@@ -115,12 +76,12 @@ export async function findEnterpriseAuthRequirementForEmailDomain(email: string)
     .innerJoin(SsoConnectionTable, and(
       eq(OrganizationTable.id, SsoConnectionTable.organizationId),
       eq(SsoConnectionTable.status, "enabled"),
-      eq(SsoConnectionTable.domain, domain),
+      ssoDomainColumnCovers(SsoConnectionTable.domain, domain),
     ))
     .innerJoin(SsoProviderTable, and(
       eq(SsoConnectionTable.providerId, SsoProviderTable.providerId),
       eq(OrganizationTable.id, SsoProviderTable.organizationId),
-      eq(SsoProviderTable.domain, domain),
+      ssoDomainColumnCovers(SsoProviderTable.domain, domain),
       eq(SsoProviderTable.domainVerified, true),
     ))
 
@@ -152,8 +113,4 @@ export async function resolveNonSsoSignInMethodForEmail(email: string): Promise<
   }
 
   return "password"
-}
-
-export async function findEnterpriseAuthRequirementForUserId(userId: string) {
-  return findEnterpriseAuthRequirement(eq(AuthUserTable.id, normalizeDenTypeId("user", userId)))
 }

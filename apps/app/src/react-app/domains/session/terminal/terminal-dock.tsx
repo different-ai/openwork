@@ -10,11 +10,10 @@ import { isElectronRuntime } from "../../../../app/utils";
 
 type TerminalDockProps = {
   workspaceRoot: string;
-  isRemoteWorkspace: boolean;
   onClose: () => void;
 };
 
-export function TerminalDock({ workspaceRoot, isRemoteWorkspace, onClose }: TerminalDockProps) {
+export function TerminalDock({ workspaceRoot, onClose }: TerminalDockProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalIdRef = useRef<string | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -25,10 +24,6 @@ export function TerminalDock({ workspaceRoot, isRemoteWorkspace, onClose }: Term
     if (!containerRef.current) return;
     if (!isElectronRuntime()) {
       setStatus("Terminal is available in the desktop app.");
-      return;
-    }
-    if (isRemoteWorkspace) {
-      setStatus("Remote workspace terminals are not wired yet.");
       return;
     }
 
@@ -114,7 +109,7 @@ export function TerminalDock({ workspaceRoot, isRemoteWorkspace, onClose }: Term
       terminalRef.current = null;
       fitRef.current = null;
     };
-  }, [isRemoteWorkspace, workspaceRoot]);
+  }, [workspaceRoot]);
 
   return (
     <section className="flex h-full min-h-0 flex-col border-t border-border bg-[#0b0d12] text-white" aria-label="Terminal">

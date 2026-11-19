@@ -1,12 +1,15 @@
 "use client";
 
 import { getOrgAccessFlags } from "../../_lib/den-org";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DashboardOverviewScreen } from "./dashboard-overview-screen";
 import { MemberDashboardScreen } from "./member-dashboard-screen";
 
 export function DashboardHomeScreen() {
   const { orgContext, orgBusy, mutationBusy } = useOrgDashboard();
+  // Feature intros: Home answers `?` only; it never gives way to an intro.
+  useFeatureIntro("home", orgContext ? {} : null);
 
   // A workspace switch keeps the previous orgContext around while the next one
   // loads. Rendering the neutral placeholder during that window (and while the
@@ -23,7 +26,7 @@ export function DashboardHomeScreen() {
   const access = getOrgAccessFlags(
     orgContext.currentMember.role,
     orgContext.currentMember.isOwner,
-    orgContext.roles,
+    orgContext.currentMember.permissions,
   );
 
   return access.isAdmin ? <DashboardOverviewScreen /> : <MemberDashboardScreen />;

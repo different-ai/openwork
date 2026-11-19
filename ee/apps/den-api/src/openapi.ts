@@ -53,6 +53,7 @@ const validationIssueSchema = z.object({
 
 export const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
+  message: z.string().optional(),
   details: z.array(validationIssueSchema),
   capability: z.string().optional(),
 }).meta({ ref: "InvalidRequestError" })
@@ -66,6 +67,17 @@ export const forbiddenSchema = z.object({
   reason: z.string().optional(),
   message: z.string().optional(),
 }).meta({ ref: "ForbiddenError" })
+
+/** the organization requires SSO and this session did not sign in through it. */
+export const ssoRequiredSchema = z.object({
+  error: z.literal("sso_required"),
+  message: z.string(),
+  organizationId: z.string(),
+  organizationSlug: z.string(),
+  organizationName: z.string(),
+  signInPath: z.string(),
+  signInUrl: z.string().url(),
+}).meta({ ref: "SsoRequiredError" })
 
 export const enterprisePlanRequiredSchema = z.object({
   error: z.literal("enterprise_plan_required"),

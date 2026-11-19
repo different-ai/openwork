@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config";
+export { selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config";
 
 import { enginePoolForConfig } from "./engine-pool.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
@@ -150,9 +152,9 @@ function resolveManagedProviderAuthTarget(
   config: ServerConfig,
   standby?: ManagedProviderAuthStandbyTarget,
 ): ManagedProviderAuthTarget | null {
-  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
-  if (!workspace) return null;
-
+  // The managed engine is one process for every workspace and runs before
+  // the first one exists, so its credentials are keyed by engine generation.
+  // Only an attached engine (no pool) is reached through a workspace.
   const pool = enginePoolForConfig(config);
   if (standby) {
     // Same scope shape as the primary branch below, so the flip that promotes
@@ -161,7 +163,7 @@ function resolveManagedProviderAuthTarget(
     if (!pool || !baseUrl) return null;
     const authHeader = basicAuthHeader(standby.username, standby.password);
     return {
-      scope: `workspace:${workspace.id}\u0000generation:${standby.generationId}`,
+      scope: `managed-engine\u0000generation:${standby.generationId}`,
       ownershipScope: "managed-engine",
       baseUrl,
       ...(authHeader ? { authHeader } : {}),
@@ -174,7 +176,7 @@ function resolveManagedProviderAuthTarget(
     if (!primary || !baseUrl) return null;
     const authHeader = basicAuthHeader(primary.username, primary.password);
     return {
-      scope: `workspace:${workspace.id}\u0000generation:${primary.generationId}`,
+      scope: `managed-engine\u0000generation:${primary.generationId}`,
       ownershipScope: "managed-engine",
       baseUrl,
       ...(authHeader ? { authHeader } : {}),
@@ -188,6 +190,8 @@ function resolveManagedProviderAuthTarget(
     };
   }
 
+  const workspace = findManagedEngineWorkspace(config.workspaces) ?? config.workspaces[0];
+  if (!workspace) return null;
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);
   const baseUrl = normalizeBaseUrl(connection.baseUrl);
   if (!baseUrl) return null;
@@ -212,29 +216,6 @@ function readEnvNames(entry: Record<string, unknown>): string[] {
   return entry.env.filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 }
 
-function credentialEnvRank(name: string): number | null {
-  const normalized = name.trim().toUpperCase();
-  if (/(^|_)API_KEY$/.test(normalized)) return 0;
-  if (/(^|_)ACCESS_KEY_ID$/.test(normalized)) return 1;
-  if (/(^|_)BEARER_TOKEN(_|$)/.test(normalized) || /(^|_)TOKEN$/.test(normalized)) return 2;
-  if (/(^|_)KEY$/.test(normalized)) return 3;
-  return null;
-}
-
-export function selectPrimaryCredentialEnvName(
-  envNames: string[],
-  availableNames: Iterable<string>,
-): string | null {
-  const available = new Set([...availableNames].filter((name) => name.trim().length > 0));
-  const orderedNames = envNames.filter((name) => available.has(name));
-  const ranked = orderedNames
-    .map((name, index) => ({ name, index, rank: credentialEnvRank(name) }))
-    .filter((entry): entry is { name: string; index: number; rank: number } => entry.rank !== null)
-    .sort((left, right) => left.rank - right.rank || left.index - right.index);
-  if (ranked[0]) return ranked[0].name;
-  if (envNames.length > 1 && envNames.some((name) => credentialEnvRank(name) !== null)) return null;
-  return orderedNames[0] ?? null;
-}
 
 /**
  * Forget what we believe the engine holds. Call this when the engine process is

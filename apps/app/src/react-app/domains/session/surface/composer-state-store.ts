@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { AutoAccessWall } from "@/app/lib/inference-access";
 
 import { createPromptMessageID } from "../../../../app/lib/opencode";
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
@@ -7,6 +8,7 @@ import type { ComposerMentionKind } from "./composer/mention-encoding";
 export type QueuedComposerItem = {
   id: string;
   draft: ComposerDraft;
+  steer?: { owner: string; generation: number; agent: string | null; order?: number };
 };
 
 export type ComposerPastePart = {
@@ -45,7 +47,9 @@ export type ComposerStateStore = {
     serverMessageId?: string;
     preparedText?: string;
     settled: boolean;
+    autoAccessWall?: AutoAccessWall;
   }[]>;
+  settleAutoAccessWall: (owner: string, messageId: string, wall: AutoAccessWall) => void;
   pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
@@ -56,7 +60,8 @@ export type ComposerStateStore = {
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
-  appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
+  appendQueuedDraft: (sessionId: string, draft: ComposerDraft, steer?: QueuedComposerItem["steer"]) => void;
+  requestQueuedDraftSend: (sessionId: string, id: string, steer: NonNullable<QueuedComposerItem["steer"]>) => void;
   removeQueuedDraft: (sessionId: string, id: string) => void;
   updateQueuedDraft: (sessionId: string, id: string, draft: ComposerDraft) => void;
   reorderQueuedDrafts: (sessionId: string, ids: string[]) => void;
@@ -70,11 +75,16 @@ const EMPTY_MENTIONS: Record<string, ComposerMentionKind> = {};
 const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerItem[] = [];
 const composerSessionDraftScopes = new Map<string, string>();
+let queuedSteerOrder = 0;
 
 export function claimComposerSessionDraftScope(sessionId: string, scopeKey: string) {
   const session = sessionId.trim();
   if (!session) return;
   composerSessionDraftScopes.set(session, scopeKey);
+}
+
+export function releaseComposerSessionDraftScope(sessionId: string, expected: string) {
+  if (composerSessionDraftScopes.get(sessionId.trim()) === expected) composerSessionDraftScopes.delete(sessionId.trim());
 }
 
 export function getComposerSessionDraftScope(sessionId: string) {
@@ -85,14 +95,26 @@ export function persistableComposerDraftText(text: string) {
   return text.replace(/\[attachment [^\]]+\]/g, "");
 }
 
+/**
+ * Decide whether the persisted draft snapshot should replace the in-memory
+ * composer. Crossing an account or organization boundary always rehydrates so
+ * the previous scope's text and attachments never survive into the next one.
+ * Inside one claimed scope the person's live composer is the newest source of
+ * truth: a snapshot that moved underneath it (another window, a queue mirror,
+ * a refused compare-and-swap) may only fill an empty composer, never replace
+ * text or attachments that are being edited here.
+ */
 export function composerDraftNeedsHydration(input: {
   claimedScopeKey: string | null;
   nextScopeKey: string;
   currentText: string;
   storedText: string;
+  currentHasAttachments?: boolean;
 }) {
-  return input.claimedScopeKey !== input.nextScopeKey
-    || persistableComposerDraftText(input.currentText) !== input.storedText;
+  if (input.claimedScopeKey !== input.nextScopeKey) return true;
+  const currentText = persistableComposerDraftText(input.currentText);
+  if (currentText.length > 0 || input.currentHasAttachments) return false;
+  return currentText !== input.storedText;
 }
 
 function createEmptyComposerSession(): ComposerSessionState {
@@ -116,6 +138,12 @@ function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   failedDrafts: {},
   pendingMessages: {},
+  settleAutoAccessWall: (owner, messageId, wall) => set((state) => {
+    const pending = state.pendingMessages[owner];
+    if (!pending?.some((item) => item.draft.messageId === messageId)) return state;
+    return { pendingMessages: { ...state.pendingMessages, [owner]: pending.map((item) => item.draft.messageId === messageId
+      ? { ...item, settled: true, autoAccessWall: wall } : item) } };
+  }),
   pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},
@@ -178,9 +206,17 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
   }),
-  appendQueuedDraft: (sessionId, draft) => set((state) => {
+  appendQueuedDraft: (sessionId, draft, steer) => set((state) => {
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, createQueuedItem(draft)] } };
+    const item = createQueuedItem(draft);
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...current, steer ? { ...item, steer: { ...steer, order: ++queuedSteerOrder } } : item] } };
+  }),
+  requestQueuedDraftSend: (sessionId, id, steer) => set((state) => {
+    const current = state.queuedDrafts[sessionId];
+    const item = current?.find((item) => item.id === id);
+    if (!current || !item || item.steer) return state;
+    const requested = { ...item, steer: { ...steer, order: ++queuedSteerOrder } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: current.map((item) => item.id === id ? requested : item) } };
   }),
   removeQueuedDraft: (sessionId, id) => set((state) => {
     const current = state.queuedDrafts[sessionId];
@@ -226,7 +262,7 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   prependQueuedDrafts: (sessionId, items) => set((state) => {
     if (items.length === 0) return state;
     const current = state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
-    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items.map((item) => createQueuedItem(item.draft, item.id)), ...current] } };
+    return { queuedDrafts: { ...state.queuedDrafts, [sessionId]: [...items.map((item) => ({ ...item, ...createQueuedItem(item.draft, item.id) })), ...current] } };
   }),
   clearSession: (sessionId) => set((state) => {
     if (!state.sessions[sessionId]) return state;
@@ -254,6 +290,13 @@ export function getComposerPasteParts(state: ComposerStateStore, sessionId: stri
 
 export function getComposerQueuedDrafts(state: ComposerStateStore, sessionId: string): QueuedComposerItem[] {
   return state.queuedDrafts[sessionId] ?? EMPTY_QUEUED_DRAFTS;
+}
+
+export function getNextComposerQueuedDraft(state: ComposerStateStore, sessionId: string, owner: string | undefined, generation: number): QueuedComposerItem | undefined {
+  const eligible = getComposerQueuedDrafts(state, sessionId).filter((item) =>
+    !item.steer || (item.steer.owner === owner && item.steer.generation === generation));
+  const requested = eligible.filter((item) => item.steer).sort((left, right) => (left.steer?.order ?? 0) - (right.steer?.order ?? 0));
+  return requested[0] ?? eligible[0];
 }
 
 export function getComposerRevertMessageId(state: ComposerStateStore, sessionId: string): string | null {
