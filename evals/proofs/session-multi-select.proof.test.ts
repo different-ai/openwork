@@ -17,6 +17,8 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
   const row = (id: string) => ({ testId: `sidebar-session-${id}` });
   const selectedIds = async () => (await probe.dom(selectedRows)).elements.length;
   const barText = async () => (await probe.dom(bar)).elements.map(element => element.text.replace(/\s+/g, " ").trim()).join(" ");
+  const listedCounts = (sessions: { sessionId: string }[]) => Promise.all(sessions.map(async session =>
+    (await probe.dom(`[data-sidebar-session-id="${session.sessionId}"]:not([data-global-archived-sessions] *)`)).elements.length));
   const toasts = async () => (await probe.dom("[data-sonner-toast]")).elements.map(element => element.text.replace(/\s+/g, " ").trim());
   await user.resizeViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 
@@ -75,19 +77,18 @@ test("a member selects three sessions with Ctrl-click and Shift-click and archiv
     const shown = await probe.eventually(() => toasts(), {
       within: 30_000, label: "one toast reports the three archived sessions", until: list => list.some(entry => entry.includes("3 sessions archived")),
     });
-    for (const session of [draft, compare, summarize]) await user.notSee(row(session.sessionId), { timeoutMs: 15_000 });
-    await user.see(row(offsite.sessionId));
+    const archivedListed = await listedCounts([draft, compare, summarize, offsite]);
     const bars = (await probe.dom(bar)).elements.length;
     evidence.recordAssertionEvidence(
       "Archiving the selection moves all three sessions out of the list and clears the selection",
-      `toasts=${JSON.stringify(shown)}; still listed=${offsite.title}; selection bars=${bars}`,
-      shown.some(entry => entry.includes("3 sessions archived")) && bars === 0,
+      `toasts=${JSON.stringify(shown)}; rows in the list per session (${[draft, compare, summarize, offsite].map(session => session.title).join(", ")})=${archivedListed.join(",")}; selection bars=${bars}`,
+      shown.some(entry => entry.includes("3 sessions archived")) && bars === 0 && archivedListed.join(",") === "0,0,0,1",
     );
     await user.screenshot();
+    expect(archivedListed).toEqual([0, 0, 0, 1]);
     await user.click({ role: "button", label: "Undo" });
     for (const session of [draft, compare, summarize]) await user.see(row(session.sessionId), { timeoutMs: 30_000 });
-    const listed = await Promise.all([draft, compare, summarize, offsite].map(async session =>
-      (await probe.dom(`[data-sidebar-session-id="${session.sessionId}"]:not([data-global-archived-sessions] *)`)).elements.length));
+    const listed = await listedCounts([draft, compare, summarize, offsite]);
     evidence.recordAssertionEvidence(
       "One Undo restores every archived session",
       `rows back in the list per session (${[draft, compare, summarize, offsite].map(session => session.title).join(", ")})=${listed.join(",")}`,
