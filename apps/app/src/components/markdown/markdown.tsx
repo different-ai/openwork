@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   Dialog,
@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { markFeatureUsed } from "@/app/lib/den";
 import { desktopBridge } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
@@ -46,6 +47,12 @@ function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
     if (!runnable) existing?.remove();
     else if (!existing) block.insertAdjacentHTML("afterbegin", CODE_RUN_BUTTON_HTML);
   }
+}
+
+const MarkdownTableExpandContext = createContext(false);
+
+export function MarkdownTableExpand({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  return <MarkdownTableExpandContext.Provider value={enabled}>{children}</MarkdownTableExpandContext.Provider>;
 }
 
 type MarkdownBlockInnerProps = {
@@ -105,6 +112,8 @@ function MarkdownBlockInner({
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  const tableExpand = useContext(MarkdownTableExpandContext);
+  const [expandedTableMarkdown, setExpandedTableMarkdown] = useState<string | null>(null);
   const references = useSessionReferencesMaybe();
   const untrusted = useUntrustedMarkdown();
   const presentation = untrusted ? "remote" : "chat";
@@ -389,6 +398,16 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || handleSessionReference(event)) return;
 
+      const tableExpandButton = event.target.closest("[data-openwork-table-expand]");
+      if (tableExpandButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!tableExpand) return;
+        setExpandedTableMarkdown(tableExpandButton.dataset.openworkTableExpand || null);
+        try { markFeatureUsed("chatTableExpand"); } catch {}
+        return;
+      }
+
       const copyButton = event.target.closest("[data-openwork-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
         event.preventDefault();
@@ -540,13 +559,17 @@ function MarkdownBlockInner({
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences, runCommand]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences, runCommand, tableExpand]);
 
   if (isEmpty) {
     return null;
   }
 
-  const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+  const rootClassName = cn(
+    "markdown-content max-w-none select-text text-foreground",
+    !tableExpand && "[&_[data-openwork-table-expand]]:hidden",
+    className,
+  );
 
   return (
     <>
@@ -577,6 +600,24 @@ function MarkdownBlockInner({
         />
       ) : null}
       <MermaidZoomPortals diagrams={mermaidDiagrams} />
+      <Dialog
+        open={expandedTableMarkdown !== null}
+        onOpenChange={(open) => {
+          if (!open) setExpandedTableMarkdown(null);
+        }}
+      >
+        <DialogContent className="block max-h-[90vh] overflow-auto pt-14 lg:w-[min(96vw,1400px)] lg:max-w-[min(96vw,1400px)] lg:rounded-3xl">
+          <DialogTitle className="sr-only">Table</DialogTitle>
+          {expandedTableMarkdown ? (
+            <MarkdownBlock
+              text={expandedTableMarkdown}
+              sessionReferences={sessionReferences}
+              githubReferences={githubReferences}
+              className="text-sm [&_[data-openwork-table-expand]]:hidden [&_[data-openwork-table]]:my-0"
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {

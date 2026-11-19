@@ -182,6 +182,7 @@ import type {
   ChatToolReconnectResult,
 } from "@/components/tools/error-attribution";
 import { MERMAID_LIMITS } from "@/components/markdown/mermaid";
+import { MarkdownTableExpand } from "@/components/markdown/markdown";
 import {
   isChatMcpReconnectScopeCurrent,
   isCurrentChatConnectionDecision,
@@ -2313,6 +2314,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const chatRunCommandsEnabled = useDesktopFeature("chatRunCommands");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
+  const chatTableExpandEnabled = useDesktopFeature("chatTableExpand");
   const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
@@ -3934,6 +3936,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   return (
     <DevProfiler id="SessionSurface">
+    <MarkdownTableExpand enabled={chatTableExpandEnabled}>
     <div
       data-session-surface-id={props.sessionId}
       data-session-surface-workspace-id={props.workspaceId}
@@ -4392,6 +4395,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         }}
       /> : null}
     </div>
+    </MarkdownTableExpand>
     </DevProfiler>
   );
 }
