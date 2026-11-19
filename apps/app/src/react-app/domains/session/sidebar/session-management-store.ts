@@ -1,5 +1,5 @@
 /**
- * Zustand store for session management primitives (pin, settle, manual order,
+ * Zustand store for session management primitives (pin, manual order,
  * custom group mirror + expanded state). Persisted to localStorage via
  * zustand/middleware/persist.
  *
@@ -59,24 +59,12 @@ type SessionGroupSyncStatus = {
   deferredServerSync?: SessionGroupDeferredServerSync;
 };
 
-/** A settled session stays settled until it has activity newer than `settledThrough`. */
-export type SessionSettleEntry = {
-  /** The session's own last-activity time when it was settled, so a remote clock never un-settles it. */
-  settledThrough?: number;
-  /** Local time of an Un-settle, or of work starting on this device; idle time for auto-settle counts from here. */
-  unsettledAt?: number;
-};
-
-/** What Settle or Un-settle changed, so Undo can put it back. */
-export type SessionSettleSnapshot = {
-  entry: SessionSettleEntry | undefined;
-  pinIndex: number;
-  unread: boolean;
-};
-
-/** Settings › Preferences choices; 0 turns auto-settle off. */
-export const AUTO_SETTLE_DAY_OPTIONS = [0, 1, 3, 7] as const;
-export const DEFAULT_AUTO_SETTLE_DAYS = 3;
+/**
+ * A spot the person dragged a session to in the Feed. `key` is the time it
+ * sorts at; it holds until the session has activity newer than `at`, which
+ * brings it back to the top.
+ */
+export type FeedPlacement = { key: number; at: number };
 
 export type SidebarView = "workspaces" | "feed";
 
@@ -96,8 +84,9 @@ export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
-  settledById: Record<string, SessionSettleEntry>;
-  autoSettleDays: number;
+  /** Local time work last started or finished in a session on this device. */
+  workedAtById: Record<string, number>;
+  feedPlacementById: Record<string, FeedPlacement>;
   /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
   sidebarView: SidebarView;
   feedFolders: FeedFolder[];
@@ -112,16 +101,13 @@ type SessionManagementActions = {
   reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
-  /** Settle through `activityAt`; also unpins the session and clears its unread dot. */
-  settle: (sessionId: string, activityAt: number) => SessionSettleSnapshot;
-  unsettle: (sessionId: string) => SessionSettleSnapshot;
   /**
-   * Work started in the session (a reply, a run, an approval answered). It leaves Settled even when the engine's
-   * session time has not moved, which OpenCode v2 does not do per message.
+   * Work started or finished in the session (a reply, a run, an approval answered). OpenCode v2 does not move the
+   * session's own time per message, so the Feed counts this as activity too.
    */
   noteActivity: (sessionId: string) => void;
-  restoreSettle: (sessionId: string, snapshot: SessionSettleSnapshot) => void;
-  setAutoSettleDays: (days: number) => void;
+  /** Put a session at a spot in the Feed until it has new activity. */
+  placeInFeed: (sessionId: string, key: number) => void;
   setSidebarView: (view: SidebarView) => void;
   setFeedGroupBy: (groupBy: FeedGroupBy) => void;
   setFeedSortBy: (sortBy: FeedSortBy) => void;
@@ -141,14 +127,6 @@ type SessionManagementActions = {
 type SessionManagementStore = SessionManagementState & SessionManagementActions;
 
 const EMPTY_GROUP_STATE: WorkspaceGroupState = { groups: [], assignments: {} };
-
-function settleSnapshot(state: SessionManagementState, sessionId: string): SessionSettleSnapshot {
-  return {
-    entry: state.settledById[sessionId],
-    pinIndex: state.pinnedIds.indexOf(sessionId),
-    unread: state.unreadIds.includes(sessionId),
-  };
-}
 
 function sameStrings(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -273,8 +251,8 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
     (set, get) => ({
       pinnedIds: [],
       unreadIds: [],
-      settledById: {},
-      autoSettleDays: DEFAULT_AUTO_SETTLE_DAYS,
+      workedAtById: {},
+      feedPlacementById: {},
       sidebarView: "workspaces",
       feedFolders: [],
       feedGroupBy: DEFAULT_FEED_GROUP_BY,
@@ -286,9 +264,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         set((state) => {
           const idx = state.pinnedIds.indexOf(sessionId);
           if (idx >= 0) return { pinnedIds: state.pinnedIds.filter((id) => id !== sessionId) };
-          // Pinning keeps a session in view, so it is no longer settled.
-          const { [sessionId]: _settled, ...settledById } = state.settledById;
-          return { pinnedIds: [...state.pinnedIds, sessionId], settledById };
+          return { pinnedIds: [...state.pinnedIds, sessionId] };
         }),
 
       reorderPins: (sessionIds) =>
@@ -311,37 +287,13 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             : state
         )),
 
-      settle: (sessionId, activityAt) => {
-        const snapshot = settleSnapshot(get(), sessionId);
-        set((state) => ({
-          settledById: { ...state.settledById, [sessionId]: { settledThrough: activityAt } },
-          pinnedIds: state.pinnedIds.filter((id) => id !== sessionId),
-          unreadIds: state.unreadIds.filter((id) => id !== sessionId),
-        }));
-        return snapshot;
-      },
-
-      unsettle: (sessionId) => {
-        const snapshot = settleSnapshot(get(), sessionId);
-        set((state) => ({
-          settledById: { ...state.settledById, [sessionId]: { unsettledAt: Date.now() } },
-        }));
-        return snapshot;
-      },
-
       noteActivity: (sessionId) =>
-        set((state) => ({ settledById: { ...state.settledById, [sessionId]: { unsettledAt: Date.now() } } })),
+        set((state) => ({ workedAtById: { ...state.workedAtById, [sessionId]: Date.now() } })),
 
-      restoreSettle: (sessionId, snapshot) =>
-        set((state) => {
-          const { [sessionId]: _current, ...settledById } = state.settledById;
-          if (snapshot.entry) settledById[sessionId] = snapshot.entry;
-          const pinnedIds = state.pinnedIds.filter((id) => id !== sessionId);
-          if (snapshot.pinIndex >= 0) pinnedIds.splice(Math.min(snapshot.pinIndex, pinnedIds.length), 0, sessionId);
-          const unreadIds = state.unreadIds.filter((id) => id !== sessionId);
-          if (snapshot.unread) unreadIds.push(sessionId);
-          return { settledById, pinnedIds, unreadIds };
-        }),
+      placeInFeed: (sessionId, key) =>
+        set((state) => (Number.isFinite(key)
+          ? { feedPlacementById: { ...state.feedPlacementById, [sessionId]: { key, at: Date.now() } } }
+          : state)),
 
       toggleFeedFolder: (workspaceId, groupId) =>
         set((state) => {
@@ -360,9 +312,6 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
 
       setFeedSortBy: (sortBy) =>
         set({ feedSortBy: FEED_SORT_BY_OPTIONS.includes(sortBy) ? sortBy : DEFAULT_FEED_SORT_BY }),
-
-      setAutoSettleDays: (days) =>
-        set({ autoSettleDays: AUTO_SETTLE_DAY_OPTIONS.some((option) => option === days) ? days : DEFAULT_AUTO_SETTLE_DAYS }),
 
       reorderSessions: (workspaceId, sessionIds) =>
         set((state) => (

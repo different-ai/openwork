@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { desktopRestrictionNotice } from "../../../../app/cloud/desktop-app-restrictions";
+import { OpencodeConnectionsImport, type OpencodeConnectionsImportSource } from "../../connections/opencode-connections-import";
 import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
@@ -63,8 +64,7 @@ import {
   revealDesktopItemInDir,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import { markFeatureUsed, readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
 import { providerSetupProblem } from "../../connections/connection-sign-in-problem";
 import type { OrgMcpConnectOptions } from "../../connections/use-org-mcp-connections";
 import { denConnectorSetupUrl } from "../../../../app/lib/den-dashboard-links";
@@ -262,6 +262,8 @@ export type McpViewProps = {
   /** OpenCode plugin management, shown under the Plugins category. */
   pluginsContent?: ReactNode;
   onOpenCloudAccount?: () => void;
+  /** Offers the connections set up in the person's own OpenCode config. Absent while the feature is off. */
+  opencodeImport?: OpencodeConnectionsImportSource;
 };
 
 const builtInExtensionDisabledReason = () => t("extensions.disabled_by_organization");
@@ -570,7 +572,6 @@ export function McpView(props: McpViewProps) {
   const canManageCloudConnections = denAuth.isSignedIn
     && identity?.organizationId === activeOrganizationId
     && isConnectAdminRole(organizationRole.data);
-  const personalConnectorsEnabled = useOrgFeature("desktopPersonalConnectors");
   const connectorCues = useMemo(() => libraryConnectorCues(connectorPresets), [connectorPresets]);
   const libraryAddOptions = {
     cloudSignedIn: libraryCloudSignedIn && Boolean(activeOrganizationId) && denAuth.status !== "unavailable",
@@ -686,7 +687,7 @@ export function McpView(props: McpViewProps) {
     return props.createLibraryItem(kind, input);
   };
 
-  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections && personalConnectorsEnabled;
+  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections;
 
   /** A member's own connector, as My Library adds it on the web; it opens sign-in straight away. */
   const createPersonalConnection = async (input: CreateLibraryItemInput) => {
@@ -697,7 +698,6 @@ export function McpView(props: McpViewProps) {
       url: input.instructions.trim(),
       authType,
     });
-    markFeatureUsed("desktopPersonalConnectors");
     setScreen({ kind: "list" });
     setFilter("all");
     refreshLibrary();
@@ -2119,6 +2119,18 @@ export function McpView(props: McpViewProps) {
           {props.builtInExtensionsDisabled ? <p className="mt-2">{t("extensions.builtins_disabled_notice")}</p> : null}
         </div>
       )}
+
+      {props.opencodeImport && props.allowManageExtensions ? (
+        <OpencodeConnectionsImport
+          source={props.opencodeImport}
+          stateOf={(name) => {
+            const server = props.mcpServers.find((entry) => entry.name === name);
+            if (!server) return null;
+            const status = resolveStatus(server);
+            return { label: friendlyStatus(status), ready: status === "connected" };
+          }}
+        />
+      ) : null}
 
       <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
         {extensionInventoryFilters.map((f) => {

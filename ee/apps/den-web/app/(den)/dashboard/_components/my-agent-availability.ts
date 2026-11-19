@@ -1,4 +1,4 @@
-import { orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org"
+import type { DenOrgContext } from "../../_lib/den-org"
 
 /**
  * Whether the member's own agent ("My bot") is shown anywhere in the shell.
@@ -9,10 +9,9 @@ import { orgFeatureEnabled, type DenOrgContext } from "../../_lib/den-org"
  * shell used to import this from my-agent-screen.tsx, which created a fragile
  * import chain that surfaced as a runtime ReferenceError under HMR/cold boot.
  *
- * The deployment must expose Workbot to the member and the Your agent
- * rollout must be on; it includes the member UI and admin health view.
+ * The deployment must expose Workbot to the member; explicit organization, team
+ * and member choices continue to control whether their agent runs.
  */
 export function myAgentAvailable(orgContext: DenOrgContext | null | undefined): boolean {
   return orgContext?.capabilities.workbot === true
-    && orgFeatureEnabled(orgContext, "workbotProactive")
 }

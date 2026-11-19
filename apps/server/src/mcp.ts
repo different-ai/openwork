@@ -545,6 +545,9 @@ export async function listMcpFromRuntimeSnapshot(
   // OpenCode and can supersede static project/global entries after startup.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
     if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
+    // One row per name: a connection OpenWork holds itself (for example one
+    // imported from this file) is the one the engine runs.
+    if (Object.prototype.hasOwnProperty.call(runtimeMap, name)) continue;
     const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name });
     items.push({
       name,

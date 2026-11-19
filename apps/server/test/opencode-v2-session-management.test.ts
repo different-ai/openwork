@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createV2ContextBridge } from "../src/opencode-v2-context-bridge.js";
 import { groupHost } from "./fixtures/native-codemode-groups.js";
 
-const commandIds = ["session.archive", "session.pin", "session.settle", "session.rename", "session.set_model"];
+const commandIds = ["session.archive", "session.pin", "session.rename", "session.set_model"];
 const requestSchema = z.object({
   kind: z.enum(["context", "command"]),
   input: z.object({ id: z.string(), args: z.record(z.string(), z.unknown()).optional(), origin: z.object({ sessionId: z.string() }) }).optional(),
@@ -52,7 +52,6 @@ for (const [id, args] of [
   ["session.archive", { sessionId: "ses_target", archived: true }],
   ["session.archive", { sessionId: "ses_target", archived: false }],
   ["session.pin", { sessionId: "ses_target" }],
-  ["session.settle", { sessionId: "ses_target", settled: true }],
   ["session.rename", { sessionId: "ses_target", title: "Revised task" }],
   ["session.set_model", { sessionId: "ses_target", workspaceId: "ws1", providerId: "provider", modelId: "model", variant: null }],
 ] satisfies Array<[string, Record<string, unknown>]>) {

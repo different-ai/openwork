@@ -2,6 +2,8 @@ import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudCompu
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { createFileSendApprovals, markFileSendApproved, type FileSendApprovals } from "./file-send-approval.js";
+import { runtimeStorageDir } from "./runtime-db.js";
 import { readHostResponse } from "./host-response.js";
 import { createTaskRecovery, setTaskRecovery } from "./task-recovery.js";
 import { managedPolicyActionSchema } from "./managed-policy-rules.js";
@@ -73,6 +75,9 @@ import {
 import { deleteSkill, listSkills, renderSkillContentForResponse, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, repairCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
+import { unexpectedApiError, watchDiskSpace } from "./disk-space.js";
+import { createClaudeCodeLogin } from "./claude-code-login.js";
+import { inheritedEngineEnv } from "./managed-opencode-v2.js";
 import { opencodeConfigApiError } from "./opencode-config-error.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -110,15 +115,19 @@ import {
 } from "./workspace-export-safety.js";
 import { serve, type ServeResult } from "./serve-node.js";
 import { serveStaticUi } from "./static-ui.js";
+import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
+import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
 import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
 import { createNativeClaudeImportEngine, registerClaudeImportRoutes } from "./routes/claude-import.js";
+import { registerOpencodeConnectionsImportRoutes } from "./routes/opencode-connections-import.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -174,6 +183,8 @@ import { buildOpenworkRuntimeConfigObject, openworkRuntimeConfigFilePath, writeO
 import { findManagedEngineWorkspace, hasExternalOpencode, managedEngineRootWorkspace } from "./workspaces.js";
 import { startThreadApprovalReplayer, type ThreadApprovalReplayer } from "./thread-approvals.js";
 import { CloudProviderSync, parseCloudProviderDenSession } from "./cloud-provider-sync.js";
+import { shareDeviceProvider } from "./device-provider-share.js";
+import { readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 import { createEngineV2Preview, shouldSyncLiveProviderOwnerTransition, type EngineV2Preview } from "./engine-v2-preview.js";
 import { MACHINE_PROVIDER_TEMPLATE_OWNERSHIP, providerConfigFingerprint } from "./provider-config-templates.js";
 import pkg from "../package.json" with { type: "json" };
@@ -803,6 +814,7 @@ export async function startServer(
   const env = new EnvService();
   envServicesByConfig.set(config, env);
   const logger = createServerLogger(config);
+  watchDiskSpace(runtimeStorageDir(config));
   try {
     await reconcileLocalManagedMcpRuntimeEntries(config);
   } catch (error) {
@@ -833,13 +845,18 @@ export async function startServer(
     logger,
   });
   setEngineInstanceReaperForConfig(config, engineInstanceReaper);
-  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile) => {
+  const fileSendApprovals = createFileSendApprovals({
+    policy: () => managedDesktopPolicy(config).fileSendPolicy(),
+    storageDir: join(runtimeStorageDir(config), "file-send-grants"),
+  });
+  const hostReadRequest = async (path: string, init?: RequestInit, approvedDriveFile?: PreparedDriveUploadFile, approvedInChat?: boolean) => {
     // Internal dispatch retains credentials and exact-file capabilities in this
     // process. Neither is serialized to the native plugin or accepted over HTTP.
     const request = new Request(`http://127.0.0.1${path}`, {
       ...init, headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" },
     });
     if (approvedDriveFile) attachApprovedDriveUpload(request, approvedDriveFile);
+    if (approvedInChat) markFileSendApproved(request);
     const response = await serverOptions.fetch(request);
     return readHostResponse(response);
   };
@@ -849,6 +866,7 @@ export async function startServer(
     providerSession: () => cloudProviderSync.providerBridgeSession(),
     hostReadRequest,
     prepareDriveUpload: createDriveUploadPreflight(config, hostReadRequest),
+    fileSends: { approvals: fileSendApprovals, approvedRequest: (path, init) => hostReadRequest(path, init, undefined, true) },
   });
   const cloudProviderSync = new CloudProviderSync({
     config,
@@ -898,6 +916,7 @@ export async function startServer(
     engineV2Preview,
     () => managedEngineReady,
     anonymousInference,
+    fileSendApprovals,
   );
 
   const serverOptions: {
@@ -1012,7 +1031,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1027,17 +1046,27 @@ export async function startServer(
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
+          const currentTaskAccess = isV2CurrentTaskRequest(request.method, mount.restPath);
+          if (!currentTaskAccess) await engineV2Preview.ensureProjectIsolation();
+          if (request.method === "POST" && /\/(?:prompt|generate|compact)\/?$/.test(mount.restPath)) {
+            await engineV2Preview.assertSandboxReady(workspace.path);
+          }
+          // Isolation may have replaced the process and its credentials.
           const connection = engineV2Preview.connection();
           if (!connection) {
             return finalize(jsonResponse({ error: "engine_v2_preview_not_running" }, 503));
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
+          // Reads can initialize a location and import its project plugins.
+          // Enforce process isolation before warmups or any native forwarding,
+          // not merely after a prompt's provider preparation has already run.
+          if (!currentTaskAccess) await engineV2Preview.assertProjectConfigReady();
           // As in v1, requests go straight to the engine: OpenWork upkeep
           // (provider mirroring, MCP registration) runs when configuration
           // changes, and never holds reads. A folder's upkeep starts in the
           // background the first time it is seen.
-          engineV2Preview.warmWorkspace(workspace.id, workspace.path);
+          if (!currentTaskAccess) engineV2Preview.warmWorkspace(workspace.id, workspace.path);
           if (needsV2ProviderCatalog(request.method, mount.restPath)) {
             // For ~200 ms a folder the engine has not loaded omits configured
             // providers from its catalog; v1's engine waits for its own folder
@@ -1051,6 +1080,9 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
+            resolveConnection: () => engineV2Preview.connection(),
+            currentTaskAccess,
+            assertAdmission: currentTaskAccess ? undefined : () => engineV2Preview.assertProjectConfigReady(),
             logWarning: (message, attributes) => logger.log("warn", message, attributes),
             // A turn uses the connections that are ready; MCP upkeep runs in
             // the background and the engine adds tools as connections finish.
@@ -1076,7 +1108,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1154,7 +1186,7 @@ export async function startServer(
             ? error
             : requestCanceled
               ? new ApiError(499, "request_aborted", "Request was canceled")
-              : new ApiError(500, "internal_error", "Unexpected server error");
+              : unexpectedApiError(error);
           recordApiError(apiError);
           return finalize(jsonResponse(formatError(apiError), apiError.status));
         }
@@ -1202,7 +1234,7 @@ export async function startServer(
           ? error
           : requestCanceled
             ? new ApiError(499, "request_aborted", "Request was canceled")
-            : new ApiError(500, "internal_error", "Unexpected server error");
+            : unexpectedApiError(error);
         recordApiError(apiError);
         const response = jsonResponse(formatError(apiError), apiError.status);
         const isAgentDiagnosticsRequest =
@@ -1412,11 +1444,32 @@ async function resolveV2SessionExecutionDirectory(
   }
 }
 
+function isV2CurrentTaskRequest(method: string, path: string): boolean {
+  const nativePath = decodeURIComponent(path).replace(/^\/opencode2/, "");
+  if (["GET", "HEAD"].includes(method.toUpperCase())) {
+    return /^\/api\/(?:session\/active|experimental\/job)\/?$/.test(nativePath)
+      || /^\/api\/session\/ses_[A-Za-z0-9_-]+(?:\/message(?:\/msg_[A-Za-z0-9_-]+)?)?\/?$/.test(nativePath);
+  }
+  return method.toUpperCase() === "POST" && /^\/api\/session\/ses_[A-Za-z0-9_-]+\/interrupt\/?$/.test(nativePath);
+}
+
 export async function proxyOpencodeV2Request(input: Parameters<typeof forwardOpencodeV2Request>[0]) {
-  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) return forwardOpencodeV2Request(input);
+  const current = () => {
+    if (!input.resolveConnection) return input;
+    const connection = input.resolveConnection();
+    if (!connection) throw new ApiError(503, "engine_v2_preview_not_running", "The engine is restarting. Retry this request.");
+    return { ...input, connection };
+  };
+  if (["GET", "HEAD"].includes(input.request.method.toUpperCase())) {
+    await input.assertAdmission?.();
+    return forwardOpencodeV2Request(current());
+  }
   const release = await enterEngineMutation(input.config, "v2", input.request.signal);
-  try { return await forwardOpencodeV2Request(input); }
-  finally { await release(); }
+  try {
+    // The setting may have changed while this request waited behind a restart.
+    await input.assertAdmission?.();
+    return await forwardOpencodeV2Request(current());
+  } finally { await release(); }
 }
 
 /** Chats resolved at once when a workspace lists its v2 sessions. */
@@ -1430,6 +1483,12 @@ async function forwardOpencodeV2Request(input: {
   workspace: WorkspaceInfo;
   proxyPath: string;
   connection: { url: string; username: string; password: string };
+  /** Re-read after a queued mutation crosses a same-engine process restart. */
+  resolveConnection?: () => { url: string; username: string; password: string } | undefined;
+  /** Activity/history and Stop use only native global APIs, never a caller's location. */
+  currentTaskAccess?: boolean;
+  /** Recheck desired/process policy after entering the engine mutation fence. */
+  assertAdmission?: () => Promise<void>;
   /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
   prepareExecution?: (directory: string) => Promise<void>;
   /** Restart one connection that is not healthy (v1's `POST /mcp/:name/connect`). */
@@ -1440,6 +1499,7 @@ async function forwardOpencodeV2Request(input: {
   logWarning?: (message: string, attributes: Record<string, string | null>) => void;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
+  const currentTaskAccess = input.currentTaskAccess === true && isV2CurrentTaskRequest(method, input.proxyPath);
   const readRequest = method === "GET" || method === "HEAD";
   const signal = readRequest
     ? input.recoverySignal ? AbortSignal.any([input.request.signal, input.recoverySignal]) : input.request.signal
@@ -1449,6 +1509,20 @@ async function forwardOpencodeV2Request(input: {
 
   const withoutPrefix = input.proxyPath.slice("/opencode2".length);
   const forwardedPath = withoutPrefix || "/";
+  const decodedPath = decodeURIComponent(forwardedPath);
+  // Native credential reads include secret values. The renderer may remove a
+  // Claude Code connection reference, but never list or write credentials.
+  const credentialDelete = method === "DELETE" ? /^\/api\/credential\/([^/]+)$/.exec(decodedPath) : null;
+  if (/^\/api\/(?:experimental\/)?credential(?:\/|$)/.test(decodedPath) && !credentialDelete) {
+    throw new ApiError(403, "engine_credentials_private", "Provider credentials are private");
+  }
+  if (!readRequest && /^\/api\/integration\/claude-agent(?:\/|$)/.test(decodedPath)) {
+    const body: unknown = await input.request.clone().json().catch(() => null);
+    if (method !== "POST" || decodedPath !== "/api/integration/claude-agent/connect/external"
+      || !isRecord(body) || body.methodID !== "claude-login" || Object.keys(body).length !== 1) {
+      throw new ApiError(400, "invalid_provider_connection", "Use the Claude Code login to connect Claude Agent");
+    }
+  }
   // Runtime provider configuration contains server-owned credentials. The
   // renderer uses the catalog/status APIs; it must not read or mutate this file.
   if (/^\/api\/(?:experimental\/)?config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
@@ -1470,7 +1544,7 @@ async function forwardOpencodeV2Request(input: {
     for (const key of [...target.searchParams.keys()]) {
       if (key === "location" || key.startsWith("location[")) target.searchParams.delete(key);
     }
-    target.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", input.workspace.path);
   }
 
   const headers = new Headers(input.request.headers);
@@ -1496,7 +1570,7 @@ async function forwardOpencodeV2Request(input: {
 
   const readNative = async (path: string): Promise<unknown> => {
     const url = new URL(path, input.connection.url);
-    url.searchParams.set("location[directory]", input.workspace.path);
+    if (!currentTaskAccess) url.searchParams.set("location[directory]", input.workspace.path);
     const result = await engineFetch(url.toString(), {
       headers: { authorization: headers.get("authorization") ?? "" },
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
@@ -1504,6 +1578,16 @@ async function forwardOpencodeV2Request(input: {
     if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
     return result.json();
   };
+  if (credentialDelete) {
+    // Use the public integration projection, not GET /credential. Other
+    // providers' keys and tokens must not be readable or removable here.
+    const integration = await readNative("/api/integration/claude-agent");
+    const claude = isRecord(integration) && isRecord(integration.data) ? integration.data : null;
+    const connections = claude?.id === "claude-agent" && Array.isArray(claude.connections) ? claude.connections : [];
+    const owned = connections.some((connection) => isRecord(connection) && connection.type === "credential"
+      && connection.method === "external" && connection.id === credentialDelete[1]);
+    if (!owned) throw new ApiError(403, "engine_credentials_private", "Only Claude Code connection references can be removed here");
+  }
   const homes = createV2SessionHomes(input.config, readNative);
   const expectedHome = await homes.canonical(input.workspace.path);
   const sessionMatch = forwardedPath.match(/^\/api\/(?:experimental\/)?session\/([^/]+)(?:\/|$)/);
@@ -1517,7 +1601,7 @@ async function forwardOpencodeV2Request(input: {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
     executionDirectory = nativeSessionDirectory(session) ?? input.workspace.path;
-    target.searchParams.set("location[directory]", executionDirectory);
+    if (!currentTaskAccess) target.searchParams.set("location[directory]", executionDirectory);
   }
 
   if (method !== "GET" && method !== "HEAD" && [OPENWORK_V2_INSTRUCTION_KEY, OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY]
@@ -1694,7 +1778,10 @@ async function forwardOpencodeV2Request(input: {
     const responseHeaders = new Headers(response.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
+    // Only this home's events pass the filter, so an idle workspace sends
+    // nothing, and the app reopens a stream that stays silent for 30 seconds.
+    const liveBody = withSseHeartbeat(scopedBody, engineEventStreamHeartbeatIntervalMs());
+    return sanitizeProxyResponse(new Response(liveBody, { status: response.status, headers: responseHeaders }));
   }
   const pendingKind = /^\/api\/form\/?$/.test(forwardedPath) ? "form"
     : /^\/api\/permission\/request\/?$/.test(forwardedPath) ? "permission" : undefined;
@@ -1908,16 +1995,24 @@ export function createWorkspaceOpencodeClient(
     });
   }
   const directory = resolveOpencodeDirectory(workspace);
-  touchEngineWorkspaceInstance(config, workspace, baseUrl);
   const baseFetch = directory ? createOpencodeDirectoryFetch(directory) : globalThis.fetch;
   const clientFetch = options?.boundedDiagnosticsReads
     ? createAgentDiagnosticsEngineFetch(baseFetch)
     : directory ? baseFetch : undefined;
 
+  const transport = clientFetch ?? globalThis.fetch;
+  const guardedFetch: typeof fetch = Object.assign(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const policy = managedDesktopPolicy(config);
+    if (await policy.requiresSandbox()) await policy.assertHostExecution();
+    // Even legacy SDK reads initialize a project. Do not register a reaper
+    // location (which may later probe it) until host authority was checked.
+    touchEngineWorkspaceInstance(config, workspace, baseUrl);
+    return transport(input, init);
+  }, { preconnect: transport.preconnect });
   return createOpencodeClient({
     baseUrl,
     ...(directory ? { directory } : {}),
-    ...(clientFetch ? { fetch: clientFetch } : {}),
+    fetch: guardedFetch,
     ...(connection.authHeader ? { headers: { Authorization: connection.authHeader } } : {}),
   });
 }
@@ -1926,6 +2021,7 @@ export function unwrapOpencodeResult<T, E>(result: OpencodeClientResult<T, E>, p
   if (result.data != null) {
     return result.data;
   }
+  if (result.error instanceof ApiError) throw result.error;
   if (result.error === undefined) {
     throw new ApiError(502, "opencode_empty_response", "OpenCode returned an empty response", { path });
   }
@@ -2796,8 +2892,11 @@ function createRoutes(
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
   anonymousInference: AnonymousInferenceService,
+  fileSendApprovals: FileSendApprovals,
 ): Route[] {
   const routes: Route[] = [];
+  // The login runs with what the engine's own `claude` gets: OS paths, never this server's credentials.
+  const claudeCodeLogin = createClaudeCodeLogin({ env: inheritedEngineEnv(undefined) });
   addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
     jsonResponse(await anonymousInference.status()));
   for (const action of ["preflight", "refresh"]) {
@@ -2941,6 +3040,44 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerOpencodeConnectionsImportRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
+    resolveWorkspace,
+    requireApproval: (ctx, workspace, names) => requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "mcp.add",
+      summary: `Import ${names.length} MCP${names.length === 1 ? "" : "s"} from OpenCode`,
+      paths: [openworkConfigPath(workspace.path)],
+    }),
+    // The same steps as POST /workspace/:id/mcp, so an imported connection is
+    // validated, policy-checked and registered exactly like a hand-added one.
+    targetFor: (ctx, workspace) => ({
+      existingNames: async () => new Set(Object.keys(runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspace.id)))),
+      checkPolicy: (name) => managedDesktopPolicy(config).assertAgentPermission("mcp", name),
+      add: async (name, connection) => {
+        validateUserMcpName(name);
+        const result = await addMcp(config, workspace.id, name, connection);
+        await syncRuntimeMcpToOpencodeEngine(config, workspace, [name], undefined, engineMcpServerState).catch(() => undefined);
+        await recordAudit(workspace.path, {
+          id: shortId(),
+          workspaceId: workspace.id,
+          actor: ctx.actor ?? { type: "remote" },
+          action: "mcp.add",
+          target: openworkConfigPath(workspace.path),
+          summary: `Imported MCP ${name} from OpenCode`,
+          timestamp: Date.now(),
+        });
+        await engineV2Preview.settleWorkspaceMcp(workspace.id, workspace.path, name);
+        emitReloadEvent(ctx.reloadEvents, workspace, "mcp", { type: "mcp", name, action: result.action });
+      },
+    }),
   });
 
   registerCloudMcpRoutes({
@@ -3257,6 +3394,34 @@ function createRoutes(
     });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+  });
+  addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    const parsed = sandboxSettingsSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "allowHostExecution must be a boolean");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
+    });
+    // Save intent before checking activity. An active task keeps its process;
+    // new work must pass the desired policy and the process-isolation boundary.
+    await writeSandboxSettings(config, parsed.data);
+    await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
+    await recordAudit(workspace.path, {
+      id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
+      action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
+    });
+    const settings = await managedDesktopPolicy(config).sandboxSettings();
+    const processPolicy = await engineV2Preview.projectIsolationStatus();
+    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = mergeOpencodeConfigs(
@@ -3376,6 +3541,25 @@ function createRoutes(
     return jsonResponse({ provider: runtimeProviderMap(runtime) });
   });
 
+  // Host only: Claude Code opens its browser sign-in on the computer this
+  // server runs on, so a remote viewer can never start one here.
+  const claudeCodeLoginStatus = (state: ReturnType<typeof claudeCodeLogin.state>) => {
+    const response = jsonResponse({ ...state, installed: claudeCodeLogin.installed() });
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
+  addRoute(routes, "GET", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.state()));
+  addRoute(routes, "POST", "/claude-code/sign-in", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (!isRecord(body) || (body.force !== undefined && typeof body.force !== "boolean") || Object.keys(body).some((key) => key !== "force")) {
+      throw new ApiError(400, "invalid_payload", "Only force is accepted");
+    }
+    await managedDesktopPolicy(config).assert("provider", { providerID: "claude-agent" });
+    return claudeCodeLoginStatus(claudeCodeLogin.start({ force: body.force === true }));
+  });
+  addRoute(routes, "DELETE", "/claude-code/sign-in", "host-token", async () => claudeCodeLoginStatus(claudeCodeLogin.cancel()));
+
   // The host that owns this instance's lifecycle asks before stopping or
   // restarting it. Counts only; no session content leaves the instance.
   addRoute(routes, "GET", "/runtime/activity", "host-token", async () => {
@@ -3432,6 +3616,14 @@ function createRoutes(
     return new Response(null, { status: 204 });
   });
 
+  addRoute(routes, "POST", "/cloud-provider-sync/gateway/refresh", "host-token", async () => {
+    ensureWritable(config);
+    // Wake the native inventory owner, never the legacy config writer. This is
+    // an invalidation only; the caller still verifies arrival in the catalog.
+    engineV2Preview.refreshGatewayInventory();
+    return jsonResponse({ ok: true });
+  });
+
   addRoute(routes, "POST", "/cloud-provider-sync/run", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
@@ -3455,6 +3647,38 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "Only the active orgId and optional credentialSetId are accepted");
     }
     return jsonResponse(await cloudProviderSync.startProviderOAuth(ctx.params.id, body.orgId, body.credentialSetId));
+  });
+
+  // Device provider sharing: the person confirmed in the app; the key
+  // goes from this computer's credential store straight to the Den it is
+  // signed in to, never through the app's window (device-provider-share.ts).
+  addRoute(routes, "POST", "/cloud-provider-sync/device-providers/:id/share", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const origin = ctx.request.headers.get("origin");
+    if (origin && origin !== new URL(ctx.request.url).origin && !config.corsOrigins.includes("*") && !config.corsOrigins.includes(origin)) {
+      throw new ApiError(403, "invalid_origin", "This origin cannot share a provider");
+    }
+    if (ctx.request.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") {
+      throw new ApiError(415, "invalid_content_type", "A JSON request is required");
+    }
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.orgId !== "string" || (body.token !== undefined && (typeof body.token !== "string" || !body.token.trim())) || Object.keys(body).some((key) => key !== "orgId" && key !== "token")) {
+      throw new ApiError(400, "invalid_payload", "Only the active orgId and an optional freshly verified token are accepted");
+    }
+    const session = cloudProviderSync.currentSession();
+    if (!session) throw new ApiError(401, "no_session", "Sign in to OpenWork first");
+    if (session.orgId !== body.orgId) throw new ApiError(403, "organization_mismatch", "The active organization changed");
+    return jsonResponse(await shareDeviceProvider({
+      session,
+      // The share service verifies this belongs to the same account, before reading a key.
+      verifiedToken: typeof body.token === "string" ? body.token.trim() : undefined,
+      providerId: ctx.params.id,
+      isCurrentSession: () => {
+        const current = cloudProviderSync.currentSession();
+        return current?.baseUrl === session.baseUrl && current.orgId === session.orgId && current.token === session.token;
+      },
+      readApiKey: async (providerId) => (await readLocalProviderApiKeys()).get(providerId) ?? null,
+    }));
   });
 
   addRoute(routes, "POST", "/experimental/session-stop-fence/check", "client", async (ctx) => {
@@ -3491,6 +3715,22 @@ function createRoutes(
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));
   addRoute(routes, "GET", "/managed-policy/browser-upload-permissions", "client", async () =>
     jsonResponse(await managedDesktopPolicy(config).browserUploadPolicy()));
+  // "Always allow" on a file-send approval: the app names the open question
+  // just before answering it. Only a question this host is showing counts.
+  addRoute(routes, "POST", "/experimental/file-send/remember", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.requestId !== "string" || !fileSendApprovals.chooseAlways(body.requestId)) {
+      throw new ApiError(409, "file_send_not_open", "That approval is no longer open, so nothing was remembered.");
+    }
+    return jsonResponse({ ok: true });
+  });
+  addRoute(routes, "GET", "/experimental/file-send/grants", "client", async () =>
+    jsonResponse(await fileSendApprovals.grants()));
+  addRoute(routes, "DELETE", "/experimental/file-send/grants/:id", "client", async (ctx) => {
+    requireClientScope(ctx, "collaborator");
+    return jsonResponse(await fileSendApprovals.revoke(ctx.params.id ?? ""));
+  });
   addRoute(routes, "GET", "/managed-policy/computer-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).computerRules() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
@@ -4682,7 +4922,7 @@ async function resolveWorkspaceWithoutBootstrap(config: ServerConfig, id: string
 async function resolveWorkspace(config: ServerConfig, id: string): Promise<WorkspaceInfo> {
   const workspace = await resolveWorkspaceWithoutBootstrap(config, id);
   const resolvedWorkspace = workspace.path;
-  if (!config.readOnly) {
+  if (!config.readOnly && !await managedDesktopPolicy(config).requiresSandbox()) {
     const ensured = await ensureWorkspaceFiles(resolvedWorkspace, workspace.preset ?? "starter");
     const bootstrapReloadReasons = new Set<ReloadReason>(ensured.reloadReasons);
     if (await repairCommands(resolvedWorkspace)) {
@@ -5346,6 +5586,7 @@ async function reloadOpencodeEngine(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean; forceStandby?: boolean; reason?: RolloverReason; manual?: boolean },
 ): Promise<RolloverOutcome> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const pool = enginePoolForConfig(config);
   if (pool) {
     // The outcome is the caller's proof: only an applied action means the
@@ -5368,6 +5609,7 @@ async function reloadOpencodeEngineInPlace(
   serverState?: EngineMcpServerState,
   options?: { awaitPostRefreshSync?: boolean },
 ): Promise<void> {
+  await managedDesktopPolicy(config).assertHostExecution();
   const activeState = activeEngineMcpServerState(config, serverState);
   if (activeState) invalidateEngineMcpWorkspace(activeState, workspace.id);
   const connection = resolveWorkspaceOpencodeConnection(config, workspace);

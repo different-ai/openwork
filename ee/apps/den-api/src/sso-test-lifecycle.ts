@@ -80,7 +80,7 @@ async function getConnectionWithProvider(connection: SsoConnection) {
 /**
  * The connection a Better Auth `/sign-in/sso` request uses. A request naming a
  * provider gets that provider. One naming an organization or an email domain
- * may match several connections (multipleSsoConnections): the oldest ready one
+ * may match several connections: the oldest ready one
  * (enabled, domain verified) wins, preferring one that covers the email's
  * domain, so a sign-in never lands on a disabled or unverified provider while
  * a ready one exists. Without a ready one, the oldest match answers (and is
@@ -405,6 +405,23 @@ export function createSsoConfigRevision(input: {
   return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify(input)).digest("hex")
 }
 
+/**
+ * Why a connection can't be enabled as things stand, or null when it can: its
+ * domain must be verified and its current configuration tested successfully.
+ * The one rule for enabling a connection and for anything that predicts it
+ * (the plan of a configuration import).
+ */
+export function ssoConnectionEnableBlocker(
+  connection: Pick<SsoConnection, "testStatus" | "lastTestedRevision" | "configRevision">,
+  provider: { domainVerified: boolean | null } | null,
+): string | null {
+  if (!provider?.domainVerified) return "Verify the SSO domain before enabling SSO."
+  if (connection.testStatus !== "succeeded" || !connection.lastTestedRevision || connection.lastTestedRevision !== connection.configRevision) {
+    return "Test the current SSO configuration successfully before enabling SSO."
+  }
+  return null
+}
+
 /** Enables one connection (read again from the primary) once its domain is verified and its current configuration tested. */
 export async function enableOrganizationSsoConnection(target: SsoConnection | null, capture: AuditChangeCapture | null = null) {
   const [connection] = target ? await db.$primary
@@ -416,11 +433,9 @@ export async function enableOrganizationSsoConnection(target: SsoConnection | nu
   const organizationId = connection.organizationId
 
   const current = await getConnectionWithProvider(connection)
-  if (!current.provider?.domainVerified) {
-    return { ok: false as const, message: "Verify the SSO domain before enabling SSO." }
-  }
-  if (connection.testStatus !== "succeeded" || !connection.lastTestedRevision || connection.lastTestedRevision !== connection.configRevision) {
-    return { ok: false as const, message: "Test the current SSO configuration successfully before enabling SSO." }
+  const blocker = ssoConnectionEnableBlocker(connection, current.provider)
+  if (blocker || !connection.lastTestedRevision) {
+    return { ok: false as const, message: blocker ?? "Test the current SSO configuration successfully before enabling SSO." }
   }
 
   const lastTestedRevision = connection.lastTestedRevision

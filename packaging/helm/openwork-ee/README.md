@@ -143,7 +143,7 @@ clear both token env aliases so `envFrom` cannot accidentally turn them on.
 Shared deployment flags, origins, database keys, and tokens must not be overridden
 through per-app `env` when enabled; Helm rejects conflicting configuration.
 
-The Smart Model Router (feature `autoRouter`) asks Jev, through TypeSafe's
+The Smart Model Router asks Jev, through TypeSafe's
 API, how well each Smart request fits each task of the member's Smart Router
 and how much thinking it needs. Give the gateway a TypeSafe API key; without
 one, Smart is off and Den refuses to save Smart Routers:
@@ -393,7 +393,7 @@ helm upgrade --install openwork-ee ./packaging/helm/openwork-ee \
 
 ### Features
 
-OpenWork features are declared once, in `packages/features/src/registry.ts`,
+OpenWork features are declared once, one file each under `packages/features/src/flags`,
 and rolled out along several dimensions: which products a feature exists on,
 on or off for everyone, per-organization overrides, and a kill switch.
 Platform admins change these in `/admin` without a redeploy. As the operator,
@@ -412,19 +412,23 @@ config:
   deployment config" for it. The `/admin` kill switch still turns it off.
 
 Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
-of self-hosted installs have no key, so they can't be turned on here. A key
-that isn't declared in `values.schema.json` fails `helm install`.
+of self-hosted installs have no key, so they can't be turned on here. With the
+published chart, a key that isn't a feature fails `helm install`. A chart
+installed from a checkout accepts any key, and den-api ignores the ones it
+does not know with a warning in its log.
 
 `config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
 OpenWork Cloud. Don't change it on a customer install.
 
-See [`config.features` in values.yaml](./values.yaml) for supported keys,
-defaults and descriptions. The
-[feature registry](../../../packages/features/src/registry.ts) is the source
-of truth.
+For supported keys, defaults and descriptions, run
+`helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
+`config.features`. The [feature registry](../../../packages/features/src/flags)
+is the source of truth.
 
-The `config.features` block and values schema are generated: run
-`pnpm features:sync` after changing the registry.
+The chart in git lists no feature keys, so adding a feature never changes it.
+The publish workflow writes every key into `values.yaml` and
+`values.schema.json` before packaging. To see the same in a checkout, run
+`node scripts/features-sync.mjs --chart` and do not commit the result.
 
 ### Automations settings
 
@@ -1221,6 +1225,18 @@ config:
 
 Local sign-in lockout protections stay enabled either way.
 
+Each organization API key can make 600 requests a minute by default. To change
+that, set `config.auth.apiKeyRateLimitMax` (renders `DEN_API_KEY_RATE_LIMIT_MAX`):
+
+```yaml
+config:
+  auth:
+    apiKeyRateLimitMax: 1200
+```
+
+The limit is saved on each key when it is created, so it applies to keys created
+after the change. Existing keys keep their limit until they are replaced.
+
 Den API also protects External MCP connection URLs with an SSRF guard. On a
 hosted multi-tenant deployment, someone who can add an MCP connection could
 otherwise make Den fetch localhost, private-network services, or cloud metadata
@@ -1242,6 +1258,29 @@ config:
 This disables SSRF protection for external MCP connection URLs. Enable it only
 on a deployment where Den's network position and the set of people who can add
 MCP connections are both trusted.
+
+### Config import secrets from environment variables
+
+An imported config file can ask Den API to fill a secret from one of its own
+environment variables (`{ "$secret": "…", "env": "OPENWORK_IMPORT_ANTHROPIC_KEY" }`). Only variables
+whose names start with `OPENWORK_IMPORT_` can ever be read, and none is allowed
+until you list them, by exact name or with a trailing `*` prefix that itself
+starts with `OPENWORK_IMPORT_`:
+
+```yaml
+denApi:
+  env:
+    DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST: "OPENWORK_IMPORT_*"
+```
+
+Provide the variables themselves to the Den API container as well (from a
+Secret you manage; `denApi.env` writes plain values into the pod spec, so keep
+it for test keys). Entries outside the `OPENWORK_IMPORT_` namespace (an exact
+name such as `DATABASE_URL`, a bare `*`, or a prefix such as `D*` or
+`OPENWORK_*`) are ignored and logged as a warning when Den API starts. Den API's
+own settings (`DATABASE_*`, `DEN_*`, `BETTER_AUTH_*` and other credentials it
+reads) are refused even if listed, so they can never be read this way. Cloud
+deployments ignore the allowlist.
 
 ## Migrations
 
@@ -1448,7 +1487,7 @@ illustrative IDs into a real installation.
 #### 2. Verify in Den
 
 Open **Members > Roles**, find **Restored administrator permissions** and inspect
-its team and 14-key policy. As an intended recipient, test changing a different
+its team and 13-key policy. As an intended recipient, test changing a different
 non-owner test member's role, then restore that test member's role. If undo is
 needed, the owner can unlink or delete this custom role in **Members > Roles**.
 The repair does not undo unrelated actions performed while access was granted.

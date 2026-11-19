@@ -1,6 +1,6 @@
 /**
- * Session length and maximum session length (feature
- * `sessionSecuritySettings`) applied to session rows. The rules are in
+ * Session length and maximum session length (Auth & Security › General)
+ * applied to session rows. The rules are in
  * session-security-settings.ts; this module reads the organizations a person
  * belongs to and writes expiry times.
  *
@@ -12,7 +12,6 @@ import { and, eq, gt, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { getFeaturesForOrganizations } from "./features.js"
 import {
   DEFAULT_SESSION_LIMITS,
   organizationSessionLimits,
@@ -24,20 +23,16 @@ import {
 /**
  * A person's session limits: the strictest of their organizations' (one
  * session opens all of them); 7 days without activity and no maximum when
- * none sets them.
+ * they belong to none.
  */
 export async function userSessionLimits(userId: string): Promise<SessionLimits> {
   const rows = await db
-    .select({ organizationId: OrganizationTable.id, metadata: OrganizationTable.metadata })
+    .select({ metadata: OrganizationTable.metadata })
     .from(MemberTable)
     .innerJoin(OrganizationTable, eq(MemberTable.organizationId, OrganizationTable.id))
     .where(and(eq(MemberTable.userId, normalizeDenTypeId("user", userId)), isNull(MemberTable.removedAt)))
   if (rows.length === 0) return DEFAULT_SESSION_LIMITS
-  const features = await getFeaturesForOrganizations(rows.map((row) => row.organizationId))
-  return strictestSessionLimits(rows.flatMap((row) => {
-    const organizationFeatures = features.get(row.organizationId)
-    return organizationFeatures ? [organizationSessionLimits({ features: organizationFeatures, metadata: row.metadata })] : []
-  }))
+  return strictestSessionLimits(rows.map((row) => organizationSessionLimits(row.metadata)))
 }
 
 /** When the person's session, signed in at `createdAt`, expires if used `now`. */

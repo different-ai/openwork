@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { askArgs } from "./opencode-plugins/openwork-agent-questions.js";
+import type { askArgs, askFormArgs } from "./opencode-plugins/openwork-agent-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 
 type EngineConnection = { url: string; username: string; password: string };
@@ -32,7 +32,7 @@ export function answerText(questions: readonly Question[], answer: Record<string
  */
 export async function askWithoutWaiting(
   engine: EngineConnection,
-  input: { directory: string; sessionId: string; questions: readonly Question[] },
+  input: { directory: string; sessionId: string; questions: readonly Question[]; form?: z.infer<typeof askFormArgs> },
   call: AbortSignal,
   lifetime: AbortSignal,
 ): Promise<{ id: string; settled: Promise<void> }> {
@@ -49,7 +49,7 @@ export async function askWithoutWaiting(
       method: "POST", headers: { authorization, "content-type": "application/json" }, signal: AbortSignal.any([open, call]),
       body: JSON.stringify({
         title: input.questions[0]?.header ?? "Question",
-        metadata: { kind: "question", background: true },
+        metadata: { kind: "question", background: true, ...(input.form ? { form: input.form } : {}) },
         fields: input.questions.map((question, index) => ({
           key: `q${index}`, type: question.multiple ? "multiselect" : "string", title: question.header, description: question.question,
           options: (question.options ?? []).map(option => ({ value: option.label, label: option.label, ...(option.description ? { description: option.description } : {}) })),

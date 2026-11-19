@@ -238,11 +238,11 @@ function appRouteFailure(error: unknown) {
   const code = error instanceof Error ? error.message : ""
   if (code === "teammate_not_found") return { ...failure, body: { error: code, message: "No teammate with that email belongs to this organization. Ask an admin to invite them first." } }
   const message = code.includes("not_found")
-    ? "This app is unavailable or you no longer have access."
+    ? "This artifact is unavailable or you no longer have access."
     : code === "artifact_view_schema_incompatible"
-      ? "The workflow’s results have changed. Ask OpenWork to update this app before saving."
+      ? "The workflow’s results have changed. Ask OpenWork to update this artifact before saving."
       : code === "artifact_view_revision_not_ready"
-        ? "This app is still being prepared. Wait for its preview before saving."
+        ? "This artifact is still being prepared. Wait for its preview before saving."
         : null
   return message ? { ...failure, body: { ...failure.body, message } } : failure
 }
@@ -365,10 +365,10 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.get(
     "/v1/apps",
     describeRoute({
-      tags: ["Apps"], summary: "List saved reusable apps",
+      tags: ["Artifacts"], summary: "List saved reusable artifacts",
       description: "Lists active Artifact views that have a saved revision and whose Workflow the caller can read, newest first, each with the Workflow title, whether the caller can manage it, and whether it is on the caller's personal dashboard. When generated Artifact views are disabled for the deployment, returns enabled: false and an empty list.",
       responses: {
-        200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
+        200: jsonResponse("Saved artifacts returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
       },
     }),
     orgMemberRoute(),
@@ -387,12 +387,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.post(
     "/v1/apps/:appId/share",
     describeRoute({
-      tags: ["Apps"], summary: "Share a saved app with a teammate",
-      description: "Grants the teammate identified by email viewer access to the app's underlying Workflow and places the app on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an app with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
+      tags: ["Artifacts"], summary: "Share a saved artifact with a teammate",
+      description: "Grants the teammate identified by email viewer access to the artifact's underlying Workflow and places the artifact on their personal dashboard; result data is never copied. An existing editor or manager grant for that teammate is kept, so repeated shares never downgrade access. Requires manager access to the Workflow and an artifact with an active saved revision; fails with teammate_not_found when no active member of the organization has that email.",
       responses: {
-        200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
-        403: jsonResponse("Only app managers can share.", forbiddenSchema),
-        404: jsonResponse("App or teammate not found.", notFoundSchema),
+        200: jsonResponse("Artifact shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
+        403: jsonResponse("Only artifact managers can share.", forbiddenSchema),
+        404: jsonResponse("Artifact or teammate not found.", notFoundSchema),
       },
     }),
     orgMemberRoute(), primaryReadsMiddleware,
@@ -413,10 +413,10 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.get(
     "/v1/apps/:appId",
     describeRoute({
-      tags: ["Apps"], summary: "Open an app or an exact draft preview",
-      description: "Returns the app with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live apps execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live apps. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
+      tags: ["Artifacts"], summary: "Open an artifact or an exact draft preview",
+      description: "Returns the artifact with the compiled HTML of one revision and the artifact payload it should render. Without revisionId the active saved revision is used; pass revisionId to preview an exact draft revision instead. Live artifacts execute the current saved Workflow as the caller with optional IANA timeZone (UTC by default); receiptId is forbidden for live artifacts. Legacy snapshots use only the caller's receipts. When the revision has not finished building, no readable successful result exists, or the result's output schema no longer matches the revision, html and payload are null and previewNotice explains why.",
       responses: {
-        200: jsonResponse("App preview returned.", savedAppDetailSchema),
+        200: jsonResponse("Artifact preview returned.", savedAppDetailSchema),
       },
     }),
     orgMemberRoute(),
@@ -437,8 +437,8 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.post(
     "/v1/apps/:appId/dashboard",
     describeRoute({
-      tags: ["Apps"], summary: "Add or remove an app on your personal dashboard",
-      description: "Adds (added: true) or removes (added: false) the app on the calling member's personal dashboard. Adding requires an app with an active saved revision that the caller can read; removal also works after access to the app has been revoked. Both directions are idempotent.",
+      tags: ["Artifacts"], summary: "Add or remove an artifact on your personal dashboard",
+      description: "Adds (added: true) or removes (added: false) the artifact on the calling member's personal dashboard. Adding requires an artifact with an active saved revision that the caller can read; removal also works after access to the artifact has been revoked. Both directions are idempotent.",
       responses: {
         200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
       },
@@ -460,10 +460,10 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.post(
     "/v1/apps/:appId/save",
     describeRoute({
-      tags: ["Apps"], summary: "Save an exact app revision for reuse",
-      description: "Activates the exact revisionId as the app's saved revision, sets its title and useInWorkflow flag, and places the app on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
+      tags: ["Artifacts"], summary: "Save an exact artifact revision for reuse",
+      description: "Activates the exact revisionId as the artifact's saved revision, sets its title and useInWorkflow flag, and places the artifact on the caller's dashboard in one transaction. Requires manager access to the Workflow; the revision must have finished building (artifact_view_revision_not_ready) and its output schema must match the Workflow's current version (artifact_view_schema_incompatible). expectedActiveRevisionId must equal the revision that is active right now (null when none); otherwise the save is refused with 409 app_changed_since_preview so a stale preview cannot overwrite a newer save.",
       responses: {
-        200: jsonResponse("App saved.", generatedArtifactViewSchema),
+        200: jsonResponse("Artifact saved.", generatedArtifactViewSchema),
       },
     }),
     orgMemberRoute(), primaryReadsMiddleware,
@@ -717,7 +717,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/run",
     describeRoute({
       tags: ["Workflows"], summary: "Run an exact Workflow version",
-      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live app, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
+      description: "Executes the version identified by configObjectVersionId of this Workflow, under the Plugin named by pluginId, with input as the script's input, using the caller's live tools, and records a snapshot receipt. For a live artifact, pass mode: live and optional IANA timeZone (UTC default), omitting input: the server generates input.runtime (now, today, timeZone, dayStart, dayEnd) and enforces read-only capabilities, exactly like live authoring tests and renders. After receipt-backed saveWorkflow, run this saved version in live mode before save_artifact_view; authoring test receipts alone are not saved snapshots. The input is validated against the version's inputSchema and the result against its outputSchema; a mismatch is rejected with 400 invalid_capability_arguments, a required capability that is unavailable with capability_unavailable, and a thrown script error with script_failed. The caller needs a Workflow, Plugin, or Marketplace grant that covers this Workflow; an unknown Workflow or Plugin returns unknown_capability and a missing grant returns forbidden, both as 400.",
       responses: {
         200: jsonResponse("Workflow executed.", runResultSchema),
         400: jsonResponse("Execution rejected.", invalidRequestSchema),

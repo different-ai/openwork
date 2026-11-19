@@ -255,7 +255,7 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   }
 
   const enabled = status?.enabled === true;
-  // Feature intros (flag `featureIntros`): this tab already is the setup step (Subscribe / Enable),
+  // Feature intros: this tab already is the setup step (Subscribe / Enable),
   // so its intro only reports setup and stays reachable from `?`; nothing replaces the page.
   useFeatureIntro("ai-gateway.openwork-models", embedded && status ? { openworkModels: status.enabled } : null);
   const subscribed = status?.subscribed === true;

@@ -6,6 +6,11 @@ import { workshopPage as page, escapeHtml } from "./workshop-html.mjs";
 const SESSION_MS = 8 * 60 * 60 * 1000;
 const AUTOMATIC_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const TOKEN_MS = 60 * 60 * 1000;
+// An app messages people from its Slack app in the background, days after they connected, so the Slack connector's
+// grant lasts as long as the workshop's Microsoft 365 sign-in does. The other connectors keep the working-day grant.
+const LONG_GRANT_MS = 30 * 24 * 60 * 60 * 1000;
+const LONG_GRANT_PATHS = new Set(["/slack/mcp"]);
+const grantMs = (resource) => (LONG_GRANT_PATHS.has(new URL(resource).pathname) ? LONG_GRANT_MS : SESSION_MS);
 const CODE_MS = 5 * 60 * 1000;
 const LIMIT = 2048;
 const secret = () => randomBytes(32).toString("base64url");
@@ -132,7 +137,7 @@ export function createWorkshopAuth({ origin, participants = [], storage, automat
   function resource(value) {
     try {
       const parsed = new URL(value);
-      return ["/outlook/mcp", "/calendar/mcp", "/drive/mcp", "/jira/mcp", "/confluence/mcp"].some((path) => value === origin + path) && parsed.origin === origin ? parsed.href : null;
+      return ["/outlook/mcp", "/calendar/mcp", "/drive/mcp", "/jira/mcp", "/confluence/mcp", "/slack/mcp"].some((path) => value === origin + path) && parsed.origin === origin ? parsed.href : null;
     } catch { return null; }
   }
   function authenticate(req) {
@@ -331,12 +336,13 @@ export function createWorkshopAuth({ origin, participants = [], storage, automat
             "/drive/mcp": ["Read and search sample workplace files.", "Create or update fictional files."],
             "/jira/mcp": ["Read sample projects and issues.", "Create or update fictional issues and comments."],
             "/confluence/mcp": ["Read and search sample spaces and pages.", "Create or update fictional pages."],
+            "/slack/mcp": ["Read your sample Slack messages.", "Send fictional Slack messages as you."],
           }[new URL(query.get("resource")).pathname];
           const fields = [...query].map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}">`).join("");
           // Chromium checks the final redirect of a form POST against form-action too.
           // Only this client's already-validated callback origin is added to the consent form.
           res.setHeader("Content-Security-Policy", `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(redirectUri).origin}; frame-ancestors 'none'; base-uri 'none'`);
-          send(res, 200, page(`Connect ${client.client_name}`, `<div class="account"><span class="muted">${automaticJoin ? "Private workspace" : "Signed in as"}</span><strong>${escapeHtml(participant.name)}</strong></div><h2>Application requesting access</h2><p>${escapeHtml(client.client_name)}<br><span class="muted">${escapeHtml(new URL(redirectUri).host)} · Unverified workshop application</span></p><h2>Workplace permissions</h2><ul class="permissions">${permissions.map((permission) => `<li>${escapeHtml(permission)}</li>`).join("")}<li>Keep this connection active for up to 8 hours.</li></ul><p class="muted">${automaticJoin ? "Only this private fictional workspace is shared. This guest label is not a verified person." : "Only your assigned sandbox account is shared."} No real work accounts are connected.</p><details><summary>Connection details</summary><p>Resource: <code>${escapeHtml(query.get("resource") || origin)}</code></p><p>Scope: <code>workplace</code></p><p>Access expires after 1 hour. Sign out ends the browser session; the application can disconnect to revoke its connection.</p></details><form action="/oauth/authorize" method="post">${fields}<div class="actions"><button type="submit" name="decision" value="allow">Allow workplace access</button><button class="secondary" type="submit" name="decision" value="deny">Deny access</button></div></form>`), "text/html"); return true;
+          send(res, 200, page(`Connect ${client.client_name}`, `<div class="account"><span class="muted">${automaticJoin ? "Private workspace" : "Signed in as"}</span><strong>${escapeHtml(participant.name)}</strong></div><h2>Application requesting access</h2><p>${escapeHtml(client.client_name)}<br><span class="muted">${escapeHtml(new URL(redirectUri).host)} · Unverified workshop application</span></p><h2>Workplace permissions</h2><ul class="permissions">${permissions.map((permission) => `<li>${escapeHtml(permission)}</li>`).join("")}<li>Keep this connection active for up to ${grantMs(query.get("resource")) === LONG_GRANT_MS ? "30 days" : "8 hours"}.</li></ul><p class="muted">${automaticJoin ? "Only this private fictional workspace is shared. This guest label is not a verified person." : "Only your assigned sandbox account is shared."} No real work accounts are connected.</p><details><summary>Connection details</summary><p>Resource: <code>${escapeHtml(query.get("resource") || origin)}</code></p><p>Scope: <code>workplace</code></p><p>Access expires after 1 hour. Sign out ends the browser session; the application can disconnect to revoke its connection.</p></details><form action="/oauth/authorize" method="post">${fields}<div class="actions"><button type="submit" name="decision" value="allow">Allow workplace access</button><button class="secondary" type="submit" name="decision" value="deny">Deny access</button></div></form>`), "text/html"); return true;
         }
         if ((automaticJoin && !query.has("decision")) || (query.has("decision") && !["allow", "deny"].includes(query.get("decision")))) { error(res, 400, "invalid_request"); return true; }
         if (query.get("decision") === "deny") {
@@ -377,7 +383,11 @@ export function createWorkshopAuth({ origin, participants = [], storage, automat
         const ownFamilies = new Set([...refreshes.values()].filter((entry) => entry.participant.id === code.participant.id).map((entry) => entry.family));
         if (ownFamilies.size >= 32 || [...refreshes.values()].filter((entry) => entry.participant.id === code.participant.id).length >= 256) { error(res, 429, "connection_quota_reached"); return true; }
         if (tokens.size >= LIMIT * 2 || refreshes.size >= LIMIT * 2) { error(res, 503, "temporarily_unavailable"); return true; }
-        issueTokens(res, { participant: code.participant, clientId: code.clientId, resource: code.resource, family: secret() }, Date.now() + SESSION_MS);
+        const grantExpires = Date.now() + grantMs(code.resource);
+        // A refresh needs its client: keep the registration for as long as the grant it was given.
+        const granted = clients.get(code.clientId);
+        granted.expires = Math.max(granted.expires, grantExpires);
+        issueTokens(res, { participant: code.participant, clientId: code.clientId, resource: code.resource, family: secret() }, grantExpires);
       } else if (path === "/oauth/revoke" && req.method === "POST") {
         const form = parsedBody;
         prune(clients); prune(tokens); prune(refreshes);
@@ -454,9 +464,21 @@ export function createWorkshopAuth({ origin, participants = [], storage, automat
   }
   /** The workspace this browser is signed into, from its session cookie only (never a bearer token). */
   function sessionParticipant(req) { return browserParticipant(req); }
+  /**
+   * The workspace a connector's bearer token was issued for, when its resource is exactly `resourcePath`. For that
+   * connector's own API beside its MCP endpoint; a token for any other connector is refused.
+   */
+  function bearerFor(req, resourcePath) {
+    if (!initialized || unavailable || closed) return null;
+    const match = /^Bearer ([A-Za-z0-9._~+/-]+=*)$/i.exec(req.headers.authorization || "");
+    if (!match) return null;
+    prune(tokens);
+    const token = tokens.get(digest(match[1]));
+    return token && resource(token.resource) && new URL(token.resource).pathname === resourcePath ? token.participant : null;
+  }
   /** A participant or guest by ID, for grants other front doors keep (null once they no longer exist). */
   function participant(id) { return typeof id === "string" ? byId.get(id) ?? null : null; }
-  return { authenticate, handle, requireMutationOrigin, browserParticipant: sessionParticipant, participant, isReady: () => initialized && !unavailable && !closed, async close() {
+  return { authenticate, handle, requireMutationOrigin, browserParticipant: sessionParticipant, participant, bearerFor, isReady: () => initialized && !unavailable && !closed, async close() {
     closed = true;
     await queue; await ready;
     for (const table of Object.values(tables)) table.clear(); rates.clear();

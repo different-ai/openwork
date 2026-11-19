@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
-import { getWorkbotSettingsRoute } from "../../_lib/den-org";
+import { getEveryoneRoute, getWorkbotSettingsRoute } from "../../_lib/den-org";
+import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
@@ -240,8 +241,8 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           {data.models.length > 0 && data.modelManagedByOrganization ? (
             <p className="text-sm" data-testid="slack-assistant-model">
               Model: {data.models.find((m) => m.id === data.model)?.name ?? data.model ?? `Default${data.defaultModel ? ` (${data.models.find((m) => m.id === data.defaultModel)?.name ?? data.defaultModel})` : ""}`}{" "}
-              <Link href={getWorkbotSettingsRoute(orgSlug)} className="text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
-                Change in Manage › Workbot
+              <Link href={workbotSettingsInTeams(orgContext) ? `${getEveryoneRoute(orgSlug)}?tab=workbot` : getWorkbotSettingsRoute(orgSlug)} className="text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+                {workbotSettingsInTeams(orgContext) ? "Change in Members › Teams › Everyone" : "Change in Manage › Workbot"}
               </Link>
             </p>
           ) : data.models.length > 0 ? (

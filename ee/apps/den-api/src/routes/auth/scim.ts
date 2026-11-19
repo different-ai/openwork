@@ -683,7 +683,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       tags: ["Authentication"],
       security: [{ scimBearerToken: [] }],
       summary: "Delete SCIM provisioned org access",
-      description: "Tombstones the organization member and deletes the global user only when no other active organization membership remains.",
+      description: "Removes the organization's access for one of its own users. The global user is deleted only when this SCIM connection provisioned them and no other active organization membership remains; a user the organization does not know answers 404.",
       responses: {
         204: {
           description: "SCIM provisioned org access deleted.",
@@ -798,8 +798,12 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
         return scimError("User not found", 404)
       }
       const resource = { id: normalizedUserId, active: false }
-      const synced = await timeScimDiagnosticStage("den_mirror_ms", () => syncExternalIdentityFromScimResource({ bearerToken, resource }))
-      if (!synced) {
+      // Deactivation is deprovisioning: the same call a retried sync_resource event makes.
+      const deprovisioned = await timeScimDiagnosticStage("den_mirror_ms", () => deleteScimProvisionedAccessForProvider({ provider, userId: normalizedUserId }))
+      if (!deprovisioned.ok && deprovisioned.status === 404) {
+        return scimError(deprovisioned.body.detail, 404)
+      }
+      if (!deprovisioned.ok) {
         await recordScimFailureSafely(() =>
           recordScimSyncFailure({
             provider,

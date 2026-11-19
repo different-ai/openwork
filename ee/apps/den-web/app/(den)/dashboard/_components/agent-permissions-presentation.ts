@@ -1,9 +1,9 @@
 import {
-  AGENT_HARNESS_PERMISSION_KEYS,
   agentPermissionDefinitions,
   agentPermissionDecisionsFor,
   agentPermissionDecisionLabels,
   AGENT_PERMISSION_DEFAULT_DECISION,
+  agentPermissionMemberDecides,
   type AgentPermissionDefinition,
   type AgentPermissionDecision,
   type AgentPermissionAction,
@@ -15,11 +15,27 @@ import {
 export type AgentPermissionsArea = "all" | "agents" | "browser";
 
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
-const HARNESS_KEYS: readonly string[] = AGENT_HARNESS_PERMISSION_KEYS;
-/** Rows that only exist while computer use does: files and the clipboard move through it. */
-const COMPUTER_USE_KEYS: readonly string[] = ["computerUse", "computerFiles", "computerClipboard"];
 /** Rows that blocking computer use blocks too, shown with its lock. */
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
+
+/** Rows the host refuses while tools may not run on the computer (sandbox-only). */
+const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
+
+/** What the editor shows beyond the definitions: rollouts it reads from the organization. */
+export type AgentPermissionEditorFeatures = {
+  /** The sandboxTools rollout. Off hides "Run tools on this computer" unless it is already set. */
+  sandboxOnly: boolean;
+};
+
+/**
+ * Sandbox-only is offered with its rollout on. A requirement saved earlier
+ * stays on screen with the rollout off, so it can be seen and removed
+ * (DESIGN.md P4): it keeps blocking host tools until then.
+ */
+export function hostExecutionRowVisible(features: AgentPermissionEditorFeatures | undefined, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): boolean {
+  if (!features || features.sandboxOnly) return true;
+  return settings.hostExecution !== undefined || everyone?.hostExecution !== undefined;
+}
 
 function inArea(area: AgentPermissionsArea, key: string): boolean {
   if (area === "all") return true;
@@ -33,24 +49,14 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-/** Preview only: keep saved and draft settings intact while computer use is unavailable. */
-export function effectiveAgentPermissionSettings(settings: AgentPermissionSettings, computerUseEnabled: boolean): AgentPermissionSettings {
-  if (computerUseEnabled) return settings;
-  const effective = { ...settings };
-  delete effective.computerUse;
-  return effective;
-}
-
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: { hostExecution?: boolean } = {}) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
-      && (harnessEnabled || !HARNESS_KEYS.includes(definition.key))
-      && (computerUseEnabled || !COMPUTER_USE_KEYS.includes(definition.key))
-      && (browserUploadsEnabled || definition.key !== "browserUploads")),
+      && (definition.key !== "hostExecution" || options.hostExecution !== false)),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -59,33 +65,41 @@ const TRY_KINDS: readonly { action: AgentPermissionAction; label: string; placeh
   { action: "external_directory", label: "Outside folder", placeholder: "~/Documents/report.pdf" },
   { action: "webfetch", label: "Website", placeholder: "https://docs.example.com/guide" },
   { action: "browser_upload", label: "Website upload", placeholder: "https://docs.example.com/upload" },
+  { action: "file_send", label: "File to a connected account", placeholder: "report.pdf" },
   { action: "skill", label: "Local skill", placeholder: "meeting-notes" },
   { action: "mcp", label: "Local MCP server", placeholder: "issue-tracker" },
 ];
 
-export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea, harnessEnabled: boolean, computerUseEnabled: boolean, browserUploadsEnabled = false) {
-  const keys = visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).flatMap((group) => group.definitions.map((definition) => definition.key));
+export function visibleAgentPermissionTryKinds(area: AgentPermissionsArea) {
+  const keys = visibleAgentPermissionGroups(area).flatMap((group) => group.definitions.map((definition) => definition.key));
   return TRY_KINDS.filter((entry) => agentPermissionDefinitions.some((definition) => definition.action === entry.action && keys.includes(definition.key)));
 }
 
 export function agentPermissionChoiceOptions(definition: AgentPermissionDefinition, team: string | null): { value: AgentPermissionDecision | "inherit"; label: string }[] {
   return [
-    ...(definition.key === "browserUploads" ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
+    ...(agentPermissionMemberDecides(definition.key) ? [{ value: "inherit" as const, label: team === null ? "Member decides" : "Use Everyone's" }] : []),
     ...agentPermissionDecisionsFor(definition).map((decision) => ({ value: decision, label: agentPermissionDecisionLabels[decision] })),
   ];
 }
 
 export function agentPermissionChoiceValue(definition: AgentPermissionDefinition, decision: AgentPermissionDecision | undefined, effective: AgentPermissionDecision): AgentPermissionDecision | "inherit" {
-  return definition.key === "browserUploads" ? decision ?? "inherit" : effective;
+  return agentPermissionMemberDecides(definition.key) ? decision ?? "inherit" : effective;
 }
 
-/** Preserve explicit upload Ask/Allow: they differ from the member-controlled default. */
+/** Preserve an explicit Ask/Allow of a member-decided permission: they differ from the member-controlled default. */
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
-  return team === null && definition.key !== "browserUploads" && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
+  return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
 }
 
 /** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */
-export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): { key: string; reason: string } | null {
+export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {
+  const sandboxRequired = (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";
+  if (key === "hostExecution" && sandboxRequired && features && !features.sandboxOnly) {
+    return { key: "sandbox-off", reason: "The sandbox is turned off for this organization, so agents can't run for these members. Turn this on to let them run again." };
+  }
+  if (BLOCKED_WITH_HOST_EXECUTION.includes(key) && sandboxRequired) {
+    return { key: "host-execution", reason: "Blocked while Run tools on this computer is off." };
+  }
   if (key === "commands" && (settings.fileEdits?.decision ?? everyone?.fileEdits?.decision) === "deny") {
     return { key: "edits", reason: "Blocked while Edit files is blocked, because any command can change files." };
   }

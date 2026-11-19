@@ -25,7 +25,6 @@ import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
-import { organizationFeatureEnabled } from "./features.js"
 import { OpenWorkWebAccessRequiredError } from "./openwork-web-access-error.js"
 import { getOpenWorkWebAccess } from "./stripe-billing.js"
 
@@ -58,7 +57,6 @@ export type OpenWorkWebRuntimeAccessResolver = (
  * the feature off gives Web back to everyone.
  */
 export async function memberHasOpenWorkWeb(organizationId: string, member: OpenWorkWebMember) {
-  if (!(await organizationFeatureEnabled(organizationId, "webPerMember"))) return true
   const orgId = normalizeDenTypeId("organization", organizationId)
   const memberCondition = "memberId" in member
     ? eq(MemberTable.id, normalizeDenTypeId("member", member.memberId))

@@ -44,6 +44,8 @@ export const ConfigObjectTable = mysqlTable(
   {
     id: denTypeIdColumn("configObject", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    /** Stable key that travels with the object between organizations. Set once, editable, never follows the title. */
+    externalKey: varchar("external_key", { length: 128 }),
     objectType: mysqlEnum("object_type", configObjectTypeValues).notNull(),
     sourceMode: mysqlEnum("source_mode", configObjectSourceModeValues).notNull(),
     title: varchar("title", { length: 255 }).notNull(),
@@ -61,6 +63,7 @@ export const ConfigObjectTable = mysqlTable(
   },
   (table) => [
     index("config_object_organization_id").on(table.organizationId),
+    uniqueIndex("config_object_org_external_key").on(table.organizationId, table.externalKey),
     index("config_object_type").on(table.objectType),
     index("config_object_source_mode").on(table.sourceMode),
     index("config_object_status").on(table.status),
@@ -100,6 +103,8 @@ export const PluginTable = mysqlTable(
   {
     id: denTypeIdColumn("plugin", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    /** Stable key that travels with the plugin between organizations. Set once, editable, never follows the name. */
+    externalKey: varchar("external_key", { length: 128 }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     sourceRepositoryUrl: varchar("source_repository_url", { length: 1024 }),
@@ -113,8 +118,10 @@ export const PluginTable = mysqlTable(
   },
   (table) => [
     index("plugin_organization_id").on(table.organizationId),
+    uniqueIndex("plugin_org_external_key").on(table.organizationId, table.externalKey),
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
+    index("plugin_status_created_at").on(table.status, table.createdAt),
     index("plugin_name").on(table.name),
     index("plugin_directory_page").on(table.organizationId, table.status, table.updatedAt, table.id),
   ],
@@ -140,6 +147,7 @@ export const MarketplaceTable = mysqlTable(
     index("marketplace_organization_id").on(table.organizationId),
     index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("marketplace_status").on(table.status),
+    index("marketplace_status_created_at").on(table.status, table.createdAt, table.name),
     index("marketplace_name").on(table.name),
   ],
 )

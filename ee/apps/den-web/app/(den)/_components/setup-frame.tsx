@@ -111,7 +111,7 @@ function WorkPreview({ step }: { step: SetupStep }) {
  * claim codes, connection links): no stepper, no eyebrows, and the story column
  * shows who is asking through `aside` instead of the product preview.
  */
-export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified, workbot = false }: {
+export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified, workbot = false, single = false, brand: brandContent }: {
   step?: SetupStep;
   title: string;
   description: string;
@@ -125,6 +125,10 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   simplified?: boolean;
   /** First-party Workbot sign-in: one compact panel, no Cloud story or setup steps. */
   workbot?: boolean;
+  /** One centered panel with the brand band and no setup steps: invitations and sandbox links. */
+  single?: boolean;
+  /** Replaces the OpenWork mark and "OpenWork / Cloud", for an organization with its own brand. */
+  brand?: ReactNode;
 }) {
   const sharedStep = step === "account" || step === "space" || step === "people";
   const useSimplifiedSteps = sharedStep && (simplified ?? true);
@@ -150,13 +154,27 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
       ))}</ol>
     </nav>
   );
-  const brand = <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>{workbot ? "Workbot" : <>OpenWork<span className={styles.cloud}> / Cloud</span></>}</span></div>;
+  const brand = <div className={styles.brand}>{brandContent && !workbot ? brandContent : <><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>{workbot ? "Workbot" : <>OpenWork<span className={styles.cloud}> / Cloud</span></>}</span></>}</div>;
   if (workbot) {
     return (
       <section className={`${styles.frame} ${styles.simplified}`} data-testid="workbot-sign-in-frame">
         <div className={styles.simpleBody}>
           {brand}
           <div className={styles.panel}>{children}</div>
+        </div>
+      </section>
+    );
+  }
+  if (single) {
+    return (
+      <section className={`${styles.frame} ${styles.simplified}`} data-testid="setup-frame" data-step="none">
+        <div className={styles.simpleBody}>
+          {brand}
+          <div className={styles.panel}>
+            <div className={styles.panelVisual}>{panelVisual ?? <OnboardingTexture />}</div>
+            {title ? <h1 className={styles.simpleTitle}>{title}</h1> : null}
+            {children}
+          </div>
         </div>
       </section>
     );

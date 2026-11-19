@@ -34,13 +34,85 @@ export const awsNetworkSchema = z.discriminatedUnion("mode", [
 ])
 export type AwsNetwork = z.infer<typeof awsNetworkSchema>
 
-export const awsTargetSchema = z.object({
+const customerSecretArnSchema = z.string().trim().max(2048)
+  .regex(/^arn:aws:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$/, "Enter the complete ARN of a customer-created plain-string Secrets Manager secret, without a JSON field or version suffix.")
+const modelBaseUrlSchema = z.string().trim().max(2048).url().refine((value) => {
+  if (!URL.canParse(value)) return false
+  const url = new URL(value)
+  return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash
+}, "Use an HTTPS endpoint without credentials, query parameters or a fragment.")
+
+export const awsAssistantsSchema = z.object({
+  headlessRunnerEnabled: z.boolean().default(false),
+  workbotEnabled: z.boolean().default(false),
+  slackAssistantEnabled: z.boolean().default(false),
+  modelProtocol: z.enum(["anthropic", "openai", "openai-responses"]).optional(),
+  modelBaseUrl: modelBaseUrlSchema.optional(),
+  model: z.string().trim().min(1).max(200).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter a model ID without spaces or control characters.").optional(),
+  modelSecretArn: customerSecretArnSchema.optional(),
+  computerProvider: z.enum(["off", "daytona", "freestyle"]).default("off"),
+  computerSecretArn: customerSecretArnSchema.optional(),
+  computerSnapshot: z.string().trim().min(1).max(200).regex(/^[^\s\x00-\x1f\x7f]+$/, "Enter a computer snapshot ID without spaces or control characters.").optional(),
+  daytonaApiUrl: modelBaseUrlSchema.optional(),
+  daytonaTarget: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9_-]+$/, "Enter a Daytona target such as us or eu.").optional(),
+}).strict().superRefine((assistants, context) => {
+  if (assistants.computerProvider !== "off" && !assistants.computerSecretArn) {
+    context.addIssue({ code: "custom", path: ["computerSecretArn"], message: "Enter the ARN of your plain-string computer provider API key secret." })
+  }
+  if (assistants.computerProvider === "daytona" && !assistants.computerSnapshot) {
+    context.addIssue({ code: "custom", path: ["computerSnapshot"], message: "Choose a Daytona computer snapshot before enabling Daytona computers." })
+  }
+})
+export type AwsAssistants = z.infer<typeof awsAssistantsSchema>
+export function assistantsEnabled(assistants: AwsAssistants) {
+  return assistants.headlessRunnerEnabled || assistants.workbotEnabled || assistants.slackAssistantEnabled || assistants.computerProvider !== "off"
+}
+
+export const awsRuntimeProfileSchema = z.enum(["legacy", "gateway"])
+export type AwsRuntimeProfile = z.infer<typeof awsRuntimeProfileSchema>
+const awsTargetFields = {
   accountId: z.string().regex(/^\d{12}$/, "Enter the 12-digit AWS account ID."),
   region: awsRegionSchema,
   route53ZoneId: z.string().trim().regex(/^Z[A-Z0-9]{1,31}$/, "Enter the Route 53 hosted zone ID, starting with Z."),
-  // Deployments created before network choice existed are dedicated.
   network: awsNetworkSchema.default({ mode: "dedicated" }),
-}).strict().superRefine((target, context) => {
+  assistants: awsAssistantsSchema.default({ headlessRunnerEnabled: false, workbotEnabled: false, slackAssistantEnabled: false, computerProvider: "off" }),
+}
+
+/** Request parsing retains an omitted profile so only the create route can choose a rollout-aware default. */
+export const awsTargetCreateSchema = z.object({ ...awsTargetFields, runtimeProfile: awsRuntimeProfileSchema.optional() }).strict()
+export type AwsTargetCreate = z.infer<typeof awsTargetCreateSchema>
+
+export function gatewayAssistants(assistants: AwsAssistants): AwsAssistants {
+  return {
+    headlessRunnerEnabled: true, workbotEnabled: true, slackAssistantEnabled: true,
+    computerProvider: assistants.computerProvider,
+    ...(assistants.computerProvider !== "off" && assistants.computerSecretArn ? { computerSecretArn: assistants.computerSecretArn } : {}),
+    ...(assistants.computerProvider === "daytona" ? {
+      ...(assistants.computerSnapshot ? { computerSnapshot: assistants.computerSnapshot } : {}),
+      ...(assistants.daytonaApiUrl ? { daytonaApiUrl: assistants.daytonaApiUrl } : {}),
+      ...(assistants.daytonaTarget ? { daytonaTarget: assistants.daytonaTarget } : {}),
+    } : {}),
+  }
+}
+
+/** Views always preserve missing-profile historical records as legacy; parsing never upgrades storage. */
+export const awsTargetSchema = z.object({ ...awsTargetFields, runtimeProfile: awsRuntimeProfileSchema.default("legacy") }).strict().superRefine((target, context) => {
+  if (target.runtimeProfile === "legacy") {
+    if (!target.assistants.headlessRunnerEnabled && (target.assistants.workbotEnabled || target.assistants.slackAssistantEnabled || target.assistants.computerProvider !== "off")) {
+      context.addIssue({ code: "custom", path: ["assistants", "headlessRunnerEnabled"], message: "Legacy assistant services require their managed runner. Use the gateway profile for a new runtime." })
+    }
+    if (target.assistants.headlessRunnerEnabled) {
+      for (const key of ["modelProtocol", "modelBaseUrl", "model", "modelSecretArn"] satisfies (keyof AwsAssistants)[]) {
+        if (!target.assistants[key]) context.addIssue({ code: "custom", path: ["assistants", key], message: "The legacy direct-model configuration is incomplete. Upgrade to the gateway profile to configure providers inside the installed Den." })
+      }
+    }
+  }
+  for (const key of ["modelSecretArn", "computerSecretArn"] satisfies (keyof AwsAssistants)[]) {
+    const arn = target.assistants[key]
+    if (arn && typeof arn === "string" && !arn.startsWith(`arn:aws:secretsmanager:${target.region}:${target.accountId}:secret:`)) {
+      context.addIssue({ code: "custom", path: ["assistants", key], message: "Use a Secrets Manager secret in this deployment's AWS account and region." })
+    }
+  }
   const network = target.network
   if (network.mode !== "existing") return
   if (network.ecsClusterArn && !new RegExp(`^arn:aws:ecs:${target.region}:${target.accountId}:cluster/[A-Za-z0-9_-]{1,255}$`).test(network.ecsClusterArn)) {
@@ -49,8 +121,43 @@ export const awsTargetSchema = z.object({
   if (network.serviceSubnetIds.some((id) => network.loadBalancerSubnetIds.includes(id))) {
     context.addIssue({ code: "custom", path: ["network", "loadBalancerSubnetIds"], message: "Use public subnets for the load balancer and private subnets for services." })
   }
-})
+}).transform((target) => target.runtimeProfile === "gateway" ? { ...target, assistants: gatewayAssistants(target.assistants) } : target)
 export type AwsTarget = z.infer<typeof awsTargetSchema>
+export function normalizeAwsTargetForView(input: unknown): AwsTarget {
+  return awsTargetSchema.parse(input)
+}
+export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreateSchema>, options: { gatewayByDefault: boolean }): AwsTarget {
+  const target = awsTargetCreateSchema.parse(input)
+  return awsTargetSchema.parse({ ...target, runtimeProfile: target.runtimeProfile ?? (options.gatewayByDefault ? "gateway" : "legacy") })
+}
+
+/**
+ * How the organization's people sign in to AWS: their IAM Identity Center
+ * access portal and optional role (permission set) to open the console with. With
+ * it, every AWS link opens through the portal in the deployment's own account.
+ * Only AWS-hosted portal addresses are accepted, so a saved value can never
+ * send an approver anywhere else.
+ */
+export const awsSignInSchema = z.object({
+  portalUrl: z.string().trim().max(300).refine((value) => awsPortalBase(value) !== null, "Enter your AWS access portal URL, such as https://your-company.awsapps.com/start.")
+    .overwrite((value) => awsPortalBase(value) ?? value),
+  roleName: z.string().trim().regex(/^[\w+=,.@-]{0,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess.").nullable().default(null).overwrite((value) => value || null),
+}).strict()
+export type AwsSignIn = z.infer<typeof awsSignInSchema>
+
+/** The portal address without a trailing slash, or null when it is not an AWS access portal. */
+export function awsPortalBase(value: string) {
+  const text = value.trim()
+  if (!URL.canParse(text)) return null
+  const url = new URL(text)
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search) return null
+  const classic = /^[a-z0-9][a-z0-9.-]*\.awsapps\.com$/.test(url.hostname)
+  const regional = /^[a-z0-9][a-z0-9.-]*\.app\.aws$/.test(url.hostname)
+  if (!classic && !regional) return null
+  const path = url.pathname.replace(/\/+$/, "")
+  if (!/^(?:\/[A-Za-z0-9_-]+)*$/.test(path)) return null
+  return `https://${url.hostname}${path || (classic ? "/start" : "")}`
+}
 
 export const gcpRegionSchema = z.enum(["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1", "europe-west2", "europe-west3", "asia-southeast1", "australia-southeast1"])
 export const gcpTargetSchema = z.object({
@@ -70,8 +177,10 @@ const commonInput = {
   ownerEmail: z.string().trim().email().max(254),
   size: z.literal("small").default("small"),
 }
+export const awsManagedDeploymentInputSchema = z.object({ ...commonInput, provider: z.literal("aws"), target: awsTargetCreateSchema }).strict()
+export type AwsManagedDeploymentInput = z.infer<typeof awsManagedDeploymentInputSchema>
 export const managedDeploymentInputSchema = z.discriminatedUnion("provider", [
-  z.object({ ...commonInput, provider: z.literal("aws"), target: awsTargetSchema }).strict(),
+  awsManagedDeploymentInputSchema,
   z.object({ ...commonInput, provider: z.literal("gcp"), target: gcpTargetSchema }).strict(),
 ])
 export type ManagedDeploymentInput = z.infer<typeof managedDeploymentInputSchema>
@@ -81,7 +190,10 @@ export const deploymentStepSchema = z.enum([
   "runner_connected", "release_verified", "account_verified", "infrastructure_applied", "services_ready", "health_verified",
 ])
 export const deploymentRunStateSchema = z.enum(["awaiting_approval", "provisioning", "ready", "failed"])
-export const deploymentRunKindSchema = z.enum(["install", "update", "retry"])
+/** What the launch route prepares. A `configure` run is prepared only by a configuration change. */
+export const deploymentLaunchKindSchema = z.enum(["install", "update", "retry"])
+export type DeploymentLaunchKind = z.infer<typeof deploymentLaunchKindSchema>
+export const deploymentRunKindSchema = z.enum(["install", "update", "retry", "configure"])
 export const deploymentEventInputSchema = z.object({
   sequence: z.number().int().min(1).max(100),
   step: deploymentStepSchema,
@@ -95,6 +207,7 @@ export type DeploymentEventInput = z.infer<typeof deploymentEventInputSchema>
 export const healthCheckIdSchema = z.enum([
   "api_health", "database_ready", "web_available", "services_running", "load_balancer_targets",
   "database_instance", "database_storage", "database_backups", "certificate",
+  "runner_service", "workbot_available", "runner_storage", "runner_backups", "ai_gateway_available",
 ])
 export const healthCheckStatusSchema = z.enum(["ok", "warning", "failing", "unknown"])
 export const healthCheckCodeSchema = z.enum([
@@ -129,6 +242,66 @@ export const deploymentHealthSchema = z.object({
   checks: z.array(healthCheckSchema),
 })
 
+// ---- Configuration changes after installation (AWS, same installer version) ----
+export const deploymentConfigurationFieldSchema = z.enum([
+  "name", "domainName", "ownerEmail",
+  "target.accountId", "target.region", "target.route53ZoneId", "target.network", "target.runtimeProfile",
+  "target.assistants.headlessRunnerEnabled", "target.assistants.workbotEnabled", "target.assistants.slackAssistantEnabled",
+  "target.assistants.modelProtocol", "target.assistants.modelBaseUrl", "target.assistants.model", "target.assistants.modelSecretArn",
+  "target.assistants.computerProvider", "target.assistants.computerSecretArn", "target.assistants.computerSnapshot",
+  "target.assistants.daytonaApiUrl", "target.assistants.daytonaTarget",
+])
+export type DeploymentConfigurationField = z.infer<typeof deploymentConfigurationFieldSchema>
+export const deploymentConfigurationEffectSchema = z.enum(["saved_immediately", "restarts_den", "restarts_runner", "adds_gateway_runtime"])
+export const deploymentConfigurationChangeSchema = z.object({
+  field: deploymentConfigurationFieldSchema,
+  /** Raw values. Secret ARNs are references, never secret values. */
+  before: z.string().nullable(),
+  after: z.string().nullable(),
+  effect: deploymentConfigurationEffectSchema,
+}).strict()
+export type DeploymentConfigurationChange = z.infer<typeof deploymentConfigurationChangeSchema>
+export const deploymentConfigurationChangeInputSchema = z.object({
+  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
+  /** The complete document, so a fixed field is refused by name. An omitted runtimeProfile keeps the recorded one. */
+  configuration: awsManagedDeploymentInputSchema,
+}).strict()
+/** Stored on a configure run. Targets are in storage form. */
+export const deploymentConfigurationChangeRecordSchema = z.object({
+  version: z.literal(1),
+  requestedBy: z.object({ memberId: z.string(), userId: z.string() }).strict(),
+  baseRunId: z.string().uuid(),
+  /** The active run to return to if the change is withdrawn. */
+  restoresRunId: z.string().uuid(),
+  previous: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
+  requested: z.object({ ownerEmail: z.string(), target: z.record(z.string(), z.unknown()) }).strict(),
+  /** Never contains `name`: a rename is saved at once, without a run. */
+  changes: z.array(deploymentConfigurationChangeSchema),
+}).strict()
+export const deploymentConfigurationLockSchema = z.enum(["aws_only", "not_installed", "run_in_progress", "unfinished_run", "installer_unknown", "installer_unavailable"])
+export const deploymentConfigurationViewSchema = z.object({
+  revision: z.string().regex(/^[a-f0-9]{64}$/),
+  /** Null when the configuration can be changed now. */
+  lock: deploymentConfigurationLockSchema.nullable(),
+  /** The installed installer is the published one, so the gateway runtime can be turned on. */
+  gatewayAvailable: z.boolean(),
+  change: z.object({
+    runId: z.string().uuid(),
+    /**
+     * `applying` from the moment the approval command confirms the change with OpenWork
+     * (the run still awaits enrollment and `run.lastSeenAt` is that moment), and for as
+     * long as no final report arrives: a passed deadline (`run.expired`) does not end it,
+     * because it says nothing about what AWS did.
+     */
+    state: z.enum(["awaiting_approval", "applying", "failed", "expired"]),
+    requestedAt: z.string().datetime(),
+    expiresAt: z.string().datetime(),
+    changes: z.array(deploymentConfigurationChangeSchema),
+    /** A valid request `configuration`, to edit the change or try it again. */
+    requested: awsManagedDeploymentInputSchema,
+  }).nullable(),
+})
+
 // ---- API views ----
 export const deploymentRunSchema = z.object({
   id: z.string().uuid(),
@@ -156,13 +329,23 @@ const managedDeploymentViewSchema = z.object({
   updateAvailable: z.boolean(),
   health: deploymentHealthSchema,
   run: deploymentRunSchema.nullable(),
+  /** Present only when the caller can change the configuration after installation. */
+  configuration: deploymentConfigurationViewSchema.optional(),
 })
 export const managedDeploymentSchema = z.discriminatedUnion("provider", [
   managedDeploymentViewSchema.extend({ provider: z.literal("aws"), target: awsTargetSchema }),
   managedDeploymentViewSchema.extend({ provider: z.literal("gcp"), target: gcpTargetSchema }),
 ])
 export const managedDeploymentListSchema = z.object({ deployments: z.array(managedDeploymentSchema) })
-export const managedDeploymentLaunchInputSchema = z.object({ kind: deploymentRunKindSchema.default("install") }).strict()
+export const managedDeploymentLaunchInputSchema = z.object({
+  kind: deploymentLaunchKindSchema.default("install"),
+  /** Reconfigure the AWS runtime only with a newer, customer-approved installer. */
+  runtimeProfile: awsRuntimeProfileSchema.optional(),
+  assistants: awsAssistantsSchema.optional(),
+}).strict().superRefine((input, context) => {
+  if ((input.assistants || input.runtimeProfile) && input.kind !== "update") context.addIssue({ code: "custom", path: ["runtimeProfile"], message: "Change the runtime profile or computers with a version-increasing Update, not Install or Retry." })
+})
+const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() })
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
@@ -179,11 +362,29 @@ export const managedDeploymentLaunchSchema = z.object({
    */
   handoff: z.discriminatedUnion("action", [
     z.object({ action: z.literal("open_link"), url: z.string().url(), command: z.null(), instructions: z.string() }),
-    z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() }),
+    cloudShellHandoffSchema,
   ]).optional(),
   expiresAt: z.string().datetime(),
 })
+/** `approval_required` is also a valid launch, so one screen shows either handoff. */
+export const deploymentConfigurationChangeResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("saved"), deployment: managedDeploymentSchema }),
+  z.object({ outcome: z.literal("withdrawn"), deployment: managedDeploymentSchema }),
+  z.object({
+    outcome: z.literal("approval_required"), deployment: managedDeploymentSchema, kind: z.literal("configure"),
+    approvalUrl: z.null(), command: z.string(), handoff: cloudShellHandoffSchema, expiresAt: z.string().datetime(),
+    changes: z.array(deploymentConfigurationChangeSchema),
+  }),
+])
+/** Sent by the approval command itself, before it changes anything in the customer's cloud. */
+export const deploymentApprovalCheckInputSchema = z.object({ challenge: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+export const deploymentApprovalCheckResultSchema = z.object({ ok: z.literal(true), expiresAt: z.string().datetime() })
+export const deploymentConfigurationErrorSchema = z.object({ error: z.string(), message: z.string().optional(), field: deploymentConfigurationFieldSchema.optional() })
 export const managedDeploymentConfigurationSchema = z.object({
+  /** Requires both managed deployment features for this caller. */
+  assistantsAvailable: z.boolean().default(false),
+  /** The organization's saved AWS sign-in. When set, every AWS link opens through it. */
+  awsSignIn: awsSignInSchema.nullable().default(null),
   providers: z.array(z.object({
     provider: managedDeploymentProviderSchema,
     available: z.boolean(),
@@ -193,5 +394,6 @@ export const managedDeploymentConfigurationSchema = z.object({
   })),
   updateMode: z.literal("approval"),
 })
+export const awsSignInInputSchema = z.object({ awsSignIn: awsSignInSchema.nullable() }).strict()
 export type ManagedDeployment = z.infer<typeof managedDeploymentSchema>
 export type DeploymentHealth = z.infer<typeof deploymentHealthSchema>

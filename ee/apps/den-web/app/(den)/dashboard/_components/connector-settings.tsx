@@ -3,8 +3,11 @@
 import { ChevronRight, Lock } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenCheckbox } from "../../_components/ui/checkbox";
 import { DenSelect } from "../../_components/ui/select";
 import { DenInput } from "../../_components/ui/input";
+import { orgFeatureEnabled } from "../../_lib/den-org";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ApiKeySchemeAdvanced } from "./connector-setup-fields";
 import { ConfirmDialog } from "./item-list";
 import { credentialModeForAuth } from "./member-api-key";
@@ -26,6 +29,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 /** `lockedReason` shows the settings read-only with why (DESIGN.md P4), e.g. the caller can't edit this connection. */
 export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null }: { connection: ExternalMcpConnection; onSaved: (message: string) => void; lockedReason?: string | null }) {
   const updateConnection = useUpdateMcpConnection();
+  const { orgContext } = useOrgDashboard();
+  const canRequestSelectedScopesOnly = orgFeatureEnabled(orgContext, "connectionSelectedScopesOnly");
   const [name, setName] = useState(connection.name);
   const [url, setUrl] = useState(connection.url);
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(connection.authType);
@@ -33,6 +38,7 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
   const [apiKeyAuthScheme, setApiKeyAuthScheme] = useState<ExternalMcpApiKeyAuthScheme>(connection.apiKeyAuthScheme);
   const [showOAuthApp, setShowOAuthApp] = useState(Boolean(connection.oauthClientId) || connection.oauthClientRequired === true);
   const [scopes, setScopes] = useState((connection.requestedScopes ?? []).join(" "));
+  const [selectedScopesOnly, setSelectedScopesOnly] = useState(connection.requestSelectedScopesOnly === true);
   const [exposeDirectly, setExposeDirectly] = useState(connection.exposeDirectly);
   const [apiKey, setApiKey] = useState("");
   const [clientId, setClientId] = useState(connection.oauthClientId ?? "");
@@ -56,7 +62,10 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
     || chosenMode !== connection.credentialMode
     || (usesKey && apiKeyAuthScheme !== connection.apiKeyAuthScheme);
   const requestedScopes = [...new Set(scopes.split(/[\s,]+/).filter(Boolean))];
-  const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ");
+  // The choice needs scopes to apply to; with none listed it is off.
+  const requestSelectedScopesOnly = selectedScopesOnly && requestedScopes.length > 0;
+  const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ")
+    || (canRequestSelectedScopesOnly && requestSelectedScopesOnly !== (connection.requestSelectedScopesOnly === true));
   const keepsSavedClientSecret = connection.oauthClientHasSecret === true && clientId.trim() === (connection.oauthClientId ?? "") && !identityChanged;
   const clientChanged = usesOAuthApp && (clientId.trim() !== (connection.oauthClientId ?? "") || Boolean(clientSecret.trim()) || ((manualChanged || identityChanged) && Boolean(manualAddresses.authorizationEndpoint.trim())));
   const changed = name.trim() !== connection.name || identityChanged || Boolean(usesSharedKey && normalizedApiKey) || clientChanged || scopesChanged || manualChanged || exposeDirectly !== connection.exposeDirectly;
@@ -74,7 +83,7 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
       authType,
       credentialMode: chosenMode,
       exposeDirectly,
-      ...(authType === "oauth" && !managedByPlugin ? { requestedScopes } : {}),
+      ...(authType === "oauth" && !managedByPlugin ? { requestedScopes, ...(canRequestSelectedScopesOnly ? { requestSelectedScopesOnly } : {}) } : {}),
       ...(authType === "oauth" && (manualChanged || (identityChanged && Boolean(manualAddresses.authorizationEndpoint.trim()))) ? { manualOAuthEndpoints: manualAddresses.authorizationEndpoint.trim() ? { authorizationEndpoint: manualAddresses.authorizationEndpoint.trim(), tokenEndpoint: manualAddresses.tokenEndpoint.trim() } : null } : {}),
       ...(!managedByPlugin ? apiKeyAuthSchemeInput(authType, apiKeyAuthScheme) : {}),
       ...(usesSharedKey && !managedByPlugin && normalizedApiKey ? { apiKey: normalizedApiKey } : {}),
@@ -101,7 +110,7 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
   return (
     <>
     <form
-      className="flex flex-col gap-3 px-5 py-4"
+      className="flex flex-col gap-3 py-4"
       data-testid="connector-settings"
       onSubmit={(event) => {
         event.preventDefault();
@@ -162,6 +171,15 @@ export function ConnectorSettingsForm({ connection, onSaved, lockedReason = null
           <DenInput value={scopes} disabled={managedByPlugin} onChange={(event) => setScopes(event.target.value)} placeholder="records.read records.write" data-testid="connector-settings-scopes" />
         </Field>
       ) : null}
+      {authType === "oauth" && canRequestSelectedScopesOnly ? (
+        <label className="flex items-start gap-2 text-[13px] text-gray-700">
+          <DenCheckbox className="mt-0.5" checked={requestSelectedScopesOnly} disabled={managedByPlugin || requestedScopes.length === 0} onCheckedChange={setSelectedScopesOnly} data-testid="connector-settings-selected-scopes-only" />
+          <span>
+            Request only these scopes
+            <span className="block text-[12px] text-gray-500">Leaves out any other scopes the server asks for at sign-in. People who already signed in keep their access until they sign in again.</span>
+          </span>
+        </label>
+      ) : null}
       <label className="flex items-center gap-2 text-[13px] text-gray-700">
         <input type="checkbox" checked={exposeDirectly} onChange={(event) => setExposeDirectly(event.target.checked)} />
         Available in other MCP apps
@@ -219,7 +237,7 @@ function ConnectorIssuerReview({ connection, onSaved }: { connection: ExternalMc
   }
 
   return (
-    <details className="group/issuer border-t border-gray-100 px-5 py-3" open={connection.issuerReviewRequired === true}>
+    <details className="group/issuer border-t border-[var(--den-list-line)] py-3" open={connection.issuerReviewRequired === true}>
       <summary className={DETAILS_SUMMARY_CLASS}><ChevronRight className="h-3.5 w-3.5 text-gray-500 transition-transform group-open/issuer:rotate-90" aria-hidden />Authorization server selection</summary>
       <div className="mt-3 flex flex-col gap-3">
       {connection.issuerReviewRequired ? <p className="text-[13px] text-gray-600">The sign-in server changed. An admin must review it.</p> : null}

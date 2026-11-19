@@ -70,7 +70,7 @@ function jsonRecord(value: unknown): Record<string, Json> {
 }
 
 /**
- * Smart Model Router (feature `autoRouter`): the gateway picks the model for
+ * Smart Model Router: the gateway picks the model for
  * each Smart turn and names it in response headers. Record that decision in
  * the session's metadata, which the engine keeps with the session and streams
  * to the app, so the chat can say which model answered each Smart reply.

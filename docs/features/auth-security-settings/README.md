@@ -1,19 +1,19 @@
-# Auth & Security settings (`authSecuritySettings`)
+# Auth & Security settings
 
-- **Feature key:** `authSecuritySettings`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Retired rollout key:** `authSecuritySettings`
+- **Deployments:** cloud and self-hosted; generally available (no flag)
 - **Author:** @OmarMcAdam
-- **Operator lock:** `DEN_FEATURE_AUTH_SECURITY_SETTINGS=true|false` (Helm `config.features.authSecuritySettings`)
 
 ## What changes
 
 Den's Settings group shows one **Auth & Security** entry instead of separate
-**SSO** and **SCIM** entries. The page has two tabs, each the existing screen
-without its own page title:
+**SSO** and **SCIM** entries. The page has three tabs, without their own page
+titles:
 
 | Tab | URL | Was |
 | --- | --- | --- |
-| Single sign-on (SSO), the default | `/dashboard/auth-security` or `?tab=sso` | `/dashboard/sso` |
+| General (session settings), the default | `/dashboard/auth-security` or `?tab=general` | new ([session-security-settings](../session-security-settings/README.md)) |
+| Single sign-on (SSO) | `/dashboard/auth-security?tab=sso` | `/dashboard/sso` |
 | User provisioning (SCIM) | `/dashboard/auth-security?tab=scim` | `/dashboard/scim` |
 
 Nothing about how SSO or SCIM work changes: same API (`/v1/sso*`, `/v1/scim*`),
@@ -23,13 +23,10 @@ plan locks (SSO on Team, SCIM on Enterprise) and the same SSO test pop-up.
 - **Navigation:** the entry shows when the person could see either SSO or SCIM
   before. The command palette lists **Settings › Auth & Security** and finds it
   by "sso", "saml", "oidc", "scim", "provisioning", "okta", "entra" and similar.
-- **Old links:** with the feature on, `/dashboard/sso` and `/dashboard/scim`
-  redirect to the matching tab and keep any other query parameters. With it
-  off, `/dashboard/auth-security` redirects back to `/dashboard/sso` or
-  `/dashboard/scim`, so a link works whichever state an organization is in.
-  The SSO test return page (`/sso/test/complete`) talks to the opener window
+- **Old links:** `/dashboard/sso` and `/dashboard/scim` redirect to the
+  matching tab and keep any other query parameters. The SSO test return page (`/sso/test/complete`) talks to the opener window
   and is unaffected.
-- **Feature intros** (only with `featureIntros` on too): the page explains
+- **Feature intros**: the page explains
   itself while nothing is set up. Keys `auth-security`, `auth-security.sso`,
   `auth-security.scim` in
   `ee/apps/den-web/app/(den)/dashboard/_features/feature-intros/intros/auth-security.tsx`.
@@ -57,23 +54,10 @@ without them never saw these entries and still don't.
 
 ## Try it locally
 
-Start den-api with the operator lock (or turn it on for one organization in
-`/admin` › Features):
-
-```sh
-DEN_FEATURE_AUTH_SECURITY_SETTINGS=true DEN_FEATURE_FEATURE_INTROS=true pnpm dev:den:api
-```
-
-Open **Settings › Auth & Security**. To see the plan locks, also set
+Start den-api (`pnpm dev:den:api`) and open **Settings › Auth & Security**. To see the plan locks, also set
 `DEN_PLAN_GATING_ENABLED=true`; an organization on the Free plan then gets the
 Upgrade to Team intro, and one whose `organization.metadata.plan.tier` is
 `enterprise` gets both tabs unlocked.
-
-## Turning it off
-
-Settings shows **SSO** and **SCIM** again exactly as before, and
-`/dashboard/auth-security` links redirect to them. No data moves, so turning
-it on or off at any time is safe; an open page switches on its next load.
 
 ## What to watch
 

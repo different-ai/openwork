@@ -35,8 +35,7 @@ import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { TaskRecovery } from "./task-recovery"
-import { BackgroundTaskNotice, BackgroundTasksLabel, BackgroundTasksMessage, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
-import { sessionBackgroundShells, useBackgroundShellStore, type BackgroundShell } from "@/react-app/domains/session/status/background-shell-store"
+import { BackgroundTaskNotice, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
 import { messageAutoAccessWall } from "@/app/lib/inference-access"
 import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
 import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-card"
@@ -53,6 +52,7 @@ import { GlobTool } from "@/components/tools/glob"
 import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
 import {
+  automationProposalCalls,
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
@@ -114,10 +114,10 @@ import { connectionFromChatToolPart } from "@/components/tools/error-attribution
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { codeModeCallsWithResults, remoteThreadStartsInParts } from "@/lib/remote-thread-starts"
-import { dedupeRenderedTurnErrors } from "@/react-app/domains/session/sync/transcript-reconcile"
+import { dedupeRenderedTurnErrors, joinRecoveredReplies } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
-import { SubagentRunLine } from "@/components/chat/subagent-run-line"
+import { SubagentRunLine, useRunningSubagentIds } from "@/components/chat/subagent-run-line"
 import { RemoteThreadRunLine } from "@/components/chat/remote-thread-run-line"
 import { isRemoteThreadStatusCheck, remoteThreadFromToolPart, type RemoteThreadStart } from "@/lib/remote-session-thread"
 import { useReviveRemoteThread } from "@/react-app/domains/session/remote-threads/remote-thread-store"
@@ -162,7 +162,6 @@ import { collectComputerSessionHistory, withoutComputerHistory, type ComputerSes
 import { ComputerSessionHistory, desktopSavedFileActions } from "./computer-session-history"
 import { ComputerCrewCard, useComputerCrew } from "./computer-crew"
 import { useComputerSessionHistoryStore } from "./computer-session-history-store"
-import { useSteadyLiveTurnStore } from "./steady-live-turn-store"
 import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity"
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
@@ -288,7 +287,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return start ? [{ start, call }] : []
   }) : []
   const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
-  if (foldTool && !remoteStart && remoteStarts.length === 0) return null
+  const proposals = calls && part.type === "dynamic-tool" ? automationProposalCalls(part) : []
+  if (foldTool && !remoteStart && remoteStarts.length === 0 && proposals.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
@@ -299,12 +299,13 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   if (part.type === "dynamic-tool") {
-    if (calls && remoteStarts.length > 0) {
-      const started = new Set(remoteStarts.map(({ call }) => call.toolCallId))
+    if (calls && (remoteStarts.length > 0 || proposals.length > 0)) {
+      const started = new Set([...remoteStarts.map(({ call }) => call.toolCallId), ...proposals.map((call) => call.toolCallId)])
       return (
         <div className="flex min-w-0 flex-col gap-1">
           {!foldTool && <CodeModeTool part={part} calls={calls.filter((call) => !started.has(call.toolCallId))} lifecycle={lifecycle} connectors={connectorIdentities} />}
           {promptCall && <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />}
+          {proposals.map((call) => <OpenWorkAutomationProposalTool key={call.toolCallId} part={call} />)}
           {remoteStarts.filter(({ call }) => !pinnedRemoteThreads.has(call.toolCallId))
             .map(({ start, call }) => <RemoteThreadRunLine key={start.key} start={start} part={call} />)}
         </div>
@@ -1180,26 +1181,16 @@ function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typ
 
 MessageComponent.displayName = "MessageComponent"
 
-const NO_BACKGROUND_SHELLS: BackgroundShell[] = []
 const NO_WAITS: WaitInterval[] = []
 
 type WorkingModel = { label: string; providerId?: string }
 
-const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells = NO_BACKGROUND_SHELLS, backgroundStale = false, model = null }: {
+const LoadingMessage = React.memo(({ elapsedSeconds, starting, model = null }: {
   elapsedSeconds: number
   starting: boolean
   /** The model writing this turn, shown on hover after the timer. */
   model?: WorkingModel | null
-  /** Commands left running in the background share this line while the turn runs. */
-  backgroundShells?: BackgroundShell[]
-  backgroundStale?: boolean
 }) => {
-  const background = backgroundShells.length > 0 ? (
-    <>
-      <span aria-hidden="true"> · </span>
-      <BackgroundTasksLabel shells={backgroundShells} stale={backgroundStale} shimmer={false} />
-    </>
-  ) : null
   return (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
       <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="group/working py-1 text-sm text-muted-foreground">
@@ -1207,9 +1198,7 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells 
             one. A count the connection cannot confirm stays outside it, still. */}
         <span className="ow-text-shimmer tabular-nums">
           {starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}
-          {backgroundStale ? null : background}
         </span>
-        {backgroundStale ? background : null}
         {/* Hover the Working line to see which model is writing this turn. It
             sits right after the timer, outside the shimmer, on the same line. */}
         {model ? (
@@ -1219,10 +1208,12 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, backgroundShells 
           >
             <span aria-hidden="true"> · </span>
             <span className="sr-only">{t("session.reply_model_live_prefix")}</span>
-            <span className="inline-flex items-center gap-1 align-[-2px]">
-              {model.providerId ? <span aria-hidden="true" className="flex size-3 shrink-0 items-center justify-center"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
-              <span>{model.label}</span>
-            </span>
+            {/* The name is plain text on the line's own baseline, level with
+                "Working"; only the logo is nudged, to sit centered on the
+                capitals. Boxing the pair took its baseline from the logo: the
+                name dropped a pixel and the line grew once the model was known. */}
+            {model.providerId ? <span aria-hidden="true" data-working-model-logo="" className="mr-1 inline-flex size-3 items-center justify-center align-[-0.125em]"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
+            {model.label}
           </span>
         ) : null}
       </div>
@@ -1392,7 +1383,7 @@ function getRenderableMessage(message: UIMessage) {
 }
 
 /**
- * steadyLiveTurn: while a turn runs, the chat never gets shorter. When the
+ * While a turn runs, the chat never gets shorter. When the
  * live turn shrinks (a step folds its detail before the next row arrives) the
  * room it gave up moves here, to the very end of the list, below the Working
  * line; whatever arrives next fills it before anything moves. Nothing above is
@@ -1564,12 +1555,10 @@ function MessageGroup({
     [panelLive, items, creationParts, showThinking],
   )
   const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
-  const computerHistoryEnabled = useComputerSessionHistoryStore(state => state.enabled)
-  const computerHistory = React.useMemo(() => computerHistoryEnabled ? collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }) : null, [computerHistoryEnabled, items, showThinking])
+  const computerHistory = React.useMemo(() => collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }), [items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
-  const parallelComputer = useComputerSessionHistoryStore(state => state.parallel)
   // The newest turn's card lists the chat's agents on its computer; a row opens that agent's live view.
-  const crewMembers = useComputerCrew(sessionId, parallelComputer && isLastGroup && isElectronRuntime() && !readOnly)
+  const crewMembers = useComputerCrew(sessionId, isLastGroup && isElectronRuntime() && !readOnly)
   const crew = React.useMemo(() => crewMembers.length ? { members: crewMembers, onOpen: (member: { sessionId: string }) => {
     const history = useComputerSessionHistoryStore.getState()
     history.setAgent(sessionId, member.sessionId)
@@ -1577,10 +1566,9 @@ function MessageGroup({
   } } : undefined, [crewMembers, sessionId])
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
-  // steadyLiveTurn: a running turn keeps its parts in arrival order (no
+  // A running turn keeps its parts in arrival order (no
   // steps/answer split until it finishes) and reserves room only at the list's
-  // end (LiveTurnReserve). With the flag off, neither area reserves height.
-  const steadyLiveTurn = useSteadyLiveTurnStore(state => state.enabled)
+  // end (LiveTurnReserve).
   // The skill this turn produced stays in view as its result, even when the
   // steps fold; later updates and shares change this card, not add another.
   const { cards: createdSkillCards } = useCreatedSkills()
@@ -1626,11 +1614,11 @@ function MessageGroup({
   // OpenCode delivers a whole turn as one assistant message with steps and
   // the answer interleaved in its parts. Split the first prose message so
   // its leading steps fold with the rest instead of pinning the run open.
-  // While the turn runs with steadyLiveTurn on, the split waits: it keys off
+  // While the turn runs, the split waits: it keys off
   // the latest text, so every new text moved rows between the steps area and
   // the answer and the chat jumped or kept a gap. The App panel keeps its fold.
   const firstProse = proseItems[0]
-  const splitAtAnswer = !(steadyLiveTurn && isLiveGroup && !panelLive)
+  const splitAtAnswer = !(isLiveGroup && !panelLive)
   if (splitAtAnswer && firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
     const split = splitTurnAtAnswer(firstProse.message)
     if (split) {
@@ -1644,7 +1632,7 @@ function MessageGroup({
       className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
     >
       {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
-        ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
+        ? <p className="mt-2 text-xs text-muted-foreground">This artifact has a newer version below.</p>
         : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
     </Message>
   )
@@ -1808,7 +1796,7 @@ function MessageGroup({
         ) : (
           <div data-live-steps="" className="flex flex-col gap-2">
             {/* Do not hold folded tool content open. Scroll stabilization belongs
-                to LiveTurnReserve, behind steadyLiveTurn, below the Working line. */}
+                to LiveTurnReserve, below the Working line. */}
             {renderItems(stepItems, 0, panelLive)}
           </div>
         )
@@ -1826,7 +1814,7 @@ function MessageGroup({
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
           fileActions={savedFileActions}
           turnEndedAt={isLiveGroup && parentActive ? null : getMessageCompleted(lastItem.message)}
-          turnStartedAt={parallelComputer ? getMessageCreated(items[0]!.message) ?? null : null}
+          turnStartedAt={getMessageCreated(items[0]!.message) ?? null}
           crew={crew} />
       </Message> : crew ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
         <ComputerCrewCard members={crew.members} onOpen={crew.onOpen} />
@@ -1930,8 +1918,6 @@ interface MessageListProps {
   viewport?: MessageListViewport
   /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
   sessionErrorHandled?: boolean
-  /** Running background commands are listed on the composer; the chat leaves out its own count of them. */
-  backgroundTasksInComposer?: boolean
 }
 
 /**
@@ -1950,7 +1936,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false, backgroundTasksInComposer = false }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
   const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
   // Only this turn's reply: before it starts there is no model to show, never the previous turn's.
   const workingModel = React.useMemo<WorkingModel | null>(() => {
@@ -1961,19 +1947,14 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     const providerId = replyModelProvider(reply, autoRoutes)
     return providerId ? { label, providerId } : { label }
   }, [messages, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName])
-  const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[workspaceId]?.running)
-  const backgroundShells = React.useMemo(
-    () => backgroundTasksInComposer ? NO_BACKGROUND_SHELLS : sessionBackgroundShells(runningShells, sessionId),
-    [backgroundTasksInComposer, runningShells, sessionId],
-  )
   const [stoppingBackground, setStoppingBackground] = React.useState(false)
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
   const newestAppCallIds = React.useMemo(() => newestBuiltAppCallIds(messages), [messages])
   const delegatedIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
     .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
-  const backgroundCount = useSessionActivityStore(state => delegatedIds.filter(id =>
-    state.recordsByWorkspaceId[workspaceId]?.[id]?.runActive).length)
+  const runningHelperIds = useRunningSubagentIds(workspaceId, delegatedIds)
+  const backgroundCount = runningHelperIds.length
   // The run is paused while it, or a helper it waits on, asks the person for
   // an approval or answer. Background helpers do not hold up the run.
   const foregroundHelperIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
@@ -2035,7 +2016,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
   // Steps that render nothing are removed before layout, so they leave no gap.
-  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(withoutSilentSteps(messages)), [messages]);
+  const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(joinRecoveredReplies(withoutSilentSteps(messages))), [messages]);
   const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
   // groupMessages indexes the visible transcript. Comparing those positions
   // with the unfiltered transcript marks the live turn historical as soon as
@@ -2069,7 +2050,6 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     [latestAssistantToolParts],
   )
   const createdSkills = useCreatedSkillsModel(messages, appRunActive && !syncDegraded)
-  const steadyLiveTurn = useSteadyLiveTurnStore(state => state.enabled)
 
   return (
     <CreatedSkillsContext.Provider value={createdSkills}>
@@ -2126,10 +2106,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
               disabled={stoppingBackground}
               className="cursor-pointer text-xs text-muted-foreground/70 underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:cursor-default disabled:opacity-50"
               onClick={() => {
-                const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]
-                const running = delegatedIds.filter((id) => records?.[id]?.runActive)
                 setStoppingBackground(true)
-                void Promise.allSettled(running.map((id) => onStopSubagentSession(id)))
+                void Promise.allSettled(runningHelperIds.map((id) => onStopSubagentSession(id)))
                   .finally(() => setStoppingBackground(false))
               }}
             >
@@ -2141,12 +2119,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
             runs, the count joins its Working line; otherwise it takes that
             line's place on its own. One line either way, so the chat does not
             move when the turn ends and the count stays. */}
-        {showLoading && !appPanelLive && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} backgroundShells={backgroundShells} backgroundStale={syncDegraded} model={workingModel} />}
+        {showLoading && !appPanelLive && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} model={workingModel} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
-        {!showLoading && backgroundShells.length > 0 && <BackgroundTasksMessage shells={backgroundShells} stale={syncDegraded} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
-        {steadyLiveTurn ? <LiveTurnReserve key={sessionId} active={runActive || status === "submitted"} /> : null}
+        <LiveTurnReserve key={sessionId} active={runActive || status === "submitted"} />
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
     </BuiltAppPreviewSync>

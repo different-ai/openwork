@@ -50,7 +50,6 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   }, [sessionId])
   const readLatest = useEffectEvent(refresh)
   const working = Boolean(snapshot?.session || snapshot?.cleanupPending)
-  const historyEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const watching = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
   // A subagent the person picked from the chat's crew: its live view instead of the chat's.
   const agent = useComputerSessionHistoryStore(state => state.agents[sessionId])
@@ -94,6 +93,6 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   }
 
   if (!slot || !snapshot || !working) return null
-  if (!showsLiveComputerView({ historyEnabled, watching, session: snapshot.session })) return null
+  if (!showsLiveComputerView({ watching, session: snapshot.session })) return null
   return <ComputerPanel key={agent ?? sessionId} sessionId={agent ?? sessionId} slot={slot} enabled={snapshot.enabled} canStop controlsBusy={stopping} stopping={stopping} cleanupPending={Boolean(snapshot.cleanupPending)} stopError={actionError} onStop={() => void halt()} />
 }

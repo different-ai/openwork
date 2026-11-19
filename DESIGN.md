@@ -2,9 +2,7 @@
 
 How OpenWork UI is designed. Agents read this before building or reviewing any
 user-facing surface (`apps/app`, `apps/desktop`, `ee/apps/den-web`, MCP Apps,
-generated artifact views). The optional `.warden/skills/design-spec-review` skill
-can review the numbered rules below locally. Automated Warden reviews focus on
-security and confidentiality.
+generated artifact views).
 
 ## Who we design for
 
@@ -107,6 +105,10 @@ advanced options discoverable but quiet.
   action. Empty states invite; errors never blame or say "Oops".
 - **C7** Sentence case. No ALL-CAPS eyebrow labels, no middle-dot meta strings
   as decoration, no "→" appended to buttons.
+
+- **C8** Call an interactive view built in OpenWork an artifact. Use
+  “Artifacts” for the library and “MCP Apps” for the protocol or integrations
+  that use it.
 
 ## States
 
@@ -212,6 +214,9 @@ Everywhere else the normal rules hold.
   Reconnect", not a stack trace. Raw input/output lives under "Technical
   details". Never show engine ids, routing names, or raw provider text in
   the row; a step that did no visible work (catalog lookups) is not shown.
+  A failed step keeps the ink of the other steps: the agent often recovers,
+  and "Couldn't…" already says it failed. Red is for the error that ends
+  the turn.
 - **T3** MCP Apps and generated views get a 40px header (source logo, title,
   explicit state such as "Ready" / "Draft" / "Not posted") and one icon
   action ("Open in panel"). Body is the app; footer holds ≤ 2 actions.

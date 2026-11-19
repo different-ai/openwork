@@ -203,6 +203,7 @@ export type AccountStatusMenuProps = {
   openWorkConnectState?: SessionCloudMcpMaintenanceState;
   showSettingsButton?: boolean;
   onOpenAccountSettings?: () => void;
+  onOpenDiagnostics?: () => void;
   onSendFeedback?: () => void;
 };
 
@@ -465,7 +466,9 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
         {connectNeedsAttention && !controlSettingsBlocked ? (
           <DropdownMenuItem
-            onClick={() => navigate(props.developerMode ? "/settings/debug" : "/settings/advanced/agent-access")}
+            onClick={() => props.onOpenDiagnostics
+              ? props.onOpenDiagnostics()
+              : navigate(props.developerMode ? "/settings/debug" : "/settings/advanced/agent-access")}
           >
             <Stethoscope className="size-3.5" />
             Run diagnostics

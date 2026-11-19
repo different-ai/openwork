@@ -22,6 +22,16 @@ export type BlobStore = {
    * large bodies (storage/), which deletes only old objects nothing references. Optional for test stores.
    */
   list?(prefix: string): Promise<Array<{ key: string; lastModified: number }>>
+  /**
+   * Moving bytes without holding them (S3 only; a disk store has none of these). `link` is an address for one object
+   * and one method that stops working after `expiresSeconds`: it carries a signature, never the store's credentials,
+   * so it can be handed to a conversation's computer. `size` and `copy` let the runner check and keep what arrived.
+   */
+  link?(method: "GET" | "PUT", key: string, expiresSeconds: number): Promise<string>
+  /** An object's size in bytes; null when it does not exist. */
+  size?(key: string): Promise<number | null>
+  /** Copies an object inside the store, giving the copy this content type. */
+  copy?(from: string, to: string, contentType: string): Promise<void>
 }
 
 /** Keys are runner-generated (`sessions/<id>/<fileId>`); this only guards against a key escaping the folder. */
@@ -104,11 +114,11 @@ export function s3BlobStore(options: S3Options): BlobStore {
     if (options.forcePathStyle) return `${base.origin}/${encodeURIComponent(options.bucket)}/${path}`
     return `${base.protocol}//${options.bucket}.${base.host}/${path}`
   }
-  const send = async (method: string, key: string, init: { body?: Uint8Array<ArrayBuffer>; contentType?: string } = {}) => {
+  const send = async (method: string, key: string, init: { body?: Uint8Array<ArrayBuffer>; contentType?: string; headers?: Record<string, string> } = {}) => {
     const request = await client.sign(urlOf(key), {
       method,
       ...(init.body ? { body: init.body } : {}),
-      headers: init.contentType ? { "content-type": init.contentType } : {},
+      headers: { ...init.headers, ...(init.contentType ? { "content-type": init.contentType } : {}) },
     })
     return (options.fetch ?? fetch)(request, { signal: AbortSignal.timeout(S3_TIMEOUT_MS) })
   }
@@ -136,6 +146,29 @@ export function s3BlobStore(options: S3Options): BlobStore {
       const response = await send("DELETE", key)
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
+    },
+    // A presigned URL: the signature is in the query, bound to this object, this method and the expiry.
+    async link(method, key, expiresSeconds) {
+      const url = new URL(urlOf(key))
+      url.searchParams.set("X-Amz-Expires", String(Math.max(1, Math.round(expiresSeconds))))
+      return (await client.sign(url.toString(), { method, aws: { signQuery: true } })).url
+    },
+    async size(key) {
+      const response = await send("HEAD", key)
+      await response.body?.cancel()
+      if (response.status === 404) return null
+      const length = response.headers.get("content-length")
+      if (!response.ok || length === null || !/^\d+$/.test(length)) throw new Error(`s3_head_${response.status}`)
+      return Number(length)
+    },
+    // CopyObject; the copy's metadata is replaced so it gets this content type, whatever the source was sent with.
+    async copy(from, to, contentType) {
+      const source = `/${encodeURIComponent(options.bucket)}/${safeKey(from).split("/").map(encodeURIComponent).join("/")}`
+      const response = await send("PUT", to, { contentType, headers: { "x-amz-copy-source": source, "x-amz-metadata-directive": "REPLACE" } })
+      if (!response.ok) throw await fail("copy", response)
+      // A copy can fail after the 200 was sent: the error is then in the body.
+      const body = await response.text()
+      if (/<Error>/.test(body)) throw new Error(`s3_copy_failed: ${body.slice(0, 300)}`)
     },
     // ListObjectsV2, page by page.
     async list(prefix) {

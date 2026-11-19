@@ -3,6 +3,7 @@ import type {
   FeatureIntro,
   FeatureIntroContext,
   FeatureIntroCta,
+  FeatureIntroFacts,
   FeatureIntroKey,
   FeatureIntroMatch,
   FeatureIntroSetupState,
@@ -63,6 +64,34 @@ export function introKeyDepth(key: FeatureIntroKey): number {
 
 export function rootIntroKey(key: FeatureIntroKey): string {
   return key.split(".")[0];
+}
+
+/**
+ * A count for setup facts from a list the server filters to what the viewer may see
+ * (e.g. `/v1/plugins` without `sharing.manage_all`). Something there proves the
+ * organization set it up; nothing there proves nothing, since a teammate may have
+ * made items this person can't see, so it stays unknown (undefined) instead of "none".
+ */
+export function visibleCountFact(count: number, seesWholeOrg: boolean): number | undefined {
+  return seesWholeOrg || count > 0 ? count : undefined;
+}
+
+/** Facts one mounted gate reports right now; withdrawn when it unmounts or goes back to loading. */
+export type FeatureIntroFactsReport = { orgId: string; key: FeatureIntroKey; facts: FeatureIntroFacts };
+
+/**
+ * A section's facts, merged from the gates mounted on the page now (in report
+ * order) for this organization. Facts from a page left earlier never count: a
+ * section that was empty when last seen must not take over a tab once it is set up.
+ */
+export function mergeReportedFacts(
+  reports: Iterable<FeatureIntroFactsReport>,
+  root: string,
+  orgId: string | null,
+): FeatureIntroFacts | null {
+  const matching = [...reports].filter((report) => report.orgId === orgId && rootIntroKey(report.key) === root);
+  if (matching.length === 0) return null;
+  return matching.reduce<FeatureIntroFacts>((merged, report) => ({ ...merged, ...report.facts }), {});
 }
 
 /** The member's state for this registry version; an older version counts as never seen. */

@@ -22,6 +22,7 @@ export const RESERVED_PROVIDER_IDS: readonly string[] = [
   "amazon-bedrock-mantle",
   "microsoft-foundry",
   "litellm",
+  "truefoundry",
 ]
 
 /** SDK packages the gateway can proxy that a custom provider may use (Den's SUPPORTED_GATEWAY_NPM_PACKAGES, minus cloud-specific ones). */

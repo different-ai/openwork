@@ -84,7 +84,7 @@ async function click(element: Element | null | undefined) {
   await act(async () => element.click())
 }
 
-test("one text-first summary, steps as sentences, a red failure, a timed thought and a marked PR link", async () => {
+test("one text-first summary, steps as sentences, a failure in the same ink, a timed thought and a marked PR link", async () => {
   const container = await render(turn())
   // No leading lane anywhere on the rail.
   expect(container.querySelector('[data-tool-aggregate] span.size-5[aria-hidden="true"]')).toBeNull()
@@ -104,7 +104,8 @@ test("one text-first summary, steps as sentences, a red failure, a timed thought
   expect(steps).toContain("Edited pr-body.md")
   expect(steps).toContain("Couldn't run Export secrets from Infisical")
   const failure = [...container.querySelectorAll('[data-text-step-tone="failed"]')].at(0)
-  expect(failure?.firstElementChild?.className).toContain("text-red-11")
+  expect(failure?.firstElementChild?.className).toContain("text-muted-foreground")
+  expect(failure?.querySelector(".text-red-11")).toBeNull()
 
   // Opening a command shows the quiet card: `$`, the tinted program, and its output.
   await click(container.querySelector('button[aria-label="Show details for Ran View the pull request"]'))

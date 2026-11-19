@@ -4,6 +4,8 @@ import { Check, Terminal, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
 import { deviceReturnTarget, deviceReturnUrl } from "../_lib/device-return";
+import { initialDeviceOrganizationId } from "../_lib/device-organization";
+import { fetchDeploymentFeatureEnabled } from "../_lib/deployment-features";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
@@ -36,17 +38,20 @@ type CodeState =
 const CLIENT_NAMES: Record<string, string> = {
   "openwork-cli": "OpenWork CLI",
   "openwork-opencode-plugin": "OpenWork - OpenCode Plugin",
+  "openwork-desktop-device": "OpenWork Desktop",
 };
 
 /** The command the person ran, echoed in the terminal illustration. */
 const CLIENT_COMMANDS: Record<string, string> = {
   "openwork-cli": "openwork-bootstrap login",
   "openwork-opencode-plugin": "opencode auth login openwork",
+  "openwork-desktop-device": "openwork login",
 };
 
 /** Where the person goes back to once the code is decided. */
 const CLIENT_RETURN_PLACES: Record<string, string> = {
   "openwork-opencode-plugin": "OpenCode",
+  "openwork-desktop-device": "the OpenWork app on that computer",
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,12 +112,25 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
       if (cancelled) return;
       const list = directory.response.ok ? parseOrganizations(directory.payload) : [];
       setOrgs(list);
-      setOrganizationId(list.find((org) => org.isActive)?.id ?? list[0]?.id ?? "");
+      setOrganizationId(initialDeviceOrganizationId(readClientId(lookup.payload), list));
       if (!lookup.response.ok) {
         setCodeState({ kind: "invalid", message: "This code is not valid or has expired. Check it against your terminal, or run the command again." });
         return;
       }
       const clientId = readClientId(lookup.payload);
+      if (clientId === "openwork-desktop-device") {
+        // UX only: Den authoritatively gates start, approval and redemption.
+        const enabled = await fetchDeploymentFeatureEnabled("remoteDesktopDeviceLogin");
+        if (cancelled) return;
+        if (!enabled) {
+          setCodeState({ kind: "invalid", message: "Device sign-in is not available on this server. Use the sign-in link instead." });
+          return;
+        }
+        if (!directory.response.ok) {
+          setCodeState({ kind: "invalid", message: "Could not load your organizations. Enter the code again to retry." });
+          return;
+        }
+      }
       setClientId(clientId);
       if (clientId) setClientName(CLIENT_NAMES[clientId] ?? clientId);
       const status = readStatus(lookup.payload);
@@ -129,8 +147,10 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
   const command = (clientId && CLIENT_COMMANDS[clientId]) || "openwork-bootstrap login";
   const returnPlace = (clientId && CLIENT_RETURN_PLACES[clientId]) || "your terminal";
   const isOpenCodePlugin = clientId === "openwork-opencode-plugin";
+  const isDesktopDevice = clientId === "openwork-desktop-device";
 
   async function decide(decision: "approve" | "deny") {
+    if (isDesktopDevice && decision === "approve" && !selectedOrg) return;
     setBusy(decision);
     setError(null);
     const { response, payload } = await requestJson(
@@ -161,16 +181,22 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
     : codeState.kind === "denied"
       ? { text: "Sign-in was denied." }
       : { text: "Waiting for approval...", muted: true };
-  const description = codeState.kind === "approved"
-    ? "Your terminal is signed in."
-    : codeState.kind === "denied"
-      ? "Your terminal did not get access."
-      : "Your terminal is waiting for approval.";
+  const description = isDesktopDevice
+    ? codeState.kind === "approved"
+      ? "Return to the OpenWork app on that computer."
+      : codeState.kind === "denied"
+        ? "That computer did not get access."
+        : "That computer is waiting for approval."
+    : codeState.kind === "approved"
+      ? "Your terminal is signed in."
+      : codeState.kind === "denied"
+        ? "Your terminal did not get access."
+        : "Your terminal is waiting for approval.";
 
   const frame = (children: ReactNode) => (
     <SetupFrame
-      title={isOpenCodePlugin ? "Approve this sign-in" : `Sign in ${clientName}.`}
-      compactHeader={isOpenCodePlugin}
+      title={isOpenCodePlugin || isDesktopDevice ? "Approve this sign-in" : `Sign in ${clientName}.`}
+      compactHeader={isOpenCodePlugin || isDesktopDevice}
       description={description}
       panelVisual={<OnboardingTexture />}
       aside={(
@@ -267,7 +293,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
   return frame(
     <SetupPanelBody>
       <span className="flex size-10 items-center justify-center rounded-full bg-[var(--dls-hover)] text-[var(--dls-text-primary)]" aria-hidden="true">
-        <Terminal className="size-5" strokeWidth={1.5} />
+        {isDesktopDevice ? <img src="/openwork-mark.svg" alt="" className="size-5" /> : <Terminal className="size-5" strokeWidth={1.5} />}
       </span>
       <SetupPanelTitle>{`Sign in ${clientName}?`}</SetupPanelTitle>
       <div className="flex flex-col gap-1">
@@ -281,6 +307,7 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
             label: "Organization",
             value: orgs && orgs.length > 1 ? (
               <DenSelect aria-label="Organization" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={busy !== null}>
+                {isDesktopDevice ? <option value="" disabled>Choose an organization</option> : null}
                 {orgs.map((org) => (
                   <option key={org.id} value={org.id}>{org.name}</option>
                 ))}
@@ -289,14 +316,27 @@ export function DeviceApprovalScreen({ initialUserCode, returnTo = "" }: { initi
           },
         ]}
       />
+      {isDesktopDevice ? (
+        selectedOrg ? (
+          <p className="m-0 text-sm font-medium leading-5 text-[var(--dls-text-primary)]" data-testid="device-desktop-consent-line">
+            This computer will sign in as you and accept remote sessions and Automations for <strong>{selectedOrg.name}</strong>.
+          </p>
+        ) : !checking && orgs && orgs.length > 1 ? (
+          <p className="m-0 text-sm font-medium leading-5 text-[var(--dls-text-primary)]" data-testid="device-desktop-consent-line">
+            Choose an organization to let this computer sign in as you and accept remote sessions and Automations.
+          </p>
+        ) : !checking ? (
+          <SetupLine testId="device-organization-required">Create or join an organization first. <a href="/organization" className="underline underline-offset-2">Create or join</a></SetupLine>
+        ) : null
+      ) : null}
       <p className="m-0 text-[13px] leading-5 text-[var(--setup-ink-soft)]" data-testid="device-consent-line">
-        Only approve if you started this in your own terminal and the code matches. {clientName} will act as {user.email} in {orgLabel} until you sign out of it.
+        Only approve if you started this in your own terminal and the code matches. {isDesktopDevice ? null : <>{clientName} will act as {user.email} in {orgLabel} until you sign out of it.</>}
       </p>
       <div className="flex flex-col gap-3.5">
         {error ? <SetupErrorLine>{error}</SetupErrorLine> : null}
         <div className="flex gap-2.5">
-          <button type="button" className="den-button-primary grow" onClick={() => void decide("approve")} disabled={checking || busy !== null}>
-            {busy === "approve" ? "Signing in…" : `Sign in ${clientName}`}
+          <button type="button" className="den-button-primary grow" data-testid="device-approve" onClick={() => void decide("approve")} disabled={checking || busy !== null || (isDesktopDevice && !selectedOrg)}>
+            {busy === "approve" ? "Signing in…" : isDesktopDevice ? "Approve" : `Sign in ${clientName}`}
           </button>
           <button type="button" className="den-button-secondary w-30 shrink-0" onClick={() => void decide("deny")} disabled={checking || busy !== null}>
             {busy === "deny" ? "Denying…" : "Deny"}

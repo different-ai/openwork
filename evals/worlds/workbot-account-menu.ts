@@ -62,11 +62,11 @@ export async function workbotAccountMenu(_seed: Seed, { place }: { place: Place 
     base = url.replace(/\/$/, "");
     server = accountMenuServer({ publicUrl: base });
     const live = server;
-    const web = resources.use(await chrome({ host: place.host(), name: "workbot-account-menu", startUrl: `${base}/?menu=off`, headless: true }));
+    const web = resources.use(await chrome({ host: place.host(), name: "workbot-account-menu", startUrl: `${base}/`, headless: true }));
     return {
       web,
-      /** The page with the account menu on or off for this person. */
-      page: (menu: "on" | "off") => `${base}/?menu=${menu}`,
+      /** The signed-in account page. */
+      page: () => `${base}/`,
       logouts: () => logouts.length,
       chooserRequests: () => [...live.chooserRequests],
       async [Symbol.asyncDispose]() { await resources.disposeAsync(); },

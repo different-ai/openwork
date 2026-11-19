@@ -9,11 +9,11 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_CHECK_REQUEST_WHY_MAX, resolveAgentBrief } from "@openwork/types/den/workbot-proactive"
 import { z } from "zod"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, runMcpServiceAction, serviceAuditResourceId, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
-import { agentBriefAllowed, proactiveAllowed, readProactiveSettings } from "../workbot-proactive/access.js"
+import { agentBriefAllowed, proactiveAllowed } from "../workbot-proactive/access.js"
 import { memberRhythm } from "../workbot-proactive/brief.js"
 import { memberLimits } from "../workbot-proactive/preferences.js"
 import { changeAgentCheckRequests } from "../workbot-proactive/repository.js"
-import { readAgentTemplate } from "../workbot-proactive/template.js"
+import { resolveMemberAgentPolicy } from "../workbot/team-settings.js"
 import { agentReadAllowlist } from "./agent-read-sources.js"
 
 /**
@@ -32,9 +32,9 @@ export const REQUEST_CHECK_TOOL_NAME = "request_check"
 const REQUEST_CHECK_DESCRIPTION = "Your agent's background check only: ask for one extra check at a time today or tomorrow, when timing matters before your next scheduled check (a meeting at 2 PM, a deadline at 5). Den keeps it inside the member's hours, caps extra checks per day and shows the reason in My bot. Asking again for about the same time changes nothing."
 
 /** Whether this MCP request may see request_check: the agent's own check token, a member, and both features on. */
-export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotProactive: boolean; workbotAgentBrief: boolean }): boolean {
+export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotAgentBrief: boolean }): boolean {
   const allowlist = agentReadAllowlist(input.scopes)
-  return Boolean(input.member && input.workbotProactive && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
+  return Boolean(input.member && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
 }
 
 function clockOf(at: number, timeZone: string) {
@@ -55,8 +55,9 @@ export async function requestAgentCheck(input: { organizationId: DenTypeId<"orga
     return { ok: false, text: "Extra checks aren't on for this member." }
   }
   const now = input.now ?? Date.now()
-  const settings = await readProactiveSettings(input.organizationId)
-  const brief = resolveAgentBrief(settings, await readAgentTemplate(input.organizationId))
+  // The member's own policy (their team's, else the organization's): the same rhythm and limits their checks follow.
+  const { settings, template } = await resolveMemberAgentPolicy({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId })
+  const brief = resolveAgentBrief(settings, template)
   return changeAgentCheckRequests(input.memberId, (row, state) => {
     if (!row) return { requests: null, result: { ok: false, text: "This member has no agent yet." } }
     const timeZone = isValidTimeZone(row.timeZone) ? row.timeZone : "UTC"

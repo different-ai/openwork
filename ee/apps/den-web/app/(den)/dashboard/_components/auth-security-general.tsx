@@ -56,7 +56,7 @@ export function adminReauthLabel(minutes: AdminReauthMinutes): string {
 }
 
 /**
- * Settings › Auth & Security › General (sessionSecuritySettings): how long
+ * Settings › Auth & Security › General: how long
  * sign-ins last without activity and at most, and how recently an admin must have signed
  * in before sensitive changes (the "Confirm your identity" dialog).
  */

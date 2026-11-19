@@ -63,7 +63,7 @@ export function appStarter(tools: McpAppToolBinding[]) {
       cssSource: STARTER_CSS,
       nextSteps: [
         "Starter: standalone. It has no tools: compute() turns the inputs in FIELDS (prefilled from the launch input) into the figures it shows, the first one largest.",
-        "Replace FIELDS and compute() with this App's inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
+        "Replace FIELDS and compute() with this artifact’s inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
         "Then call create_app with this preparationId.",
       ],
     }
@@ -80,8 +80,8 @@ export function appStarter(tools: McpAppToolBinding[]) {
   ].filter(Boolean).join("\n")
   const body = change ? ACTION_SOURCE : LOOKUP_SOURCE
   const describe = change
-    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the App opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
-    : `Starter: lookup. ${load?.name} loads when the App opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
+    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the artifact opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
+    : `Starter: lookup. ${load?.name} loads when the artifact opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
   return {
     pattern,
     reactSource: [STARTER_HEADER, constants, SHARED_SOURCE, body].join("\n"),
@@ -489,7 +489,7 @@ function Fields({ fields, values, onChange, onEnter }) {
 
 // Blocked, approval and failure states, each with its next step.
 function ToolNotice({ call, retryLabel, onRetry, showBlocked = true }) {
-  if (!call.available) return showBlocked ? <p className="notice">Open this App in OpenWork to use its live data.</p> : null;
+  if (!call.available) return showBlocked ? <p className="notice">Open this artifact in OpenWork to use its live data.</p> : null;
   if (call.status === "approval") {
     return <p className="notice">This needs your approval first. <button type="button" onClick={onRetry}>{retryLabel}</button></p>;
   }
@@ -618,7 +618,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     setValues(initialValues(CHANGE.fields, input));
   }, [launch]);
-  // The read loads when the App opens, showing its last result at once while
+  // The read loads when the artifact opens, showing its last result at once while
   // it refreshes, and again from its button. Only the change waits for a click.
   const delivered = result !== undefined;
   React.useEffect(() => {
@@ -783,7 +783,7 @@ type StarterSample = {
 const STARTER_SAMPLES: StarterSample[] = [
   {
     pattern: "lookup",
-    title: "Lookup App starter",
+    title: "Lookup artifact starter",
     useWhen: "Every bound tool only reads: a dashboard, list, status board, or search. Loads its data when it opens.",
     tools: [{
       name: "find_orders",
@@ -798,7 +798,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "action",
-    title: "Action App starter",
+    title: "Action artifact starter",
     useWhen: "At least one bound tool changes data: a form that creates, updates, or sends something, with a read that shows the result.",
     tools: [
       {
@@ -824,7 +824,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "standalone",
-    title: "Standalone App starter",
+    title: "Standalone artifact starter",
     useWhen: "No tools: calculators, converters, checklists, and planners that work from their inputs and the launch input alone.",
     tools: [],
     textFallback: "Splits an amount by a percentage and shows both parts.",

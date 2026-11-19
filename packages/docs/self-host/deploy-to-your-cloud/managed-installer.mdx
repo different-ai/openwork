@@ -34,7 +34,7 @@ To deploy by hand instead, with Helm or Terraform, see
 | Action | Permission | Who has it by default |
 | --- | --- | --- |
 | See deployments | **View deployments** | Owner and admins |
-| Create, approve, update and remove deployments | **Manage deployments** | Owner only |
+| Create, approve, update, change and remove deployments | **Manage deployments** | Owner only |
 
 Managing deployments asks you to sign in again if you haven't signed in
 recently.
@@ -94,6 +94,9 @@ Nothing is created in your cloud yet.
 - **AWS**: click **Prepare AWS approval**, then **Review and approve in AWS**.
   The CloudFormation console opens with the installer filled in. Review its
   permissions, acknowledge IAM, and create the stack.
+  Sign in to that AWS account in the same browser first. If AWS shows a sign-in
+  page for a root or IAM user, the browser isn't signed in to the account: sign
+  in on your company's AWS page, then open the link again.
 - **Google Cloud**: click **Prepare Google Cloud approval**. Click **Copy
   command**, then **Open Google Cloud Shell**, and run the command there. It
   checks the installer before running it, asks you to type the project ID to
@@ -140,6 +143,109 @@ When a newer installer is published, the deployment shows **Update to** and
 the version. Click it to get a command for AWS CloudShell or Google Cloud
 Shell, then run it there. The update refuses to delete or replace your
 database, secrets or network, and checks health again afterwards.
+
+## Change the configuration
+
+After an AWS deployment is installed, **Edit configuration** changes some of
+its settings without waiting for a newer installer. It is rolling out by
+request: if you don't see **Edit configuration** on an installed deployment,
+ask your OpenWork contact. Google Cloud deployments can't be edited after
+installation yet.
+
+### What you can change
+
+| Setting | What it does |
+| --- | --- |
+| **Name** | Saved right away. Nothing changes in AWS, and there is no command to run. |
+| **First administrator email** | Changes who can complete the first sign-in at `https://<your address>/setup`. An administrator who has already signed in stays the administrator, and no email is sent. |
+| **Add gateway runtime** | For a deployment with core services only: adds the model gateway, managed runner, Workbot, Slack and Automations, file storage and daily backups. AWS bills your account for them, and they can't be removed later. |
+| **Cloud computers** | For a deployment with the gateway runtime: turns Daytona or Freestyle computers on or off, or changes their key, snapshot or Daytona settings. The computers run outside your AWS account and are billed by that provider. |
+
+### What is fixed at installation
+
+**Address**, **AWS account**, **Region**, **Hosted zone**, **Network** and
+**Size** are chosen when the deployment is created. The dialog shows them
+locked under **Fixed at installation**. Your database, certificates, DNS
+records and network are built around them, so changing one would mean a
+different installation, not an edited one. To use different values, create a
+new deployment.
+
+The gateway runtime can't be turned off once it is added: removing it would
+delete the runner's files, secrets and backups.
+
+### Make a change
+
+1. Open the deployment in **Manage › Deployments** and click **Edit
+   configuration**.
+2. Change the values and click **Review changes**. The review lists each
+   value **Before** and **After** and says what the change does to your
+   installation.
+3. Tick the confirmation and click **Prepare AWS approval**.
+4. Click **Copy command**, then **Open AWS CloudShell** signed in to the
+   deployment's AWS account, and run the command there.
+
+**Nothing changes until you run the command in your AWS account.** Until
+then the deployment reads **Awaiting AWS approval**, lists the change under
+**Requested changes**, and keeps running with its current settings. The
+approval expires after 3 hours. While it waits you can:
+
+- **Show approval command** to see the command again, for example after
+  reloading the page.
+- **Edit change** to replace it with a different change. The earlier command
+  stops working.
+- **Discard change** to drop it. The earlier command stops working.
+
+The command first checks that the approval is still current and reserves it,
+then updates the installer in your AWS account. Once reserved, the change
+can't be edited or discarded: the shell may already be changing AWS. If it
+stays at **AWS approval reserved**, ask your OpenWork operator to inspect the
+installer before attempting recovery. Turning the feature off does not
+cancel an approval already reserved.
+
+The command runs the installer version you already have with the new values;
+it does not update OpenWork. It refuses to run in any other AWS account, and
+the installer refuses to delete or replace your database, secrets or network.
+Older installations without an immutable installer reference need an approved
+Update before configuration editing is available.
+
+### A change restarts services
+
+Every change you approve restarts the OpenWork API and web app, so people
+using your OpenWork are interrupted for a moment. A change to cloud computers
+also restarts the managed runner, which interrupts work it is running at that
+moment. Run the command at a quiet time.
+
+OpenWork shows the same six steps as an install. After the last one,
+**HTTPS and database verified**, the deployment shows the new values. If a
+step fails, the page says what to check; the deployment keeps showing the
+values from before the change, AWS may be partly changed, and **Review and
+try again** reopens the change so you can run it again.
+
+### Secrets stay in your account
+
+OpenWork never asks for a secret value. For cloud computers, create your
+Daytona or Freestyle API key as a plain-string secret in AWS Secrets Manager,
+in the deployment's AWS account and region, and enter only its ARN, for
+example `arn:aws:secretsmanager:us-east-1:123456789012:secret:daytona-key-Ab12Cd`.
+OpenWork Cloud stores the ARN and passes it to the installer; it never receives
+the key value. Your installed runner uses the key to authenticate to your
+chosen computer provider.
+
+### If Edit configuration is locked
+
+The line under the button says why. The usual reasons:
+
+- An install, update or change is waiting for approval or running in AWS.
+  Finish it, or discard the change, first.
+- The last install, retry or update didn't finish. Finish it with **Prepare
+  retry** or **Update to**, then edit the configuration.
+- You don't have the **Manage deployments** permission. Ask the organization
+  owner.
+
+**Add gateway runtime** can be used only when the deployment already runs the
+newest published installer. On an older one the button is locked and names
+the version to update to; **Update to** can add the gateway runtime in the
+same step.
 
 ## Remove
 

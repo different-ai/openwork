@@ -64,7 +64,7 @@ function LocationProbe() {
   return <output data-testid="location">{useLocation().pathname}</output>;
 }
 
-async function openMenu(developerMode: boolean) {
+async function openMenu(developerMode: boolean, onOpenDiagnostics?: () => void) {
   await act(async () => root?.render(
     <MemoryRouter initialEntries={["/workspace/test/session/test"]}>
       <ShellConfigProvider>
@@ -76,6 +76,7 @@ async function openMenu(developerMode: boolean) {
           providerConnectedIds={["openwork"]}
           mcpConnectedCount={0}
           openWorkConnectState={{ status: "failed", issue: null, attempt: 1, maxAttempts: 1 }}
+          onOpenDiagnostics={onOpenDiagnostics}
         />
         <LocationProbe />
       </ShellConfigProvider>
@@ -104,6 +105,17 @@ test.each([
   expect(action).toBeDefined();
   await act(async () => { action?.click(); });
   expect(host.querySelector('[data-testid="location"]')?.textContent).toBe(destination);
+});
+
+test.each([false, true])("Run diagnostics delegates to the route that preserves conversation context with developerMode=%s", async (developerMode) => {
+  let opened = 0;
+  await openMenu(developerMode, () => { opened += 1; });
+  const action = diagnosticsAction();
+  expect(action).toBeDefined();
+  await act(async () => { action?.click(); });
+  expect(opened).toBe(1);
+  // Do not also navigate without the conversation context after delegating.
+  expect(host.querySelector('[data-testid="location"]')?.textContent).toBe("/workspace/test/session/test");
 });
 
 test.each([false, true])("allowControlSettings restriction hides Run diagnostics with developerMode=%s", async (developerMode) => {

@@ -70,7 +70,12 @@ export const controlCenterSharingSchema = z.object({
   mcp: z.object({ teamCalls: count, sharedConnectionCalls: count, sharedReuseRate: rate }),
   connectors: z.array(z.object({ name: z.string().max(255), people: count, calls: count, errors: count, errorRate: rate })).max(10),
   /** Built-in default plugins and marketplaces every organization gets are excluded. */
-  catalog: z.object({ plugins: count, marketplaces: count }),
+  catalog: z.object({
+    plugins: count,
+    marketplaces: count,
+    /** Older snapshots stored a placeholder zero for plugins. */
+    pluginsCounted: z.boolean().optional(),
+  }),
 }).meta({ ref: "AdminControlCenterSharing" })
 export type ControlCenterSharing = z.infer<typeof controlCenterSharingSchema>
 

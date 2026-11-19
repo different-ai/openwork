@@ -10,10 +10,15 @@ type RunNotice = {
   message: string;
 };
 
+/** A desktop occurrence no desktop picked up: Den records it as skipped, and it never started. */
+export function isMissedAutomationRun(run: RunReceiptState): boolean {
+  return run.status === "skipped" && run.error?.code === "runner_unavailable" && run.attemptCount === 0 && run.startedAt == null;
+}
+
 export function automationRunNotice(run: RunReceiptState): RunNotice | null {
   if (!run.error) return null;
   if (run.status === "skipped" && run.error.code === "runner_unavailable") {
-    if (run.attemptCount === 0 && run.startedAt == null) {
+    if (isMissedAutomationRun(run)) {
       return {
         variant: "default",
         title: "Run missed",

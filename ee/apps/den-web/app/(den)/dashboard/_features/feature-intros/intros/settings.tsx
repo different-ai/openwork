@@ -1,5 +1,6 @@
-import { CreditCard, Laptop, SlidersHorizontal, Stethoscope } from "lucide-react";
+import { CreditCard, Laptop, Receipt, SlidersHorizontal, Stethoscope } from "lucide-react";
 import {
+  getBillingInvoicesRoute,
   getBillingRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
@@ -10,6 +11,10 @@ import {
 import { ENTERPRISE_CONTACT_URL } from "../../../_lib/enterprise-contact";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
+import { InvoicesExample } from "./examples/billing/invoices-example";
+
+/** Invoices on the first page of `GET /v1/billing/stripe/invoices`; missing until it loads. */
+export type BillingInvoicesFacts = { invoices?: number };
 
 /*
  * Settings pages that are forms or reports, with nothing to set up: they never
@@ -86,6 +91,33 @@ export const settingsIntros = [
     // Plans are bought on this page itself; Enterprise is invoiced, not bought here.
     ctas: [],
     setupState: () => "done",
+  }),
+
+  defineFeatureIntro<BillingInvoicesFacts>({
+    key: "billing.invoices",
+    parent: "billing",
+    version: 1,
+    match: { path: getBillingInvoicesRoute() },
+    icon: Receipt,
+    title: "Invoices",
+    summary: "Every invoice for your plan and add-ons, ready to view, pay or download.",
+    highlights: [
+      { title: "One a month.", text: "Stripe sends an invoice each time a subscription renews." },
+      { title: "Pay what's due.", text: "Open an unpaid invoice to pay it by card." },
+      { title: "For your records.", text: "Download each invoice and its receipt as a PDF." },
+    ],
+    example: {
+      Component: InvoicesExample,
+      alt: "Example: three monthly invoices. 1 November, $60, due; 1 October, $60, paid; 1 September, $50, paid.",
+    },
+    docsUrl: docsPage("cloud/billing"),
+    // Invoices start with a paid plan, which is bought on Billing.
+    ctas: [
+      { when: (ctx) => ctx.can("canManageBilling"), label: "Choose a plan", href: getBillingRoute() },
+      { when: () => true, label: "Choose a plan", href: getBillingRoute(), locked: { reason: permissionLockReason("billing.manage") } },
+    ],
+    // A box in place of the empty list; never on a guess before the list loads.
+    setupState: (ctx) => (ctx.facts.invoices === 0 ? "none" : "done"),
   }),
 
   defineFeatureIntro({

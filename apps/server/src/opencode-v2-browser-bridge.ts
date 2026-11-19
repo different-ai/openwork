@@ -2,8 +2,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
 import { server as browserTools } from "./opencode-plugins/openwork-chrome-devtools.js";
-import { computerFeatures, server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
-import { agentQuestionsOffered } from "./opencode-plugins/openwork-agent-questions.js";
+import { server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
 
 const requestSchema = z.object({
   name: z.string().min(1),
@@ -18,20 +17,17 @@ const requestSchema = z.object({
 /** Only the existing conversation-scoped browser and computer tools, with
  * their usual approval and policy checks. This credential does not authorize
  * app commands or the read bridge; the desktop's credential stays in the host. */
-export async function createV2BrowserBridge() {
+export async function createV2BrowserBridge(assertHostExecution: () => Promise<void> = async () => {}) {
   const token = randomBytes(32).toString("base64url");
   const tools = { ...(await browserTools()).tool, ...(await computerTools()).tool };
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
-    // The engine offers the computer tools only while the desktop has the feature on.
-    if (request.method === "GET" && new URL(request.url).pathname === "/computer") return Response.json(await computerFeatures());
-    // And a question that does not stop the agent only while `agentQuestions` is on.
-    if (request.method === "GET" && new URL(request.url).pathname === "/agent-questions") return Response.json({ offered: await agentQuestionsOffered() });
     if (request.method !== "POST" || new URL(request.url).pathname !== "/browser") return new Response(null, { status: 404 });
     try {
       const text = await request.text();
       if (text.length > 64_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
+      await assertHostExecution();
       const tool = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
       if (!tool) return new Response(null, { status: 404 });
       const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId, ...(call.agentName ? { agentName: call.agentName } : {}) } : {}), abort: request.signal });

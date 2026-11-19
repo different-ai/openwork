@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { allocateFreePorts } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { configureProvider } from "./chat.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 /** One command the agent leaves running, and how its run ends. */
 type BackgroundJob = { name: string; command: string; output: string; prompt: string; started: string; wake: string };
@@ -20,7 +19,7 @@ function job(name: string, output: string, prompt: string, started: string, wake
  * waits until the world releases it; when it ends, the engine wakes the agent
  * with its output and the model replies.
  */
-async function buildBackgroundTasks(seed: Seed, composerList: boolean) {
+async function buildBackgroundTasks(seed: Seed) {
   const engine = "v2";
   const dir = seed.tmpPath("background-tasks-shimmer");
   await mkdir(join(dir, "scripts"), { recursive: true });
@@ -42,12 +41,11 @@ async function buildBackgroundTasks(seed: Seed, composerList: boolean) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the background tasks world");
   // Explicit org shape makes Daytona provision the same admin identity it bootstraps,
-  // rather than falling back to the demo owner when this world enables its flag.
+  // rather than falling back to the demo owner.
   const den = await seed.den({
     trustedOrigins: [`http://127.0.0.1:${webPort}`],
     org: { name: "Background tasks workspace", admin: { name: "Background tasks owner" } },
   });
-  if (composerList) await enableOrganizationCapabilities(seed, den.admin, { composerBackgroundTasks: true });
 
   const providerId = "background-shell-mock";
   const modelId = "background-shell-model";
@@ -85,12 +83,7 @@ async function buildBackgroundTasks(seed: Seed, composerList: boolean) {
   };
 }
 
-/** The current count-in-chat presentation, with the composer list flag off. */
-export function backgroundTasksShimmer(seed: Seed) {
-  return buildBackgroundTasks(seed, false);
-}
-
-/** The same member with `composerBackgroundTasks` on: running commands are listed on the composer. */
+/** Running commands are listed on the generally available composer. */
 export function backgroundTasksComposer(seed: Seed) {
-  return buildBackgroundTasks(seed, true);
+  return buildBackgroundTasks(seed);
 }

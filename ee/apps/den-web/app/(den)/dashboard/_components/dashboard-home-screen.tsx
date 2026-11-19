@@ -8,7 +8,7 @@ import { MemberDashboardScreen } from "./member-dashboard-screen";
 
 export function DashboardHomeScreen() {
   const { orgContext, orgBusy, mutationBusy } = useOrgDashboard();
-  // Feature intros (flag `featureIntros`): Home answers `?` only; it never gives way to an intro.
+  // Feature intros: Home answers `?` only; it never gives way to an intro.
   useFeatureIntro("home", orgContext ? {} : null);
 
   // A workspace switch keeps the previous orgContext around while the next one

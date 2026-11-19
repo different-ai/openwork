@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../../_lib/workbot-settings-rollout";
 
 import { Command } from "cmdk";
 import {
@@ -18,7 +19,6 @@ import {
   getAutomationsRoute,
   getOrgAccessFlags,
   getPluginRoute,
-  orgFeatureEnabled,
 } from "../../../_lib/den-org";
 import { myAgentAvailable } from "../my-agent-availability";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
@@ -56,7 +56,7 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Returns true when it handled the navigation itself (the Workbot entry while Workbot has no AI provider). */
+  /** Returns true when it handled the navigation itself (the Workbot entry while it is blocked). */
   interceptNavigation?: (href: string) => boolean;
 };
 
@@ -163,9 +163,9 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
       runtimeConfigLoaded,
 
       desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+      workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
       canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
       myBot: myAgentAvailable(orgContext),
-      authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
     });
     return flattenNavigationForSearch(sections)
       .filter((entry) => entry.href !== "#")

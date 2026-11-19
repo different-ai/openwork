@@ -36,6 +36,7 @@ about Enterprise** (user provisioning). See
 Single sign-on works with any SAML or OIDC identity provider. Follow the guide
 for yours:
 
+- [Set up OIDC single sign-on](/cloud/sso-oidc), for an OIDC identity provider
 - [Okta SAML SSO](/cloud/sso-okta)
 - [Microsoft Entra SAML SSO](/cloud/sso-microsoft-entra)
 - [Google Workspace SAML SSO](/cloud/sso-google-workspace)
@@ -59,6 +60,29 @@ this switch is at the top of the **Single sign-on (SSO)** tab or under
 **Authentication** in **Settings → General**. Where available, **Restrict this
 domain to our SSO** also stops people at your domain from using a password or
 Google anywhere in OpenWork.
+
+### OIDC callback URLs
+
+The OIDC callback is `<callback-origin>/api/auth/sso/callback/<provider-id>`.
+For the first connection, the provider ID is `openwork-sso-<organization-id>`.
+Find the organization ID in **Settings → General**. The callback origin is the
+server's configured public API URL, or its authentication origin when no public
+API URL is configured. Ask your deployment administrator for the actual origin.
+
+Additional connections receive an ID when saved, so their callback cannot be
+derived from the organization ID alone. Use the saved connection's **Redirect URL**
+as the authoritative value, including on deployments with separate web and API hosts.
+
+### Editing and recovery
+
+An OIDC replacement save requires the client secret again, disables the connection,
+and resets its test state. Test the saved configuration before re-enabling it.
+The setup test uses a temporary session, not a normal SSO sign-in.
+
+Enforcement depends on deployment settings. Deployments without per-organization
+SSO enforcement require SSO as soon as it is enabled. Plan recovery before enabling
+or changing the only working connection. Disabling retains configuration but still
+requires authenticated management access. Deleting also removes linked provider-account data.
 
 ## User provisioning
 

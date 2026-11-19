@@ -24,6 +24,8 @@ concurrency:
 env:
   MODELS_PATH: ee/apps/gateway/src/models/base.json
   MODELS_URL: https://models.dev/api.json
+  MODELS_V2_PATH: ee/apps/gateway/src/models/base-v2.json
+  MODELS_V2_URL: https://models.dev/experimental/v2.0/api.json?type=all
   BASE_BRANCH: ${{ inputs.base_branch }}
   BRANCH_NAME: automation/update-models-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -62,8 +64,9 @@ jobs:
           sparse-checkout: ee/apps/gateway/scripts/update-models.mjs
           sparse-checkout-cone-mode: false
 
-      # The script validates the models.dev response, derives the openrouter-eu
-      # provider from OpenRouter's EU model list, and writes minified JSON.
+      # The script downloads the v1 and v2 catalogs in one run, validates both,
+      # derives the openrouter-eu provider in each from OpenRouter's EU model
+      # list, and writes minified JSON.
       - name: Download and validate models
         run: node .update-models-generator/ee/apps/gateway/scripts/update-models.mjs
 
@@ -72,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --quiet -- "$MODELS_PATH"; then
+          if git diff --quiet -- "$MODELS_PATH" "$MODELS_V2_PATH"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -96,7 +99,7 @@ jobs:
           git config --local gpg.format ssh
           git config --local user.signingkey "$signing_key"
           git switch -c "$BRANCH_NAME"
-          git add "$MODELS_PATH"
+          git add "$MODELS_PATH" "$MODELS_V2_PATH"
           git commit -S -m "chore: update models snapshot"
 
       # Opened by the automation App once it is configured (AUTOMATION_APP_ID
@@ -128,7 +131,7 @@ jobs:
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore: update models snapshot" \
-            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON.")"
+            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\` and \`$MODELS_V2_PATH\` from \`$MODELS_V2_URL\`.\n\nThe workflow validated both responses before replacing the files and wrote the snapshots as minified JSON.")"
           {
             echo "pr_url=$pr_url"
             echo "pr_number=$(gh pr view "$pr_url" --json number --jq .number)"
@@ -153,9 +156,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          if [ "$changed_files" != "$MODELS_PATH" ]; then
-            echo "Refusing to approve PR #$PR: changed files must be exactly $MODELS_PATH; found:"
+          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' | sort)"
+          unexpected="$(grep -vxF -e "$MODELS_PATH" -e "$MODELS_V2_PATH" <<< "$changed_files" || true)"
+          if [ -z "$changed_files" ] || [ -n "$unexpected" ]; then
+            echo "Refusing to approve PR #$PR: changed files must be only $MODELS_PATH and $MODELS_V2_PATH; found:"
             echo "$changed_files"
             exit 1
           fi
@@ -166,7 +170,7 @@ jobs:
             exit 1
           fi
 
-          BODY="Machine-generated snapshot of \`ee/apps/gateway/src/models/base.json\` from https://models.dev/api.json, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
+          BODY="Machine-generated snapshots of \`$MODELS_PATH\` from $MODELS_URL and \`$MODELS_V2_PATH\` from $MODELS_V2_URL, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
           gh api "repos/$REPO/pulls/$PR/reviews" \
             -f event=APPROVE \
             -f commit_id="$HEAD_SHA" \

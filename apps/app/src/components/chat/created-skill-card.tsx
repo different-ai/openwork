@@ -19,6 +19,16 @@ export type CreatedSkillsContextValue = CreatedSkillsModel & {
   onCheckSharing?: (pluginId: string) => Promise<void>
 }
 
+export type ReadyCreatedSkill = Extract<CreatedSkillCardModel, { kind: "ready" }>
+
+export type CreatedSkillSharing = {
+  enabled: boolean
+  ownedPluginIds: ReadonlySet<string>
+  onShareSkill: (card: ReadyCreatedSkill, onSaved: () => Promise<void>) => void
+}
+
+export const CreatedSkillSharingContext = React.createContext<CreatedSkillSharing | null>(null)
+
 const EMPTY: CreatedSkillsContextValue = { cards: [], shareLabels: new Map(), savedNames: new Map() }
 
 export const CreatedSkillsContext = React.createContext<CreatedSkillsContextValue>(EMPTY)
@@ -45,6 +55,7 @@ const OPEN_CLASS = "h-7 rounded-lg bg-background px-3 text-xs before:rounded-[in
  */
 export function CreatedSkillCard({ card }: { card: CreatedSkillCardModel }) {
   const { onOpenSkill, onCheckSharing } = useCreatedSkills()
+  const sharing = React.useContext(CreatedSkillSharingContext)
   const [checking, setChecking] = React.useState(false)
 
   if (card.kind === "loading") {
@@ -74,18 +85,32 @@ export function CreatedSkillCard({ card }: { card: CreatedSkillCardModel }) {
           <p className="truncate text-sm font-medium text-foreground">{card.name}</p>
           <p data-created-skill-access="" className="truncate pt-0.5 text-xs text-muted-foreground">{label}</p>
         </div>
-        {onOpenSkill ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className={OPEN_CLASS}
-            aria-label={`Open ${card.name} in Library`}
-            onClick={() => onOpenSkill(createdSkillLibraryDetailId(card))}
-          >
-            Open
-          </Button>
-        ) : null}
+        <div className="flex shrink-0 items-center gap-2">
+          {onOpenSkill && onCheckSharing && sharing?.enabled && sharing.ownedPluginIds.has(card.pluginId) ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={OPEN_CLASS}
+              aria-label={`Share ${card.name}`}
+              onClick={() => sharing.onShareSkill(card, () => onCheckSharing(card.pluginId))}
+            >
+              Share
+            </Button>
+          ) : null}
+          {onOpenSkill ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={OPEN_CLASS}
+              aria-label={`Open ${card.name} in Library`}
+              onClick={() => onOpenSkill(createdSkillLibraryDetailId(card))}
+            >
+              Open
+            </Button>
+          ) : null}
+        </div>
       </div>
       {unverified && onCheckSharing ? (
         <Button

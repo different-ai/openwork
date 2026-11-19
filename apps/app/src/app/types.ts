@@ -1,3 +1,4 @@
+import type { AgentForm } from "@openwork/types/agent-form";
 import type {
   Message,
   Part,
@@ -9,6 +10,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
+import type { SessionLink } from "@openwork/types/session-link";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -22,6 +24,8 @@ export type SidebarSessionItem = {
   state?: unknown;
   runStatus?: unknown;
   parentID?: string | null;
+  /** The session this one was started from, as a side chat or by its agent. */
+  openworkSessionLink?: SessionLink | null;
   time?: {
     updated?: number | null;
     created?: number | null;
@@ -204,6 +208,7 @@ export const SETTINGS_TAB_VALUES = [
   "appearance",
   "shortcuts",
   "computer",
+  "devices",
   "updates",
   "recovery",
   "debug",
@@ -407,6 +412,7 @@ export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  form?: AgentForm;
 };
 
 export type TodoItem = {

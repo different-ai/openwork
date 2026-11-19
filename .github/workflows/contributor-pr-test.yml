@@ -7,14 +7,8 @@ name: Contributor PR checks
 # after the comment, or the free screen blocked the commit, it is refused.
 #
 # Once bound and allowed by the deterministic screen, approve the fork's
-# waiting test runs and run the sandboxed Warden review without waiting for
-# Warden's advisory AI screen or its verdict. Maintainer authorization and
-# exact-head binding remain required; AI feedback never substitutes for them.
-# The sandboxed review posts the advisory `warden-clear` check as diff-warden,
-# like same-repository PRs: success if clear, neutral if flagged or incomplete.
-# No Warden check or workflow job is a merge requirement. Incomplete analysis
-# still fails its workflow job for observability. Required tests and human
-# approvals are unchanged.
+# waiting test runs. Maintainer authorization and exact-head binding remain
+# required. Required tests and human approvals are unchanged.
 #
 # issue_comment always runs this file from dev. Nothing here runs PR code.
 on:
@@ -41,8 +35,6 @@ jobs:
       pull-requests: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
-      needs_screen: ${{ steps.authorize.outputs.needs_screen }}
-      needs_review: ${{ steps.authorize.outputs.needs_review }}
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -63,24 +55,7 @@ jobs:
           COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
         run: node .github/scripts/contributor-pr.mjs authorize
 
-  ai-screen:
-    needs: authorize
-    if: needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_screen == 'true'
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
-    with:
-      pr_number: ${{ github.event.issue.number }}
-      head_sha: ${{ needs.authorize.outputs.sha }}
-      stage: screen
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
-
-  # Proceed from maintainer authorization and the deterministic screen only;
-  # never wait for the advisory AI screen or its verdict.
+  # Proceed from maintainer authorization and the deterministic screen.
   start-tests:
     needs: authorize
     if: needs.authorize.outputs.sha != ''
@@ -107,63 +82,3 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ needs.authorize.outputs.sha }}
         run: node .github/scripts/contributor-pr.mjs approve-runs
-
-  review:
-    needs: authorize
-    if: needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_review == 'true'
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
-    with:
-      pr_number: ${{ github.event.issue.number }}
-      head_sha: ${{ needs.authorize.outputs.sha }}
-      stage: review
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
-
-  # Posts the advisory `warden-clear` check from this run's own review result
-  # (a job output, not a status anyone else could write), as the diff-warden
-  # App. Its key is only in the warden-clearance environment.
-  warden-check:
-    needs: [authorize, review]
-    if: >-
-      always() && needs.authorize.outputs.sha != '' &&
-      (needs.review.result == 'success' || needs.review.result == 'failure')
-    runs-on: ubuntu-latest
-    environment: warden-clearance
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout trusted script from dev
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          sparse-checkout: .github/scripts
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24.22.1
-      - name: Mint the check token
-        id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.WARDEN_APP_ID }}
-          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
-          permission-checks: write
-      # An empty verdict means the review saw a newer head and stopped; that
-      # push gets its own /test.
-      - name: Post warden-clear
-        if: needs.review.result == 'failure' || needs.review.outputs.verdict != ''
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ needs.authorize.outputs.sha }}
-          VERDICT: ${{ needs.review.outputs.verdict }}
-          # The review's verdict is clear, flagged, too-big or incomplete.
-          REASON: ${{ needs.review.outputs.verdict == 'too-big' && 'files-over-size-limits' || ((needs.review.result == 'failure' || needs.review.outputs.verdict == 'incomplete') && 'review-incomplete' || (needs.review.outputs.verdict == 'flagged' && 'flagged' || '')) }}
-          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node .github/scripts/warden-check.mjs post

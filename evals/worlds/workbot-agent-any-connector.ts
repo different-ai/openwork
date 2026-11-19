@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { chatAs } from "./workbot-agent-library.ts";
 import { ENCRYPTION_KEY, SLACK_CONNECTION_ID, encryptForDen } from "./workbot-proactive.ts";
 
@@ -128,7 +128,7 @@ export async function workbotAgentAnyConnectorWorld(seed: Seed) {
         DEN_ALLOW_PRIVATE_MCP_URLS: "1",
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     const headers = (session: DenSession) => ({ authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId, "content-type": "application/json" });
     const brief = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { method: "PUT", headers: headers(den.admin), body: JSON.stringify({ capabilities: { workbotAgentBrief: true } }) });
     if (!brief.response.ok) throw new Error(`Turning on workbotAgentBrief failed: ${brief.text.slice(0, 300)}`);

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -47,7 +48,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
-import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
+import { CloudSignInEmptyState } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
@@ -55,6 +56,8 @@ import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { AutomationShareButton } from "./automation-share-button"
+import { SharedAutomationsSection } from "./shared-automations-section"
 import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
@@ -65,6 +68,7 @@ import {
   useAutomationListQuery,
   useAutomationRunsQuery,
   useAutomationsDenContext,
+  useAutomationSharingEnabled,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
@@ -187,6 +191,7 @@ export function AutomationsPage(props: {
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   const denContext = useAutomationsDenContext()
+  const sharingEnabled = useAutomationSharingEnabled(denContext)
   const { client, organizationId, ready, queryRoot } = denContext
   const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
@@ -253,21 +258,15 @@ export function AutomationsPage(props: {
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
     // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
-    // and the page leads with the same sign-in banner as Library.
+    // and the page is one empty state whose action is signing in.
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
-        <CloudSignInBanner
-          testId="automations-sign-in-banner"
-          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
-          message={t("automations.sign_in_banner")}
+      <div className="h-full w-full" data-automations-signed-out>
+        <CloudSignInEmptyState
+          testId="automations-sign-in"
+          icon={<Clock3 />}
+          title={t("automations.signed_out_title")}
           onSignIn={props.onSignIn}
         />
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>No Automations yet</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
       </div>
     )
   }
@@ -369,6 +368,7 @@ export function AutomationsPage(props: {
                     ...input,
                     ...(workspaceId ? { workspaceId } : {}),
                   })
+              featureAnalytics.automationCreated(chosenPlacement)
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")
@@ -481,6 +481,9 @@ export function AutomationsPage(props: {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {sharingEnabled && task.state !== "archived" ? (
+              <AutomationShareButton key={`${organizationId}:${task.id}`} context={denContext} automation={task} refresh={refresh} />
+            ) : null}
             {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
@@ -817,6 +820,9 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
+      {sharingEnabled ? (
+        <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
+      ) : null}
     </div>
   )
 }

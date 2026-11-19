@@ -1,8 +1,9 @@
-import { Boxes, LayoutDashboard, Network, Plug, Route, SlidersHorizontal, Users } from "lucide-react";
+import { Boxes, KeyRound, LayoutDashboard, Network, Plug, Route, SlidersHorizontal, Users } from "lucide-react";
 import {
   getAiGatewayProvidersRoute,
   getAiGatewayRoute,
   getInferenceRoute,
+  getLibraryRoute,
   getNewAiGatewayLimitRoute,
   getNewAiGatewayProviderRoute,
   getNewAiGatewaySmartRouterRoute,
@@ -10,6 +11,7 @@ import {
 } from "../../../../_lib/den-org";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
+import { ApiKeysExample } from "./examples/ai-gateway/api-keys-example";
 import { AiGatewayExample } from "./examples/ai-gateway/gateway-example";
 import { LimitsExample } from "./examples/ai-gateway/limits-example";
 import { OpenWorkModelsExample } from "./examples/ai-gateway/openwork-models-example";
@@ -35,6 +37,10 @@ export type AiGatewayFacts = {
   policies?: number;
   /** Provider access grants to anyone (everyone, a team or a person). */
   accessGrants?: number;
+  /** Members may create AI Gateway API keys (`GET /v1/org/ai-gateway/api-keys`); only where the feature is on. */
+  memberApiKeys?: boolean;
+  /** Active member AI Gateway API keys in the organization. */
+  apiKeys?: number;
 };
 
 type Ctx = FeatureIntroContext<AiGatewayFacts>;
@@ -218,6 +224,31 @@ export const aiGatewayIntros = [
       if (ctx.facts.openworkModels === undefined) return "done";
       return ctx.facts.accessGrants === 0 && !ctx.facts.openworkModels ? "partial" : "done";
     },
+  }),
+
+  defineFeatureIntro<AiGatewayFacts>({
+    key: "ai-gateway.api-keys",
+    parent: "ai-gateway",
+    version: 2,
+    match: { path: PATH, tab: "api-keys" },
+    icon: KeyRound,
+    title: "Members create their own keys",
+    summary: "Each person creates API keys for themselves, to use your Gateway's models from the tools they already work in.",
+    highlights: [
+      { title: "Created in their Library.", text: "Members make keys in My Library › Models for Claude Code, Codex, Cursor or any compatible tool." },
+      { title: "Same access, same limits.", text: "A key reaches only the models its owner is allowed, and counts toward their limit." },
+      { title: "One place to revoke.", text: "Every key shows up here with who owns it and when it was last used." },
+    ],
+    example: {
+      Component: ApiKeysExample,
+      alt: "Example: four API keys, each with the tool it is for, the person who owns it and when it was last used.",
+    },
+    docsUrl: docsPage("ai-gateway/third-party-tools"),
+    ctas: [
+      { when: (ctx) => ctx.facts.memberApiKeys === true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1` },
+      { when: () => true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1`, locked: { reason: "Turn on Allow 3rd party tools & harnesses above to let members create keys." } },
+    ],
+    setupState: (ctx) => ((ctx.facts.apiKeys ?? 0) > 0 ? "done" : "none"),
   }),
 
   defineFeatureIntro<AiGatewayFacts>({

@@ -5,6 +5,7 @@ import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH,
   type DesktopFreeAccessStatus } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "../shared/config.js"
@@ -78,7 +79,8 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
           recorder.start({ identity: { kind: "models", organizationId: key.organization_id, orgMembershipId: key.org_membership_id, inferenceKeyId: key.id },
             openworkRequestId: requestId, route: "openwork_free", protocol: prepared.protocol === "responses" ? "openai_responses" : "openai_chat", upstreamProviderId: "openai",
             upstreamHost: upstream.hostname, upstreamPath: upstream.pathname, method: "POST",
-            requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream, signal })
+            requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream, signal,
+            headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)) })
           return recorder
         } : undefined })
     } catch (error) {

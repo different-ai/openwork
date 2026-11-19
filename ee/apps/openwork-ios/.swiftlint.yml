@@ -1,0 +1,27 @@
+# SwiftLint settings for OpenWork for iPhone. SwiftFormat owns layout, so layout rules are off here.
+excluded:
+  - .build
+  - build
+  - DerivedData
+  - OpenWorkKit/.build
+disabled_rules:
+  - trailing_comma
+  - statement_position
+  - opening_brace
+line_length:
+  warning: 260
+  error: 320
+identifier_name:
+  min_length: 1
+type_name:
+  min_length: 2
+nesting:
+  type_level: 2
+type_body_length:
+  warning: 400
+file_length:
+  warning: 600
+function_body_length:
+  warning: 80
+cyclomatic_complexity:
+  warning: 16

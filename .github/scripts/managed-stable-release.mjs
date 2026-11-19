@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GCP_REPOSITORIES, resolveImage } from "../../infra/managed-deployments/tools/build-release.mjs";
+import { AWS_REPOSITORIES, GCP_REPOSITORIES, resolveImage } from "../../infra/managed-deployments/tools/build-release.mjs";
 
 export const PROMOTION_ENVIRONMENT = "managed-installer-production";
 const SHA = /^[a-f0-9]{40}$/;
@@ -106,9 +106,32 @@ export function verifyRuntimeImage(metadata, pin, candidate, repository) {
     throw new Error("Runtime image platform, digest or OCI release source does not match.");
   }
 }
-export function releaseImages(candidate, repository, inspectManifest, inspectRuntime) {
-  return Object.fromEntries(["den_api", "den_web"].map((kind) => {
-    const registry = GCP_REPOSITORIES[kind];
+export function releaseRepositories(provider) {
+  if (provider === "aws") return AWS_REPOSITORIES;
+  // The builder adds its independently pinned Python health image for GCP.
+  if (provider === "gcp") return { den_api: GCP_REPOSITORIES.den_api, den_web: GCP_REPOSITORIES.den_web };
+  throw new Error("Unknown installer provider.");
+}
+export function assertReleaseImages(provider, images) {
+  const repositories = releaseRepositories(provider);
+  if (!images || typeof images !== "object" || Array.isArray(images)
+    || Object.keys(images).sort().join(",") !== Object.keys(repositories).sort().join(",")
+    || Object.entries(repositories).some(([kind, registry]) => typeof images[kind] !== "string"
+      || !images[kind].startsWith(`${registry}@sha256:`) || !HASH.test(images[kind].slice(`${registry}@sha256:`.length)))) {
+    throw new Error("Release requires the exact provider runtime inventory pinned by digest.");
+  }
+}
+export function releaseBuildArguments(provider, version, directory, pins) {
+  releaseRepositories(provider);
+  stableVersion(version);
+  return ["infra/managed-deployments/tools/build-release.mjs", provider, version, directory, "--image-pins", pins,
+    ...(provider === "aws" ? ["--include-assistants"] : [])];
+}
+export function releaseImages({ provider, candidate, repository, inspectManifest, inspectRuntime }) {
+  if (stableVersion(candidate.version) !== candidate.version || stableVersion(candidate.tag) !== candidate.version || !SHA.test(candidate.commit)) {
+    throw new Error("Runtime images require the resolved published stable tag commit.");
+  }
+  return Object.fromEntries(Object.entries(releaseRepositories(provider)).map(([kind, registry]) => {
     // Share the builder's unique Linux/amd64 resolver, including digest re-read.
     const pin = resolveImage(`${registry}:${candidate.version}`, registry, inspectManifest);
     verifyRuntimeImage(inspectRuntime(pin), pin, candidate, repository);
@@ -197,6 +220,7 @@ export function renderClient(serviceId, token, fetchImpl = fetch) {
 export async function promote({ candidate, expected, client, latest, publish, provider = "aws", qualified = false }) {
   if (provider !== "aws") throw new Error("GCP publication remains an explicit operator action; do not enable an unconfigured provider.");
   if (!qualified) throw new Error("A reviewed real-cloud fresh install and approved Update are required.");
+  assertReleaseImages(provider, candidate.images);
   const current = parseCurrent(provider, expected);
   assertSameLatest(candidate, await latest());
   assertForward(current, { version: candidate.version, bundleSha256: candidate.bundleSha256 });
@@ -248,11 +272,11 @@ export async function main(command = process.argv[2], env = process.env) {
       execFileSync("docker", ["pull", "--platform=linux/amd64", pin], { stdio: "ignore" });
       return JSON.parse(execFileSync("docker", ["image", "inspect", pin], { encoding: "utf8" }))[0];
     };
-    const images = releaseImages(candidate, repository, undefined, inspectRuntime);
+    const images = releaseImages({ provider, candidate, repository, inspectRuntime });
     mkdirSync(directory, { recursive: true });
     const pins = resolve(directory, "image-pins.json");
     writeFileSync(pins, JSON.stringify(images) + "\n");
-    execFileSync(process.execPath, ["infra/managed-deployments/tools/build-release.mjs", provider, candidate.version, directory, "--image-pins", pins], { stdio: "inherit" });
+    execFileSync(process.execPath, releaseBuildArguments(provider, candidate.version, directory, pins), { stdio: "inherit" });
     const manifestBytes = readFileSync(resolve(directory, "manifest.json"));
     const manifest = JSON.parse(manifestBytes);
     writeFileSync(resolve(directory, "candidate.json"), JSON.stringify({ ...candidate, provider, images, bundleSha256: manifest.bundleSha256, manifestSha256: hash(manifestBytes) }, null, 2) + "\n");

@@ -8,7 +8,7 @@ import { pickIntroCta } from "../_features/feature-intros/model";
  * Sources has no parent intro (an empty organization connects GitHub here), so
  * the hook resolves it as a section; it is drawn as a box above the provider
  * cards instead, because their Connect buttons start the GitHub install and
- * cannot be a link. Null while loading, set up, or with the flag off.
+ * cannot be a link. Null while loading or set up.
  */
 export function PluginSourcesIntro({ githubSources }: { githubSources: number | null }) {
   const runtime = useFeatureIntroRuntime();

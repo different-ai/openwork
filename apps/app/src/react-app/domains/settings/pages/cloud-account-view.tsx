@@ -182,6 +182,7 @@ function DenSignedOutPanel({
 
 const permissionLabels = {
   allowCustomProviders: "Add AI providers",
+  allowLocalModels: "Use local models",
   allowZenModel: "Use the free starter model",
   allowMultipleWorkspaces: "Create more workspaces",
   allowControlSettings: "Change app settings",

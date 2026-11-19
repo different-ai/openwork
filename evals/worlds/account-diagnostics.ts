@@ -15,5 +15,13 @@ export async function accountDiagnostics(seed: Seed) {
   const { app, workspace } = await signedInAppWeb(seed, {
     den, webPort, workspacePath, name: "account-diagnostics", engine: "v2", headless: true,
   });
-  return { app, workspace, advancedUrl: `${app.webUrl}/settings/advanced/developer` };
+  // Headless Chrome only lets the page write and read the clipboard once granted.
+  await app.client.send("Browser.grantPermissions", {
+    origin: new URL(app.webUrl).origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+  });
+  return {
+    app, workspace, advancedUrl: `${app.webUrl}/settings/advanced/developer`,
+    // TODO(primitive): probe.clipboard should expose this read-only witness without browser evaluation.
+    readClipboard: () => seed.evalIn(app, () => navigator.clipboard.readText(), { awaitPromise: true }),
+  };
 }

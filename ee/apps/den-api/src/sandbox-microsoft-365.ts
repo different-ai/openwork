@@ -6,7 +6,7 @@ import { SANDBOX_MICROSOFT_CLIENT_MARKER, sandboxMicrosoftAddresses } from "./ca
 import { assertPublicUrl } from "./capability-sources/url-guard.js"
 import { env } from "./env.js"
 
-/** The sample apps one Microsoft 365 connector replaces when `sandboxMicrosoft365` is on. */
+/** The sample apps one Microsoft 365 connector replaces on cloud deployments. */
 export const SANDBOX_MICROSOFT_APP_KEYS: ReadonlySet<string> = new Set(["outlook", "calendar", "drive"])
 export const SANDBOX_MICROSOFT_EXTERNAL_KEY = "sandbox-microsoft-365"
 /** What Workbot and agents may do with the sample mail, calendar and files: read, save drafts, change events and files. Never send mail. */

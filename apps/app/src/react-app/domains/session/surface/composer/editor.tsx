@@ -78,6 +78,8 @@ type EditorProps = {
   attachments?: ComposerAttachmentToken[];
   submitDisabled: boolean;
   placeholder: string;
+  /** Key that takes the placeholder as the draft, shown when the editor is focused. */
+  placeholderShortcut?: string;
   onChange: (value: string) => void;
   onMentionQueryChange?: (query: string | null) => void;
   /** The `#query` at the caret (task picker) and the draft offset of its `#`, or null. Omit to leave `#` as plain text. */
@@ -1816,7 +1818,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         - max-h caps the composer — long pastes / multi-paragraph drafts scroll
           inside the editor instead of pushing the transcript out of view.
       */}
-      <div className="relative">
+      <div className="group/prompt-editor relative">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
@@ -1833,6 +1835,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           placeholder={
             <div className="pointer-events-none absolute left-0 top-0 text-base leading-6 text-dls-secondary/70 lg:text-[13px] lg:leading-[1.55]">
               {props.placeholder}
+              {props.placeholderShortcut ? (
+                <kbd className="ml-2 hidden rounded border border-dls-border px-1 py-0.5 font-sans text-[11px] leading-none group-has-[[data-composer-editor]:focus]/prompt-editor:inline">
+                  {props.placeholderShortcut}
+                </kbd>
+              ) : null}
             </div>
           }
           ErrorBoundary={LexicalErrorBoundary}

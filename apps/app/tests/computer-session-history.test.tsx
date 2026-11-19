@@ -204,10 +204,9 @@ test("with two apps in one session, each step names the app it ran in", async ()
 
 test("with the card on, the live computer view opens from the card or when the person is needed", () => {
   const working = { state: "active" }
-  expect(showsLiveComputerView({ historyEnabled: false, watching: false, session: working })).toBe(true)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: working })).toBe(false)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: true, session: working })).toBe(true)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: { state: "paused" } })).toBe(true)
+  expect(showsLiveComputerView({ watching: false, session: working })).toBe(false)
+  expect(showsLiveComputerView({ watching: true, session: working })).toBe(true)
+  expect(showsLiveComputerView({ watching: false, session: { state: "paused" } })).toBe(true)
 })
 
 test("the card offers the live view only for a working computer, and toggles it", async () => {

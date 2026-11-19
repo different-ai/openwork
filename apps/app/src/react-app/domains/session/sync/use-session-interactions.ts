@@ -317,10 +317,12 @@ export type UseSessionInteractionsInput = {
   sessionId: string | null;
   interactionSessionIds?: string[];
   workspaceRoot: string;
+  /** Records "Always allow" on a file-send approval with the host. */
+  rememberFileSend?: (requestID: string) => Promise<void>;
 };
 
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId, workspaceRoot, rememberFileSend } = input;
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -411,13 +413,19 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
-    async (requestID: string, reply: "once" | "always" | "reject") => {
+    async (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => {
       if (!client || !workspaceId || !sessionId) return;
       if (permissionReplyBusyRef.current) return;
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
+        // "Always allow" on a file send: the host records the choice for this
+        // open question first, so a failure here answers nothing.
+        if (remember === "always" && reply === "always" && !pendingPermission?.evaluation) {
+          if (!rememberFileSend) throw new Error(t("session.file_send_remember_unavailable"));
+          await rememberFileSend(requestID);
+        }
         if (pendingPermission?.evaluation) {
           // A development-only proof request has no engine-side request to answer.
         } else if (pendingPermission?.protocol === "v2") {
@@ -448,7 +456,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot, rememberFileSend],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;

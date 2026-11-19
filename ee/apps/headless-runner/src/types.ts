@@ -15,6 +15,17 @@ export const toolCallSchema = z.object({
 })
 export type ToolCall = z.infer<typeof toolCallSchema>
 
+/**
+ * The App a tool result opened: an App built in OpenWork (Connect's `openwork/mcpApp` launch of the App's own
+ * `open_app`), by its id and name. Kept on the tool message for the caller that shows the App; the model reads only
+ * the result's text.
+ */
+export const toolAppSchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string().max(200),
+})
+export type ToolApp = z.infer<typeof toolAppSchema>
+
 /** Engine-neutral transcript entry. Stored as JSON, one row per entry. */
 export const messageSchema = z.discriminatedUnion("role", [
   z.object({
@@ -37,6 +48,8 @@ export const messageSchema = z.discriminatedUnion("role", [
     images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
     /** PDFs a tool returned, passed to the model as document input (text and page images). */
     documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+    /** The App this result opened, for the caller to show. */
+    app: toolAppSchema.optional(),
   }),
 ])
 export type Message = z.infer<typeof messageSchema>
@@ -46,11 +59,13 @@ export type ToolSpec = {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  /** Its server says it only reads (MCP `readOnlyHint`): calls to it may run at the same time. Never sent to the model. */
+  readOnly?: boolean
 }
 
 export type ToolImage = { mediaType: string; data: string }
 export type ToolDocument = { mediaType: "application/pdf"; data: string; name: string }
-export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[] }
+export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[]; app?: ToolApp }
 
 /**
  * How long a session's turns may keep repeating a step (same calls, same results) before the model is asked to stop
@@ -132,12 +147,18 @@ export type SessionComputer = {
   /** The snapshot new computers boot from, for logs. */
   image: string
   desktopTools?: ToolSpec[]
-  desktopRun?(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>
-  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`, `desktop_updating`), which the runner reports as its error code. */
+  desktopRun?(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal, policy?: { browserRecovery: boolean }): Promise<ToolResult>
+  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`, `desktop_updating`, `desktop_replacing`), which the runner reports as its error code. */
   desktopViewer?(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }): Promise<{ state: "paused" } | { state: "connected"; url: string; expiresAt: number; paused: boolean }>
   browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
   desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
-  run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  /** `callKey` names this one call for good, so a command started under it can be picked up later (`pickUp`). */
+  run(sessionId: string, name: string, input: Record<string, unknown>, callKey?: string): Promise<ToolResult>
+  /**
+   * The result of a command started under `callKey` whose result never reached the runner: its real result once it
+   * ends, or that it is still running. Null when the computer never started it. Never starts a command or a computer.
+   */
+  pickUp?(sessionId: string, name: string, input: Record<string, unknown>, callKey: string): Promise<ToolResult | null>
   /** Whether this conversation has a computer here at all (see computer-route.ts); unset means every conversation does. */
   available?(sessionId: string): boolean
   known(sessionId: string): boolean

@@ -7,7 +7,7 @@ import { applyFeatureIntroEvent, featureIntroStateView, type FeatureIntroTimesta
 
 /**
  * Feature intros (DESIGN.md I1–I10): per member and organization, which intros were seen, dismissed or acted
- * on. Den web owns the registry of intro keys and versions; Den only stores what happened. Behind featureIntros.
+ * on. Den web owns the registry of intro keys and versions; Den only stores what happened.
  */
 type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">

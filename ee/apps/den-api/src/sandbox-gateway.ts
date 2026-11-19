@@ -3,7 +3,7 @@ import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/de
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { gatewayCatalog, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayProvider } from "./llm/gateway-matrix.js"
+import { gatewayCatalog, GatewayWriteError, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayProvider } from "./llm/gateway-matrix.js"
 import { appLogger } from "./observability/logger.js"
 
 /** Whether new sandboxes get an AI Gateway provider: the deployment runs the Gateway and has a shared sandbox key or mints one per sandbox. */
@@ -22,11 +22,14 @@ export async function addSandboxGatewayProvider(input: {
   ownerMemberId: DenTypeId<"member">
   /** The sandbox's own key; omitted uses the deployment's shared key. */
   apiKey?: string
+  /** The models this sandbox gets; omitted uses the deployment's list. */
+  modelIds?: string[]
 }): Promise<DenTypeId<"inferenceProvider"> | null> {
   const config = env.sandbox.gateway
   const apiKey = input.apiKey ?? config?.apiKey ?? null
   if (!env.gatewayEnabled || !config || !apiKey) return null
-  const catalog = await gatewayCatalog(config.providerId, config.modelIds)
+  const modelIds = [...new Set(input.modelIds ?? config.modelIds)]
+  const catalog = await gatewayCatalog(config.providerId, modelIds)
   const now = new Date()
   const provider: GatewayProvider = {
     id: createDenTypeId("inferenceProvider"),
@@ -34,7 +37,7 @@ export async function addSandboxGatewayProvider(input: {
     created_by_org_membership_id: input.ownerMemberId,
     provider_id: catalog.catalog.id,
     name: input.apiKey ? "Sandbox models" : `${catalog.catalog.name ?? config.providerId} (sandbox)`,
-    model_ids: [...new Set(config.modelIds)],
+    model_ids: modelIds,
     pinned_model_ids: [],
     provider_config: catalog.config,
     settings: {},
@@ -54,6 +57,24 @@ export async function addSandboxGatewayProvider(input: {
     const groupId = await writeGatewayGroup(tx, provider, { name: "All Allowed Models", modelIds: models.map(model => model.model_id) })
     await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience: { type: "organization" } })
   })
-  appLogger.info("sandbox gateway provider added", { organization_id: input.organizationId, provider_id: config.providerId, models: config.modelIds.length })
+  appLogger.info("sandbox gateway provider added", { organization_id: input.organizationId, provider_id: config.providerId, models: modelIds.length })
   return provider.id
+}
+
+/** Every model a sandbox can be given: the sandbox provider's catalog models the AI Gateway supports. */
+export async function sandboxGatewayModelOptions() {
+  const config = env.sandbox.gateway
+  if (!config) return null
+  const catalog = await gatewayCatalog(config.providerId, [])
+  return { providerId: config.providerId, models: catalog.models.map(model => ({ id: model.id, name: model.name })) }
+}
+
+/**
+ * Checks models chosen for one sandbox against the sandbox provider's catalog before anything is created, so a
+ * mistyped id is refused instead of leaving a sandbox without its provider. Throws GatewayWriteError.
+ */
+export async function assertSandboxGatewayModels(modelIds: string[]) {
+  const config = env.sandbox.gateway
+  if (!config) throw new GatewayWriteError(400, "sandbox_gateway_missing", "This deployment has no sandbox model key, so sandboxes get included models only.")
+  await gatewayCatalog(config.providerId, modelIds)
 }

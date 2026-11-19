@@ -134,6 +134,14 @@
       "development": "./src/litellm-catalog.ts",
       "default": "./dist/litellm-catalog.js"
     },
+    "./truefoundry-catalog": {
+      "types": {
+        "openwork-build": "./dist/types/src/truefoundry-catalog.d.ts",
+        "default": "./src/truefoundry-catalog.ts"
+      },
+      "development": "./src/truefoundry-catalog.ts",
+      "default": "./dist/truefoundry-catalog.js"
+    },
     "./ai-sdk-env-settings": {
       "types": {
         "openwork-build": "./dist/types/src/ai-sdk-env-settings.d.ts",
@@ -176,8 +184,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
-    "test": "node --test src/*.test.ts"
+    "build": "tsup && tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "luxon": "^3.6.1",

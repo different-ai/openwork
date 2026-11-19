@@ -2,7 +2,13 @@ import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/des
 import { existsSync } from "node:fs";
 import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
-import { createWorkspaceKvStore, isRecord } from "./workspace-kv-store.js";
+import {
+  createWorkspaceKvStore,
+  isRecord,
+  SAFE_UPDATED_AT_SQL,
+  UNSAFE_UPDATED_AT_RAW_SQL,
+  warnUnsafeUpdatedAt,
+} from "./workspace-kv-store.js";
 
 export { runtimeDbPath, runtimeStorageDir } from "./runtime-db.js";
 
@@ -73,7 +79,7 @@ const runtimeOpencodeConfigStore = createWorkspaceKvStore<RuntimeOpencodeConfig>
   serialize: (value) => JSON.stringify(value),
 });
 
-export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string) => void;
+export type RuntimeOpencodeConfigWriteListener = (config: ServerConfig, workspaceId: string, snapshot: RuntimeOpencodeConfig) => void;
 
 const writeListeners = new Set<RuntimeOpencodeConfigWriteListener>();
 
@@ -205,7 +211,11 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
   const path = runtimeDbPath(config);
   if (!existsSync(path)) return [];
   const sql = `
-    SELECT workspace_id AS workspaceId, config_json AS configJson, updated_at AS updatedAt
+    SELECT
+      workspace_id AS workspaceId,
+      config_json AS configJson,
+      ${SAFE_UPDATED_AT_SQL} AS updatedAt,
+      ${UNSAFE_UPDATED_AT_RAW_SQL} AS unsafeUpdatedAt
     FROM runtime_opencode_configs
   `;
   try {
@@ -228,6 +238,13 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
       }
     }
     return rows.flatMap((row) => {
+      if (isRecord(row)) {
+        warnUnsafeUpdatedAt(
+          "runtime_opencode_configs",
+          typeof row.workspaceId === "string" ? row.workspaceId : undefined,
+          row.unsafeUpdatedAt,
+        );
+      }
       const parsed = runtimeOpencodeConfigRow(row);
       return parsed ? [parsed] : [];
     });
@@ -583,7 +600,7 @@ function updateRuntimeConfig(
       }
       for (const name of changedMcpNames) revisions.set(name, updatedAt);
     }
-    for (const listener of writeListeners) listener(config, workspaceId);
+    for (const listener of writeListeners) listener(config, workspaceId, next);
     return { config: next, changed: true };
   });
   runtimeWrites.set(config, result);

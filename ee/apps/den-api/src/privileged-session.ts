@@ -1,14 +1,14 @@
 import type { OrganizationContext } from "./orgs.js"
 import type { AuthContextVariables } from "./session.js"
-import { adminReauthMaxAgeMs, LEGACY_ADMIN_REAUTH_MAX_AGE_MS } from "./session-security-settings.js"
+import { adminReauthMaxAgeMs } from "./session-security-settings.js"
 
 // Step-up window for high-risk workspace actions (security settings, API keys,
 // roles, credentials, deletion). Verifying again starts a new session, so this
 // counts from the last sign-in or identity check. Routine plugin, marketplace,
 // and connector work does not step up; normal role checks still apply.
-// The organization chooses it with sessionSecuritySettings ("Enforce fresh
-// admin sessions"); this is the window while that is off.
-export const PRIVILEGED_SESSION_MAX_AGE_MS = LEGACY_ADMIN_REAUTH_MAX_AGE_MS
+// The organization chooses it in Auth & Security › General ("Enforce fresh
+// admin sessions"); this is the window for requests without an organization.
+export const PRIVILEGED_SESSION_MAX_AGE_MS = 2 * 60 * 60 * 1000
 export const CONNECTIONS_READ_SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000
 export const WORKSPACE_REAUTH_SECURITY_MESSAGE = "For security, confirm it's you before changing workspace settings."
 
@@ -54,12 +54,12 @@ export type PrivilegedSessionContext = {
 
 /**
  * The organization's "Enforce fresh admin sessions" window, in milliseconds,
- * or null when it turned the check off. Without an organization (or with
- * sessionSecuritySettings off): PRIVILEGED_SESSION_MAX_AGE_MS.
+ * or null when it turned the check off. Without an organization:
+ * PRIVILEGED_SESSION_MAX_AGE_MS.
  */
-export function organizationPrivilegedSessionMaxAgeMs(organizationContext: Pick<OrganizationContext, "features" | "organization"> | null | undefined): number | null {
+export function organizationPrivilegedSessionMaxAgeMs(organizationContext: Pick<OrganizationContext, "organization"> | null | undefined): number | null {
   if (!organizationContext) return PRIVILEGED_SESSION_MAX_AGE_MS
-  return adminReauthMaxAgeMs({ features: organizationContext.features, metadata: organizationContext.organization.metadata })
+  return adminReauthMaxAgeMs(organizationContext.organization.metadata)
 }
 
 

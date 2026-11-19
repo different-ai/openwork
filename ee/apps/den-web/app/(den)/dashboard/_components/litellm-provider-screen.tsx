@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { Check, Globe, Plus, RefreshCw, User, Users } from "lucide-react";
+import { Check, Globe, LockKeyhole, Plus, RefreshCw, User, Users } from "lucide-react";
 import type { GatewayAccessGrantWrite } from "@openwork/types/den/gateway";
 import { createAuditOperationContext } from "@openwork/types/den/audit";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
@@ -16,32 +16,35 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
-import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { DenTextarea } from "../../_components/ui/textarea";
+import { getAiGatewayProviderRoute, getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, useOrgInferenceProviders } from "./inference-provider-data";
 import { ProviderRemovalUsageLimits, useProviderRemovalUsageLimits } from "./provider-removal-usage-limits";
 import type { DenInferenceProviderDetails } from "./inference-provider-request";
 import {
-  LITELLM_DOC_URL, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle, liteLlmAttentionLabel, liteLlmCreateError, liteLlmIssueStrategyLabel, liteLlmKeyLabel,
-  liteLlmMirrorFallbackLabel, liteLlmModeLabel, liteLlmSpendLabel, liteLlmStatusMode, liteLlmSyncSummary, liteLlmSyncedLabel, replaceLiteLlmKey, syncLiteLlmProvider,
-  updateLiteLlmIssue, type LiteLlmIssueStrategy, type LiteLlmMirrorFallback, type LiteLlmMode,
+  EMPTY_LITELLM_ENTRA, LITELLM_DOC_URL, LITELLM_ENTRA_DOC_URL, LITELLM_ENTRA_FEATURE, buildLiteLlmEntraUpdateBody, createLiteLlmProvider, liteLlmAccessGroupId, liteLlmAccessTitle,
+  liteLlmAttentionLabel, liteLlmCreateError, liteLlmEntraError, liteLlmEntraUpdateSignsPeopleOut, liteLlmIssueStrategyLabel, liteLlmKeyLabel,
+  liteLlmMirrorFallbackLabel, liteLlmModeLabel, liteLlmModeOptions, liteLlmSpendLabel, liteLlmStatusMode, liteLlmSyncSummary, liteLlmSyncedLabel, replaceLiteLlmKey, syncLiteLlmProvider,
+  updateLiteLlmEntra, updateLiteLlmIssue, type LiteLlmEntraInput, type LiteLlmIssueStrategy, type LiteLlmMirrorFallback, type LiteLlmMode,
 } from "./litellm-provider-data";
 
 const CARD = "rounded-[12px] border border-gray-100 bg-white p-4";
 const CARD_TITLE = "text-[13px] font-medium text-gray-900";
 const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const ROW = "flex min-h-10 items-center gap-3 py-2 text-[13px]";
+const MONO = "mt-1.5 font-mono text-[12px]";
 
-type Audience = GatewayAccessGrantWrite["audience"];
-type AccessValue = { allMembers: boolean; memberIds: string[]; teamIds: string[] };
+export type Audience = GatewayAccessGrantWrite["audience"];
+export type AccessValue = { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 
 function Mark({ size = "md" }: { size?: "sm" | "md" }) {
   return <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className={size === "sm" ? "h-7 w-7 rounded-[7px]" : "h-8 w-8 rounded-[8px]"} imageClassName={size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} />;
 }
 
-/** People and teams picker shared by setup and the saved provider. */
-function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
-  title: string; value: AccessValue; busy: boolean;
+/** People and teams picker shared by setup and the saved provider (LiteLLM and TrueFoundry). */
+export function AccessList({ title, value, onAdd, onRemove, onEveryone, busy, idPrefix = "litellm" }: {
+  title: string; value: AccessValue; busy: boolean; idPrefix?: string;
   onAdd: (audience: Audience) => void; onRemove: (audience: Audience) => void; onEveryone: (checked: boolean) => void;
 }) {
   const { orgContext } = useOrgDashboard();
@@ -51,19 +54,19 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
   const teamOptions = teams.filter((team) => !value.teamIds.includes(team.id)).map((team) => ({ value: team.id, label: team.name, description: `${team.memberIds.length} ${team.memberIds.length === 1 ? "member" : "members"}` }));
   const memberOptions = members.filter((member) => !value.memberIds.includes(member.id)).map((member) => ({ value: member.id, label: member.user.name, description: member.user.email }));
   return (
-    <section className={`${CARD} mt-3`} aria-labelledby="litellm-access-heading">
-      <h2 id="litellm-access-heading" className={CARD_TITLE}>{title}</h2>
+    <section className={`${CARD} mt-3`} aria-labelledby={`${idPrefix}-access-heading`}>
+      <h2 id={`${idPrefix}-access-heading`} className={CARD_TITLE}>{title}</h2>
       <div className={`${ROW} mt-1`}>
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Globe className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
         <span className="min-w-0 flex-1 font-medium text-gray-900">Everyone in the organization</span>
-        <DenSwitch checked={value.allMembers} disabled={busy} aria-label="Everyone in the organization" testId="litellm-access-everyone" onChange={onEveryone} />
+        <DenSwitch checked={value.allMembers} disabled={busy} aria-label="Everyone in the organization" testId={`${idPrefix}-access-everyone`} onChange={onEveryone} />
       </div>
       {!value.allMembers && (value.teamIds.length || value.memberIds.length) ? (
         <ul className="divide-y divide-gray-100 border-t border-gray-100">
           {value.teamIds.map((teamId) => {
             const team = teams.find((entry) => entry.id === teamId);
             return (
-              <li key={teamId} className={ROW} data-testid="litellm-access-row">
+              <li key={teamId} className={ROW} data-testid={`${idPrefix}-access-row`}>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><Users className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
                 <span className="min-w-0 flex-1 text-gray-900">{team?.name ?? "Team"}</span>
                 <DenButton size="sm" variant="ghost" disabled={busy} onClick={() => onRemove({ type: "team", teamId })}>Remove</DenButton>
@@ -73,7 +76,7 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
           {value.memberIds.map((memberId) => {
             const member = members.find((entry) => entry.id === memberId);
             return (
-              <li key={memberId} className={ROW} data-testid="litellm-access-row">
+              <li key={memberId} className={ROW} data-testid={`${idPrefix}-access-row`}>
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500"><User className="h-4 w-4" aria-hidden="true" strokeWidth={1.5} /></span>
                 <span className="min-w-0 flex-1"><span className="block text-gray-900">{member?.user.name ?? "Person"}</span><span className="block text-[12px] text-gray-500">{member?.user.email ?? ""}</span></span>
                 <DenButton size="sm" variant="ghost" disabled={busy} onClick={() => onRemove({ type: "member", memberId })}>Remove</DenButton>
@@ -99,22 +102,52 @@ function AccessList({ title, value, onAdd, onRemove, onEveryone, busy }: {
   );
 }
 
-function addAudience(value: AccessValue, audience: Audience): AccessValue {
+export function addAudience(value: AccessValue, audience: Audience): AccessValue {
   if (audience.type === "organization") return { allMembers: true, memberIds: [], teamIds: [] };
   return audience.type === "team" ? { ...value, teamIds: [...new Set([...value.teamIds, audience.teamId])] } : { ...value, memberIds: [...new Set([...value.memberIds, audience.memberId])] };
 }
-function removeAudience(value: AccessValue, audience: Audience): AccessValue {
+export function removeAudience(value: AccessValue, audience: Audience): AccessValue {
   if (audience.type === "organization") return { ...value, allMembers: false };
   return audience.type === "team" ? { ...value, teamIds: value.teamIds.filter((id) => id !== audience.teamId) } : { ...value, memberIds: value.memberIds.filter((id) => id !== audience.memberId) };
+}
+
+/**
+ * Microsoft sign-in for a proxy that takes sign-in tokens instead of LiteLLM keys: the organization's Entra app
+ * registration, the one API scope LiteLLM accepts tokens for, and the models people may use.
+ */
+function LiteLlmEntraFields({ value, onChange, disabled = false, secretSaved = false }: {
+  value: LiteLlmEntraInput; onChange: (value: LiteLlmEntraInput) => void; disabled?: boolean; secretSaved?: boolean;
+}) {
+  return (
+    <>
+      <label className={LABEL}>Directory (tenant) ID
+        <DenInput className={MONO} value={value.tenantId} disabled={disabled} onChange={(event) => onChange({ ...value, tenantId: event.target.value })} placeholder="00000000-0000-0000-0000-000000000000" data-testid="litellm-entra-tenant-id" autoComplete="off" />
+      </label>
+      <label className={LABEL}>Application (client) ID
+        <DenInput className={MONO} value={value.clientId} disabled={disabled} onChange={(event) => onChange({ ...value, clientId: event.target.value })} data-testid="litellm-entra-client-id" autoComplete="off" />
+      </label>
+      <label className={LABEL}>Client secret
+        <DenSecretInput className={MONO} value={value.clientSecret} disabled={disabled} onChange={(clientSecret) => onChange({ ...value, clientSecret })} saved={secretSaved} data-testid="litellm-entra-client-secret" replaceTestId="litellm-entra-client-secret-replace" autoComplete="new-password" />
+      </label>
+      <label className={LABEL}>API scope
+        <DenInput className={MONO} value={value.scope} disabled={disabled} onChange={(event) => onChange({ ...value, scope: event.target.value })} placeholder="api://<application-id>/access" data-testid="litellm-entra-scope" autoComplete="off" />
+      </label>
+      <label className={LABEL}>Models, one per line
+        <DenTextarea className={MONO} rows={4} value={value.models} disabled={disabled} onChange={(event) => onChange({ ...value, models: event.target.value })} placeholder={"gpt-4o\nclaude-sonnet-4-5"} data-testid="litellm-entra-models" spellCheck={false} />
+      </label>
+    </>
+  );
 }
 
 /** Setup for a new LiteLLM provider: proxy URL, key mode, key, and who gets access. */
 export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
-  const { orgSlug, runReauthableAction } = useOrgDashboard();
+  const { orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
+  const entraAvailable = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE);
   const [baseUrl, setBaseUrl] = useState("");
   const [mode, setMode] = useState<LiteLlmMode>("org");
+  const [entra, setEntra] = useState<LiteLlmEntraInput>(EMPTY_LITELLM_ENTRA);
   const [issueStrategy, setIssueStrategy] = useState<LiteLlmIssueStrategy>("per_team");
   const [mirrorFallback, setMirrorFallback] = useState<LiteLlmMirrorFallback>("per_team");
   const [apiKey, setApiKey] = useState("");
@@ -123,7 +156,7 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
   const [error, setError] = useState<string | null>(null);
 
   async function connect() {
-    const input = { name: "LiteLLM", baseUrl, mode, apiKey, access, issueStrategy, mirrorFallback };
+    const input = { name: "LiteLLM", baseUrl, mode, apiKey, access, issueStrategy, mirrorFallback, entra };
     const invalid = liteLlmCreateError(input);
     if (invalid) return setError(invalid);
     setError(null);
@@ -157,11 +190,9 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
         <label className={LABEL}>Proxy URL
           <DenInput className="mt-1.5 font-mono text-[12px]" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://litellm.example.com" data-testid="litellm-base-url" autoComplete="off" />
         </label>
-        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Keys" value={mode} options={[
-          { value: "org", label: liteLlmModeLabel("org") },
-          { value: "member", label: liteLlmModeLabel("member") },
-          { value: "issued", label: liteLlmModeLabel("issued") },
-        ]} onChange={(next) => { setMode(next); setApiKey(""); }} />
+        <DenSegmented<LiteLlmMode> className="mt-3" aria-label="Authentication" value={mode} options={liteLlmModeOptions(entraAvailable)}
+          onChange={(next) => { setMode(next); setApiKey(""); }} />
+        {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
         {mode === "issued" ? (
           <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
             <span className="flex items-center gap-2 text-[12px] text-gray-700">Keys
@@ -180,10 +211,18 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
             ) : null}
           </div>
         ) : null}
-        <p className="mt-2 text-[12px] text-gray-500" data-testid="litellm-spend-tracking">Spend tracking: {liteLlmSpendLabel({ spendTracking: mode === "org" })}</p>
-        <label className={LABEL}>{liteLlmKeyLabel(mode)}
-          <DenSecretInput className="mt-1.5 font-mono text-[12px]" value={apiKey} onChange={setApiKey} placeholder="sk-…" data-testid="litellm-api-key" autoComplete="new-password" />
-        </label>
+        <p className="mt-2 text-[12px] text-gray-500" data-testid="litellm-spend-tracking">Spend tracking: {liteLlmSpendLabel({ spendTracking: mode === "org", keySource: mode === "entra" ? "entra" : null })}</p>
+        {mode === "entra" ? (
+          <>
+            <LiteLlmEntraFields value={entra} onChange={setEntra} disabled={saving} />
+            <DenNotice className="mt-3" tone="neutral" message="Save this provider to get its redirect URI, then add it to your Entra app registration as a Web redirect URI before people connect." />
+            <Link href={LITELLM_ENTRA_DOC_URL} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm", className: "mt-3 w-fit" })}>Read setup instructions</Link>
+          </>
+        ) : (
+          <label className={LABEL}>{liteLlmKeyLabel(mode)}
+            <DenSecretInput className="mt-1.5 font-mono text-[12px]" value={apiKey} onChange={setApiKey} placeholder="sk-…" data-testid="litellm-api-key" autoComplete="new-password" />
+          </label>
+        )}
       </section>
 
       <AccessList title={liteLlmAccessTitle(mode)} value={access} busy={saving}
@@ -206,7 +245,9 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   const { orgId, orgSlug, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
   const status = provider.litellm;
   const uiMode: LiteLlmMode = status ? liteLlmStatusMode(status) : "org";
-  const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "remove" | null>(null);
+  const entraMode = uiMode === "entra";
+  const entraAvailable = orgFeatureEnabled(orgContext, LITELLM_ENTRA_FEATURE);
+  const [busy, setBusy] = useState<"sync" | "key" | "access" | "issue" | "entra" | "remove" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
@@ -223,9 +264,20 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
     teamIds: grants.flatMap((grant) => grant.audience.type === "team" ? [grant.audience.teamId] : []),
     memberIds: grants.flatMap((grant) => grant.audience.type === "member" ? [grant.audience.memberId] : []),
   };
-  const modelGroups = provider.modelGroups.filter((group) => group.id !== accessGroupId || uiMode === "org");
+  const modelGroups = provider.modelGroups.filter((group) => group.id !== accessGroupId || uiMode === "org" || entraMode);
+  // Microsoft sign-in: what is saved, and the admin's unsaved edits to it (the client secret is never read back).
+  const savedEntra: LiteLlmEntraInput = {
+    tenantId: set?.oauthTenantId ?? "", clientId: set?.oauthClientId ?? "", clientSecret: "", scope: status?.entraScope ?? "",
+    models: provider.catalogModels.map((model) => model.id).join("\n"),
+  };
+  const [entraDraft, setEntraDraft] = useState<LiteLlmEntraInput | null>(null);
+  const [signOutAcknowledged, setSignOutAcknowledged] = useState(false);
+  const [callbackCopied, setCallbackCopied] = useState(false);
+  const entra = entraDraft ?? savedEntra;
+  const entraChanges = entraDraft ? buildLiteLlmEntraUpdateBody(savedEntra, entraDraft) : null;
+  const entraSignsPeopleOut = entraChanges ? liteLlmEntraUpdateSignsPeopleOut(entraChanges) : false;
 
-  async function run(kind: "sync" | "key" | "access" | "issue", label: string, action: () => Promise<string | null>) {
+  async function run(kind: "sync" | "key" | "access" | "issue" | "entra", label: string, action: () => Promise<string | null>) {
     setBusy(kind);
     setError(null);
     setNotice(null);
@@ -253,8 +305,20 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
   };
   const changeIssue = (input: { issueStrategy?: LiteLlmIssueStrategy; mirrorFallback?: LiteLlmMirrorFallback }) =>
     run("issue", "update-litellm-key-creation", async () => `Key creation updated. ${liteLlmSyncSummary((await updateLiteLlmIssue(provider.id, input, createAuditOperationContext())).sync)}`);
+  const saveEntra = () => {
+    if (!entraChanges) return undefined;
+    const invalid = liteLlmEntraError(entra, set?.hasOauthClientSecret === true);
+    if (invalid) return setError(invalid);
+    if (entraSignsPeopleOut && !signOutAcknowledged) return setError("Confirm that people will sign in with Microsoft again before saving this change.");
+    return run("entra", "update-litellm-microsoft-sign-in", async () => {
+      await updateLiteLlmEntra(provider.id, entraChanges, createAuditOperationContext());
+      setEntraDraft(null);
+      setSignOutAcknowledged(false);
+      return entraSignsPeopleOut ? "Saved. People sign in with Microsoft again." : "Saved.";
+    });
+  };
   const addGrant = (audience: Audience) => run("access", "add-litellm-access", async () => {
-    if (!accessGroupId || !set) throw new Error("Sync LiteLLM before granting access.");
+    if (!accessGroupId || !set) throw new Error(entraMode ? "Add a model before granting access." : "Sync LiteLLM before granting access.");
     const context = createAuditOperationContext();
     await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: accessGroupId, credentialSetId: set.id } }, context);
     if (audience.type === "organization") for (const grant of grants) if (grant.audience.type !== "organization") await deleteGatewayResource(provider.id, "access-grants", grant.id, context);
@@ -291,7 +355,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
       <div className="mt-3 flex items-center gap-3">
         <Mark />
         <Heading className="min-w-0 flex-1 truncate text-[20px] font-medium tracking-[-0.02em] text-gray-900" data-testid="gateway-provider-title">{provider.name}</Heading>
-        <DenButton icon={RefreshCw} loading={busy === "sync"} disabled={busy !== null && busy !== "sync"} onClick={() => void sync()} data-testid="litellm-sync">Sync models</DenButton>
+        {entraMode ? null : <DenButton icon={RefreshCw} loading={busy === "sync"} disabled={busy !== null && busy !== "sync"} onClick={() => void sync()} data-testid="litellm-sync">Sync models</DenButton>}
       </div>
       {error ? <DenNotice tone="error" message={error} className="mt-4" /> : null}
       {!error && status?.lastSyncError ? <DenNotice tone="error" message={`Last sync failed: ${status.lastSyncError} Fix the key or URL, then sync again.`} className="mt-4" /> : null}
@@ -302,7 +366,7 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
           <h2 id="litellm-status-heading" className="sr-only">Status</h2>
           <dl className="divide-y divide-gray-100" data-testid="litellm-status">
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Proxy</dt><dd className="min-w-0 flex-1 truncate font-mono text-[12px] text-gray-900">{status.baseUrl ?? "Not set"}</dd></div>
-            <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Keys</dt><dd className="flex-1 text-gray-900">{liteLlmModeLabel(uiMode)}</dd></div>
+            <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">{entraMode ? "Sign-in" : "Keys"}</dt><dd className="flex-1 text-gray-900">{liteLlmModeLabel(uiMode)}</dd></div>
             {uiMode === "issued" && status.issueStrategy ? (
               <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Each person gets</dt><dd className="flex-1">
                 <DenSegmented<LiteLlmIssueStrategy> aria-label="How keys are created" value={status.issueStrategy} options={[
@@ -321,11 +385,12 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
             ) : null}
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Spend tracking</dt><dd className="flex-1 text-gray-900" data-testid="litellm-spend-tracking">{liteLlmSpendLabel(status)}</dd></div>
             <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Models</dt><dd className="flex-1 text-gray-900">{status.modelCount}</dd></div>
-            {status.mode === "member" ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">LiteLLM teams</dt><dd className="flex-1 text-gray-900">{status.teamCount}</dd></div> : null}
+            {status.mode === "member" && !entraMode ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">LiteLLM teams</dt><dd className="flex-1 text-gray-900">{status.teamCount}</dd></div> : null}
             {uiMode === "member" ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">People connected</dt><dd className="flex-1 text-gray-900">{status.connectedMemberCount}</dd></div> : null}
+            {entraMode ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">People signed in</dt><dd className="flex-1 text-gray-900" data-testid="litellm-entra-signed-in">{status.connectedMemberCount}</dd></div> : null}
             {uiMode === "issued" ? <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">People with keys</dt><dd className="flex-1 text-gray-900" data-testid="litellm-issued-count">{status.issuedMemberCount}</dd></div> : null}
-            <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Last sync</dt><dd className="flex-1 text-gray-900">{liteLlmSyncedLabel(status.lastSyncedAt)}</dd></div>
-            <div className={ROW}>
+            {entraMode ? null : <div className={ROW}><dt className="w-40 shrink-0 text-gray-500">Last sync</dt><dd className="flex-1 text-gray-900">{liteLlmSyncedLabel(status.lastSyncedAt)}</dd></div>}
+            {entraMode ? null : <div className={ROW}>
               <dt className="w-40 shrink-0 text-gray-500">{liteLlmKeyLabel(status.mode)}</dt>
               <dd className="flex min-w-0 flex-1 items-center gap-2">
                 {replacing ? (
@@ -341,10 +406,36 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
                   </>
                 )}
               </dd>
-            </div>
+            </div>}
           </dl>
         </section>
       ) : <DenNotice tone="error" className="mt-5" message="This LiteLLM provider has no sync state. Sync models to repair it." />}
+
+      {entraMode ? (
+        <section className={`${CARD} mt-3`} aria-labelledby="litellm-entra-heading">
+          <h2 id="litellm-entra-heading" className={CARD_TITLE}>Microsoft sign-in</h2>
+          {entraAvailable ? null : <DenNotice className="mt-3" tone="neutral" icon={LockKeyhole} message="Read only. Microsoft sign-in for LiteLLM is turned off for your account. Ask your deployment administrator to turn it on." />}
+          {provider.oauthCallbackUrl ? (
+            <div className={`${ROW} mt-1 border-b border-gray-100`}>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5"><span className="text-[12px] font-medium text-gray-700">Redirect URI</span><code className="break-all font-mono text-[12px] text-gray-900" data-testid="litellm-entra-redirect-uri">{provider.oauthCallbackUrl}</code></span>
+              <DenButton size="sm" variant="secondary" onClick={() => {
+                const callback = provider.oauthCallbackUrl;
+                if (!callback) return;
+                if (!navigator.clipboard) { setError("Clipboard access is unavailable. Select and copy the redirect URI manually."); return; }
+                void navigator.clipboard.writeText(callback).then(() => setCallbackCopied(true)).catch(() => setError("Could not copy the redirect URI. Select and copy it manually."));
+              }}>{callbackCopied ? "Copied" : "Copy redirect URI"}</DenButton>
+            </div>
+          ) : <DenNotice className="mt-3" tone="neutral" message="Redirect URI unavailable. Ask your deployment administrator to configure the public Den API origin." />}
+          <LiteLlmEntraFields value={entra} secretSaved={set?.hasOauthClientSecret === true} disabled={!entraAvailable || busy !== null}
+            onChange={(next) => { setEntraDraft(next); setSignOutAcknowledged(false); }} />
+          {entraSignsPeopleOut ? <label className="mt-3 flex items-center gap-3 text-[13px] text-gray-900"><DenSwitch checked={signOutAcknowledged} onChange={setSignOutAcknowledged} aria-label="Confirm that people sign in again" testId="litellm-entra-confirm-sign-out" /><span>Sign everyone out on save. People sign in with Microsoft again.</span></label> : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <DenButton size="sm" loading={busy === "entra"} disabled={!entraAvailable || !entraChanges || (busy !== null && busy !== "entra")} onClick={() => void saveEntra()} data-testid="litellm-entra-save">Save changes</DenButton>
+            {entraDraft ? <DenButton size="sm" variant="ghost" disabled={busy !== null} onClick={() => { setEntraDraft(null); setSignOutAcknowledged(false); setError(null); }}>Discard changes</DenButton> : null}
+            <Link href={LITELLM_ENTRA_DOC_URL} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary", size: "sm" })}>Read setup instructions</Link>
+          </div>
+        </section>
+      ) : null}
 
       {uiMode === "issued" && status && status.attentionCount > 0 ? (
         <section className={`${CARD} mt-3`} aria-labelledby="litellm-attention-heading">
@@ -377,18 +468,18 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
               <span className="text-[12px] text-gray-500">{group.modelIds.length} {group.modelIds.length === 1 ? "model" : "models"}</span>
             </li>
           ))}
-          {!modelGroups.length ? <li className={`${ROW} text-gray-500`}>{uiMode === "member" ? "No LiteLLM teams yet. People get a group when they connect their key." : uiMode === "issued" ? "No LiteLLM teams yet. People get a group when OpenWork creates their key." : "No models yet. Sync models to load them."}</li> : null}
+          {!modelGroups.length ? <li className={`${ROW} text-gray-500`}>{uiMode === "member" ? "No LiteLLM teams yet. People get a group when they connect their key." : uiMode === "issued" ? "No LiteLLM teams yet. People get a group when OpenWork creates their key." : entraMode ? "No models yet. Add model names under Microsoft sign-in." : "No models yet. Sync models to load them."}</li> : null}
         </ul>
       </section>
 
-      <DenStickyActionBar sticky={false} summary={<span>{status ? `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models · ${liteLlmSyncedLabel(status.lastSyncedAt).toLowerCase()}` : provider.name}</span>}>
+      <DenStickyActionBar sticky={false} summary={<span>{status ? entraMode ? `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models` : `${liteLlmModeLabel(uiMode)} · ${status.modelCount} models · ${liteLlmSyncedLabel(status.lastSyncedAt).toLowerCase()}` : provider.name}</span>}>
         <AlertDialog.Root open={confirmDelete && !reauthDialogOpen} onOpenChange={(open) => { if (busy === "remove") return; setConfirmDelete(open); if (!open) removalLimits.reset(); }}>
           <AlertDialog.Trigger disabled={busy !== null} className={buttonVariants({ variant: "secondary" })} data-testid="gateway-provider-remove">Remove</AlertDialog.Trigger>
           <AlertDialog.Portal>
             <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
             <AlertDialog.Popup initialFocus={cancelDeleteRef} className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-[16px] border border-gray-200 bg-white p-5 outline-none">
               <AlertDialog.Title className="text-[15px] font-medium text-gray-950">Remove {provider.name}?</AlertDialog.Title>
-              <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">People lose these models and their saved LiteLLM keys. Your LiteLLM proxy is not changed.</AlertDialog.Description>
+              <AlertDialog.Description className="mt-2 text-[13px] leading-5 text-gray-600">{entraMode ? "People lose these models and are signed out of Microsoft here. Your LiteLLM proxy and Entra app registration are not changed." : "People lose these models and their saved LiteLLM keys. Your LiteLLM proxy is not changed."}</AlertDialog.Description>
               <ProviderRemovalUsageLimits providerName={provider.name} usageLimits={removalLimits.usageLimits} targets={removalLimits.targets} choice={removalLimits.choice} onChange={removalLimits.setChoice} disabled={busy === "remove"} />
               <div className="mt-5 flex justify-end gap-2">
                 <AlertDialog.Close ref={cancelDeleteRef} disabled={busy === "remove"} className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>

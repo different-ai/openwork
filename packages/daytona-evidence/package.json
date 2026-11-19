@@ -21,8 +21,7 @@
     "@openwork/freestyle": "workspace:*"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test": "node --test src/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -180,6 +180,29 @@ export function assertAutomationTimezone(timezone: string): void {
   }
 }
 
+/**
+ * Reads a one-time run written as text: epoch milliseconds in digits, an ISO
+ * date-time with an offset, or one without, which is that wall time in the
+ * schedule's timezone. Returns null for anything else.
+ */
+export function automationTimestampFromText(text: string, timezone: string): number | null {
+  const value = text.trim()
+  if (/^\d{1,16}$/.test(value)) return Number(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i.exec(value)
+  if (!match) return null
+  if (match[6]) {
+    const instant = Date.parse(value.replace(" ", "T"))
+    return Number.isNaN(instant) ? null : instant
+  }
+  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number)
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return null
+  try {
+    return resolveLocalOccurrence({ year, month, day }, hour, minute, timezone)?.timestamp ?? null
+  } catch {
+    return null
+  }
+}
+
 export interface AutomationOccurrenceSearchOptions {
   after: number
   count?: number

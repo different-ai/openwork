@@ -342,6 +342,18 @@ function MarkdownBlockInner({
       if (event.target instanceof HTMLImageElement) sync();
     };
 
+    // A chat image that cannot load (a page URL, a dead link) reads as its
+    // plain link. Only the picture itself counts: the fallback link's favicon
+    // failing must not replace an image that loaded.
+    const handleImageError = (event: Event) => {
+      const image = event.target;
+      if (!(image instanceof HTMLImageElement) || !image.parentElement?.hasAttribute("data-openwork-image-preview")) return;
+      const box = image.closest("[data-openwork-image]");
+      const fallback = box?.querySelector(":scope > [data-openwork-image-fallback]");
+      if (!box || !root.contains(box) || !(fallback instanceof HTMLElement)) return;
+      box.replaceWith(...Array.from(fallback.childNodes));
+    };
+
     const handleSessionReference = (event: MouseEvent) => {
       if (!sessionReferences || !(event.target instanceof Element)) return false;
       const link = event.target.closest("a[data-openwork-session-reference]");
@@ -442,10 +454,11 @@ function MarkdownBlockInner({
 
     const handleContextMenu = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || !onOpenTarget) return;
-      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron]");
+      const link = event.target.closest("[data-openwork-link-href], [data-openwork-link-chevron], [data-openwork-inline-code-path]");
       if (!(link instanceof HTMLElement)) return;
-      const href = link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
-      const target = targetAt(href, link);
+      const codePath = link.dataset.openworkInlineCodePath;
+      const href = codePath ?? link.dataset.openworkLinkHref ?? link.dataset.openworkLinkChevron ?? "";
+      const target = targetAt(href, link, codePath === undefined || link.dataset.openworkPathDecode === "true");
       if (target?.kind !== "file") return;
       event.preventDefault();
       event.stopPropagation();
@@ -463,6 +476,7 @@ function MarkdownBlockInner({
     };
 
     root.addEventListener("load", handleLoad, true);
+    root.addEventListener("error", handleImageError, true);
     root.addEventListener("click", handleClick);
     root.addEventListener("auxclick", handleAuxClick);
     root.addEventListener("mousedown", handleMouseDown);
@@ -472,6 +486,7 @@ function MarkdownBlockInner({
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
+        root.removeEventListener("error", handleImageError, true);
         root.removeEventListener("click", handleClick);
         root.removeEventListener("auxclick", handleAuxClick);
         root.removeEventListener("mousedown", handleMouseDown);
@@ -486,6 +501,7 @@ function MarkdownBlockInner({
     return () => {
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
+      root.removeEventListener("error", handleImageError, true);
       root.removeEventListener("click", handleClick);
       root.removeEventListener("auxclick", handleAuxClick);
       root.removeEventListener("mousedown", handleMouseDown);

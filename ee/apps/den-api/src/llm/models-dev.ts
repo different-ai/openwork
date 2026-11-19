@@ -153,6 +153,11 @@ export async function getModelsDevProvider(providerId: string): Promise<ModelsDe
   return catalog.providersById.get(providerId) ?? null
 }
 
+/** Every provider with its models, from one cached catalog read. */
+export async function getModelsDevCatalogProviders(): Promise<readonly ModelsDevProvider[]> {
+  return (await loadModelsDevCatalog()).providers
+}
+
 /** Resolve several providers from a single cached catalog read. */
 export async function getModelsDevProviders(providerIds: readonly string[]): Promise<ModelsDevProvider[]> {
   const catalog = await loadModelsDevCatalog()

@@ -247,7 +247,7 @@ async function workflowRefusal(ctx: CapabilityRegistryContext, binding: McpAppTo
     return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "capability_unavailable", message, ...connection }) }] }
   }
   if (stillRunsWithoutClick(binding, accesses)) return null
-  return errorResult("policy_blocked", `${binding.name} now reaches tools that are not marked read-only, so OpenWork blocked it. An editor of this App needs to update its tools.`)
+  return errorResult("policy_blocked", `${binding.name} now reaches tools that are not marked read-only, so OpenWork blocked it. An editor of this artifact needs to update its tools.`)
 }
 
 /** Runs one App tool as the caller, with the caller's own authorization and connections. */
@@ -258,7 +258,7 @@ export async function callMcpAppTool(
 ): Promise<ExecuteCapabilityToolResult> {
   const parsed = parseCapability(binding.capability)
   if (binding.kind === "workflow") {
-    if (parsed?.kind !== "marketplace") return errorResult("unknown_capability", "This App tool is no longer available.")
+    if (parsed?.kind !== "marketplace") return errorResult("unknown_capability", "This artifact’s tool is no longer available.")
     const refusal = await workflowRefusal(ctx, binding, parsed.configObjectId)
     if (refusal) return refusal
     if (binding.mode !== "live") return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, body: args }))
@@ -286,7 +286,7 @@ export async function callMcpAppTool(
     }
     return withoutAgentServerMeta(await executeCapability(ctx, { name: binding.capability, path: args.path, query: args.query, body: args.body }))
   }
-  if (parsed?.kind !== "externalMcp") return errorResult("unknown_capability", "This App tool is no longer available.")
+  if (parsed?.kind !== "externalMcp") return errorResult("unknown_capability", "This artifact’s tool is no longer available.")
   // The provider must still advertise the schema the App was published against
   // and, for a read-only tool, still mark it read-only for this caller.
   const result = await executeCapability(ctx, {

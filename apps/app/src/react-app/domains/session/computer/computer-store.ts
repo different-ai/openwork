@@ -3,7 +3,6 @@ import { create } from "zustand"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
-import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
 import { isActiveWorkSessionStatus } from "../sidebar/utils"
 import { useDesktopFeature } from "../status/use-desktop-feature"
 
@@ -31,35 +30,12 @@ export const useComputerStore = create<ComputerStore>((set) => ({
 export const useComputerRequest = (sessionId: string | null | undefined) =>
   useComputerStore((state) => sessionId ? state.requests[sessionId] ?? null : null)
 
-/**
- * Connects the desktop's computer broker to the app, once per window and on
- * every route, Settings included: reports the `computerUse`,
- * `remoteComputers` and `standardCodeMode` features and keeps in-chat
- * requests current.
- */
+/** Connects in-chat requests and the remaining remote-computer rollout. */
 export function ComputerBridge() {
-  const enabled = useDesktopFeature("computerUse")
   const remote = useDesktopFeature("remoteComputers")
-  const standardCodeMode = useDesktopFeature("standardCodeMode")
-  const parallel = useDesktopFeature("parallelComputerUse")
   useEffect(() => {
-    void desktopBridge.computerSetRemoteEnabled(enabled && remote).catch(() => {})
-  }, [enabled, remote])
-
-  useEffect(() => {
-    void desktopBridge.computerSetFeatureEnabled(enabled).catch(() => {})
-  }, [enabled])
-
-  // Computer programs that start while it is on run as standard JavaScript.
-  useEffect(() => {
-    void desktopBridge.computerSetStandardCodeMode(standardCodeMode).catch(() => {})
-  }, [standardCodeMode])
-
-  // A chat's subagents work on its computer as part of it.
-  useEffect(() => {
-    void desktopBridge.computerSetParallelAgents(parallel).catch(() => {})
-    useComputerSessionHistoryStore.getState().setParallel(parallel)
-  }, [parallel])
+    void desktopBridge.computerSetRemoteEnabled(remote).catch(() => {})
+  }, [remote])
 
   // The broker raises computer-use requests only while computer use is on, but the
   // built-in browser's sign-in confirmations arrive either way.

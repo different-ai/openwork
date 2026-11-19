@@ -114,7 +114,7 @@ type DenFlowContextValue = {
   submitVerificationCode: (event: FormEvent<HTMLFormElement>) => Promise<AuthNavigationResult>;
   resendVerificationCode: () => Promise<void>;
   cancelVerification: () => void;
-  beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
+  beginSocialAuth: (provider: SocialAuthProvider, options?: { loginHint: string }) => Promise<void>;
   signOut: () => Promise<void>;
   /** Re-checks the session with Den; clears the signed-in user when it is gone. */
   revalidateSession: () => Promise<AuthUser | null>;
@@ -863,7 +863,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function beginSocialAuth(provider: SocialAuthProvider) {
+  async function beginSocialAuth(provider: SocialAuthProvider, options?: { loginHint: string }) {
     if (authBusy || typeof window === "undefined") {
       return;
     }
@@ -898,7 +898,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           provider,
           callbackURL,
-          errorCallbackURL: callbackURL
+          errorCallbackURL: callbackURL,
+          ...(provider === "google" && options?.loginHint.trim() ? { loginHint: options.loginHint.trim() } : {})
         })
       });
 

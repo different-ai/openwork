@@ -9,16 +9,17 @@ to the module they test (`packages/*/src/**/*.test.ts`) and run in the same
 
 ## How CI works (start here)
 
-Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, about
-a minute): static CI guards, the feature registry, a typecheck of the shipped
-code it changes, and the Den API auth tests when Den API code changes. Red here
-means a normal code problem. Everything else runs after merge:
+Every PR to `dev` gets one quick check ("Quick check", `quick-check.yml`, under
+two minutes): static CI guards, the feature registry, a typecheck of the
+shipped code it changes, the desktop build, and the Den API auth tests when Den
+API code changes. It runs again on every dev push, and no alpha or release
+ships a commit it did not pass. Red here means a normal code problem. The rest:
 
-1. **Unit tests and build** (`ci-tests.yml`, every `dev` push): the "Unit tests
-   (...)" jobs, the full Den API security suite and "Build the desktop app".
-2. **Core journeys** (`core-journeys.yml`, every `dev` push and nightly), and
+1. **Nightly regression** (`ci-tests.yml`, nightly and on demand):
+   test-framework checks, engine smoke tests, docs and model validation.
+2. **Core journeys** (`core-journeys.yml`, nightly and on demand), and
    [`core/core-chat.e2e.test.ts`](./core/core-chat.e2e.test.ts) in the nightly
-   Freestyle world check. A dev push also runs every proof it adds or changes.
+   Freestyle world check. Proofs never run automatically.
 3. **The packaged desktop** ("Packaged desktop smoke") before every alpha release.
 
 PR evidence is on demand: `gh workflow run pr-proof.yml --ref <branch> -f
@@ -70,8 +71,7 @@ Use the skills in this order:
 
 1. `write-a-spec`
 2. `run-tests`
-3. `diagnose-a-red-run` when the run fails
-4. `open-a-pr`; CI runs the core journey and the changed specs on the PR head and publishes the evidence
+3. `open-a-pr`; CI runs the core journey and the changed specs on the PR head and publishes the evidence
 
 Demo-driven features start from a world script plus a core journey step or a proof.
 
@@ -113,14 +113,7 @@ Skills own mechanics; this README owns the map and vocabulary.
 | --- | --- | --- |
 | Author a spec | `write-a-spec` | Add a step to a core journey in `evals/core`, or a proof in `evals/proofs`. |
 | Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
-| Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
-| Slow CI or slow spec | `speed-up-ci` | Measure time to green, find where a job's seconds go, land one measured speedup at a time. |
-| Design notes on a PR | `fix-design-notes` | Read the design notes in the Evidence preview check, fix what they found, prove the note is gone. |
-| Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive the app by hand over CDP | `drive-desktop-cdp` | Check a UI change in `dev-app-web --browser` (headless) or, when the desktop shell matters, a desktop window. |
-| Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
-| Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |
-| Demo artifacts | `record-a-demo` | Capture supplementary screenshots or recordings. |
 
 ## Install and run
 

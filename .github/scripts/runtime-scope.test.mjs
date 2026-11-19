@@ -22,6 +22,18 @@ function job(source, id) {
   return lines.slice(start, next === -1 ? undefined : next).join("\n");
 }
 
+test("Daytona service launchers retain runtime options while enabling workspace source imports", () => {
+  const launches = [...read(".devcontainer/start-daytona-server.sh").matchAll(/^\s+NODE_OPTIONS="([^"]+)" \\$/gm)];
+  assert.equal(launches.length, 2, "check both Den API and the AI Gateway");
+  for (const [, value] of launches) {
+    assert.equal(value, "${NODE_OPTIONS:-} --conditions=development");
+    const observed = execFileSync("bash", ["-c", `NODE_OPTIONS="${value}"\nprintf '%s' "$NODE_OPTIONS"`], {
+      encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "--trace-warnings --max-old-space-size=1024" },
+    });
+    assert.equal(observed, "--trace-warnings --max-old-space-size=1024 --conditions=development");
+  }
+});
+
 const scopedBuilds = [
   ["ci-sdk", "sdk", "generated-sdk"],
   ["api-contract", "den-contract", "openapi-snapshot-and-lint"],

@@ -55,7 +55,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
-      - run: node --test .github/scripts/managed-stable-release.test.mjs
+      - run: node --test .github/scripts/managed-stable-release.test.mjs .github/scripts/managed-stable-release-smoke.test.mjs
 
   prepare:
     if: >-
@@ -106,7 +106,7 @@ jobs:
           node infra/managed-deployments/aws/bootstrap/template.mjs /tmp/cloudformation.json
           diff -u infra/managed-deployments/aws/bootstrap/cloudformation.json /tmp/cloudformation.json
           python3 -m unittest discover -s infra/managed-deployments/tests -v
-          node --test .github/scripts/managed-stable-release.test.mjs infra/managed-deployments/tests/test_publish_*_release.mjs infra/managed-deployments/tests/build-release.test.mjs
+          node --test .github/scripts/managed-stable-release.test.mjs .github/scripts/managed-stable-release-smoke.test.mjs infra/managed-deployments/tests/test_publish_*_release.mjs infra/managed-deployments/tests/build-release.test.mjs
       - name: Resolve latest stable and package verified Linux/amd64 release images
         if: steps.plan.outputs.prepare == 'true'
         run: node .github/scripts/managed-stable-release.mjs prepare

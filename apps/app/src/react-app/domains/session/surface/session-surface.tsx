@@ -16,10 +16,10 @@ import { toast } from "@/components/ui/sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-import { captureAnalyticsEvent } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, takeTaskRunStart, featureAnalytics, taskRunQuality } from "@/app/lib/analytics";
 import { createSessionInterruptionClient, hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -28,7 +28,7 @@ import { setThemeMode } from "@/app/theme";
 import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { type CloudImportedPlugin } from "@/app/cloud/import-state";
-import { createDenClient, readDenSettings } from "@/app/lib/den";
+import { createDenClient, markFeatureUsed, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { hasMovedRejectedTurn, rejectedTurnOwner, useRejectedTurns, useSessionDraftState } from "@/react-app/domains/session/sync/draft-store";
 import { mergeRejectedTurns, retainRejectedTurn } from "@/react-app/domains/session/sync/rejected-turn";
@@ -66,6 +66,7 @@ import { ReactSessionComposer } from "./composer/composer";
 import { sessionComposerDiagnosticReasons } from "./composer/composer-diagnostics";
 import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
+import { useRestoreSessionModel } from "./use-restore-session-model";
 import { getSessionAgentSelection, useSessionAgentSelection } from "./session-mode-memory";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
@@ -99,10 +100,11 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError, sessionErrorAnalyticsProperties, sessionErrorPresentationFromUIMessage, type OpencodeSessionErrorPresentation } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
+import { RemoteAccessAsk } from "@/react-app/domains/devices/remote-access-ask";
 import { autoAccessRefreshEvent, autoAccessWallFromError, preflightAutoSubmission, type AutoAccessBlock } from "@/app/lib/inference-access";
 import { isAutoModel } from "@/react-app/domains/models/model-catalog";
 import { modelRefKey } from "../models/model-collections-store";
@@ -124,10 +126,14 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
-import { ComposerSubagentTracker, currentTurnSubagentParts, useComposerRemoteTasks } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
+import { AgentFormCard } from "@/react-app/domains/session/modals/agent-form-card";
+import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { useFollowUpSuggestion } from "./composer/use-follow-up-suggestion";
+import { parseSideQuestionCommand } from "../links/side-question";
+import { showSideChatTab, useSideQuestionStore } from "../links/side-question-store";
 import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-messages-panel";
 import { deriveOpenTargets, deriveSessionFileEvidence, sameOpenTargets, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
@@ -162,6 +168,8 @@ import {
 } from "./composer-state-store";
 import { MessageList } from "@/components/chat/message-list";
 import { MessageListProvider, type DispatchAction } from "@/components/chat/message-list-provider";
+import { NoCreatedSkillSharing, type CreatedSkillSharingProviderProps } from "@/react-app/kernel/created-skill-sharing";
+import type { ComponentType } from "react";
 import type {
   ChatToolReconnectAction,
   ChatToolReconnectProgress,
@@ -796,7 +804,7 @@ export type SessionSurfaceProps = {
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => void;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
   respondQuestion?: (requestID: string, answers: string[][] | null) => void | Promise<void>;
@@ -806,6 +814,7 @@ export type SessionSurfaceProps = {
   onOpenSettingsSection?: ((section: ComposerSettingsSection) => void) | undefined;
   /** Open one Library item's detail page, e.g. a skill the agent just created. */
   onOpenLibraryDetail?: ((detailId: string) => void) | undefined;
+  skillSharingProvider?: ComponentType<CreatedSkillSharingProviderProps>;
   onRevertToMessage?: (messageId: string, sessionId: string) => Promise<boolean>;
   onRestoreRevertedSession?: (sessionId: string) => Promise<boolean>;
   onForkAtMessage?: (messageId: string | null, sessionId: string, isCurrent: () => boolean) => Promise<void>;
@@ -1153,6 +1162,7 @@ function uncopiedChatReason(error: unknown): string | undefined {
 }
 
 export function SessionSurface(props: SessionSurfaceProps) {
+  const SkillSharingProvider = props.skillSharingProvider ?? NoCreatedSkillSharing;
   const local = useLocal();
   const { config: shellConfig } = useShellConfig();
   const showThinking = local.prefs.showThinking;
@@ -1345,6 +1355,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.onModelPickerOpenChange]);
   const handleModelChange = useCallback((nextModel: ModelRef, variant?: string | null) => {
     sessionModel.setModel(nextModel, variant);
+    featureAnalytics.modelChanged(sessionModel.selectedModel, nextModel, true);
     props.onModelChange(nextModel, variant);
     setModelPickerOpen(false);
   }, [props.onModelChange, sessionModel]);
@@ -1409,6 +1420,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [toolMcpStatuses, setToolMcpStatuses] = useState<McpStatusMap>({});
   const [toolImportedPlugins, setToolImportedPlugins] = useState<CloudImportedPlugin[]>([]);
   const orgMcpConnections = useOrgMcpConnections();
+  const refreshOrgMcpConnections = orgMcpConnections.refresh;
   const connectorIdentities = useMemo(
     () => buildConnectorToolIdentities({
       mcpServers: toolMcpServers,
@@ -1538,6 +1550,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const currentSnapshot = fullSnapshot ?? openingHistory.snapshot;
   // Auto replies recorded before this view opened name their model too.
   const snapshotSession = currentSnapshot?.session;
+  useRestoreSessionModel(props.sessionId, snapshotSession);
+  const sessionModelPending = !sessionModel.hasSessionOverride && snapshotSession?.id !== props.sessionId;
   useEffect(() => {
     if (snapshotSession?.id === props.sessionId) useAutoRouteStore.getState().publish(props.sessionId, autoRoutesFromSession(snapshotSession));
   }, [snapshotSession, props.sessionId]);
@@ -2258,11 +2272,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const composerBusy = chatStreaming || status === "submitted";
   // Sub-agents of the current turn, attached to the composer (OpenCode v2 only).
   const subagentTrackerParentActive = status === "streaming" || status === "retrying" || status === "submitted";
+  // An earlier turn's helper that still works stays listed after a follow-up.
+  const subagentTrackerParts = useComposerSubagentParts(visibleMessages, props.workspaceId, {
+    enabled: snapshotEngine === "v2",
+    keepEarlier: !archived,
+  });
   const subagentTrackerToolCallIds = useMemo<ReadonlySet<string>>(
-    () => new Set(snapshotEngine === "v2"
-      ? currentTurnSubagentParts(visibleMessages).map((part) => part.toolCallId)
-      : []),
-    [snapshotEngine, visibleMessages],
+    () => new Set(subagentTrackerParts.map((part) => part.toolCallId)),
+    [subagentTrackerParts],
   );
   // Tasks the turn started on other computers join the list on either engine;
   // their state comes from Den, not the local engine.
@@ -2276,8 +2293,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Commands the agent left running, listed under the Agents list until each exits.
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
-  const composerBackgroundTasksEnabled = useDesktopFeature("composerBackgroundTasks");
-  const backgroundTasksShown = composerBackgroundTasksEnabled && backgroundShells.length > 0 && !archived;
+  const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
+  const questionInThreadEnabled = useDesktopFeature("questionInThread");
+  const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
+  const followUpSuggestion = useFollowUpSuggestion({
+    enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
+    client: opencodeClient,
+    sessionId: props.sessionId,
+    messages: renderedMessages,
+    settled: !composerBusy && !error && !props.activePermission && !props.activeQuestion && queuedItems.length === 0,
+    model: sessionModel.selectedModel,
+  });
+  const backgroundTasksShown = backgroundShells.length > 0 && !archived;
+  const sideQuestionsEnabled = useDesktopFeature("sideQuestions")
+    && props.chatPane !== "secondary" && !snapshot?.session.parentID && isOpencodeV2Client(opencodeClient);
 
   useEffect(() => {
     if (!hasFullHistory || admissionOutcome !== "unresolved") {
@@ -2446,6 +2476,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setError(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
+      if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
       const identity = readDenSettings();
       const freeBlock = nextDraft.mode === "shell" ? null : isAutoModel(sessionModel.selectedModel) && props.openWorkModelsSyncing
         ? { outcome: "blocked", reason: "auto-access", wall: { state: "sync" } } satisfies AutoAccessBlock
@@ -2523,7 +2554,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
       const parsed = parseSessionError(nextError);
-      captureAnalyticsEvent("task_send_failed", {});
+      captureAnalyticsEvent("task_send_failed", sessionErrorAnalyticsProperties(
+        parsed.kind === "model-not-found" ? "model-unavailable" : (parsed.presentation ?? presentOpencodeSessionError(nextError)).kind,
+        { providerId: sessionModel.selectedModel.providerID, modelId: sessionModel.selectedModel.modelID },
+      ));
       setError(parsed);
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       if (activeSessionOwnerRef.current === sessionOwner) {
@@ -2534,7 +2568,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [snapshot?.session.parentID, archived, archiveStateKnown, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
+  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
 
   const clearComposer = useCallback(() => {
     clearPersistedDraft();
@@ -2544,7 +2578,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
 
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
+  const askSideQuestionFromComposer = useCallback(() => {
+    if (!sideQuestionsEnabled || !isOpencodeV2Client(opencodeClient)) return false;
+    const current = useComposerStateStore.getState().sessions[props.sessionId];
+    if (!current || current.attachments.length > 0) return false;
+    const question = parseSideQuestionCommand(current.draft);
+    if (question === null) return false;
+    if (question) {
+      markFeatureUsed("sideQuestions");
+      useSideQuestionStore.getState().ask(opencodeClient, props.sessionId, question);
+    }
+    showSideChatTab(props.sessionId);
+    clearComposer();
+    return true;
+  }, [clearComposer, opencodeClient, props.sessionId, sideQuestionsEnabled]);
+
   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+    if (!sourceComposer && askSideQuestionFromComposer()) return;
     if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const generation = getQueuedSendGeneration(props.sessionId);
@@ -2554,6 +2604,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    skipThreadQuestionBeforeSendRef.current?.();
     const focusedComposer = document.activeElement;
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
@@ -2659,7 +2710,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [archived, archiveStateKnown, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner, setError]);
+  }, [archived, archiveStateKnown, askSideQuestionFromComposer, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, mentions, pasteParts, persistedDraftKey, props.onDraftChange, props.opencodeBaseUrl, props.sessionId, sendDraft, sessionOwner, setError]);
 
   // One-step run from the empty-state hero: the route keeps the continuation
   // in this session's composer and marks the submitted snapshot for auto-send.
@@ -2669,7 +2720,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (model.transitionState !== "idle") return;
     if (archived || !archiveStateKnown || archiveHeld) return;
     if (chatStreaming) return;
-    if (sessionModelUnavailable) return;
+    if (sessionModelUnavailable || sessionModelPending) return;
     const sourceComposer = autoSendPayload?.composer;
     if (sourceComposer) {
       if (!sourceComposer.draft.trim() && !sourceComposer.attachments.length) return;
@@ -2681,7 +2732,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (!draft.trim() && !attachments.length) return;
     if (!consumeComposerAutoSend(props.sessionId)) return;
     void handleSend();
-  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, archiveHeld, attachments.length, autoSendPayload, chatStreaming, draft, handleSend, model.transitionState, sessionModelUnavailable, sessionModelPending, props.sessionId, sessionOwner]);
 
   // Queue: hold a snapshot of the composer and clear it. The drain effect sends
   // it once the session reports idle; a steer-tagged row is dispatched as soon
@@ -2693,6 +2744,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       void handleSend();
       return;
     }
+    if (askSideQuestionFromComposer()) return;
     if (archived || !archiveStateKnown || pendingStopsRef.current.has(sessionOwner)
       || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     // A one-step run seeded without a snapshot sends whatever the composer holds
@@ -2709,7 +2761,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       agent: getSessionAgentSelection(props.sessionId, props.selectedAgent),
     } : undefined);
     clearComposer();
-  }, [archived, archiveStateKnown, appendQueuedDraft, buildDraft, clearComposer, handleSend, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, sessionOwner]);
+  }, [archived, archiveStateKnown, appendQueuedDraft, askSideQuestionFromComposer, buildDraft, clearComposer, handleSend, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, sessionOwner]);
 
   const handleSteer = useCallback(async () => {
     if (pendingStopsRef.current.has(sessionOwner)) return;
@@ -2842,13 +2894,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // without it the server resolves the default project, finds no live run,
       // and answers `200: false` while the stream keeps going (#2014).
       const stopClient = createSessionInterruptionClient(props.opencodeBaseUrl, opencodeClient, props.workspaceRoot, props.openworkToken);
+      taskRunQuality.stopping(props.sessionId, true);
       await interruptSessionTurn(props.opencodeBaseUrl, stopClient, props.sessionId,
         props.workspaceRoot.trim() || undefined, {
           admissionUnknown: phase.kind === "admission_unknown",
           admissionMessageID: phase.kind === "admission_unknown" ? phase.messageID : undefined,
           onStopped: () => dispatchQueuedDrain(props.sessionId, { type: "stop_confirmed" }),
         });
-      captureAnalyticsEvent("task_run_stopped", {});
+      takeTaskRunStart(props.sessionId);
+      captureAnalyticsEvent("task_run_stopped", taskRunQuality.finish(props.sessionId));
       // The surface survives navigation; refresh the stopped conversation, not
       // whichever query the observer is showing when cancellation finishes.
       if (isDesktopRuntime() && !isOpencodeV2BaseUrl(props.opencodeBaseUrl)) {
@@ -2861,6 +2915,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       setError({ message: error instanceof Error ? error.message : t("session.stop_failed") });
       return false;
     } finally {
+      taskRunQuality.stopping(props.sessionId, false);
       pendingStopsRef.current.delete(sessionOwner);
       setPendingStopSessions([...pendingStopsRef.current]);
     }
@@ -2987,7 +3042,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [checkUnknownAdmission, observationProbeVersion, opencodeClient, props.opencodeBaseUrl, props.sessionId, props.workspaceId, queuedDrainState, sessionOwner, snapshotQuery.refetch]);
 
   useEffect(() => {
-    if (sendingQueued) return;
+    if (sendingQueued || sessionModelPending) return;
     if (archived || !archiveStateKnown) return;
     if (sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
     if (cloudQueueBlockedRef.current) return;
@@ -3024,7 +3079,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (getQueuedSendGeneration(props.sessionId) !== generation) nextDraft.attachments.forEach(revokeAttachmentPreview);
       }
     })();
-  }, [archived, archiveStateKnown, autoSending, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued, sessionOwner, stopping]);
+  }, [archived, archiveStateKnown, autoSending, chatStreaming, cloudQueueRetryVersion, liveStatus.type, props.opencodeBaseUrl, props.sessionId, queuedDrainState, queuedItems, sendDraft, sendingQueued, sessionModelPending, sessionOwner, stopping]);
 
   useEffect(() => {
     if (props.cloudMcpSubmissionState.status !== "failed") {
@@ -3172,13 +3227,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
     label: "Send the composer prompt",
     description: "Send the draft of the composer the person currently has focused to that session. Focus-bound: if focus moved since composer.set_text, the draft goes to the newly focused session. Disabled while that session is mid-turn. To message another session use session.send.",
     sideEffect: "mutation",
-    disabled: archived || !archiveStateKnown || archiveHeld || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
+    disabled: archived || !archiveStateKnown || archiveHeld || sessionModelPending || sessionModelUnavailable || (!draft.trim() && attachments.length === 0) || model.transitionState !== "idle" || queuedDrainState.phase.kind === "admission_unknown",
     targetRef: composerShellRef,
     execute: async () => {
       await handleSend();
       return true;
     },
-  }), [archived, archiveStateKnown, archiveHeld, attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable]);
+  }), [archived, archiveStateKnown, archiveHeld, attachments.length, draft, handleSend, model.transitionState, queuedDrainState.phase.kind, sessionModelUnavailable, sessionModelPending]);
   useControlAction(props.isControlTarget ? composerSendControlAction : null);
 
   const composerStopControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -3583,6 +3638,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
         onProgress,
       });
       if (!isAuthorizationCurrent()) throw new Error("The connection request or account changed.");
+      // Every card for this connection reads the member's live status from this list.
+      void refreshOrgMcpConnections();
       recordInspectorEvent("mcp.chat_reconnect.completed", {
         workspaceId: props.workspaceId,
         sessionId: props.sessionId,
@@ -3598,7 +3655,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       throw error;
     }
-  }, [props.onOpenConnect, props.sessionId, props.workspaceId]);
+  }, [props.onOpenConnect, props.sessionId, props.workspaceId, refreshOrgMcpConnections]);
 
   const handleMcpReopenAuthorization = useCallback(async (
     action: ChatToolReconnectAction,
@@ -3648,6 +3705,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
   const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
+  const threadQuestion = questionInThreadEnabled ? composerQuestion : null;
+  const dockedQuestion = questionInThreadEnabled ? null : composerQuestion;
+  skipThreadQuestionBeforeSendRef.current = threadQuestion && props.respondQuestion && !props.questionReplyBusy
+    ? () => { void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {}); }
+    : null;
   // The agent is waiting for computer use in this chat (setup or allowance).
   const computerRequest = useComputerRequest(props.sessionId);
   // A turn that ended on a Connect card picks up once its sign-in lands, as if the person said so.
@@ -3848,7 +3910,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             sessionScroll.markScrollGesture(event.currentTarget);
           }}
           onScroll={sessionScroll.handleScroll}
-          className={cn("absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 sm:px-5",
+          className={cn("absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y px-3 pb-4 pt-4 [scrollbar-gutter:stable] sm:px-5",
             !isDesktopRuntime() && "max-lg:[mask-image:linear-gradient(to_bottom,transparent,black_1rem)]")}
         >
           {/* Chat column: tighter than the composer (800px) so messages
@@ -3955,23 +4017,59 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       continueAfterConnection={archived ? undefined : continueAfterConnection}
                       connectionQuestionToolCallId={nativeConnectionRequest?.questionToolCallId ?? null}
                     >
-                      <MessageList
-                        messageIdReplacements={pendingReconciliation.messageIdReplacements}
-                        viewport={messageViewport}
+                      <SkillSharingProvider
+                        key={JSON.stringify([props.workspaceId, props.sessionId])}
                         messages={visibleMessages}
-                        sessionErrorHandled={hideGatewayError}
-                        status={status}
-                        activityStatus={effectiveActivityStatus}
-                        retryStatus={liveStatus.type === "retry" ? liveStatus : null}
-                        syncHealth={runSyncHealth}
-                        backgroundTasksInComposer={composerBackgroundTasksEnabled}
-                      />
+                        active={!archived && archiveStateKnown && !archiveHeld && Boolean(props.onOpenLibraryDetail)}
+                      >
+                        <MessageList
+                          messageIdReplacements={pendingReconciliation.messageIdReplacements}
+                          viewport={messageViewport}
+                          messages={visibleMessages}
+                          sessionErrorHandled={hideGatewayError}
+                          status={status}
+                          activityStatus={effectiveActivityStatus}
+                          retryStatus={liveStatus.type === "retry" ? liveStatus : null}
+                          syncHealth={runSyncHealth}
+                        />
+                      </SkillSharingProvider>
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
                 </OpenTargetProvider>
               </DevProfiler>
             )}
             </SessionHistoryBoundary>
+            {threadQuestion ? (
+              <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
+{threadQuestion.form ? (
+                  <AgentFormCard
+                    key={threadQuestion.id}
+                    form={threadQuestion.form}
+                    busy={props.questionReplyBusy ?? false}
+                    onReply={(answers) => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                    }}
+                    onDismiss={props.respondQuestion ? () => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                    } : undefined}
+                  />
+                ) : (
+                                <QuestionPanel
+                  key={threadQuestion.id}
+                  variant="thread"
+                  questions={threadQuestion.questions}
+                  busy={props.questionReplyBusy ?? false}
+                  requestId={threadQuestion.id}
+                  onReply={(answers) => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                  }}
+                  onDismiss={props.respondQuestion ? () => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                  } : undefined}
+                />
+                )}
+              </div>
+            ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
@@ -4050,6 +4148,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         {attachmentsUploading ? <div role="status" className="mx-3 mb-2 text-xs text-muted-foreground" data-attachment-status="uploading">
           Preparing attachments...
         </div> : null}
+        <RemoteAccessAsk />
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         <ReactSessionComposer
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
@@ -4065,13 +4164,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
         editing={editing}
         stopping={stopping}
         steering={steering}
+        followUpDefault={local.prefs.followUpDefault}
         submissionPreparing={preparingCloudTools || sending || autoSending}
         queuedCount={queuedItems.length}
-        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
+        disabled={!archiveStateKnown || archiveHeld || model.transitionState !== "idle" || sessionModelPending || sessionModelUnavailable || queuedDrainState.phase.kind === "admission_unknown"}
         disabledReasons={sessionComposerDiagnosticReasons({
           archiveStateKnown,
           archiveHeld,
-          modelTransitioning: model.transitionState !== "idle",
+          modelTransitioning: model.transitionState !== "idle" || sessionModelPending,
           modelUnavailable: sessionModelUnavailable,
           admissionUnknown: queuedDrainState.phase.kind === "admission_unknown",
         })}
@@ -4103,6 +4203,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         modelVariant={sessionModel.modelVariant}
         modelBehaviorOptions={sessionModel.modelBehaviorOptions}
         onModelVariantChange={handleModelVariantChange}
+        modelSelectionPending={sessionModelPending}
         agentLabel={sessionAgent.selectedAgent === props.selectedAgent ? props.agentLabel : sessionAgent.selectedAgent ? sessionAgent.selectedAgent.charAt(0).toUpperCase() + sessionAgent.selectedAgent.slice(1) : t("session.default_agent")}
         selectedAgent={sessionAgent.selectedAgent}
         listAgents={props.listAgents}
@@ -4121,14 +4222,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
         searchFiles={props.searchFiles}
         onInsertMention={handleInsertMention}
         inputHistory={inputHistory}
+        followUpSuggestion={followUpSuggestion}
         onPasteText={handlePasteText}
         onUnsupportedFileLinks={handleUnsupportedFileLinks}
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
+          compactTopSpacing={Boolean(dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
+            dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4150,6 +4252,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onOpenSubagentSession={openChild}
                     onStopSubagentSession={handleStopSubagentSession}
                     includeLocal={subagentTrackerToolCallIds.size > 0}
+                    parts={subagentTrackerParts}
                     remote={remoteTrackerTasks.length > 0 ? {
                       tasks: remoteTrackerTasks,
                       owner: remoteTrackerOwner,
@@ -4165,19 +4268,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onStop={snapshotEngine === "v2" ? handleStopBackgroundTask : undefined}
                   />
                 ) : null}
-                {composerQuestion ? (
+                {dockedQuestion ? (
                   <div data-composer-interaction="question">
                   <QuestionPanel
-                    questions={composerQuestion.questions}
+                    questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
+                    collapsible={questionMinimizeEnabled}
+                    requestId={dockedQuestion.id}
+                    shortcutActive={props.isControlTarget}
                     onReply={(answers) => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {});
                       }
                     }}
                     onDismiss={props.respondQuestion ? () => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, null)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, null)).catch(() => {});
                       }
                     } : undefined}
                   />

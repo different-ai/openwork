@@ -1,8 +1,8 @@
 import { AuditLogError, appendAuditEvent, setAuditCaptureState, type AuditContext, type AuditEventInput } from "@openwork-ee/den-db/audit-log"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { auditCaptureUpdateSchema, auditEventsResponseSchema, auditEventTypesResponseSchema, auditOperationOutcomeSchema, auditOperationsResponseSchema, auditOriginSchema, auditUsageResponseSchema } from "@openwork/types/den/audit"
+import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { auditCaptureUpdateSchema, auditEventsResponseSchema, type AuditCaptureUpdate, auditEventTypesResponseSchema, auditOperationOutcomeSchema, auditOperationsResponseSchema, auditOriginSchema, auditUsageResponseSchema } from "@openwork/types/den/audit"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
@@ -112,6 +112,43 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
   }
 }
 
+/**
+ * PATCH /v1/audit/settings's write without the HTTP layer (also used by config-blob imports,
+ * src/config-blobs/areas/settings-audit.ts). Re-checks membership and Manage audit settings inside the
+ * transaction. Returns the rejection, or null when saved; AuditLogError / AuditReadError propagate.
+ */
+export async function setOrganizationAuditCapture(params: {
+  organizationId: DenTypeId<"organization">
+  member: { id: DenTypeId<"member">; userId: DenTypeId<"user"> }
+  credentialId: string | undefined
+  requestId: string
+  input: AuditCaptureUpdate
+}): Promise<"forbidden" | "enterprise_plan_required" | "audit_capture_unavailable" | null> {
+  const { input, credentialId } = params
+  return db.transaction(async (tx) => {
+    const { entitlement } = await readAuditAvailability(tx, params.organizationId)
+    const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, params.member.id), eq(MemberTable.organizationId, params.organizationId), eq(MemberTable.userId, params.member.userId), isNull(MemberTable.removedAt))).limit(1)
+    if (!member) return "forbidden"
+    // Re-check Manage audit settings through this transaction (read-only, share locks), so a
+    // permission revoked after the route check is seen before capture state changes.
+    const permissions = await resolvePermissionsForMember({ organizationId: params.organizationId, memberId: member.id, database: tx })
+    if (!permissions.has("audit.manage")) return "forbidden"
+    if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
+    if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
+    const initialization = await initializeAuditPolicyInTx(tx, params.organizationId, env.auditCaptureEnabled)
+    // Revision zero means absent, not permission to overwrite a concurrent
+    // winner. Our own initial ON + explicit OFF commit in this one tx.
+    if (input.expectedRevision === 0 && initialization.policy && !initialization.initialized) throw new AuditLogError("audit_policy_changed")
+    if (initialization.initialized && input.expectedRevision !== 0) throw new AuditLogError("audit_policy_changed")
+    await setAuditCaptureState(tx, { ...input, expectedRevision: initialization.initialized && input.expectedRevision === 0 ? 1 : input.expectedRevision, context: {
+      organizationId: params.organizationId, actor: { type: "user", id: member.userId, memberId: member.id, ...(credentialId ? { credentialId } : {}) },
+      principalKey: `user:${member.userId}:member:${member.id}:key:${credentialId ?? "session"}`,
+      kind: "audit.policy", scope: params.organizationId, origin: "api", originTrust: "authenticated", requestId: params.requestId,
+    } })
+    return null
+  })
+}
+
 export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: Hono<T>) {
   app.patch("/v1/audit/settings", describeAuditRoute({
     operationId: "updateAuditCapture", tags: ["Organizations"], "x-mcp": false, summary: "Set organization audit capture",
@@ -129,28 +166,12 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     const organization = c.get("organizationContext")
     const input = c.req.valid("json")
     try {
-      const rejection = await db.transaction(async (tx) => {
-        const { entitlement } = await readAuditAvailability(tx, organization.organization.id)
-        const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1)
-        if (!member) return "forbidden"
-        // Re-check Manage audit settings through this transaction (read-only, share locks), so a
-        // permission revoked after the route check is seen before capture state changes.
-        const permissions = await resolvePermissionsForMember({ organizationId: organization.organization.id, memberId: member.id, database: tx })
-        if (!permissions.has("audit.manage")) return "forbidden"
-        if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
-        if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
-        const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)
-        // Revision zero means absent, not permission to overwrite a concurrent
-        // winner. Our own initial ON + explicit OFF commit in this one tx.
-        if (input.expectedRevision === 0 && initialization.policy && !initialization.initialized) throw new AuditLogError("audit_policy_changed")
-        if (initialization.initialized && input.expectedRevision !== 0) throw new AuditLogError("audit_policy_changed")
-        const credentialId = c.get("apiKey")?.id
-        await setAuditCaptureState(tx, { ...input, expectedRevision: initialization.initialized && input.expectedRevision === 0 ? 1 : input.expectedRevision, context: {
-          organizationId: organization.organization.id, actor: { type: "user", id: member.userId, memberId: member.id, ...(credentialId ? { credentialId } : {}) },
-          principalKey: `user:${member.userId}:member:${member.id}:key:${credentialId ?? "session"}`,
-          kind: "audit.policy", scope: organization.organization.id, origin: "api", originTrust: "authenticated", requestId: c.get("requestId") ?? createDenTypeId("request"),
-        } })
-        return null
+      const rejection = await setOrganizationAuditCapture({
+        organizationId: organization.organization.id,
+        member: { id: organization.currentMember.id, userId: organization.currentMember.userId },
+        credentialId: c.get("apiKey")?.id,
+        requestId: c.get("requestId") ?? createDenTypeId("request"),
+        input,
       })
       if (rejection === "forbidden") {
         const denied = permissionDeniedResponse("audit.manage")

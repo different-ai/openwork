@@ -35,11 +35,11 @@ export const checkpointSchema = z.object({
   sessionResets: z.number().default(0),
   /** New messages always answer like Workbot. False only preserves older in-flight checkpoints. */
   workbot: z.boolean().default(false),
-  /** Told how to read Drive files (`workbotDriveFiles`). Chosen once per message, like `workbot`. */
+  /** New turns always include Drive instructions; false only preserves older in-flight checkpoints. */
   driveFiles: z.boolean().default(false),
   /**
-   * `workbotSlackAnswerReply`: notes written on the way stream into one message, and the final answer is posted as a
-   * new reply that notifies the person. Chosen once per message, like `workbot`.
+   * New turns stream notes then post the final answer as its own reply.
+   * False preserves the reply format of older in-flight checkpoints.
    */
   answerReply: z.boolean().default(false),
   /** The final answer waiting to be posted as its own reply, and how many of its parts already went out. */
@@ -776,14 +776,15 @@ export async function advanceSlackWatch(input: {
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "aborted"])
 
 export class RemoteSessionUnavailableError extends Error {
-  constructor() {
+  /** `runnerError`: the runner call's error code that ended the run, so the failure log names its cause. */
+  constructor(readonly runnerError?: string) {
     super("remote_session_unavailable")
   }
 }
 
 /** Retries a runner call that may work later; anything else ends the run. */
 function retryLater(result: RunnerFailure, cp: Checkpoint) {
-  if (!result.retryable) throw new RemoteSessionUnavailableError()
+  if (!result.retryable) throw new RemoteSessionUnavailableError(result.error)
   return {
     checkpoint: cp,
     delayMs: typeof result.retryAfterMs === "number" ? Math.max(1_000, Math.min(60_000, result.retryAfterMs)) : 5_000,
@@ -795,7 +796,7 @@ function retryLater(result: RunnerFailure, cp: Checkpoint) {
  * runtime). Forget it and run this same message again in a fresh session, once; the answer starts over.
  */
 async function startInFreshSession(input: { clearSession: () => Promise<void>; persist?: (checkpoint: Checkpoint) => Promise<void> }, cp: Checkpoint) {
-  if (cp.sessionResets >= 1 || !cp.prompt) throw new RemoteSessionUnavailableError()
+  if (cp.sessionResets >= 1 || !cp.prompt) throw new RemoteSessionUnavailableError("unknown_session")
   cp.sessionResets += 1
   await input.clearSession()
   cp.sessionId = undefined

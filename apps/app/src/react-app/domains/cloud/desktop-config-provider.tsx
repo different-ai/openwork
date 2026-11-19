@@ -55,6 +55,12 @@ import {
 export type DesktopConfigStore = {
   config: DenDesktopConfig;
   loading: boolean;
+  /**
+   * Whether Den has answered for this sign-in (server, organization and
+   * member). Once it has, the answer stands while later refreshes are in
+   * flight or cannot reach Den; only a new sign-in or a refusal from Den
+   * replaces it.
+   */
   freshConfigStatus: "pending" | "ready" | "failed";
   refresh: () => Promise<void>;
   refreshFresh: () => Promise<DenDesktopConfig>;
@@ -117,6 +123,17 @@ function rememberCachedConfigMember(cacheKey: string, userId: string): void {
   } catch {
     // A lost record only means the next start waits for a fresh config.
   }
+}
+
+/**
+ * Den answered and refused the member (signed out, removed from the
+ * organization, organization gone), as opposed to not answering: a timeout, a
+ * dropped connection, a busy or restarting server.
+ */
+function denRefusedDesktopConfig(error: unknown): boolean {
+  return error instanceof DenApiError
+    && error.status >= 400 && error.status < 500
+    && error.status !== 408 && error.status !== 429;
 }
 
 export function resolveConnectStateToPush(config: DenDesktopConfig): boolean | null {
@@ -286,6 +303,11 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   // rendering, while this ref lets the handler compare without stale closures.
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
   const devRefreshDesktopConfigRef = useRef<DenDesktopConfig | null>(null);
+  // The sign-in Den last answered for. Pages that need a fresh answer
+  // (Artifacts) keep it through a refresh that could not reach Den, so they
+  // do not leave the sidebar on a dropped connection and return on the next
+  // refresh.
+  const answeredSignInRef = useRef<string | null>(null);
   const isSignedIn = denAuth.isSignedIn;
   const userId = denAuth.user?.id?.trim() ?? "";
 
@@ -387,6 +409,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     const cacheKey = getDenDesktopConfigCacheKey();
 
     if (!isSignedIn || !token || !activeOrgId) {
+      answeredSignInRef.current = null;
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({
         ...current,
@@ -397,6 +420,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       return DEFAULT_DESKTOP_CONFIG;
     }
 
+    const signIn = `${cacheKey}\u0000${userId}`;
     const cached = readCachedDenDesktopConfig(cacheKey);
     const cachedKnown = Boolean(cached) && cachedConfigFor(cacheKey, userId);
     if (cached) {
@@ -418,6 +442,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       writeCachedDenDesktopConfig(cacheKey, nextConfig);
       rememberCachedConfigMember(cacheKey, userId);
+      answeredSignInRef.current = signIn;
       applyDesktopConfigActions(nextConfig);
       setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "ready", known: true }));
       void reconcileShellBranding(nextConfig).catch(() => undefined);
@@ -442,7 +467,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
       const fallbackConfig = cached ?? DEFAULT_DESKTOP_CONFIG;
       applyDesktopConfigActions(fallbackConfig);
-      setDesktopConfigState((current) => ({ ...current, freshConfigStatus: "failed", known: cachedKnown }));
+      if (denRefusedDesktopConfig(error)) answeredSignInRef.current = null;
+      const answered = answeredSignInRef.current === signIn;
+      setDesktopConfigState((current) => ({
+        ...current,
+        freshConfigStatus: answered ? "ready" : "failed",
+        known: cachedKnown,
+      }));
       if (requireFresh) throw error;
       return fallbackConfig;
     } finally {
@@ -489,6 +520,7 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
     }
 
     if (!isSignedIn) {
+      answeredSignInRef.current = null;
       applyDesktopConfigActions(DEFAULT_DESKTOP_CONFIG);
       setDesktopConfigState((current) => ({
         ...current,
@@ -501,10 +533,13 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
 
     const cacheKey = getDenDesktopConfigCacheKey();
     const cached = readCachedDenDesktopConfig(cacheKey);
+    // Reading the same sign-in again (a renewed token, a renamed
+    // organization) keeps Den's last answer until the new one arrives.
+    const answered = Boolean(cached) && answeredSignInRef.current === `${cacheKey}\u0000${userId}`;
     applyDesktopConfigActions(cached ?? DEFAULT_DESKTOP_CONFIG);
     setDesktopConfigState((current) => ({
       ...current,
-      freshConfigStatus: "pending",
+      freshConfigStatus: answered ? "ready" : "pending",
       loading: !cached,
       known: Boolean(cached) && cachedConfigFor(cacheKey, userId),
     }));

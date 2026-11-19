@@ -17,6 +17,8 @@ export const DEN_DASHBOARD_LINKS = {
   gatewayLimits: "/dashboard/ai-gateway?tab=limits",
   /** Billing: the organization's plan and subscriptions. */
   billing: "/dashboard/billing",
+  /** My Usage: a member's own limits, 30-day usage and model prices. Only linked once Den has answered /v1/gateway/usage/me. */
+  myUsage: "/dashboard/my-usage",
 } as const;
 
 export type DenDashboardLink = keyof typeof DEN_DASHBOARD_LINKS;

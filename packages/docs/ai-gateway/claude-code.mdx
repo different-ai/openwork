@@ -1,0 +1,104 @@
+---
+title: "Use Claude Code with AI Gateway"
+description: "Point Claude Code at your organization's AI Gateway with a project settings file, and use your models, Claude or not."
+keywords: ["Claude Code", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "settings.local.json", "AI Gateway API key", "3rd party tools"]
+---
+
+With an [AI Gateway API key](/ai-gateway/third-party-tools) you can run Claude
+Code on the models your organization gives you. Requests go through AI Gateway
+like any other: the key only reaches models you're allowed, and usage counts
+toward your limit.
+
+Claude Code works best with Claude models. Other models (OpenAI, Gemini,
+DeepSeek and the rest) work too: AI Gateway answers Claude Code in the format it
+expects for every model.
+
+## Set it up
+
+Create a key in **My Library › Models** and pick **Claude Code** under **Start
+using this key**. Already have a key? Open its menu and select **Set up**.
+
+1. **Choose your models.** Pick a **Main model** (Claude Code's Opus and Sonnet,
+   and its subagents) and a **Fast model** (its Haiku, for quick background
+   tasks). The page builds the settings file from your choice.
+2. **Add the settings file.** In your project folder, create
+   `.claude/settings.local.json` and paste the settings from the page. They
+   look like this:
+
+   ```json
+   {
+     "env": {
+       "ANTHROPIC_BASE_URL": "https://<your AI Gateway>/api/v1/claude-code",
+       "ANTHROPIC_AUTH_TOKEN": "<your API key>",
+       "ANTHROPIC_API_KEY": "",
+       "ANTHROPIC_DEFAULT_OPUS_MODEL": "openwork/claude-opus-5.5-k3f9[1m]",
+       "ANTHROPIC_DEFAULT_SONNET_MODEL": "openwork/claude-opus-5.5-k3f9[1m]",
+       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openwork/claude-haiku-5.5-7xq2[1m]",
+       "CLAUDE_CODE_SUBAGENT_MODEL": "openwork/claude-opus-5.5-k3f9[1m]",
+       "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1"
+     },
+     "modelOverrides": {
+       "claude-opus-5-5": "openwork/claude-opus-5.5-k3f9[1m]",
+       "claude-haiku-5-5": "openwork/claude-haiku-5.5-7xq2[1m]"
+     }
+   }
+   ```
+
+   The file holds your key, so keep it out of git.
+3. **Start Claude Code** in that folder with `claude`.
+4. **Check it.** Run `/status`: it should show the OpenWork base URL. `/model`
+   lists your models.
+
+<Warning>
+  Keep `ANTHROPIC_API_KEY` empty. A real Anthropic key there makes Claude Code
+  send it instead of your OpenWork key.
+</Warning>
+
+### Using Claude Code for the first time on this computer
+
+Claude Code reads the project settings file only after its first-run sign-in
+screen. If it asks you to choose a login method, quit and start it once with
+your key in the command:
+
+```bash
+ANTHROPIC_AUTH_TOKEN="<your API key>" claude
+```
+
+After that, `claude` in the project folder is enough.
+
+### Signed in to Claude Code with a Claude account
+
+If `/status` shows a Claude account instead of the OpenWork base URL, run
+`/logout`, quit, and start `claude` again.
+
+## Model names
+
+Each of your models has a name for Claude Code:
+
+```text
+openwork/<model name>-<4 characters>[1m]
+```
+
+The four characters tell apart models with the same name. `[1m]` marks models
+with a 1 million token context window, so Claude Code doesn't compact the
+conversation early. Copy names from the page rather than typing them.
+
+- **Claude models** are also listed under `modelOverrides`, so Claude Code knows
+  their limits and features (thinking, effort) as it does for Anthropic.
+- **Other models** aren't known to Claude Code. When one is your main model, the
+  settings also set `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to its context window.
+- `/model` lists the Claude models it discovers. To switch to another model,
+  type `/model openwork/<name>` with a name from the page.
+- **[Smart Routers](/ai-gateway/auto-model-routing)** you can use are listed as
+  `openwork/smart-<router name>-<4 characters>`, shown as **Smart:** and the
+  router's name. Choose one as the main or fast model on the page; Smart picks
+  the model and thinking for each prompt.
+
+## When it doesn't work
+
+| Claude Code shows | What to do |
+| --- | --- |
+| A login method screen | Start it once with `ANTHROPIC_AUTH_TOKEN="<your API key>" claude` (see above). |
+| `authentication_error` / `invalid_api_key` | The key was revoked, has expired, or 3rd party tools are off for your organization. Check it in **My Library › Models**. |
+| `not_found_error: … is not one of your OpenWork models` | The model name isn't one of yours anymore. Copy the settings again from the page. |
+| A model isn't recognized, context assumed to be 200k | A model Claude Code doesn't know. Expected for non-Claude models; the page sets the right window for your main model. |

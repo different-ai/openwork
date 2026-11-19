@@ -8,7 +8,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { type AccessDraft, accessPeopleIds, peopleLabel } from "./access-summary";
+import { type AccessDraft, accessPeopleIds, reachSentence } from "./access-summary";
 import type { ConnectorRoute } from "./connector-route";
 import { ConnectorRouteStep } from "./connector-route-step";
 import { ConnectorConnectionProgress } from "./connector-connection-progress";
@@ -179,7 +179,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
           body: showOAuthApp ? (
             <div className="flex flex-col gap-2" data-testid="connector-setup-own-oauth-app">
               <p className="text-[13px] leading-[18px] text-gray-500">{`Add the client ID and secret from your ${name} OAuth app, then sign in again.`}</p>
-              <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />
+              <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} callbackUrl={callbackUrl} />
             </div>
           ) : (
             <DenButton size="sm" variant="secondary" onClick={() => setShowOAuthApp(true)}>Use your own OAuth app</DenButton>
@@ -205,7 +205,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
               )}
             </div>
           )
-          : <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} />,
+          : <OAuthAppFields url={target.url} discovery={setup.discovery} secretRequired={setup.secretRequired} saving={setup.saving} error={setup.saveError} onSave={(input) => void setup.saveOAuthApp(input)} callbackUrl={callbackUrl} />,
       };
     }
     return check;
@@ -250,7 +250,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       const unverified = checked?.status === "could_not_verify" || (setup.skipped && checked?.status !== "ready");
       toast({
         title: usesIndividualKeys ? `${name} is set up` : unverified ? `${name} couldn't be verified` : `${name} is ready`,
-        description: `${reached > 0 ? `${peopleLabel(reached)} will find it in My Library.` : "Only you have it so far."}`,
+        description: reachSentence(access, reached, "it") ?? "Only you have it so far.",
         action: { label: "View", onClick: () => router.push(getMcpConnectionRoute(orgSlug, connectionId)) },
       });
       router.push(openAssistant
@@ -409,7 +409,7 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
       <StepFooter note={switchingToShared
         ? `Next, sign in with the ${name} account everyone will use.`
-        : reached > 0 ? `${peopleLabel(reached)} will find ${name} in My Library.` : `Only you will have ${name}.`}
+        : reachSentence(access, reached, name) ?? `Only you will have ${name}.`}
       >
         <DenButton variant="secondary" disabled={busy} onClick={() => void cancel()}>Cancel</DenButton>
         <DenButton loading={busy} onClick={() => (switchingToShared ? setConfirmSwitch(true) : void add())}>{switchingToShared ? "Continue" : `Add ${name}`}</DenButton>

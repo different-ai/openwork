@@ -1,4 +1,7 @@
 import { startupPhase } from "./startup-phase.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { assertSandboxEngineIdle } from "./sandbox-engine-transition.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
@@ -160,7 +163,12 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  assertSandboxReady(directory: string): Promise<void>;
+  assertProjectConfigReady(): Promise<void>;
+  ensureProjectIsolation(options?: { deferBusy?: boolean }): Promise<void>;
+  projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }>;
   refreshProviders(): Promise<void>;
+  refreshGatewayInventory(): void;
   /**
    * Reconcile a folder's MCP connections with the engine: register new or
    * changed ones, remove revoked ones, and restart failed ones after a back-off.
@@ -732,6 +740,7 @@ export function createEngineV2Preview(options: {
   deferStart?: boolean;
   hostReadRequest?: (path: string, init?: RequestInit) => Promise<unknown>;
   prepareDriveUpload?: PrepareDriveUpload;
+  fileSends?: Parameters<typeof createV2ContextBridge>[3];
   providerSession?: () => CloudProviderDenSession | null;
   waits?: Partial<typeof ENGINE_V2_UPKEEP_WAITS>;
   /** Running-task probe for leaving v1; unknown is not idle. */
@@ -826,6 +835,7 @@ export function createEngineV2Preview(options: {
   async function settleWorkspaceSkills(directory: string): Promise<void> {
     const active = sidecar;
     if (!active || !chatRouting) return;
+    await assertProjectConfigReady();
     await waitForEngineSkillChanges(directory, async () => {
       const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
       if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
@@ -862,6 +872,7 @@ export function createEngineV2Preview(options: {
   async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<McpFailures> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
+    await assertProjectConfigReady();
     const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
     const runtime = runtimeMcpMap(effective);
     const agentPermissionRules = agentPermissionRulesOf(effective.managedPolicy);
@@ -872,8 +883,9 @@ export function createEngineV2Preview(options: {
     const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp");
     if (mcpRules) await active.refreshConfig();
     const organizationMcp = mcpRules ? await registeredOrganizationMcpServers(config, [location.workspaceId]) : {};
+    const hostAllowed = await managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
+      if (!hostAllowed || agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
       const mapped = mapRuntimeMcpToV2(value, name);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
@@ -893,6 +905,7 @@ export function createEngineV2Preview(options: {
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine connects before it answers (up to the startup timeout).
       const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
@@ -906,6 +919,7 @@ export function createEngineV2Preview(options: {
       applied.set(name, fingerprint);
     };
     const restart = async (name: string, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine ignores a PUT identical to the config it has, so a failed
       // connection is restarted with /connect. On a healthy client /connect
       // closes and reopens it, which is why only unhealthy ones get here.
@@ -964,6 +978,97 @@ export function createEngineV2Preview(options: {
     if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
       throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
     }
+  }
+
+  let isolationInFlight: Promise<void> | undefined;
+  let isolationRefreshing = false;
+  let isolationTimer: ReturnType<typeof setInterval> | undefined;
+  async function localSandboxSettingsPending(): Promise<boolean> {
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    return desired.allowHostExecution !== applied.allowHostExecution;
+  }
+  async function projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }> {
+    const policy = managedDesktopPolicy(config);
+    const required = await policy.requiresSandbox();
+    return {
+      pending: isolationRefreshing || await localSandboxSettingsPending()
+        || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
+      effectiveAllowHostExecution: sidecar ? !sidecar.projectConfigDisabled : !required,
+    };
+  }
+  function deferBusyIsolation(error: unknown): void {
+    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) return;
+    throw error;
+  }
+  async function ensureProjectIsolation(change: { deferBusy?: boolean } = {}): Promise<void> {
+    if (isolationInFlight) return change.deferBusy ? isolationInFlight.catch(deferBusyIsolation) : isolationInFlight;
+    const pending = (async () => {
+      if (startPromise) await startPromise;
+      // Do not override the embedding host's deferred startup/history handoff.
+      // A process that is not running will read the preference when it starts.
+      const policy = managedDesktopPolicy(config);
+      if (!sidecar) { await applySandboxSettings(config); return; }
+      const needsChange = async () => sidecar !== undefined && (sidecar.projectConfigDisabled !== await policy.requiresSandbox() || await localSandboxSettingsPending());
+      if (!await needsChange()) return;
+      await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+        const active = sidecar;
+        if (!active) throw new ApiError(503, "sandbox_unavailable", "The engine stopped before the permission could be applied. Retry; nothing ran on the host.");
+        // Never restart into project-enabled mode on unknown authority. A fresh
+        // denial may update the desired mode and eliminate the transition.
+        if (!await policy.requiresSandbox()) {
+          try { await policy.assertHostExecution(true); }
+          catch (error) { if (!await policy.requiresSandbox()) throw error; }
+        }
+        if (!await needsChange()) return;
+        // The desired setting is already durable. Busy or unknown activity keeps
+        // this process intact; fresh admissions cannot cross its policy mismatch.
+        await assertSandboxEngineIdle(active);
+        isolationRefreshing = true;
+        await applySandboxSettings(config);
+        const resume = allowRunning;
+        await stopRuntime();
+        if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "The engine was stopped while applying permissions. Start it and retry.");
+        allowRunning = true;
+        try { await start(); }
+        catch (error) {
+          recordStartError(error);
+          throw new ApiError(503, "sandbox_engine_refresh_failed", "The permission is saved, but the engine could not refresh. Retry this setting or message; host fallback is disabled.");
+        }
+        if (!sidecar || sidecar.projectConfigDisabled !== await policy.requiresSandbox()) {
+          throw new ApiError(503, "sandbox_engine_permission_changed", "Permissions changed while the engine refreshed. Retry; no task was admitted.");
+        }
+      } });
+    })();
+    isolationInFlight = pending;
+    const settled = pending.finally(() => {
+      if (isolationInFlight === pending) { isolationInFlight = undefined; isolationRefreshing = false; }
+    });
+    return change.deferBusy ? settled.catch(deferBusyIsolation) : settled;
+  }
+
+  async function assertProjectConfigReady(): Promise<void> {
+    if ((await projectIsolationStatus()).pending) {
+      throw new ApiError(409, "sandbox_engine_policy_pending", "Saved. Applies when current tasks finish. No new task was started.");
+    }
+  }
+
+  async function assertSandboxReady(directory: string): Promise<void> {
+    const policy = managedDesktopPolicy(config);
+    await policy.assertHostExecution().catch(() => undefined);
+    await ensureProjectIsolation();
+    if (!await policy.requiresSandbox()) return;
+    const active = sidecar;
+    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement is not ready. No task was admitted.");
+    if (!active.projectConfigDisabled) throw new ApiError(503, "sandbox_engine_restart_required", "Restart the engine to use sandbox-only mode without project configuration or workspace plugins. No task was admitted.");
+    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "Sandbox-only mode requires the supported OpenCode engine. No task was admitted.");
+    const plugins = await active.fetchJson("/api/plugin", { directory, timeoutMs: 10_000 });
+    const instance = engineInstanceId();
+    const expected = join(rootDir, ...(instance ? ["instances", instance] : []), "sandbox-plugin");
+    const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data : [];
+    const installed = data.filter(isRecord).some(plugin => plugin.id === "openwork.sandbox"
+      && isRecord(plugin.state) && plugin.state.status === "active"
+      && isRecord(plugin.source) && plugin.source.type === "local" && plugin.source.path === expected);
+    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement could not be verified in this engine. No task was admitted.");
   }
 
   function checkMcpHealth(): void {
@@ -1025,7 +1130,13 @@ export function createEngineV2Preview(options: {
     // "Only models you provide": the providers v1 omits from `enabled_providers`
     // never reach v2 either, whether configured or connected on this computer.
     const allowsProvider = organizationProviderGate(globalRuntime.managedPolicy);
-    const localAuth = await readLocalProviderAuth();
+    // A source that cannot be read costs only its own providers: the rest of
+    // the mirror still reaches the engine, and the reason stays in the status.
+    const unreadable: string[] = [];
+    const localAuth = await readLocalProviderAuth().catch((error: unknown) => {
+      unreadable.push(errorMessage(error));
+      return { apiKeys: new Map<string, string>(), signIns: new Set<string>() };
+    });
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
@@ -1037,6 +1148,7 @@ export function createEngineV2Preview(options: {
     const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
     const local = await localProviderDefinitions(config, localAuth, { ...configured, ...userFile.claimed }, {
       allows: allowsProvider, native, environment,
+      onCatalogError: () => { unreadable.push("Could not read locally connected provider metadata"); },
     });
     const blockedConfigured = Object.keys(configured).filter(id => allowsProvider && !allowsProvider(id));
     const combinedProviders = { ...local.providers, ...Object.fromEntries(Object.entries(configured)
@@ -1092,7 +1204,7 @@ export function createEngineV2Preview(options: {
     for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
     const catalog = await waitForEngineV2Catalog(active, workspaceDir, specs, CATALOG_MIRROR_TIMEOUT_MS, ownsGateway);
     currentCatalogModelIds = catalog.modelIds;
-    lastError = [...templates.errors, ...userFile.errors].map(error => error.message)
+    lastError = [...unreadable, ...[...templates.errors, ...userFile.errors].map(error => error.message)]
       .concat(catalog.lastError ? [catalog.lastError] : []).join("\n") || undefined;
   }
 
@@ -1134,6 +1246,8 @@ export function createEngineV2Preview(options: {
     mcpLocations.clear();
     if (mcpHealthTimer) clearInterval(mcpHealthTimer);
     mcpHealthTimer = undefined;
+    if (isolationTimer) clearInterval(isolationTimer);
+    isolationTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
@@ -1157,7 +1271,10 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload) : undefined;
+    // No old native process remains at cold startup or after the idle fence.
+    // Materialize durable desired intent before the bridge decides spawn policy.
+    await applySandboxSettings(config);
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends, config) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
     const globalSkills = globalSkillDirectories();
@@ -1211,6 +1328,13 @@ export function createEngineV2Preview(options: {
       });
       mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
       mcpHealthTimer.unref?.();
+      // Native isolation is process-global. Reconcile both directions without
+      // making the person find an idle moment or resend their saved preference.
+      isolationTimer = setInterval(() => {
+        if (stopping || !allowRunning || !sidecar) return;
+        void ensureProjectIsolation({ deferBusy: true }).catch(error => warn(`Permissions: ${errorMessage(error)}`));
+      }, 500);
+      isolationTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
@@ -1293,6 +1417,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
+    await managedDesktopPolicy(config).assertHostExecution((await readSandboxSettings(config)).allowHostExecution);
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1355,6 +1480,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
+    await assertProjectConfigReady();
     // Read local inventory first so mixed local/Gateway startup keeps local
     // readiness. This is not the provider push or catalog confirmation join.
     if (ownsGateway() && providerDiscovery) await providerDiscovery;
@@ -1495,5 +1621,7 @@ export function createEngineV2Preview(options: {
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
+    refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
+    syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }
