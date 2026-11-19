@@ -28,6 +28,7 @@ export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
 export { default as nativeMcpEvents } from "@openwork/features/flags/native-mcp-events"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
+export { default as personalSkillPortability } from "@openwork/features/flags/personal-skill-portability"
 export { default as providerFilterSyncFix } from "@openwork/features/flags/provider-filter-sync-fix"
 export { default as questionInThread } from "@openwork/features/flags/question-in-thread"
 export { default as questionMinimize } from "@openwork/features/flags/question-minimize"
