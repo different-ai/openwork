@@ -131,6 +131,8 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/artifact-views/:artifactViewId/retire", "tenant_change", "artifact_view.retire", "workflow.management", "artifact_view", "artifactViewId", { notes: "MCP retire_artifact_view mutates directly (service layer)." }),
 
   // Config objects
+  member("GET", "/v1/me/personal-skills/export", "tenant_access", "personal_skills.export", "config_object.configuration", "config_object", null, { notes: "Session-only and recent sign-in; reads only the caller's own unshared SKILL.md source in the current workspace. Source is not audit evidence." }),
+  member("POST", "/v1/me/personal-skills/import", "tenant_change", "personal_skills.import", "config_object.configuration", "config_object", null, { notes: "Session-only and recent sign-in; creates new private skills for the caller. Source is not audit evidence." }),
   member("GET", "/v1/config-objects", "tenant_access", "config_object.list", "config_object.configuration", "config_object", null, { notes: `Each item embeds latestVersion including rawSourceText (Workflow/App source redacted). ${MCP_NATIVE}` }),
   member("POST", "/v1/config-objects", "tenant_change", "config_object.create", "config_object.configuration", "config_object", null, { notes: MCP_NATIVE }),
   member("GET", "/v1/config-objects/:configObjectId", "tenant_access", "config_object.read", "config_object.configuration", "config_object", "configObjectId", { notes: `Returns the latest version source. ${MCP_NATIVE}` }),
