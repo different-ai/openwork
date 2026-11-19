@@ -1,8 +1,3 @@
-/**
- * Korean translations (한국어)
- * Product names stay in English: OpenCode, OpenPackage, OpenWork, MCP, Cloud, Den
- */
-
 export default {
   "account.mcp_connected_one": "MCP 서버 {count}개",
   "account.mcp_connected_other": "MCP 서버 {count}개",
