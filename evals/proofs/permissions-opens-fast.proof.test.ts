@@ -55,10 +55,11 @@ test("a signed-in member with twelve workspaces can open Permissions while organ
     const result = await measure(2_100, 3_000);
     const requests = world.proxy.requests.slice(offset);
     const held = requests.filter(row => row.durationMs === undefined).length;
+    // The two earlier opens verified the organization's settings, so checking them again shows nothing.
     const notice = Object.keys(result.notices).includes(checking);
     const notices = forbidden(result.notices);
-    const ok = held > 0 && result.marks.tti !== undefined && result.marks.tti <= coldBudget && notice && notices.length === 0;
-    evidence.recordAssertionEvidence("The organization check is quiet and does not block either section", `TTI ${tti(result.marks.tti)} / ${coldBudget} ms; ${held} requests still unanswered; organization check ${notice ? "shown" : "not shown"}; blocking notices: ${notices.join(", ") || "none"}.`, ok);
+    const ok = held > 0 && result.marks.tti !== undefined && result.marks.tti <= coldBudget && !notice && notices.length === 0;
+    evidence.recordAssertionEvidence("Checking already verified organization settings again is silent and does not block either section", `TTI ${tti(result.marks.tti)} / ${coldBudget} ms; ${held} requests still unanswered; organization check note ${notice ? "shown" : "not shown"}; blocking notices: ${notices.join(", ") || "none"}.`, ok);
     await user.screenshot();
     expect(ok).toBe(true);
   });

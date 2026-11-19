@@ -596,19 +596,22 @@ class ManagedDesktopPolicy {
     const generation = this.generation;
     if (!session) return;
     if (!this.desktopFresh()) {
-      // An already old in-flight response cannot establish an Allow. If it
-      // completes, read again independently of the rollout request.
-      const joined = this.sandboxDesktopRead?.generation === generation;
+      // An answer to a read sent before this check began cannot establish an
+      // Allow once it is old: read again. An answer to a read sent after the
+      // check began is current however long it took to arrive, so a slow
+      // organization service does not leave the member sandbox-only.
+      const checkStartedAt = performance.now();
+      const current = () => this.sandboxDesktopSentAt >= checkStartedAt || this.desktopFresh();
       let verified = false;
       try {
         await this.readSandboxDesktopConfig(session, generation);
         verified = true;
-        if (joined && !this.desktopFresh() && this.sandboxFreshnessMs > 0 && !this.sandboxOrgForce) {
+        if (!current() && this.sandboxFreshnessMs > 0 && !this.sandboxOrgForce) {
           await this.readSandboxDesktopConfig(session, generation);
         }
       } catch { this.identityChanged(generation); }
       this.identityChanged(generation);
-      if (!this.sandboxOrgForce && verified && this.sandboxFreshnessMs > 0 && !this.desktopFresh()) {
+      if (!this.sandboxOrgForce && verified && this.sandboxFreshnessMs > 0 && !current()) {
         throw new ApiError(503, "policy_unavailable", "OpenWork couldn't check your permissions. Reconnect and try again. Nothing ran.");
       }
     }

@@ -231,6 +231,33 @@ test("verified org deny beats local allow, survives flag off/outage and scoped c
   } finally { await den.stop(); await f.cleanup(); }
 });
 
+test("a slow organization answer still verifies host authority instead of leaving the member sandbox-only", async () => {
+  const f = await fixture();
+  let required = false;
+  let reads = 0;
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
+    if (new URL(request.url).pathname === "/v1/org") return Response.json({ features: { sandboxTools: false } });
+    reads++;
+    // Every answer takes longer than the freshness window allows an answer to stay current.
+    await delay(120);
+    return Response.json({ agentPermissions: { rules: required ? [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] : [] } });
+  } });
+  const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 40 });
+  try {
+    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_slow_link", token: "slow-fixture-token" });
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    // A check that joins a read sent before it began does not trust that older read.
+    const earlier = policy.verifySandboxHostAuthority();
+    await delay(60);
+    const before = reads;
+    await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    await earlier;
+    expect(reads).toBeGreaterThan(before);
+    required = true;
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+  } finally { await policy.clearSession(); await den.stop(); await f.cleanup(); }
+});
+
 test("a first unverified sign-in never grants host execution, even with local allow and no cached org deny", async () => {
   const f = await fixture();
   let unavailable = true;
