@@ -24,6 +24,7 @@ import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFr
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
+import type { McpCredentialProofSource } from "./credential-proof.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "./headless-run-token.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
@@ -147,6 +148,18 @@ export function mcpPrincipalCredentialId(principal: McpPrincipal): string | null
   if (runTokenId) return `run_token:${runTokenId}`
   const clientId = readStringClaim(payload, "client_id") ?? readStringClaim(payload, "azp")
   return clientId ? `client:${clientId}` : null
+}
+
+/** Classify only a verified principal, in the same order as verifyMcpRequest's liveness checks. */
+export function mcpPrincipalProofSource(principal: McpPrincipal): McpCredentialProofSource | null {
+  const grantId = readStringClaim(principal.payload, DEN_MCP_GRANT_ID_CLAIM)
+  if (grantId) return { kind: "grant", grantId }
+  if (principal.payload.client_id === DEN_MCP_HEADLESS_RUN_CLIENT_ID) {
+    const tokenId = readStringClaim(principal.payload, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM)
+    return tokenId ? { kind: "run", tokenId } : null
+  }
+  const sessionId = readStringClaim(principal.payload, "sid")
+  return sessionId ? { kind: "session", sessionId } : null
 }
 
 function readTokenAudiences(payload: Record<string, unknown>) {

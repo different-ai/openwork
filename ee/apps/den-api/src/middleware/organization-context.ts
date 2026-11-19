@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { beginAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
-import { findSsoAccessBlock, ssoRequiredErrorBody } from "../organization-sso-access.js"
+import { agentSsoRequiredErrorBody, findSsoAccessBlock, findSsoAccessBlockForCredential, ssoRequiredErrorBody } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
@@ -22,8 +22,12 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const session = c.get("session")
+  const internalMcp = session?.internalMcp
+  const scopedOrganizationId = internalMcp?.organizationId ?? apiKeyScopedOrganizationId ?? headerOrganizationId
+  if (internalMcp && headerOrganizationId && headerOrganizationId !== internalMcp.organizationId) {
+    return c.json({ error: "forbidden", message: "This agent credential is scoped to a different organization." }, 403) as never
+  }
   const userId = normalizeDenTypeId("user", user.id)
 
   let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null
@@ -101,9 +105,11 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   // session signed in through its SSO. API keys are issued from such a
   // session (POST /v1/api-keys runs behind this check), so they are not re-checked.
   if (!apiKey) {
-    const ssoBlock = await findSsoAccessBlock({ sessionId: session?.id ?? null, organizationId: normalizedOrganizationId })
+    const ssoBlock = internalMcp
+      ? await findSsoAccessBlockForCredential(internalMcp.proofSource, normalizedOrganizationId)
+      : await findSsoAccessBlock({ sessionId: session?.id ?? null, organizationId: normalizedOrganizationId })
     if (ssoBlock) {
-      return c.json(ssoRequiredErrorBody(ssoBlock), 403) as never
+      return c.json(internalMcp ? agentSsoRequiredErrorBody(ssoBlock, internalMcp.proofSource) : ssoRequiredErrorBody(ssoBlock), 403) as never
     }
   }
 

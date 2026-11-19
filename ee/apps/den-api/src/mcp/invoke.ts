@@ -1,6 +1,6 @@
 import type { Hono } from "hono"
 import { createInternalCapabilityConnectorHeader, createInternalMcpPrincipalHeader, INTERNAL_CAPABILITY_CONNECTOR_HEADER } from "../session.js"
-import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
+import { mcpPrincipalCredentialId, mcpPrincipalProofSource, type McpPrincipal } from "./auth.js"
 import type { McpToolOperation } from "./catalog.js"
 import { requiredScopeForMethod } from "./policy.js"
 import { buildRestToolContent } from "./tool-content.js"
@@ -91,6 +91,7 @@ function buildInternalRequest(input: {
       userId: input.principal.userId,
       organizationId: input.principal.organizationId,
       credentialId: mcpPrincipalCredentialId(input.principal),
+      proofSource: mcpPrincipalProofSource(input.principal),
     }),
   })
   if (input.nativeConnectionId) {

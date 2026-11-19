@@ -12,12 +12,15 @@ import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { sessionRefreshDue } from "./session-security-settings.js"
+import { isMcpCredentialProofSource, type McpCredentialProofSource } from "./mcp/credential-proof.js"
 
 type AuthSessionValue = {
   user: CachedAuthSession["user"]
   session: Omit<CachedAuthSession["session"], "id" | "token"> & {
     id: string
     token: string
+    /** Set only after verifying Den's signed internal header. This credential may never change organizations. */
+    internalMcp?: { organizationId: string; proofSource: McpCredentialProofSource | null }
   }
 }
 type AuthSessionLike = AuthSessionValue | null
@@ -66,6 +69,7 @@ type InternalMcpPrincipal = {
   expiresAt: number
   /** MCP grant/client/run-token identifier (`grant:<id>` …) for audit attribution; never token material. */
   credentialId?: string
+  proofSource?: McpCredentialProofSource
 }
 
 type InternalCapabilityConnector = InternalMcpPrincipal & {
@@ -101,12 +105,13 @@ function verifySignature(payload: string, signature: string) {
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
 
-export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string; credentialId?: string | null }) {
+export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string; credentialId?: string | null; proofSource?: McpCredentialProofSource | null }) {
   const principal: InternalMcpPrincipal = {
     userId: normalizeDenTypeId("user", input.userId),
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     expiresAt: Date.now() + INTERNAL_MCP_PRINCIPAL_TTL_MS,
     ...(input.credentialId ? { credentialId: input.credentialId } : {}),
+    ...(input.proofSource ? { proofSource: input.proofSource } : {}),
   }
   const payload = Buffer.from(JSON.stringify(principal), "utf8").toString("base64url")
   return `${payload}.${signPrincipalPayload(payload)}`
@@ -141,18 +146,28 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
     return null
   }
 
-  let parsed: InternalMcpPrincipal
+  let parsed: unknown
   try {
-    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as InternalMcpPrincipal
+    parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"))
   } catch {
     return null
   }
 
-  if (typeof parsed.userId !== "string" || typeof parsed.organizationId !== "string" || typeof parsed.expiresAt !== "number" || parsed.expiresAt < Date.now()) {
+  if (typeof parsed !== "object" || parsed === null
+    || !("userId" in parsed) || typeof parsed.userId !== "string"
+    || !("organizationId" in parsed) || typeof parsed.organizationId !== "string"
+    || !("expiresAt" in parsed) || typeof parsed.expiresAt !== "number" || parsed.expiresAt < Date.now()
+    || ("proofSource" in parsed && !isMcpCredentialProofSource(parsed.proofSource))) {
     return null
   }
 
-  return parsed
+  return {
+    userId: parsed.userId,
+    organizationId: parsed.organizationId,
+    expiresAt: parsed.expiresAt,
+    ...("credentialId" in parsed && typeof parsed.credentialId === "string" ? { credentialId: parsed.credentialId } : {}),
+    ...("proofSource" in parsed && isMcpCredentialProofSource(parsed.proofSource) ? { proofSource: parsed.proofSource } : {}),
+  }
 }
 
 /**
@@ -228,6 +243,7 @@ async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(Au
     session: {
       id: "mcp_internal",
       token: "mcp_internal",
+      internalMcp: { organizationId: parsed.organizationId, proofSource: parsed.proofSource ?? null },
       userId: user.id,
       activeOrganizationId: normalizeDenTypeId("organization", parsed.organizationId),
       activeTeamId: null,

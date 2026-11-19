@@ -9,7 +9,8 @@ import { DEN_MCP_OAUTH_RESOURCE } from "../auth.js"
 import { cloudAutomationRuntime } from "../automations/headless-runtime.js"
 import { db } from "../db.js"
 import { attributeAuditRequest, auditUserPrincipalKey } from "../audit/request-capture.js"
-import { mcpPrincipalCredentialId, verifyMcpRequest } from "../mcp/auth.js"
+import { mcpPrincipalCredentialId, mcpPrincipalProofSource, verifyMcpRequest } from "../mcp/auth.js"
+import type { McpCredentialProofSource } from "../mcp/credential-proof.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { mintHeadlessTurnCredentials } from "../headless-runner/resume-grants.js"
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
@@ -193,6 +194,7 @@ type Resolved = {
   memberId: string
   /** MCP grant/client id of the Workbot token (never token material). */
   credentialId: string | null
+  proofSource: McpCredentialProofSource | null
 }
 
 /** What a ranged file answer says about its bytes, for a media player that asked for a range. */
@@ -287,6 +289,7 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
     organization,
     memberId: member.id,
     credentialId: mcpPrincipalCredentialId(verified),
+    proofSource: mcpPrincipalProofSource(verified),
   }
 }
 
@@ -709,7 +712,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         try { normalizeDenTypeId("externalMcpConnection", connectionId) } catch { return c.json({ error: "invalid_request" }, 400) }
       }
       const query = new URLSearchParams({ workbotReturnPath: input.returnPath, workbotRequestId: input.requestId })
-      const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId }) })
+      const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId, proofSource: resolved.proofSource }) })
       const base = resolvePublicApiBaseUrl(c.req.raw, env.apiPublicUrl)
       const response = await app.fetch(new Request(new URL(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/start?${query}`, c.req.url), { headers }))
       const payload: unknown = await response.json().catch(() => null)
@@ -767,6 +770,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
           userId: resolved.principal.userId,
           organizationId: resolved.principal.organizationId,
           credentialId: resolved.credentialId,
+          proofSource: resolved.proofSource,
         }),
       })
       if (body !== undefined) headers.set("content-type", "application/json")
@@ -807,7 +811,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (!read && !inner.endsWith("/close") && !features.workbotDocumentEditing) return c.json({ error: "feature_disabled", message: "Document editing is off for this workspace." }, 403)
       if (!resolved.scopes.has(read ? DEN_MCP_READ_SCOPE : DEN_MCP_WRITE_SCOPE)) return c.json({ error: "insufficient_scope" }, 403)
       const url = new URL(c.req.url)
-      const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId }) })
+      const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId, proofSource: resolved.proofSource }) })
       let body: string | undefined
       if (!read) {
         // The destination's bodyLimit is also authoritative, including for a forged Content-Length.

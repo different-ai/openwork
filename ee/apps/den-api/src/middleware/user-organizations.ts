@@ -3,7 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { beginUserOrganizationsAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
-import { findSsoBlockedOrganizations } from "../organization-sso-access.js"
+import { agentSsoRequiredErrorBody, findSsoAccessBlockForCredential, findSsoBlockedOrganizations } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 
 export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
@@ -72,7 +72,11 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
+  const internalMcp = session?.internalMcp
+  const scopedOrganizationId = internalMcp?.organizationId ?? apiKeyScopedOrganizationId ?? headerOrganizationId
+  if (internalMcp && headerOrganizationId && headerOrganizationId !== internalMcp.organizationId) {
+    return c.json({ error: "forbidden", message: "This agent credential is scoped to a different organization." }, 403) as never
+  }
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
@@ -87,11 +91,13 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
 
-  // never act in an organization that requires SSO from a
-  // session that did not sign in through it. Fall back to the first
-  // organization the session may open; the list itself stays complete so the
-  // person can still choose it (and be sent through its SSO).
-  if (!apiKey && activeOrganizationId) {
+  // Internal credentials may act only in their signed organization, never a fallback.
+  // Browser sessions may fall back to an openable organization; their list stays
+  // complete so the person can still choose another (and be sent through its SSO).
+  if (internalMcp && activeOrganizationId) {
+    const block = await findSsoAccessBlockForCredential(internalMcp.proofSource, activeOrganizationId)
+    if (block) return c.json(agentSsoRequiredErrorBody(block, internalMcp.proofSource), 403) as never
+  } else if (!apiKey && activeOrganizationId) {
     const blocked = await findSsoBlockedOrganizations({ sessionId: session?.id ?? null, organizationIds: scopedOrgs.map((org) => org.id) })
     if (blocked.has(activeOrganizationId)) {
       const fallback = scopedOrganizationId ? null : scopedOrgs.find((org) => !blocked.has(org.id)) ?? null

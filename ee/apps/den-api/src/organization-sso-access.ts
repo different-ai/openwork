@@ -12,6 +12,7 @@ import {
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import type { McpCredentialProofSource } from "./mcp/credential-proof.js"
 import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
 import {
   blocksNonSsoSignIn,
@@ -286,7 +287,7 @@ export async function findSsoBlockedOrganizations(input: { sessionId: string | n
   const required = await readSsoRequiredOrganizations(input.organizationIds)
   const result = new Map<string, SsoAccessBlock>()
   if (required.size === 0) return result
-  const proofs = input.sessionId ? await readSessionSsoProofs(input.sessionId) : new Map<string, Date>()
+  const proofs = await readSessionSsoProofs(input.sessionId ?? "")
   for (const [organizationId, block] of required) {
     if (proofs.has(organizationId)) continue
     result.set(organizationId, block)
@@ -315,6 +316,26 @@ export async function findSsoAccessBlock(input: { sessionId: string | null; orga
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const blocked = await findSsoBlockedOrganizations({ sessionId: input.sessionId, organizationIds: [organizationId] })
   return blocked.get(organizationId) ?? null
+}
+
+/** Only session-backed MCP credentials currently carry a checkable organization SSO proof. */
+export async function findSsoAccessBlockForCredential(proofSource: McpCredentialProofSource | null | undefined, organizationId: string) {
+  return findSsoAccessBlock({
+    sessionId: proofSource?.kind === "session" ? proofSource.sessionId : null,
+    organizationId,
+  })
+}
+
+export function agentSsoRequiredErrorBody(block: SsoAccessBlock, proofSource: McpCredentialProofSource | null) {
+  return {
+    error: "sso_required" as const,
+    reason: "agent_credential_without_sso_proof" as const,
+    message: proofSource?.kind === "session"
+      ? "Agent access requires a credential backed by this organization's SSO sign-in. Sign in with its SSO, then reconnect OpenWork Connect."
+      : "This organization requires SSO, but this agent credential carries no supported proof. This route does not support SSO proof from OAuth grants or unattended run credentials.",
+    organizationId: block.organizationId,
+    ...(proofSource?.kind === "session" ? { signInPath: block.signInPath, signInUrl: ssoSignInUrl(block.signInPath) } : {}),
+  }
 }
 
 export const SSO_REQUIRED_MESSAGE = "This organization requires single sign-on. Sign in with its SSO to continue."
