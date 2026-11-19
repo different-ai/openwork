@@ -4,7 +4,7 @@ import { sessionMultiSelectWorld } from "../worlds/session-multi-select.ts";
 
 const test = spec.world(sessionMultiSelectWorld, {
   timeout: 600_000,
-  resources: { surfaces: ["appWeb"], services: ["den"] },
+  resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
 const selectedRows = '[data-session-multi-selected="true"]';
