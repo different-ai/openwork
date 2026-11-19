@@ -81,6 +81,17 @@ import { db } from "../../../db.js"
 import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
+import {
+  SKILL_FILE_MAX_BYTES,
+  SKILL_FILES_MAX_COUNT,
+  SKILL_FILES_MAX_TOTAL_BYTES,
+  checkSkillFiles,
+  isSkillFileText,
+  sameSkillFiles,
+  skillFilePathProblem,
+  skillFilesFromPayload,
+  type SkillFile,
+} from "../../../skill-files.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -294,6 +305,8 @@ type GithubPluginMcpImportPlugin = {
 
 type GithubPluginSkillImportSkill = {
   description: string | null
+  /** Text files beside SKILL.md, read only for the skills an import will store. */
+  files?: SkillFile[]
   name: string
   pluginKey: string
   pluginName: string
@@ -640,6 +653,31 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
     snapshot,
   }))
   return Object.fromEntries(paths.map((path, index) => [path, texts[index] ?? null]))
+}
+
+/**
+ * What a skill version stores beside its SKILL.md: its supporting files, under
+ * `files`. A write that names no payload keeps the files of the version before
+ * it, so editing SKILL.md alone never drops them; a payload replaces them.
+ */
+function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigObjectInput }): Record<string, unknown> | null {
+  const payload = input.value.normalizedPayloadJson
+  if (payload === undefined) {
+    const kept = skillFilesFromPayload(input.previousPayload)
+    return kept.length > 0 ? { files: kept } : null
+  }
+  const { files: rawFiles, ...rest } = payload
+  if (rawFiles === undefined) return Object.keys(rest).length > 0 ? rest : null
+  const checked = checkSkillFiles(rawFiles)
+  if ("problem" in checked) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_files",
+      checked.problem.path ? `${checked.problem.message} (${checked.problem.path})` : checked.problem.message,
+    )
+  }
+  const next = checked.files.length > 0 ? { ...rest, files: checked.files } : rest
+  return Object.keys(next).length > 0 ? next : null
 }
 
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -1749,7 +1787,9 @@ export async function createConfigObject(input: {
         createdVia: input.sourceMode,
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+        normalizedPayloadJson: input.objectType === "skill"
+          ? skillVersionPayload({ value: input.value })
+          : input.value.normalizedPayloadJson ?? null,
         organizationId,
         rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1857,6 +1897,14 @@ export async function createConfigObjectVersion(input: {
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
+  const normalizedPayloadJson = row.objectType === "skill"
+    ? skillVersionPayload({
+      previousPayload: input.value.normalizedPayloadJson === undefined
+        ? (await getLatestVersions([row.id])).get(row.id)?.normalizedPayloadJson
+        : undefined,
+      value: input.value,
+    })
+    : input.value.normalizedPayloadJson ?? null
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectVersionTable).values({
       configObjectId: row.id,
@@ -1866,7 +1914,7 @@ export async function createConfigObjectVersion(input: {
       createdVia: row.sourceMode === "connector" ? "connector" : row.sourceMode,
       id: createDenTypeId("configObjectVersion"),
       isDeletedVersion: false,
-      normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+      normalizedPayloadJson,
       organizationId: row.organizationId,
       rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -5294,7 +5342,45 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean; organizationId?: OrganizationId }): Promise<GithubPluginMcpImportPlan> {
+/**
+ * The text files in a skill's folder besides SKILL.md, read from the repository.
+ * Files that are too large, not text, or past the per-skill limits are left out.
+ */
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<SkillFile[]> {
+  if (!input.sourcePath.endsWith("/SKILL.md")) return []
+  const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
+  const candidates: Array<{ discoveryPath: string; path: string }> = []
+  let budget = SKILL_FILES_MAX_TOTAL_BYTES
+  const entries = input.snapshot.treeEntries
+    .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
+    .sort((a, b) => a.path.localeCompare(b.path))
+  for (const entry of entries) {
+    if (candidates.length === SKILL_FILES_MAX_COUNT) break
+    const path = entry.path.slice(directory.length + 1)
+    if (entry.size === null || entry.size > SKILL_FILE_MAX_BYTES || entry.size > budget || skillFilePathProblem(path)) continue
+    budget -= entry.size
+    candidates.push({ discoveryPath: entry.path, path })
+  }
+  const texts = await mapPublicGithubConcurrently(candidates, (candidate) => getPublicGithubTextFile({
+    branch: input.snapshot.branch,
+    discoveryPath: candidate.discoveryPath,
+    snapshot: input.snapshot,
+  }))
+  const files = candidates.flatMap((candidate, index) => {
+    const text = texts[index]
+    return typeof text === "string" && isSkillFileText(text) ? [{ path: candidate.path, text }] : []
+  })
+  const checked = checkSkillFiles(files)
+  return "files" in checked ? checked.files : []
+}
+
+async function computeGithubPluginMcpImportPlan(input: {
+  githubUrl: string
+  includeSkillText?: boolean
+  /** Also read the supporting files of these skills ("all", or the selected skill keys). */
+  includeSkillFilesFor?: "all" | ReadonlySet<string>
+  organizationId?: OrganizationId
+}): Promise<GithubPluginMcpImportPlan> {
   const target = parsePublicGithubPluginUrl(input.githubUrl)
   const snapshot = await getPublicGithubRepositoryTree(target)
   const fileTextByPath = await getPublicGithubDiscoveryFileTexts(snapshot)
@@ -5337,6 +5423,14 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
           sourcePath: job.path,
         }))
       }
+    }
+  }
+
+  const skillFilesFor = input.includeSkillFilesFor
+  if (skillFilesFor) {
+    for (const skill of skills) {
+      if (!skill.supported || (skillFilesFor !== "all" && !skillFilesFor.has(skill.skillKey))) continue
+      skill.files = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
     }
   }
 
@@ -6213,6 +6307,7 @@ async function grantImportAccessToPluginArchResource(input: {
 }
 
 type ImportedGithubObject = {
+  files: SkillFile[]
   id: ConfigObjectId
   mcpUrlKeys: string[]
   objectType: "mcp" | "skill"
@@ -6297,6 +6392,7 @@ async function importedGithubObjects(context: PluginArchActorContext, pluginId: 
       mcpUrlKeys: object.objectType === "mcp"
         ? servers.flatMap((server) => typeof server.url === "string" ? [importedMcpKey(server.url)] : [])
         : [],
+      files: object.objectType === "skill" ? skillFilesFromPayload(payload) : [],
       objectType: object.objectType,
       rawSourceText: object.objectType === "skill" ? version?.rawSourceText ?? null : null,
       // Only a GitHub import's own objects carry a source path it may prune by.
@@ -6371,12 +6467,13 @@ export async function importGithubPluginMcps(input: {
   if (input.marketplaceId) {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
+  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const plan = await computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
     includeSkillText: true,
+    includeSkillFilesFor: input.selectedSkillKeys === undefined ? "all" : selectedSkillKeys,
     organizationId: input.context.organizationContext.organization.id,
   })
-  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
   const consideredServers = selectedServerKeys.size > 0
@@ -6536,6 +6633,7 @@ export async function importGithubPluginMcps(input: {
     if (!skillText) {
       throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
     }
+    const skillFiles = skill.files ?? []
     const metadata = skillMetadataFromText(skillText)
     const sourcePath = githubImportSourcePath(plan, skill.sourcePath)
     const byPath = sourcePath ? existingBySourcePath.get(sourcePath) : undefined
@@ -6545,7 +6643,7 @@ export async function importGithubPluginMcps(input: {
       matchedObjectIds.add(existingSkill.id)
       await recordGithubImportSourcePath(existingSkill, sourcePath)
       // Stored text is trimmed on write; compare the same way.
-      if (existingSkill.rawSourceText?.trim() === skillText.trim()) {
+      if (existingSkill.rawSourceText?.trim() === skillText.trim() && sameSkillFiles(existingSkill.files, skillFiles)) {
         unchanged.push({ name: metadata.title, objectType: "skill" })
         continue
       }
@@ -6553,7 +6651,8 @@ export async function importGithubPluginMcps(input: {
         context: input.context,
         configObjectId: existingSkill.id,
         reason: `Re-imported from ${input.githubUrl}`,
-        value: { rawSourceText: skillText },
+        // Always named, so a file removed upstream is removed here too.
+        value: { normalizedPayloadJson: { files: skillFiles }, rawSourceText: skillText },
       })
       updatedSkills.push({ configObjectId: existingSkill.id, name: metadata.title, sourcePath: skill.sourcePath })
       continue
@@ -6574,6 +6673,7 @@ export async function importGithubPluginMcps(input: {
           sourceSchemaVersion: skill.sourceSchemaVersion,
           sourcePath: skill.sourcePath,
         },
+        ...(skillFiles.length > 0 ? { normalizedPayloadJson: { files: skillFiles } } : {}),
         rawSourceText: skillText,
       },
     })
