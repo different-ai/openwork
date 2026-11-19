@@ -65,6 +65,24 @@ test("a skill's supporting files are stored, kept across a SKILL.md edit, listed
   assert.equal(contents[0]?.text, files[0]!.text, JSON.stringify(read))
   assert.equal(contents[0]?.mimeType, "text/markdown")
 
+  // get_skill, the tool every client calls, names the files and reads one.
+  const loaded = await den.callMcpTool(caseyToken, "get_skill", { name: skillName })
+  assert.equal(loaded.isError, false, loaded.raw.slice(0, 400))
+  assert.deepEqual(list(field(loaded.structured, "files")).map((file) => file.path), ["references/GUIDE.md", "scripts/run.sh"])
+  assert.match(loaded.text, /Read references\/GUIDE\.md first\./)
+  assert.match(loaded.text, /Supporting files of this skill[\s\S]*- references\/GUIDE\.md\n- scripts\/run\.sh$/)
+  const guide = await den.callMcpTool(caseyToken, "get_skill", { name: skillName, file: "./references/GUIDE.md" })
+  assert.equal(guide.isError, false, guide.raw.slice(0, 400))
+  assert.equal(guide.text, files[0]!.text)
+  assert.equal(field(guide.structured, "file", "path"), "references/GUIDE.md")
+  const missing = await den.callMcpTool(caseyToken, "get_skill", { name: skillName, file: "references/OTHER.md" })
+  assert.equal(missing.isError, true)
+  assert.equal(field(missing.body, "error"), "unknown_skill_file")
+  assert.deepEqual(field(missing.body, "files"), ["references/GUIDE.md", "scripts/run.sh"])
+  const deniedFile = await den.callMcpTool(novaToken, "get_skill", { name: skillName, file: "references/GUIDE.md" })
+  assert.equal(deniedFile.isError, true)
+  assert.equal(deniedFile.raw.includes("supporting-file proof phrase"), false)
+
   // Not listed in the manifest means not readable.
   const unlisted = await mcp(caseyToken, "resources/read", { uri: `${root}references/OTHER.md` })
   assert.notEqual(unlisted.error, undefined)

@@ -878,6 +878,18 @@ export async function listAccessibleMarketplaceSkillSources(input: {
   return sources
 }
 
+/**
+ * The supporting files of one skill. It checks no access: call it only for a
+ * skill executeMarketplaceCapability has just served to this member.
+ */
+export async function readMarketplaceSkillFiles(input: { configObjectId: string; organizationId: string }): Promise<SkillFile[]> {
+  const version = await latestVersion(
+    normalizeDenTypeId("configObject", input.configObjectId),
+    normalizeDenTypeId("organization", input.organizationId),
+  )
+  return skillFilesFromPayload(version?.normalizedPayloadJson)
+}
+
 async function latestVersion(configObjectId: ConfigObjectId, organizationId: OrganizationId) {
   const rows = await db
     .select()

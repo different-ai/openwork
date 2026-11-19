@@ -45,7 +45,7 @@ import {
   type CapabilityMatch,
 } from "./search.js"
 import { mcpMemberForToken, resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
-import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, readMarketplaceSkillFiles, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { findSkillFile, registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
@@ -368,7 +368,11 @@ export async function readRemoteSkillSource(input: {
     }
     return null
   }
-  return { content: result.content, provenance: result.provenance }
+  return {
+    content: result.content,
+    provenance: result.provenance,
+    files: await readMarketplaceSkillFiles({ organizationId: input.organizationId, configObjectId: marketplace.configObjectId }),
+  }
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -1048,11 +1052,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     registerAgentSkillCatalogTools({
       server,
       listSkills: loadRemoteSkills,
-      readSkill: (skill) => readRemoteSkillSource({
+      // Reading one supporting file is not a new use of the skill.
+      readSkill: (skill, read) => readRemoteSkillSource({
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
-        recordUse: true,
+        recordUse: read.file === undefined,
       }),
     })
 
