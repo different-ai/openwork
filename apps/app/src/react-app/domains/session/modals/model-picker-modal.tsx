@@ -1,54 +1,29 @@
-/** @jsxImportSource react */
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { Check, ChevronDown, ChevronRight, RefreshCw, Search, Star } from "lucide-react";
-
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+import { useEffect, useRef } from "react";
+import { Cloud } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { t } from "@/i18n";
-import { readDenSettings } from "@/app/lib/den";
-import { FAST_PRICING_WARNING, getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
-import {
-  gatewayConnectCopy,
-  gatewayConnectProviderKey,
-  type GatewayConnectProvider,
-  OPENWORK_GATEWAY_BADGE_LABEL,
-} from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { modelEquals, resolveProviderDisplayName } from "../../../../app/utils";
-import type { ModelOption, ModelRef } from "../../../../app/types";
-import { isRecommendedModel } from "../../../../app/defaults";
-import { ProviderIcon } from "../../../design-system/provider-icon";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useSetWorkspaceDefaultModel } from "@/react-app/kernel/use-workspace-model-default";
+import { ModelPickerPanel } from "@/react-app/domains/models/model-picker-panel";
+import { buildModelCatalog, resolveRetainedSelection, withoutBlockedSelection } from "@/react-app/domains/models/catalog";
+import { useModelChoice } from "@/react-app/domains/models/use-model-catalog";
+import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { usePlatform } from "../../../kernel/platform";
-import {
-  OPENWORK_MODELS_PROVIDER_ID,
-  OPENWORK_MODELS_PROVIDER_NAME,
-} from "../../cloud/openwork-models-promo";
+import type { ModelOption, ModelRef } from "@/app/types";
+import { openAutoProviderSettings } from "../../cloud/auto-access-ui";
+import { isAutoModel, managesOwnBehavior, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
-
-export function resolveModelPickerSubtitle(subtitle: string | undefined) {
-  return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE;
-}
+export function resolveModelPickerSubtitle(subtitle: string | undefined) { return subtitle ?? MODEL_PICKER_DEFAULT_SUBTITLE; }
 
 export type ModelPickerModalProps = {
   open: boolean;
-  options: ModelOption[];
+  /** What to list: the shared catalog's options for this surface. */
+  options: readonly ModelCatalogOption[];
+  /** Everything the person could have chosen, disabled rows included; names a saved choice that is not listed. */
+  knownOptions?: readonly ModelCatalogOption[];
   disabledProviders?: string[];
   organizationModelsEmpty?: boolean;
   organizationModelsSettingsUrl?: string;
@@ -63,536 +38,72 @@ export type ModelPickerModalProps = {
   onToggleProvider?: (providerId: string, enabled: boolean) => void;
   onOpenSettings: () => void;
   onClose: (options?: { restorePromptFocus?: boolean }) => void;
-  /** Den entitlement present. Picker no longer upsells here; callers still pass it. */
   openWorkModelsEntitled?: boolean;
-  /** The server is waiting to reload this workspace with OpenWork Models. */
   openWorkModelsSyncing?: boolean;
   onRefreshOrganizationModels?: () => void | Promise<void>;
   restrictToCloud?: boolean;
-  /** Runtime provider ids routed through the OpenWork inference gateway (sync status source "openwork_gateway"). */
   gatewayProviderIds?: ReadonlySet<string>;
-  /** Gateway providers waiting on this member's sign-in; shown as a compact "Connect" hint. */
   gatewayConnectProviders?: GatewayConnectProvider[];
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
+  catalogState?: ModelPickerCatalogState;
+  retainedSelection?: RetainedModelSelection;
+  onSetWorkspaceDefault?: (model: ModelRef, variant?: string | null) => void | boolean | Promise<void | boolean>;
+  onOpenProviderSettings?: () => void;
+  onReloadWorkspace?: () => void | Promise<unknown>;
 };
 
-type ProviderGroup = {
-  id: string;
-  name: string;
-  isNew: boolean;
-  isCloud: boolean;
-  isGateway: boolean;
-  isDisabled: boolean;
-  hasCurrent: boolean;
-  recommended: ModelOption[];
-  other: ModelOption[];
-};
-
-export type ModelPickerEmptyState = {
-  messageKey: string;
-  showConnectProvider: boolean;
-  showRefreshOrganizationModels: boolean;
-  showOrganizationModelsSettings: boolean;
-};
-
-export type ProviderGroupBadge = { label: string; className: string };
-
-/** Header badges for one provider group, in display order. */
-export function resolveProviderGroupBadges(
-  group: Pick<ProviderGroup, "isNew" | "isCloud" | "isGateway" | "hasCurrent">,
-  organizationProviderLabel: string,
-): ProviderGroupBadge[] {
-  const badges: ProviderGroupBadge[] = [];
-  if (group.isNew) badges.push({ label: "New", className: "bg-blue-3 text-blue-11" });
-  if (group.isCloud) badges.push({ label: organizationProviderLabel, className: "bg-blue-3/50 text-blue-11/70" });
-  if (group.isGateway) {
-    badges.push({ label: OPENWORK_GATEWAY_BADGE_LABEL, className: "border-dls-border text-dls-secondary" });
-  }
-  if (group.hasCurrent) badges.push({ label: "Current", className: "bg-green-3 text-green-11" });
-  return badges;
-}
-
-export function resolveModelPickerEmptyState(input: {
-  providerGroupCount: number;
-  query: string;
-  organizationModelsEmpty: boolean;
-  restrictToCloud: boolean;
-  organizationModelsSettingsUrl?: string;
-}): ModelPickerEmptyState | null {
+export type ModelPickerEmptyState = { messageKey: string; showConnectProvider: boolean; showRefreshOrganizationModels: boolean; showOrganizationModelsSettings: boolean };
+export function resolveModelPickerEmptyState(input: { providerGroupCount: number; query: string; organizationModelsEmpty: boolean; restrictToCloud: boolean; organizationModelsSettingsUrl?: string }): ModelPickerEmptyState | null {
   if (input.providerGroupCount > 0) return null;
-  if (input.query.trim()) {
-    return {
-      messageKey: "models.no_models_match_search",
-      showConnectProvider: false,
-      showRefreshOrganizationModels: false,
-      showOrganizationModelsSettings: false,
-    };
-  }
-  if (input.organizationModelsEmpty) {
-    return {
-      messageKey: "models.organization_models_empty",
-      showConnectProvider: false,
-      showRefreshOrganizationModels: true,
-      showOrganizationModelsSettings: Boolean(input.organizationModelsSettingsUrl),
-    };
-  }
-  return {
-    messageKey: "models.no_models_available",
-    showConnectProvider: !input.restrictToCloud,
-    showRefreshOrganizationModels: false,
-    showOrganizationModelsSettings: false,
-  };
+  return { messageKey: input.query.trim() ? "models.no_models_match_search" : input.organizationModelsEmpty ? "models.organization_models_empty" : "models.no_models_available",
+    showConnectProvider: !input.query.trim() && !input.organizationModelsEmpty && !input.restrictToCloud,
+    showRefreshOrganizationModels: !input.query.trim() && input.organizationModelsEmpty,
+    showOrganizationModelsSettings: !input.query.trim() && input.organizationModelsEmpty && Boolean(input.organizationModelsSettingsUrl) };
 }
 
 export function ModelPickerModal(props: ModelPickerModalProps) {
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
-  const [refreshingOrganizationModels, setRefreshingOrganizationModels] = useState(false);
-  const denAuth = useDenAuth();
-  const platform = usePlatform();
-  const organizationModelsSettingsUrl = props.organizationModelsSettingsUrl;
-  const organizationProviderLabel = useMemo(
-    () => readDenSettings().activeOrgName?.trim() || t("settings.provider_source_organization"),
-    [denAuth.status],
-  );
-
-  const disabledSet = useMemo(
-    () => new Set(props.disabledProviders ?? []),
-    [props.disabledProviders],
-  );
-  const currentOption = props.options.find((option) => modelEquals(option, props.current));
-  const currentBehavior = getModelBehaviorSelection(currentOption?.behaviorOptions ?? [],
-    props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : currentOption?.behaviorValue ?? null);
-  const behaviorControls = getModelBehaviorControls(currentBehavior.options, currentBehavior.value);
-
-  // Reset on open
-  useEffect(() => {
-    if (props.open) {
-      props.setQuery("");
-    }
-  }, [props.open]);
-
-  // Focus search
-  useEffect(() => {
-    if (!props.open) return;
-    const frame = requestAnimationFrame(() => searchInputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [props.open]);
-
-  // Filter by search
-  const filteredOptions = useMemo(() => {
-    const q = props.query.trim().toLowerCase();
-    if (!q) return props.options;
-    return props.options.filter(
-      (o) =>
-        o.title.toLowerCase().includes(q) ||
-        o.providerID.toLowerCase().includes(q) ||
-        o.modelID.toLowerCase().includes(q) ||
-        (o.description ?? "").toLowerCase().includes(q),
-    );
-  }, [props.options, props.query]);
-
-  // Group by provider
-  const providerGroups = useMemo<ProviderGroup[]>(() => {
-    const map = new Map<string, ProviderGroup>();
-    for (const opt of filteredOptions) {
-      let group = map.get(opt.providerID);
-      if (!group) {
-        group = {
-          id: opt.providerID,
-          name: opt.description ?? resolveProviderDisplayName(opt.providerID),
-          isNew: !!opt.isRecommended,
-          isCloud: opt.source === "cloud",
-          isGateway: props.gatewayProviderIds?.has(opt.providerID) === true,
-          isDisabled: disabledSet.has(opt.providerID),
-          hasCurrent: false,
-          recommended: [],
-          other: [],
-        };
-        map.set(opt.providerID, group);
-      }
-      if (isRecommendedModel(opt.modelID)) {
-        group.recommended.push(opt);
-      } else {
-        group.other.push(opt);
-      }
-      if (modelEquals(props.current, { providerID: opt.providerID, modelID: opt.modelID })) {
-        group.hasCurrent = true;
-      }
-    }
-    const groups = [...map.values()];
-    for (const group of groups) {
-      group.recommended.sort((a, b) => a.title.localeCompare(b.title));
-      group.other.sort((a, b) => a.title.localeCompare(b.title));
-    }
-    return groups.sort((a, b) => {
-      if (a.isDisabled !== b.isDisabled) return a.isDisabled ? 1 : -1;
-      if (a.isNew !== b.isNew) return a.isNew ? -1 : 1;
-      if (a.hasCurrent !== b.hasCurrent) return a.hasCurrent ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [filteredOptions, props.current, props.gatewayProviderIds, disabledSet]);
-
-  // Auto-expand on search
-  useEffect(() => {
-    if (props.query.trim()) {
-      setExpandedProviders(new Set(providerGroups.map((g) => g.id)));
-    }
-  }, [props.query, providerGroups]);
-
-  // Expand current, organization-provided, and OpenWork groups once they appear
-  // (options often load async).
-  const autoExpandedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!props.open) {
-      autoExpandedRef.current = new Set();
-      return;
-    }
-    const toExpand: string[] = [];
-    const queueExpand = (id: string) => {
-      if (!autoExpandedRef.current.has(id) && !toExpand.includes(id)) toExpand.push(id);
-    };
-    const current = providerGroups.find((group) => group.hasCurrent);
-    if (current) queueExpand(current.id);
-    for (const group of providerGroups) {
-      if (group.isCloud) queueExpand(group.id);
-    }
-    const openwork = providerGroups.find((group) => group.id === OPENWORK_MODELS_PROVIDER_ID);
-    if (openwork) queueExpand(openwork.id);
-    if (toExpand.length === 0) return;
-    for (const id of toExpand) autoExpandedRef.current.add(id);
-    setExpandedProviders((prev) => {
-      const next = new Set(prev);
-      for (const id of toExpand) next.add(id);
-      return next;
-    });
-  }, [props.open, providerGroups]);
-
-  const toggleProvider = useCallback((id: string) => {
-    setExpandedProviders((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }, []);
-
-  const handleSelect = useCallback(
-    (opt: ModelOption) => props.onSelect({ providerID: opt.providerID, modelID: opt.modelID }),
-    [props.onSelect],
-  );
-
-  const handleRefreshOrganizationModels = useCallback(async () => {
-    if (!props.onRefreshOrganizationModels || refreshingOrganizationModels) return;
-    setRefreshingOrganizationModels(true);
-    try {
-      await props.onRefreshOrganizationModels();
-    } finally {
-      setRefreshingOrganizationModels(false);
-    }
-  }, [props.onRefreshOrganizationModels, refreshingOrganizationModels]);
-
-  const emptyState = resolveModelPickerEmptyState({
-    providerGroupCount: providerGroups.length,
-    query: props.query,
-    organizationModelsEmpty: Boolean(props.organizationModelsEmpty),
-    restrictToCloud: Boolean(props.restrictToCloud),
-    organizationModelsSettingsUrl,
-  });
-
-  // Escape
-  useEffect(() => {
-    if (!props.open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose(); }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [props.open]);
-
-  return (
-    <Dialog
-      open={props.open}
-      onOpenChange={(open) => {
-        if (!open) props.onClose();
-      }}
-    >
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t("models.title")}</DialogTitle>
-          <DialogDescription>
-            {resolveModelPickerSubtitle(props.subtitle)}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          {/* Search */}
-          <div className="relative mb-4 shrink-0">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
-              placeholder={t("models.search_placeholder")}
-              value={props.query}
-              onChange={(e) => props.setQuery(e.target.value)}
-            />
-          </div>
-
-          {props.openWorkModelsSyncing ? (
-            <div className="mb-3 flex shrink-0 items-center overflow-hidden rounded-2xl border border-amber-6/60 bg-amber-2/40">
-              <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5">
-                <ProviderIcon providerId={OPENWORK_MODELS_PROVIDER_ID} providerName={OPENWORK_MODELS_PROVIDER_NAME} size={18} className="shrink-0 text-amber-11" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                    <span>{OPENWORK_MODELS_PROVIDER_NAME}</span>
-                  </div>
-                  <div className="truncate text-[11px] text-dls-secondary">
-                    Included on your plan — pending workspace reload.
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="max-h-40 shrink-0 overflow-y-auto">
-          {props.gatewayConnectProviders?.map((provider) => (
-            <div
-              key={gatewayConnectProviderKey(provider)}
-              className="mb-3 flex shrink-0 items-center gap-3 rounded-2xl border border-dashed border-dls-border px-3 py-2.5"
-            >
-              <ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} className="shrink-0 text-dls-secondary" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-[13px] font-medium text-dls-text">
-                  <span className="truncate">{provider.name}</span>
-                  <Badge variant="outline" className="h-auto rounded-md px-1.5 py-0.5 text-[10px] text-dls-secondary">
-                    {OPENWORK_GATEWAY_BADGE_LABEL}
-                  </Badge>
-                </div>
-                <div className="truncate text-[11px] text-dls-secondary">{gatewayConnectCopy(provider.name)}</div>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!props.onConnectGatewayProvider}
-                onClick={() => void props.onConnectGatewayProvider?.(provider)}
-              >
-                Connect
-              </Button>
-            </div>
-          ))}
-
-          </div>
-
-          {/* Content */}
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 -mr-1">
-            {currentOption && !disabledSet.has(currentOption.providerID) ? (
-              <section aria-label={`Settings for ${currentOption.title}`} className="mb-3 rounded-xl border border-dls-border p-3" data-testid="current-model-settings">
-                <div className="text-xs font-medium">{currentOption.title} · {currentBehavior.label}</div>
-                <p role="status" className="mt-1 text-xs text-muted-foreground">{currentBehavior.description}</p>
-                {behaviorControls.hasFast ? (
-                  <div className="mt-2 space-y-1">
-                    <Button type="button" size="sm" variant={behaviorControls.fast ? "secondary" : "outline"}
-                      aria-pressed={behaviorControls.fast} disabled={behaviorControls.toggleValue === undefined}
-                      onClick={() => {
-                        if (behaviorControls.toggleValue !== undefined) props.onBehaviorChange(props.current, behaviorControls.toggleValue);
-                      }}>Fast: {behaviorControls.fast ? "On" : "Off"}</Button>
-                    <p className="text-xs text-muted-foreground">{FAST_PRICING_WARNING}</p>
-                  </div>
-                ) : null}
-                <div role="group" aria-label="Thinking and effort" className="mt-2 flex flex-wrap gap-2">
-                  {behaviorControls.options.map((option) => (
-                    <Button key={option.value === null ? "default" : `variant-${option.value}`} type="button" size="sm"
-                      variant={option.value === currentBehavior.value ? "secondary" : "outline"}
-                      aria-pressed={option.value === currentBehavior.value}
-                      onClick={() => props.onBehaviorChange(props.current, option.value)}>
-                      {option.label}
-                    </Button>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            {emptyState ? (
-              <div className="space-y-3 rounded-2xl border border-dls-border bg-dls-hover/30 px-4 py-6 text-center">
-                <div className="text-sm text-dls-secondary">
-                  {t(emptyState.messageKey)}
-                </div>
-                {emptyState.showRefreshOrganizationModels ? (
-                  <Button variant="outline" onClick={() => void handleRefreshOrganizationModels()} disabled={refreshingOrganizationModels}>
-                    <RefreshCw className={`mr-1 size-3 ${refreshingOrganizationModels ? "animate-spin" : ""}`} />
-                    {refreshingOrganizationModels ? t("models.refreshing_organization_models") : t("models.refresh_organization_models")}
-                  </Button>
-                ) : null}
-                {emptyState.showOrganizationModelsSettings && organizationModelsSettingsUrl ? (
-                  <Button variant="ghost" onClick={() => platform.openLink(organizationModelsSettingsUrl)}>
-                    {t("models.manage_organization_models")}
-                  </Button>
-                ) : null}
-                {emptyState.showConnectProvider ? (
-                  <Button variant="outline" onClick={props.onOpenSettings}>
-                    {t("models.connect_provider")}
-                  </Button>
-                ) : null}
-              </div>
-            ) : (
-              providerGroups.map((group) => (
-                <ProviderAccordion
-                  key={group.id}
-                  group={group}
-                  expanded={expandedProviders.has(group.id)}
-                  current={props.current}
-                  canToggleProvider={!!props.onToggleProvider}
-                  onToggleExpand={() => toggleProvider(group.id)}
-                  onToggleProvider={props.onToggleProvider}
-                  onSelect={handleSelect}
-                  organizationProviderLabel={organizationProviderLabel}
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <DialogFooter className="shrink-0">
-          <DialogClose render={<Button variant="outline" />}>
-            {t("models.done")}
-          </DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Provider accordion                                                 */
-/* ------------------------------------------------------------------ */
-
-function ProviderAccordion({
-  group,
-  expanded,
-  current,
-  canToggleProvider,
-  onToggleExpand,
-  onToggleProvider,
-  onSelect,
-  organizationProviderLabel,
-}: {
-  group: ProviderGroup;
-  expanded: boolean;
-  current: ModelRef;
-  canToggleProvider: boolean;
-  onToggleExpand: () => void;
-  onToggleProvider?: (providerId: string, enabled: boolean) => void;
-  onSelect: (opt: ModelOption) => void;
-  organizationProviderLabel: string;
-}) {
-  const totalModels = group.recommended.length + group.other.length;
-  const Chevron = expanded ? ChevronDown : ChevronRight;
-
-  return (
-    <div className={group.isDisabled ? "opacity-50" : ""}>
-      {/* Provider header */}
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-dls-hover"
-          onClick={onToggleExpand}
-        >
-          <Chevron size={14} className="shrink-0 text-dls-secondary" />
-          <ProviderIcon providerId={group.id} size={18} className="shrink-0 text-dls-text" />
-          <div className="min-w-0 flex-1">
-            <span className="text-[13px] font-medium text-dls-text">{group.name}</span>
-            {" "}
-            <span className="ml-2 text-[11px] text-dls-secondary">
-              {totalModels} model{totalModels === 1 ? "" : "s"}
-            </span>
-          </div>
-          {" "}
-          <span className="flex shrink-0 items-center gap-1.5">
-            {resolveProviderGroupBadges(group, organizationProviderLabel).map((badge) => (
-              <Badge
-                key={badge.label}
-                variant="outline"
-                className={`h-auto rounded-md border-transparent px-1.5 py-0.5 text-[10px] ${badge.className}`}
-              >
-                {badge.label}
-              </Badge>
-            ))}
-          </span>
-        </button>
-        {canToggleProvider ? (
-          <button
-            type="button"
-            className={[
-              "mr-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors",
-              group.isDisabled
-                ? "border border-dls-border text-dls-secondary hover:bg-dls-hover hover:text-dls-text"
-                : "bg-green-3 text-green-11 hover:bg-green-4",
-            ].join(" ")}
-            onClick={(e) => { e.stopPropagation(); onToggleProvider?.(group.id, group.isDisabled); }}
-            title={group.isDisabled ? "Enable this provider" : "Disable this provider"}
-          >
-            {group.isDisabled ? "Enable" : "Enabled"}
-          </button>
-        ) : null}
-      </div>
-
-      {/* Models */}
-      {expanded && !group.isDisabled ? (
-        <div className="ml-9 space-y-0.5 pb-2 pt-0.5">
-          {group.recommended.length > 0 ? (
-            <>
-              <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                Recommended
-              </div>
-              {group.recommended.map((opt) => (
-                <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} recommended />
-              ))}
-            </>
-          ) : null}
-          {group.other.length > 0 ? (
-            <>
-              {group.recommended.length > 0 ? (
-                <div className="px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-dls-secondary">
-                  All models
-                </div>
-              ) : null}
-              {group.other.map((opt) => (
-                <DefaultModelRow key={opt.modelID} opt={opt} current={current} onSelect={onSelect} />
-              ))}
-            </>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Default tab: model row (click to select as default)                */
-/* ------------------------------------------------------------------ */
-
-function DefaultModelRow({
-  opt, current, onSelect, recommended,
-}: {
-  opt: ModelOption; current: ModelRef; onSelect: (opt: ModelOption) => void; recommended?: boolean;
-}) {
-  const active = modelEquals(current, { providerID: opt.providerID, modelID: opt.modelID });
-
-  return (
-    <button
-      type="button"
-      className={[
-        "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors",
-        active ? "bg-green-3/50" : "hover:bg-dls-hover",
-      ].join(" ")}
-      onClick={() => onSelect(opt)}
-    >
-      {recommended ? <Star size={12} className="shrink-0 text-amber-9" /> : <div className="w-3 shrink-0" />}
-      <div className="min-w-0 flex-1">
-        <span className={["text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")}>{opt.title}</span>
-        <span className="ml-2 font-mono text-[10px] text-dls-secondary/60">{opt.modelID}</span>
-      </div>
-      {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
-    </button>
-  );
+  const isMobile = useIsMobile();
+  const setWorkspaceDefault = useSetWorkspaceDefaultModel();
+  const checkRestriction = useCheckDesktopRestriction();
+  const auth = useDenAuth();
+  const popupRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const choice = useModelChoice(JSON.stringify([props.open, props.current, props.currentBehaviorValue]));
+  const restrictToCloud = props.restrictToCloud || checkRestriction({ restriction: "allowCustomProviders" });
+  const catalogState = props.catalogState ?? { state: "ready", onRetry: props.onRefreshOrganizationModels } satisfies ModelPickerCatalogState;
+  // Callers pass the shared catalog; applying the same pipeline here keeps the dialog correct for any caller
+  // (it is idempotent) and applies this dialog's own policy, disabled-provider and gateway inputs.
+  const catalog = buildModelCatalog({ runtime: [...(props.knownOptions ?? props.options)], signedIn: auth.isSignedIn, restrictToCloud, checkRestriction,
+    disabledProviders: props.disabledProviders, gatewayProviderIds: props.gatewayProviderIds });
+  const retained = resolveRetainedSelection({ current: props.current, catalog, saved: props.retainedSelection, signedIn: auth.isSignedIn,
+    restrictToCloud, checkRestriction, catalogState: catalogState.state, sessionScoped: props.target === "session" });
+  const options = withoutBlockedSelection(catalog.options, retained);
+  const selected = options.find((option) => option.providerID === props.current.providerID && option.modelID === props.current.modelID && !option.disabled);
+  const behaviorValue = props.currentBehaviorValue !== undefined ? props.currentBehaviorValue : selected?.behaviorValue ?? null;
+  const autoVisible = retained?.reason !== "policy" && retained?.reason !== "disabled" && (options.some(isAutoModel) || isAutoModel(props.current));
+  useEffect(() => { if (props.open) props.setQuery(""); }, [props.open]);
+  const openSettings = () => { props.onClose({ restorePromptFocus: false }); (props.onOpenProviderSettings ?? openAutoProviderSettings)(); };
+  const pendingProviders = props.gatewayConnectProviders?.filter((provider) => !provider.models?.length) ?? [];
+  // The same panel as the composer's picker, in a dialog for surfaces without a composer.
+  return <Dialog open={props.open} onOpenChange={(open) => { if (!open && !choice.loginOpen) props.onClose(); }}>
+    <DialogContent ref={popupRef} showCloseButton={false} initialFocus={() => isMobile ? popupRef.current : searchInputRef.current} aria-describedby={undefined}
+      className="flex max-h-[min(calc(100dvh-2rem),36rem)] min-h-0 w-90 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-90 lg:w-90 lg:max-w-90 lg:rounded-2xl" data-testid="all-models-picker">
+      <DialogTitle className="sr-only">Models</DialogTitle>
+      <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={props.current} behaviorValue={behaviorValue}
+        onSelect={(option, behavior) => choice.choose(option, () => {
+          props.onSelect({ providerID: option.providerID, modelID: option.modelID });
+          if (behavior && !managesOwnBehavior(option)) props.onBehaviorChange({ providerID: option.providerID, modelID: option.modelID }, behavior.variant);
+        })}
+        onBehaviorChange={(value) => props.onBehaviorChange(props.current, value)}
+        catalogState={catalogState} retainedSelection={retained}
+        onConnectProvider={!restrictToCloud ? props.onOpenSettings : undefined}
+        onOpenProviderSettings={!checkRestriction({ restriction: "allowControlSettings" }) ? openSettings : undefined}
+        onSetWorkspaceDefault={props.onSetWorkspaceDefault ?? setWorkspaceDefault}
+        openWorkModelsSyncing={props.openWorkModelsSyncing} autoVisible={autoVisible} onReloadWorkspace={props.onReloadWorkspace}
+        footerExtra={pendingProviders.length ? <div className="border-t border-border p-1.5">{pendingProviders.map((provider) => <div key={gatewayConnectProviderKey(provider)} className="flex h-9 items-center gap-2.5 px-2 text-sm">
+          <Cloud className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} /><span className="min-w-0 flex-1 truncate">{gatewayConnectCopy(provider.name)}</span>
+          <Button size="sm" variant="ghost" disabled={!props.onConnectGatewayProvider || props.disabledProviders?.includes(provider.providerId)} onClick={() => void props.onConnectGatewayProvider?.(provider)}>Login</Button>
+        </div>)}</div> : null} />
+    </DialogContent>
+  </Dialog>;
 }

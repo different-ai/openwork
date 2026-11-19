@@ -5,6 +5,7 @@ import {
 import {
   abandonExternalMcpAuth as abandonWithEnterpriseClient,
   callExternalMcpTool as callWithEnterpriseClient,
+  callListedExternalMcpTool as callListedWithEnterpriseClient,
   callExternalMcpToolRaw as callRawWithEnterpriseClient,
   completeExternalMcpAuth as completeWithEnterpriseClient,
   connectExternalMcp as connectWithEnterpriseClient,
@@ -22,6 +23,7 @@ export type ExternalMcpClientRuntime = {
   abandonExternalMcpAuth: typeof abandonWithEnterpriseClient
   listExternalMcpTools: typeof listWithEnterpriseClient
   callExternalMcpTool: typeof callWithEnterpriseClient
+  callListedExternalMcpTool: typeof callListedWithEnterpriseClient
   callExternalMcpToolRaw: typeof callRawWithEnterpriseClient
   describeExternalMcpServer: typeof describeWithEnterpriseClient
   listExternalMcpResources: typeof listResourcesWithEnterpriseClient
@@ -36,6 +38,7 @@ const enterpriseMcpClient: ExternalMcpClientRuntime = {
   abandonExternalMcpAuth: abandonWithEnterpriseClient,
   listExternalMcpTools: listWithEnterpriseClient,
   callExternalMcpTool: callWithEnterpriseClient,
+  callListedExternalMcpTool: callListedWithEnterpriseClient,
   callExternalMcpToolRaw: callRawWithEnterpriseClient,
   describeExternalMcpServer: describeWithEnterpriseClient,
   listExternalMcpResources: listResourcesWithEnterpriseClient,
@@ -52,6 +55,7 @@ export const {
   abandonExternalMcpAuth,
   listExternalMcpTools,
   callExternalMcpTool,
+  callListedExternalMcpTool,
   callExternalMcpToolRaw,
   describeExternalMcpServer,
   listExternalMcpResources,

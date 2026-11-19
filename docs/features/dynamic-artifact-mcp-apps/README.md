@@ -13,7 +13,6 @@ client still receives a useful Markdown result.
    refresh the data snapshot; they do not create or execute UI code.
 4. The read-only `render_workflow_artifact` tool loads the latest successful
    snapshot, or an exact receipt when requested.
-   `render_dynamic_artifact` remains as a deprecated alias for one release.
 5. MCP Apps hosts resolve the linked `ui://` resource and inject the tool's
    structured result. Other hosts show the Markdown fallback.
 

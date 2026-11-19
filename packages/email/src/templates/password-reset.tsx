@@ -1,3 +1,4 @@
+import React from "react"
 import { Body, Button, Container, Head, Heading, Hr, Html, Preview, Text } from "@react-email/components"
 
 export type PasswordResetEmailProps = {

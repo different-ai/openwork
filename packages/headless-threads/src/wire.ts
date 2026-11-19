@@ -20,7 +20,12 @@ const timeSchema = z
   .object({
     created: z.number().optional(),
     updated: z.number().optional(),
+    completed: z.number().optional(),
   })
+  .passthrough();
+
+const spanSchema = z
+  .object({ start: z.number().optional(), end: z.number().optional() })
   .passthrough();
 
 export const threadStatusSchema = z.discriminatedUnion("type", [
@@ -45,7 +50,15 @@ const partSchema = z
     text: z.string().optional(),
     tool: z.string().optional(),
     callID: z.string().optional(),
-    state: z.object({ status: z.string().optional() }).passthrough().optional(),
+    time: spanSchema.optional(),
+    state: z.object({
+      status: z.string().optional(),
+      input: z.unknown().optional(),
+      output: z.unknown().optional(),
+      error: z.unknown().optional(),
+      title: z.string().optional(),
+      time: spanSchema.optional(),
+    }).passthrough().optional(),
     synthetic: z.boolean().optional(),
     ignored: z.boolean().optional(),
   })
@@ -96,8 +109,8 @@ export const threadSnapshotSchema = z.object({
   status: threadStatusSchema,
 });
 
-type SessionWire = z.infer<typeof sessionSchema>;
-type MessageWire = z.infer<typeof messageSchema>;
+export type SessionWire = z.infer<typeof sessionSchema>;
+export type MessageWire = z.infer<typeof messageSchema>;
 type PartWire = z.infer<typeof partSchema>;
 type TodoWire = z.infer<typeof todoSchema>;
 
@@ -112,6 +125,13 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   if (part.tool !== undefined) mapped.tool = part.tool;
   if (part.callID !== undefined) mapped.callId = part.callID;
   if (part.state?.status !== undefined) mapped.toolStatus = part.state.status;
+  if (part.state?.input !== undefined) mapped.toolInput = part.state.input;
+  if (typeof part.state?.output === "string") mapped.toolOutput = part.state.output;
+  if (typeof part.state?.error === "string") mapped.toolError = part.state.error;
+  if (part.state?.title) mapped.toolTitle = part.state.title;
+  const span = part.state?.time ?? part.time;
+  if (span?.start !== undefined) mapped.startedAt = span.start;
+  if (span?.end !== undefined) mapped.endedAt = span.end;
   if (part.synthetic !== undefined) mapped.synthetic = part.synthetic;
   if (part.ignored !== undefined) mapped.ignored = part.ignored;
   return mapped;
@@ -152,6 +172,7 @@ export function toThreadMessage(message: MessageWire): HeadlessThreadMessage {
     role: message.info.role,
     parentId: message.info.parentID ?? null,
     createdAt: message.info.time?.created ?? null,
+    completedAt: message.info.time?.completed ?? null,
     error: toMessageError(message.info.error),
     usage: message.info.role === "assistant" && message.info.tokens ? {
       inputTokens: message.info.tokens?.input ?? 0,

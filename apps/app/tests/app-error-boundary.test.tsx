@@ -143,6 +143,111 @@ test("the revealed technical details show the redacted message, never the query 
   }
 });
 
+function quotedCrash(sink: string) {
+  const fields = ["token", "grant", "code", "secret", "key"];
+  const opaque = ["q7Vm2pR8", "b4Nx9wL3", "h6Zd1sK5", "v8Jc3rT2", "m5Yf7aP9"];
+  const canaries: string[] = [];
+  function assignments(part: string) {
+    return fields.map((field, index) => {
+      const values = [0, 1, 2, 3].map((variant) => `${sink}${part}${opaque[index]}${variant}`);
+      canaries.push(...values);
+      return `${field}="${values[0]}" ${field}='${values[1]}' "${field}":"${values[2]}" '${field}':'${values[3]}'`;
+    }).join(" ");
+  }
+  const error = new Error(`Recovery failed: ${assignments("m")} status=502`);
+  error.stack = `Error: recovery trace ${assignments("s")}\n    at restoreSession (session-route.tsx:42:7)`;
+  return { error, canaries };
+}
+
+test("revealed DOM redacts complete quoted assignments in a caught error message and stack", async () => {
+  const ownedDom = typeof window === "undefined";
+  if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+  const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const logError = spyOn(console, "error").mockImplementation(() => {});
+  const { error, canaries } = quotedCrash("d");
+  function Throws(): ReactNode {
+    throw error;
+  }
+  try {
+    await act(async () => {
+      root.render(<AppErrorBoundary><Throws /></AppErrorBoundary>);
+    });
+    const toggle = Array.from(container.querySelectorAll("button")).find((button) => /technical details/i.test(button.textContent ?? ""));
+    if (!toggle) throw new Error("Technical details toggle is missing");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(container.querySelector("pre")).toBeNull();
+    await act(async () => { toggle.click(); });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const stack = container.querySelector("pre");
+    const message = stack?.previousElementSibling;
+    expect(message?.textContent).toContain("Recovery failed:");
+    expect(message?.textContent).toContain("status=502");
+    expect(stack?.textContent).toContain("Error: recovery trace");
+    expect(stack?.textContent).toContain("at restoreSession (session-route.tsx:42:7)");
+    for (const canary of canaries) expect(container.textContent).not.toContain(canary);
+    expect(message?.textContent?.match(/\[redacted\]/g)).toHaveLength(20);
+    expect(stack?.textContent?.match(/\[redacted\]/g)).toHaveLength(20);
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    logError.mockRestore();
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
+});
+
+test("Copy details writes redacted quoted assignments from a caught error to the clipboard", async () => {
+  const ownedDom = typeof window === "undefined";
+  if (ownedDom) GlobalRegistrator.register({ url: "http://localhost/" });
+  const actEnvironment = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const logError = spyOn(console, "error").mockImplementation(() => {});
+  const writeText = spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+  const { error, canaries } = quotedCrash("c");
+  function Throws(): ReactNode {
+    throw error;
+  }
+  try {
+    await act(async () => {
+      root.render(<AppErrorBoundary><Throws /></AppErrorBoundary>);
+    });
+    const toggle = Array.from(container.querySelectorAll("button")).find((button) => /technical details/i.test(button.textContent ?? ""));
+    if (!toggle) throw new Error("Technical details toggle is missing");
+    await act(async () => { toggle.click(); });
+    const copy = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Copy details");
+    if (!copy) throw new Error("Copy details button is missing");
+    expect(writeText).not.toHaveBeenCalled();
+    await act(async () => { copy.click(); });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const payload = writeText.mock.calls[0][0];
+    const parts = payload.split("\n\n");
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toContain("OpenWork ");
+    expect(parts[1]).toContain("Recovery failed:");
+    expect(parts[1]).toContain("status=502");
+    expect(parts[2]).toContain("Error: recovery trace");
+    expect(parts[2]).toContain("at restoreSession (session-route.tsx:42:7)");
+    for (const canary of canaries) expect(payload).not.toContain(canary);
+    expect(parts[1].match(/\[redacted\]/g)).toHaveLength(20);
+    expect(parts[2].match(/\[redacted\]/g)).toHaveLength(20);
+    expect(copy.textContent).toBe("Copied");
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    writeText.mockRestore();
+    logError.mockRestore();
+    Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", actEnvironment);
+    if (ownedDom) await GlobalRegistrator.unregister();
+  }
+});
+
 test("children render untouched when nothing throws", () => {
   const html = renderToStaticMarkup(
     <AppErrorBoundary>

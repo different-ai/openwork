@@ -18,9 +18,27 @@ type CopyMethod = "clipboard" | "execCommand" | "none";
 type Props = {
   className?: string;
   compact?: boolean;
+  /** Another prompt for another page; defaults to the setup prompt. */
+  prompt?: string;
+  heading?: string;
+  description?: string;
+  /** Analytics variant and placement for this card. */
+  variant?: string;
+  placement?: string;
+  /** Show the prompt text in the card, so people see what they paste. */
+  showPrompt?: boolean;
 };
 
-export function LandingHeroPrompt({ className, compact = false }: Props) {
+export function LandingHeroPrompt({
+  className,
+  compact = false,
+  prompt = AGENT_START_PROMPT,
+  heading = "Already use an AI agent?",
+  description = "Paste one prompt. It installs and sets up OpenWork for you.",
+  variant = PROMPT_VARIANT,
+  placement = "hero",
+  showPrompt = false
+}: Props) {
   const [feedback, setFeedback] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -35,12 +53,12 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
     let copied = false;
     let method: CopyMethod = "none";
     try {
-      await navigator.clipboard.writeText(AGENT_START_PROMPT);
+      await navigator.clipboard.writeText(prompt);
       copied = true;
       method = "clipboard";
     } catch {
       const textarea = document.createElement("textarea");
-      textarea.value = AGENT_START_PROMPT;
+      textarea.value = prompt;
       textarea.setAttribute("readonly", "");
       textarea.style.cssText = "position:absolute;left:-9999px;top:-9999px;";
       document.body.appendChild(textarea);
@@ -56,8 +74,8 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
     capturePosthogEvent("landing_copy_prompt_clicked", {
       copied,
       method,
-      variant: PROMPT_VARIANT,
-      placement: "hero"
+      variant,
+      placement
     });
     if (resetTimer.current) clearTimeout(resetTimer.current);
     resetTimer.current = setTimeout(() => {
@@ -69,8 +87,8 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
   const copyButton = (
     <button
       type="button"
-      aria-label="Copy the agent setup prompt"
-      title={AGENT_START_PROMPT}
+      aria-label={prompt === AGENT_START_PROMPT ? "Copy the agent setup prompt" : "Copy the prompt"}
+      title={prompt}
       onClick={(event) => {
         event.stopPropagation();
         void onClick();
@@ -124,11 +142,16 @@ export function LandingHeroPrompt({ className, compact = false }: Props) {
         className="group cursor-pointer rounded-2xl bg-white p-5 shadow-[0_8px_24px_rgba(1,22,39,0.05)] transition-shadow hover:shadow-[0_10px_28px_rgba(1,22,39,0.08)]"
       >
         <div className="text-[15px] leading-snug text-[#011627]">
-          Already use an AI agent?
+          {heading}
         </div>
         <div className="mt-1 text-[13px] leading-relaxed text-[var(--lp-muted)]">
-          Paste one prompt. It installs and sets up OpenWork for you.
+          {description}
         </div>
+        {showPrompt ? (
+          <p className="mt-4 rounded-xl bg-[var(--lp-tonal)] px-3.5 py-3 font-mono text-[12.5px] leading-[1.6] text-[var(--lp-ink)]">
+            {prompt}
+          </p>
+        ) : null}
         <div className="mt-4 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 text-[var(--lp-faint)]">
             <LandingAgentGlyphs />

@@ -45,6 +45,18 @@ export function loopbackFetch(
   return globalThis.fetch(input, init);
 }
 
+/**
+ * Transfer a response body into a new stream before wrapping it in another
+ * Response. Node's fetch registers the original Response with an undici GC
+ * finalizer that cancels an unlocked body when that Response becomes
+ * unreachable. pipeThrough locks the source synchronously, so dropping the
+ * original Response cannot cancel the stream while a wrapper is waiting to be
+ * consumed. Cancellation and backpressure still propagate through the pipe.
+ */
+export function transferResponseBody(response: Response): ReadableStream<Uint8Array> | null {
+  return response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>()) ?? null;
+}
+
 export type RuntimeDiagnosticRuntimeFamily = "electron-node" | "node" | "bun" | "unknown";
 export type RuntimeDiagnosticTransport = "node-undici" | "bun-fetch" | "test-seam" | "unknown";
 

@@ -59,6 +59,104 @@ export const openworkAffordanceDescriptorSchema = z.object({
 export type OpenworkAffordanceDescriptor = z.infer<typeof openworkAffordanceDescriptorSchema>
 
 /**
+ * The model a session is bound to, as agents pass it to `session.create`
+ * (`model` argument) and read it back from `session.list_sessions` entries
+ * and `session.read` results (`model` field). `variant` is the reasoning /
+ * thinking effort the composer shows as its behavior pill (for example
+ * `low`, `medium`, `high`); null means the provider default. The source is
+ * the engine's session record: bound at creation, updated by every turn.
+ * Results carry null instead of the object before any model is bound, and
+ * the engine's literal "default" variant reads back as null.
+ */
+export const openworkSessionModelSchema = z.object({
+  providerId: z.string().trim().min(1),
+  modelId: z.string().trim().min(1),
+  variant: z.string().trim().min(1).max(60).nullable(),
+  displayName: z.string().optional(),
+  providerName: z.string().optional(),
+})
+export type OpenworkSessionModel = z.infer<typeof openworkSessionModelSchema>
+
+export const openworkModelSelectorSchema = z.object({
+  providerId: openworkSessionModelSchema.shape.providerId.optional(),
+  modelId: openworkSessionModelSchema.shape.modelId.optional(),
+  alias: z.string().trim().min(1).optional(),
+  displayName: z.string().trim().min(1).optional(),
+  variant: openworkSessionModelSchema.shape.variant.optional(),
+}).superRefine((value, context) => {
+  const names = [value.alias, value.displayName].filter((name) => name !== undefined)
+  if (value.alias && (value.displayName || value.modelId)) {
+    context.addIssue({ code: "custom", message: "Use exactly one of modelId, alias or displayName." })
+  }
+  if (!names.length && !value.modelId) {
+    context.addIssue({ code: "custom", path: ["modelId"], message: "Provide providerId/modelId, alias or displayName." })
+  }
+  if (value.modelId && !value.providerId) {
+    context.addIssue({ code: "custom", path: ["providerId"], message: "providerId is required with modelId." })
+  }
+})
+
+export const openworkModelsListArgsSchema = z.strictObject({ workspaceId: z.string().trim().min(1) })
+export const openworkModelsListResultSchema = z.object({
+  ok: z.literal(true),
+  workspaceId: openworkModelsListArgsSchema.shape.workspaceId,
+  models: z.array(openworkSessionModelSchema.omit({ variant: true }).extend({
+    displayName: z.string(), providerName: z.string(), available: z.literal(true),
+  })),
+})
+export type OpenworkCatalogModel = Pick<OpenworkSessionModel, "providerId" | "modelId"> & {
+  displayName: string
+  providerName: string
+}
+
+export const openworkEngineProviderCatalogSchema = z.object({
+  connected: z.array(z.string()),
+  all: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    models: z.record(z.string(), z.object({ name: z.string().optional() })),
+  })),
+})
+
+export function openworkCatalogModels(value: z.infer<typeof openworkEngineProviderCatalogSchema>): OpenworkCatalogModel[] {
+  return value.all.filter((provider) => value.connected.includes(provider.id)).flatMap((provider) =>
+    Object.entries(provider.models).map(([modelId, model]) => ({
+      providerId: provider.id, modelId, displayName: model.name || modelId, providerName: provider.name,
+    })),
+  )
+}
+
+export function labelOpenworkSessionModel(model: OpenworkSessionModel | null, catalog: readonly OpenworkCatalogModel[]): OpenworkSessionModel | null {
+  if (!model) return null
+  const entry = catalog.find((entry) => entry.providerId === model.providerId && entry.modelId === model.modelId)
+  return entry ? { ...model, displayName: entry.displayName, providerName: entry.providerName } : model
+}
+
+export function resolveOpenworkModel(selector: z.infer<typeof openworkModelSelectorSchema>, catalog: readonly OpenworkCatalogModel[]): OpenworkSessionModel {
+  const name = selector.modelId ? undefined : selector.alias ?? selector.displayName
+  const matches = catalog.filter((entry) => name !== undefined
+    ? entry.displayName.toLowerCase() === name.toLowerCase() && (!selector.providerId || entry.providerId.toLowerCase() === selector.providerId.toLowerCase())
+    : entry.providerId === selector.providerId && entry.modelId === selector.modelId)
+  const match = matches[0]
+  if (matches.length !== 1 || !match) {
+    throw new Error(`${matches.length ? "Ambiguous" : "Unavailable"} model: ${name ?? `${selector.providerId}/${selector.modelId}`}. Use models.list with this workspaceId${matches.length ? " and qualify the name with providerId" : ""}.`)
+  }
+  return { providerId: match.providerId, modelId: match.modelId, displayName: match.displayName, providerName: match.providerName,
+    variant: selector.variant && selector.variant !== "default" ? selector.variant : null }
+}
+
+export const openworkSessionActivityInventorySchema = z.object({
+  working: z.boolean(),
+  descendantActivity: z.object({
+    busy: z.number().int().nonnegative(),
+    waiting: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative(),
+  }),
+  inventoryComplete: z.boolean(),
+})
+export type OpenworkSessionActivityInventory = z.infer<typeof openworkSessionActivityInventorySchema>
+
+/**
  * Where a request came from: the conversation (session) whose agent issued
  * it. Set by the OpenWork bridge, never by the agent, so UI commands such as
  * opening a browser tab can act for the requesting conversation instead of
@@ -87,11 +185,41 @@ const openworkAffordanceSuccessSchema = z.object({
   effects: openworkAffordanceEffectsSchema,
 })
 
+/**
+ * Structured outcomes an action can report so the agent can decide instead of
+ * retrying a transport-looking error. Warnings travel back through the channel
+ * the request came from: an agent never gets a dialog, it gets one of these.
+ * - `target_working`: the target session is still working; ask the person to
+ *   stop it if they want it closed, otherwise leave it running.
+ * - `target_waiting`: the target session is waiting on the person (a question
+ *   or approval); it stays in view until they answer.
+ * - `self_archive_while_working`: a session asked to archive itself (or its
+ *   parent) from inside its own running turn; finish the turn, the reviewer
+ *   archives.
+ * - `verification_failed`: archive safety checks could not finish; no archive
+ *   mutation was sent by this attempt.
+ * - `archive_outcome_unknown`: the archive mutation was sent but its outcome
+ *   could not be confirmed; read the session before considering another attempt.
+ */
+export const openworkAffordanceFailureCodeSchema = z.enum([
+  "unavailable",
+  "invalid-args",
+  "conflict",
+  "failed",
+  "target_working",
+  "target_waiting",
+  "self_archive_while_working",
+  "verification_failed",
+  "archive_outcome_unknown",
+])
+export type OpenworkAffordanceFailureCode = z.infer<typeof openworkAffordanceFailureCodeSchema>
+
 const openworkAffordanceFailureSchema = z.object({
   ok: z.literal(false),
   id: z.string(),
   error: z.string(),
-  code: z.enum(["unavailable", "invalid-args", "conflict", "failed"]),
+  code: openworkAffordanceFailureCodeSchema,
+  hint: z.string().optional(),
   revision: z.number().int().nonnegative().optional(),
 })
 

@@ -3,13 +3,13 @@ import {
   isApplyPatchToolPart,
   isBashToolPart,
   isEditToolPart,
-  isEnvVarRequestToolPart,
   isGlobToolPart,
   isGrepToolPart,
   isLspToolPart,
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  skillDisplayName,
   isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
@@ -66,7 +66,7 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return `Inspecting ${parseFilename(part.input?.filePath)}`
   }
   if (isSkillToolPart(part)) {
-    const name = part.input?.name?.trim()
+    const name = skillDisplayName(part.input)
     return name ? `Loading ${name} skill` : "Loading a skill"
   }
   if (isTodoWriteToolPart(part)) {
@@ -85,10 +85,6 @@ export function getToolActivityLabel(part: AnyToolPart): string {
   if (isQuestionToolPart(part)) {
     return "Asking a question"
   }
-  if (isEnvVarRequestToolPart(part)) {
-    const key = part.input?.key?.trim()
-    return key ? `Requesting ${key}` : "Requesting an environment variable"
-  }
   if (isTaskToolPart(part)) {
     const description = part.input?.description?.trim()
     return description
@@ -99,15 +95,4 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return `Running ${part.toolName.replace(/[_-]+/g, " ")}`
   }
   return "Working"
-}
-
-/** Label for the most recent tool still in flight, if any. */
-export function getActiveToolLabel(parts: DynamicToolUIPart[]): string | null {
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    const part = parts[index]
-    if (part && isToolPartInFlight(part)) {
-      return getToolActivityLabel(part)
-    }
-  }
-  return null
 }

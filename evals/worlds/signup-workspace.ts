@@ -2,12 +2,18 @@ import { signIn } from "@openwork/behaviors";
 import { captureBrowserFilm } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
-export async function signupWorkspace(seed: Seed, options: { filmDirectory?: string; viewport?: { width: number; height: number } } = {}) {
+export async function signupWorkspace(seed: Seed, options: { simplified?: boolean; filmDirectory?: string; viewport?: { width: number; height: number } } = {}) {
   // Capture real rendered emails locally; never use an inherited mail provider.
-  const den = await seed.den({ provision: false, env: {
+  const den = await seed.den({ provision: options.simplified === true,
+    ...(options.simplified ? { org: {
+      name: "Existing workspace",
+      admin: { name: "Existing Admin", email: `onboarding-admin-${Date.now()}@openwork.test` },
+    } } : {}),
+    env: {
     OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "",
     DEN_REQUIRE_EMAIL_VERIFICATION: "false",
     DEN_OPENWORK_WEB_ENABLED: "true",
+    ...(options.simplified ? { DEN_DEPLOYMENT: "cloud" } : {}),
   } });
   const owner = {
     name: "Workspace Owner",

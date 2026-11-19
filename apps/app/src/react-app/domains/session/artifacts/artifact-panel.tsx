@@ -2,9 +2,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
-import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,7 +13,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "@/components/ui/sonner";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
@@ -39,7 +40,8 @@ type ArtifactPanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
-  isRemoteWorkspace?: boolean;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
 };
 
@@ -48,7 +50,8 @@ type ArtifactPanelViewProps = {
   client: OpenworkServerClient;
   workspaceId: string;
   workspaceRoot: string;
-  isRemoteWorkspace?: boolean;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
+  isLocalWorkspace?: boolean;
   target: OpenTarget;
   onClose: () => void;
 };
@@ -59,18 +62,11 @@ type ArtifactQueryState =
 
 type SaveArtifactInput = Data & { baseUpdatedAt: number | null };
 
-function absoluteWorkspacePath(root: string, path: string) {
-  const cleanRoot = root.trim().replace(/[/\\]+$/, "");
-  const cleanPath = path.trim().replace(/^\.\//, "");
-  
-  return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
-}
-
 function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
 
-export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, onClose }: ArtifactPanelProps) {
+export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRoot, onOpenTarget, isLocalWorkspace, onClose }: ArtifactPanelProps) {
   const transcriptTargets = usePanelTabStore((state) => state.transcriptArtifactTargets[sessionId] ?? EMPTY_TRANSCRIPT_TARGETS);
   const artifactTargets = useMemo(() => transcriptTargets.filter(isCollectibleArtifactTarget), [transcriptTargets]);
   const target = tab.target ?? artifactTargets.find((item) => item.id === tab.id) ?? null;
@@ -85,18 +81,22 @@ export function ArtifactPanel({ sessionId, tab, client, workspaceId, workspaceRo
       client={client}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
-      isRemoteWorkspace={isRemoteWorkspace}
+      onOpenTarget={onOpenTarget}
+      isLocalWorkspace={isLocalWorkspace}
       target={target}
       onClose={onClose}
     />
   );
 }
 
-function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRemoteWorkspace = false, target, onClose }: ArtifactPanelViewProps) {
+function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, target, onOpenTarget, isLocalWorkspace, onClose }: ArtifactPanelViewProps) {
+  const [failure, setFailure] = useState<{ owner: string; title: string; details: string } | null>(null);
+  const owner = JSON.stringify([sessionId, workspaceId, target.id]);
+  const reportFailure = (title: string, error: unknown) => setFailure({ owner, title, details: error instanceof Error ? error.message : String(error) });
   const platform = usePlatform();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const [treeOpen, setTreeOpen] = useState(true);
+  const [treeOpen, setTreeOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
@@ -105,7 +105,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
   const isDirectCodeEdit = target.kind === "file" && target.preview === "code";
-  const canUseDesktopWorkspaceActions = !isRemoteWorkspace && platform.capabilities.revealInFileManager;
+  const canUseDesktopWorkspaceActions = Boolean(isLocalWorkspace && onOpenTarget && platform.capabilities.revealInFileManager);
   const canUseDesktopFileActions = target.kind === "file" && canUseDesktopWorkspaceActions;
   const workspaceName = workspaceRoot.split(/[/\\]/).filter(Boolean).pop() ?? "Workspace";
 
@@ -121,8 +121,9 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     });
   };
 
+  const queryKey = ["artifact-panel", workspaceId, sessionId, target.fileScope ?? null, target.id, target.updatedAt ?? null];
   const { data, error, isError, isLoading } = useQuery<ArtifactQueryState>({
-    queryKey: ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
+    queryKey,
     queryFn: async () => {
       if (target.kind === "url") {
         throw new Error("URLs open in browser tabs.");
@@ -132,12 +133,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
       }
 
       if (isTextContent(target)) {
-        const result = await client.readWorkspaceFile(workspaceId, target.value);
+        const result = await client.readWorkspaceFile(workspaceId, target.value, { sessionId, fileScope: target.fileScope });
 
         return { kind: "text", data: result.content, updatedAt: result.updatedAt ?? null };
       }
 
-      const result = await client.downloadWorkspaceFile(workspaceId, target.value);
+      const result = await client.downloadWorkspaceFile(workspaceId, target.value, { sessionId, fileScope: target.fileScope });
 
       return { kind: "binary", data: result.data, contentType: result.contentType, updatedAt: target.updatedAt ?? null };
     },
@@ -146,6 +147,14 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     staleTime: Infinity,
     gcTime: 0,
   });
+
+  const previewedOwner = useRef<string | null>(null);
+  const recordPreview = (node: HTMLDivElement | null) => {
+    if (!node || !data || previewedOwner.current === owner) return;
+    if (data.kind === "binary" && !["image", "pdf", "html", "sheet"].includes(target.preview)) return;
+    previewedOwner.current = owner;
+    featureAnalytics.filePreviewed(target.preview);
+  };
 
   const [binaryObjectUrl, setBinaryObjectUrl] = useState<string | null>(null);
 
@@ -179,20 +188,24 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   }, [data]);
 
   const { mutate, mutateAsync, isPending: isSaving } = useMutation({
+    onMutate: () => ({ owner, fileType: target.preview }),
     mutationFn: async (input: SaveArtifactInput) => {
       if (target.kind !== "file") {
         throw new Error("Cannot save non-file artifact.");
       }
 
       if (input.kind === "text") {
-        return client.writeWorkspaceFile(workspaceId, { path: target.value, content: input.data, baseUpdatedAt: input.baseUpdatedAt });
+        return client.writeWorkspaceFile(workspaceId, { path: target.value, content: input.data, baseUpdatedAt: input.baseUpdatedAt, sessionId, fileScope: target.fileScope });
       }
 
-      return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt });
+      return client.writeWorkspaceBinaryFile(workspaceId, { path: target.value, data: input.data, baseUpdatedAt: input.baseUpdatedAt, sessionId, fileScope: target.fileScope });
     },
-    onSuccess: (result, input) => {
+    onSuccess: (result, input, context) => {
+      featureAnalytics.fileEdited(context?.fileType ?? target.preview);
+      if (context?.owner !== owner) return;
+      setFailure((current) => current?.owner === owner ? null : current);
       queryClient.setQueryData<ArtifactQueryState>(
-        ["artifact-panel", workspaceId, target.id, target.updatedAt ?? null] as const,
+        queryKey,
         input.kind === "text"
           ? { kind: "text", data: input.data, updatedAt: result.updatedAt ?? null }
           : { kind: "binary", data: input.data, contentType: data?.kind === "binary" ? data.contentType : null, updatedAt: result.updatedAt ?? null },
@@ -203,48 +216,37 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
         failedDraftRef.current = null;
       }
     },
-    onError: (cause, input) => {
+    onError: (cause, input, context) => {
+      if (context?.owner !== owner) return;
       if (input.kind === "text") {
         failedDraftRef.current = input.data;
       }
 
-      toast.error(cause instanceof Error ? cause.message : "Could not save changes.");
+      reportFailure("Could not save changes. Check the file before saving again.", cause);
     },
   });
 
   const downloadFile = async (path: string, name: string) => {
-    const result = await client.downloadWorkspaceFile(workspaceId, path);
+    const result = await client.downloadWorkspaceFile(workspaceId, path, { sessionId, fileScope: path === target.value ? target.fileScope : "workspace" });
     const url = URL.createObjectURL(new Blob([result.data], { type: result.contentType ?? "application/octet-stream" }));
     const anchor = document.createElement("a");
 
     anchor.href = url;
     anchor.download = name;
     anchor.click();
+    featureAnalytics.fileDownloaded();
 
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const openFileExternally = async (path: string) => {
-    if (isRemoteWorkspace) {
-      await downloadFile(path, path.split(/[/\\]/).pop() ?? path);
-
-      return;
-    }
-
-    try {
-      await openDesktopPath(absoluteWorkspacePath(workspaceRoot, path));
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not open this file.");
-    }
+    const fileTarget = path === target.value ? target : openTargetFromWorkspaceFile(path);
+    if (fileTarget) onOpenTarget?.(fileTarget, { external: true });
   };
 
   const revealFile = async (path: string) => {
-    if (isRemoteWorkspace) return;
-    try {
-      await revealDesktopItemInDir(absoluteWorkspacePath(workspaceRoot, path));
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Could not show this file in your file manager.");
-    }
+    const fileTarget = path === target.value ? target : openTargetFromWorkspaceFile(path);
+    if (fileTarget) onOpenTarget?.(fileTarget, { external: true, reveal: true });
   };
 
   const download = async () => {
@@ -252,7 +254,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
       return;
     }
 
-    await downloadFile(target.value, target.name);
+    await downloadFile(target.value, target.name).catch((error: unknown) => reportFailure("Could not download this file. Try again.", error));
   };
 
   const openExternal = async () => {
@@ -305,7 +307,9 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div ref={recordPreview} className="flex h-full min-h-0 flex-col bg-background">
+      {failure?.owner === owner ? <div className="shrink-0 px-3 py-2"><TaskRecovery compact title={failure.title} technicalDetails={failure.details}
+        actions={<Button variant="ghost" size="xs" onClick={() => setFailure(null)}>Dismiss</Button>} /></div> : null}
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         <div className="flex h-10 items-center gap-2 pe-2 ps-2">
           <Tooltip>

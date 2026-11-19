@@ -38,6 +38,8 @@
   "dependencies": {
     "@openwork/cdp": "workspace:*",
     "@openwork/paths": "link:../../../packages/paths",
-    "@openwork/timeline": "workspace:*"
+    "@openwork/timeline": "workspace:*",
+    "@openwork/sandbox": "link:../../../packages/sandbox",
+    "@openwork/sandbox-daytona": "link:../../../packages/sandbox-daytona"
   }
 }

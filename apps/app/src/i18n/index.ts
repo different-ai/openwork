@@ -8,19 +8,20 @@ import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
 import ru from "./locales/ru";
+import it from "./locales/it";
 import deDE from "./locales/de-DE";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "de-DE";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it" | "de-DE";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "de-DE"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it", "de-DE"];
 
 /**
  * Language options for UI - single source of truth
@@ -36,6 +37,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
   { value: "es" as Language, label: "Spanish", nativeName: "Español" },
   { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
+  { value: "it" as Language, label: "Italian", nativeName: "Italiano" },
   { value: "de-DE" as Language, label: "German", nativeName: "Deutsch" },
 ] as const;
 
@@ -68,6 +70,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   ca,
   es,
   ru,
+  it,
   "de-DE": deDE,
 };
 
@@ -134,6 +137,7 @@ const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
   ca: new Intl.PluralRules("ca"),
   es: new Intl.PluralRules("es"),
   ru: new Intl.PluralRules("ru"),
+  it: new Intl.PluralRules("it"),
   "de-DE": new Intl.PluralRules("de-DE"),
 };
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
@@ -190,7 +194,8 @@ export const t = (
   let out = result;
   for (const [k, v] of Object.entries(params)) {
     if (k === "lng") continue;
-    out = out.replace(`{${k}}`, String(v));
+    // A placeholder can appear more than once ("{name} … your {name} app").
+    out = out.split(`{${k}}`).join(String(v));
   }
   return out;
 };

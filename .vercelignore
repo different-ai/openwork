@@ -6,8 +6,3 @@ vendor
 **/.next
 **/dist
 **/.*.bun-build
-packages/agent-lab
-packages/desktop
-packages/headless
-packages/owpenbot
-packages/server

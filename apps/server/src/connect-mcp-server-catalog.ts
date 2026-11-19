@@ -1,8 +1,10 @@
+import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { readMcpResourceText, type McpFetch } from "./connect-mcp-transport.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
+import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import {
   readGlobalRuntimeMcpConfig,
   readRuntimeMcpConfig,
@@ -168,7 +170,7 @@ function isLoopbackHostname(hostname: string): boolean {
   return Boolean(match && Number(match[1]) === 127 && match.slice(1).every((part) => Number(part) <= 255));
 }
 
-async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
+export async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unknown>): Promise<boolean> {
   if (typeof cloudMcp.url !== "string") return false;
   let endpoint: URL;
   try {
@@ -233,11 +235,35 @@ export function directConnectMcpRuntimeEntries(
     }]));
 }
 
+/**
+ * The organization MCP servers OpenWork registered, by name and address: the
+ * account's `openwork-cloud` connection and the connections these workspaces'
+ * Connect catalogs expose directly. Read from OpenWork's own records, never
+ * from stored entries' names, so a member's server under a reserved name is
+ * not taken for one.
+ */
+export async function registeredOrganizationMcpServers(
+  config: ServerConfig,
+  workspaceIds: Iterable<string>,
+): Promise<OrganizationMcpServers> {
+  const cloudMcp = await readGlobalRuntimeMcpConfig(config, "openwork-cloud");
+  if (!cloudMcp || typeof cloudMcp.url !== "string") return {};
+  const servers: OrganizationMcpServers = { "openwork-cloud": [cloudMcp.url] };
+  for (const workspaceId of new Set(workspaceIds)) {
+    const catalog = await readOpenWorkConnectMcpAppHostCatalog(config, workspaceId);
+    for (const [name, entry] of Object.entries(directConnectMcpRuntimeEntries(cloudMcp, catalog))) {
+      const urls = servers[name] ?? [];
+      if (typeof entry.url === "string" && !urls.includes(entry.url)) servers[name] = [...urls, entry.url];
+    }
+  }
+  return servers;
+}
+
 export async function readOpenWorkConnectMcpAppHostCatalog(
   config: ServerConfig,
   workspaceId: string,
 ): Promise<OpenWorkConnectMcpServerIndex> {
-  return await appHostCatalogStore.get(config, workspaceId) ?? emptyIndex();
+  return await timeMcpApp("desktop.connect-catalog-read", () => appHostCatalogStore.get(config, workspaceId)) ?? emptyIndex();
 }
 
 export async function writeOpenWorkConnectMcpAppHostCatalog(
@@ -328,7 +354,7 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
   if (!await trustedAppHostCloudEndpoint(cloudMcp)) return { index: null, diagnostic: "untrusted_origin" };
   const authorization = privateAppHostAuthorization(appHostAuthorization);
   if (!authorization) return { index: null, diagnostic: "missing_app_host_auth" };
-  const text = await readMcpResourceText({
+  const text = await timeMcpApp("desktop.connect-index-read", () => readMcpResourceText({
     config: {
       ...cloudMcp,
       headers: {
@@ -339,7 +365,7 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
     uri: CONNECT_MCP_SERVER_INDEX_URI,
     fetcher,
     clientName: "openwork-server-connect-mcp-catalog",
-  }).catch(() => null);
+  })).catch(() => null);
   // Transport currently collapses HTTP and protocol failures. Do not guess
   // that an unavailable discovery response means expired auth or no apps.
   if (text === null) return { index: null, diagnostic: "discovery_unavailable" };
@@ -358,6 +384,39 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
     servers.push({ ...server, url });
   }
   return { index: { ...parsed.data, servers }, diagnostic: servers.length === 0 ? "empty" : "ready" };
+}
+
+type CatalogRead = {
+  identity: string;
+  fetcher: McpFetch;
+  result: Promise<ConnectMcpCatalogReadResult>;
+};
+const pendingCatalogReads = new WeakMap<ServerConfig, Map<string, CatalogRead>>();
+
+/** Share startup and App discovery only while the same workspace/credential
+ * read is in flight. Completed reads, including failures, are never kept. */
+async function readWorkspaceCatalog(
+  config: ServerConfig,
+  workspaceId: string,
+  cloudMcp: Record<string, unknown>,
+  authorization: string | null,
+  fetcher: McpFetch = externalFetch,
+): Promise<ConnectMcpCatalogReadResult> {
+  if (!await trustedAppHostCloudEndpoint(cloudMcp)) return { index: null, diagnostic: "untrusted_origin" };
+  const revision = await readOpenWorkConnectMcpAppHostAuthorizationRevision(config, workspaceId);
+  const identity = createHash("sha256").update(JSON.stringify([cloudMcp.url, cloudMcp.enabled, authorization, revision])).digest("hex");
+  const pending = pendingCatalogReads.get(config) ?? new Map<string, CatalogRead>();
+  const existing = pending.get(workspaceId);
+  if (existing?.identity === identity && existing.fetcher === fetcher) return existing.result;
+  const read = { identity, fetcher, result: readOpenWorkConnectMcpServerIndexWithDiagnostics(cloudMcp, authorization, fetcher) };
+  pending.set(workspaceId, read);
+  pendingCatalogReads.set(config, pending);
+  try {
+    return await read.result;
+  } finally {
+    if (pending.get(workspaceId) === read) pending.delete(workspaceId);
+    if (pending.size === 0) pendingCatalogReads.delete(config);
+  }
 }
 
 /**
@@ -380,7 +439,7 @@ export async function refreshOpenWorkConnectMcpAppHostCatalog(
     workspaceId,
     String(cloudMcp.url),
   );
-  const { index, diagnostic } = await readOpenWorkConnectMcpServerIndexWithDiagnostics(cloudMcp, appHostAuthorization, fetcher);
+  const { index, diagnostic } = await readWorkspaceCatalog(config, workspaceId, cloudMcp, appHostAuthorization, fetcher);
   if (!index) return { status: "unavailable", appHostNames: [], diagnostic };
 
   await writeOpenWorkConnectMcpAppHostCatalog(config, workspaceId, index);
@@ -420,7 +479,7 @@ export async function reconcileOpenWorkConnectMcpServers(input: {
       String(input.cloudMcp.url),
     )
     : null;
-  const { index, diagnostic } = await readOpenWorkConnectMcpServerIndexWithDiagnostics(input.cloudMcp, appHostAuthorization, input.fetcher);
+  const { index, diagnostic } = await readWorkspaceCatalog(input.config, input.workspace.id, input.cloudMcp, appHostAuthorization, input.fetcher);
   const privateCatalog = index ?? emptyIndex();
   await writeOpenWorkConnectMcpAppHostCatalog(input.config, input.workspace.id, privateCatalog);
 

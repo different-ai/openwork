@@ -1,0 +1,5 @@
+// path: specs/composer-draft.e2e.test.ts
+import { spec } from "@openwork/testkit";
+import { coreWebWorld } from "../worlds/core-web.ts";
+const test = spec.world(coreWebWorld);
+test("a person keeps a draft", async ({ user }) => { await user.see("composer"); });

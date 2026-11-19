@@ -3,6 +3,9 @@ import type { ThreadStatus } from "@/lib/messages"
 // Relative so the pure grouping contract stays importable from alias-free
 // test workspaces (evals specs import this module directly).
 import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
+import { reasoningDurationMs } from "../../lib/text-activity"
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../app/types"
+import { parseLocalPathReference } from "../../react-app/domains/session/artifacts/local-path"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -84,15 +87,8 @@ export function getSafeFileDownloadUrl(part: Pick<FileUIPart, "url">) {
 }
 
 export function getSafeFileRevealPath(part: Pick<FileUIPart, "url">) {
-  try {
-    const url = new URL(part.url)
-    if (url.protocol !== "file:") return null
-    const pathname = decodeURIComponent(url.pathname)
-    if (!pathname) return null
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname
-  } catch {
-    return null
-  }
+  if (!/^file:\/\//i.test(part.url)) return null
+  return parseLocalPathReference(part.url)?.path ?? null
 }
 
 function getMessageOpencodeMetadata(message: UIMessage): object | null {
@@ -116,6 +112,62 @@ export function getMessageCompleted(message: UIMessage): number | null {
   if (!opencode || !("completed" in opencode)) return null
   const completed: unknown = opencode.completed
   return typeof completed === "number" ? completed : null
+}
+
+/**
+ * When the current run started (server timestamp). A follow-up sent while the
+ * reply before it was still being written joins that run, so steering does not
+ * restart the working time; a message sent after the reply finished, or after
+ * an error, starts a new run.
+ */
+export function getRunStartedAt(messages: UIMessage[]): number | null {
+  const newestReply = messages.findLast((message) => message.role === "assistant")
+  let startedAt: number | null = null
+  // The user message being traced back and the newest reply written before it.
+  let followUp: UIMessage | null = null
+  let reply: UIMessage | null = null
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === "assistant") {
+      if (followUp) reply ??= message
+      continue
+    }
+    if (message.role !== "user") continue
+    if (followUp && !(reply && replyUnfinishedAt(reply, getMessageCreated(followUp), reply === newestReply))) break
+    followUp = message
+    reply = null
+    startedAt = getMessageCreated(message) ?? startedAt
+  }
+  return startedAt
+}
+
+function replyUnfinishedAt(reply: UIMessage, sentAt: number | null, newest: boolean) {
+  if (reply.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)) return false
+  const completed = getMessageCompleted(reply)
+  // An interrupted run can leave an old reply without a completion time; only
+  // the newest reply may still be in progress.
+  if (completed === null) return newest
+  return sentAt !== null && completed > sentAt
+}
+
+/**
+ * How long, between `from` and `now`, a run waited for a person's approval or
+ * answer. Waits that overlap (the chat and a helper asking at once) count once;
+ * an open wait lasts until `now`.
+ */
+export function getWaitedMs(waits: readonly { start: number; end?: number }[], from: number, now: number): number {
+  const spans = waits
+    .map((wait) => [Math.max(wait.start, from), Math.min(wait.end ?? now, now)] as const)
+    .filter(([start, end]) => end > start)
+    .sort((left, right) => left[0] - right[0])
+  let waited = 0
+  let cursor = from
+  for (const [start, end] of spans) {
+    if (end <= cursor) continue
+    waited += end - Math.max(start, cursor)
+    cursor = end
+  }
+  return waited
 }
 
 export function formatMessageTimestamp(timestampMs: number): string {
@@ -169,7 +221,7 @@ export function groupMessages(messages: UIMessage[], status: ThreadStatus): Mess
 
 type AssistantRenderGroup =
   | { kind: "text"; text: string }
-  | { kind: "reasoning"; text: string; isStreaming: boolean }
+  | { kind: "reasoning"; text: string; isStreaming: boolean; durationMs?: number | null }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
   | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
@@ -234,6 +286,11 @@ export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answe
   }
 }
 
+/** Two thoughts' combined length, unknown when either is unknown. */
+function addDurations(left: number | null | undefined, right: number | null): number | null {
+  return typeof left === "number" && right !== null ? left + right : null
+}
+
 export function getAssistantRenderGroups(
   parts: UIMessage["parts"],
   showThinking: boolean
@@ -259,6 +316,7 @@ export function getAssistantRenderGroups(
     if (!isReasoningUIPart(part)) {
       return
     }
+    const durationMs = reasoningDurationMs(part.providerMetadata)
 
     const previous = groups.at(-1)
     if (previous?.kind === "reasoning") {
@@ -267,6 +325,7 @@ export function getAssistantRenderGroups(
       // previous paragraph's last sentence.
       previous.text += previous.text && part.text.trim() ? `\n\n${part.text}` : part.text
       previous.isStreaming = previous.isStreaming || part.state === "streaming"
+      previous.durationMs = addDurations(previous.durationMs, durationMs)
       return
     }
 
@@ -283,17 +342,19 @@ export function getAssistantRenderGroups(
       if (lastThought && lastThought.afterIndex === previous.parts.length) {
         lastThought.text += lastThought.text ? `\n\n${part.text}` : part.text
         lastThought.isStreaming = lastThought.isStreaming || part.state === "streaming"
+        lastThought.durationMs = addDurations(lastThought.durationMs, durationMs)
         return
       }
       previous.thoughts.push({
         afterIndex: previous.parts.length,
         text: part.text,
         isStreaming: part.state === "streaming",
+        durationMs,
       })
       return
     }
 
-    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" })
+    groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming", durationMs })
   }
 
   for (const part of filteredParts) {

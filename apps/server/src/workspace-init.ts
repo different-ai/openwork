@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
 import { opencodeConfigPath } from "./workspace-files.js";
-import { readJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import type { ReloadReason, WorkspaceInfo } from "./types.js";
 
 type WorkspaceOpenworkConfig = {
@@ -58,12 +58,57 @@ export function defaultWorkspaceOpenworkConfig(workspaceRoot: string, preset: st
   };
 }
 
+// Older OpenWork versions added this exact npm browser plugin entry to
+// workspace configs. The built-in browser tools replaced it; left in place, it
+// loads a second set of browser tools that clash by name and skip the member's
+// website rules. A version-pinned entry was added by someone else and stays.
+const LEGACY_BROWSER_PLUGIN = "opencode-chrome-devtools";
+
+export function isLegacyBrowserPlugin(value: unknown): boolean {
+  return value === LEGACY_BROWSER_PLUGIN;
+}
+
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
   const path = opencodeConfigPath(workspaceRoot);
-  if (await exists(path)) {
-    await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
+  if (!(await exists(path))) return false;
+  let data: Record<string, unknown>;
+  try {
+    ({ data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true }));
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("read", path, error);
+    return false;
   }
-  return false;
+  if (!Array.isArray(data.plugin) || !data.plugin.some(isLegacyBrowserPlugin)) return false;
+  // Remove only that entry, keeping the rest of the file and its comments.
+  const plugin = data.plugin.filter((item) => !isLegacyBrowserPlugin(item));
+  try {
+    await updateJsoncTopLevel(path, { plugin: plugin.length ? plugin : undefined });
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("update", path, error);
+    return false;
+  }
+  return true;
+}
+
+// The legacy-plugin cleanup is best-effort. When the OS denies access to the
+// workspace config (e.g. macOS privacy protection on ~/Documents returns EPERM),
+// skip the cleanup instead of failing every request that resolves the workspace.
+const CONFIG_ACCESS_ERROR_CODES = new Set(["EPERM", "EACCES", "EISDIR"]);
+
+function isConfigAccessError(error: unknown): boolean {
+  const code = errorStringField(error, "code");
+  return code !== undefined && CONFIG_ACCESS_ERROR_CODES.has(code);
+}
+
+function warnConfigAccessError(action: "read" | "update", path: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[workspace-init] Skipping legacy plugin cleanup; could not ${action} ${path}: ${message}`, {
+    fsCode: errorStringField(error, "code"),
+    syscall: errorStringField(error, "syscall"),
+    fsPath: errorStringField(error, "path"),
+  });
 }
 
 export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<EnsureWorkspaceFilesResult> {
@@ -95,18 +140,17 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
 /**
  * Provision workspace files for every workspace that has local files to set up.
  *
- * Skips remote workspaces (which live on a host and may even carry a non-empty
- * remote `directory`) and any workspace without a resolved local path. Either
- * would otherwise reach ensureWorkspaceFiles() — which throws
+ * Skips any workspace without a resolved local path, which would otherwise
+ * reach ensureWorkspaceFiles() — which throws
  * `invalid_workspace_path` on a blank path — and abort server startup. Local
  * provisioning failures are logged and skipped so one stale path cannot abort
  * startup. Shared by the embedded-server and CLI boot paths.
  */
 export async function ensureLocalWorkspaceFiles(
-  workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset" | "workspaceType">>,
+  workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset">>,
 ): Promise<void> {
   for (const workspace of workspaces) {
-    if (workspace.workspaceType === "remote" || !workspace.path.trim()) continue;
+    if (!workspace.path.trim()) continue;
     try {
       await ensureWorkspaceFiles(workspace.path, workspace.preset);
     } catch (error) {

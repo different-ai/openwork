@@ -9,6 +9,11 @@ import type { Place } from "./place.ts";
 import { ephemeralDatabaseName, localMysqlIsRunning } from "./place.ts";
 import { SkipError } from "./needs.ts";
 
+// Lookup witnesses use purpose-specific 256-bit bearer keys, not password hashing.
+// Keep the algorithms in the product helpers; fixed-vector tests pin their formats.
+export { gatewayBearerKey, gatewayBearerKeyLookupDigest } from "../../../../ee/packages/utils/src/gateway-bearer-key.ts";
+export { inferenceBearerKey, legacyInferenceBearerKeyLookupDigest } from "../../../../ee/packages/utils/src/inference-bearer-key.ts";
+
 const root = fileURLToPath(new URL("../../../..", import.meta.url));
 const encryptionSecret = "local-dev-db-encryption-key-please-change-1234567890";
 const exec = promisify(execFile);
@@ -21,8 +26,8 @@ function encrypted(value: string) {
   return `enc:v1:${iv.toString("base64")}.${cipher.getAuthTag().toString("base64")}.${ciphertext.toString("base64")}`;
 }
 
-/** Real HTTP service with disposable baseline SQL for auth; generation is local. */
-export async function managedInference(place: Place) {
+/** Real HTTP service with disposable baseline SQL for auth; generation is local. `env` overrides gateway settings. */
+export async function managedInference(place: Place, options: { env?: Record<string, string> } = {}) {
   if (place.kind !== "local") throw new SkipError("managed inference fixture requires a local MySQL service and loopback provider");
   if (!await localMysqlIsRunning()) throw new SkipError("MySQL is not reachable at OPENWORK_EVAL_MYSQL_URL or the default local port");
   const stack = new AsyncDisposableStack();
@@ -44,6 +49,7 @@ export async function managedInference(place: Place) {
         DEN_DB_ENCRYPTION_KEY: encryptionSecret, OPENROUTER_UPSTREAM_URL: witness.url,
         GATEWAY_EGRESS_ALLOWED_ORIGINS: new URL(witness.url).origin,
         INFERENCE_WEBHOOK_SECRET: "fixture-webhook-secret", INFERENCE_UPSTREAM_TIMEOUT_MS: "1000", INFERENCE_STREAM_IDLE_MS: "1000",
+        ...options.env,
       },
     });
     let logs = "";
@@ -81,6 +87,23 @@ export async function managedInference(place: Place) {
       url, witness, identity, logs: () => logs,
       async denyManagedModels() {
         await sql.execute("UPDATE organization SET metadata=? WHERE id=?", [JSON.stringify({ inference: { enabled: true, tier: "tier1" }, dpaSigned: true }), organizationId]);
+      },
+      /** The organization has used this window's allowance; the current window ends `resetInMs` from now. */
+      async exhaustAllowance(windowType: "five_hour" | "weekly" | "monthly" = "five_hour", resetInMs = 70 * 60_000) {
+        const [rows] = await sql.execute("SELECT id FROM inference_org_limit_policies WHERE organization_id=? AND window_type=?", [organizationId, windowType]);
+        const policy = Array.isArray(rows) ? rows[0] : undefined;
+        if (!policy || typeof policy !== "object" || !("id" in policy) || typeof policy.id !== "string") throw new Error(`Missing ${windowType} allowance policy`);
+        const bucketId = id("ioub");
+        const limit = 100_000_000;
+        await sql.execute("INSERT INTO inference_org_usage_buckets (id,organization_id,policy_id,window_start_at,window_end_at,limit_amount,used_amount) VALUES (?,?,?,?,?,?,?)",
+          [bucketId, organizationId, policy.id, new Date(Date.now() - 60_000), new Date(Date.now() + resetInMs), limit, limit]);
+        await sql.execute("UPDATE inference_org_limit_policies SET current_bucket_id=? WHERE id=?", [bucketId, policy.id]);
+      },
+      /** Requests the gateway admitted or refused for this organization, as its request log records them. */
+      async requestCount() {
+        const [rows] = await sql.execute("SELECT COUNT(*) AS count FROM gateway_request_logs WHERE organization_id=?", [organizationId]);
+        const row = Array.isArray(rows) ? rows[0] : undefined;
+        return row && typeof row === "object" && "count" in row ? Number(row.count) : 0;
       },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };

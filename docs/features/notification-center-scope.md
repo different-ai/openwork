@@ -1,126 +1,137 @@
-# Notification center scope: what belongs in the bell, what stays a toast
+# Activity: member changes and background notices
 
-Report on the question "the Notifications panel says *No notifications yet*
-while workspace events such as the archived-session toast never appear there —
-is that intentional?"
+ENG-278 replaces the desktop Notifications popover with a member Activity
+popover and full page. Organization-wide audit history belongs in Den and is
+not part of this surface.
 
-## Verdict
+## What belongs here
 
-**Intentional delivery scope, misleading empty-state copy.** The archived-session
-toast is a *user-action confirmation*, and the notification center was designed
-to exclude that class. The only defect is the empty-state hint, which promised
-"updates from … your workspaces" without saying that confirmations of your own
-actions are deliberately kept out. This change fixes the copy and adds an E2E
-spec that pins the contract. No delivery behavior changed.
+- Changes to the signed-in member's usable model-provider access.
+- Newly available skills/plugins and published skill or connection revisions.
+- Meaningful connection configuration changes and observed unavailability.
 
-## Documented intent (not inferred)
+Only these high-level changes, as on the Paper boards. Device notices (applied
+or pending engine reloads such as “Updates applied · Skill … is now active”,
+update checks, background failures) are not Activity: failures keep their
+toast with its action, and receipts stay silent. Confirmations of the user's
+own actions, such as archiving a session or installing a skill, remain
+toast-only. Task permission/question prompts and
+native OS notifications keep their separate delivery contracts. Activity does
+not collect all toasts, other people's activity, usage analytics or automation
+history.
 
-- PR [#2215](https://github.com/different-ai/openwork/pull/2215) "notification
-  center + auto-reload engine when idle" (merged 2026-06-13) introduced three
-  delivery classes:
+## Observations, not an audit log
 
-  | Class | Behavior | Examples named in the PR |
-  | --- | --- | --- |
-  | Feedback | toast only | skill installed, validation warnings, action errors |
-  | Event | center entry + badge, never a popup | provider sync, reload receipts, pending updates |
-  | Alert | center entry + one toast; bursts collapse into one summary toast | reload failure, updater / auto-reconnect errors |
+Existing desktop cloud-sync lifecycle hooks and inventory-change signals ask
+one app-level observer to read the current usable inventories. The observer
+compares complete, successful results with the previous successful snapshots.
+Installation drift and engine connectivity are not permission evidence.
 
-- The entry-point module `apps/app/src/react-app/shell/notifications.ts`
-  restates it in its header: "Direct feedback for user actions (e.g. 'skill
-  installed') should keep using `toast` … and stay out of the center."
-- PR [#4818](https://github.com/different-ai/openwork/pull/4818) (the archive
-  toast identity fix, merged 2026-09-10) explicitly considered a "durable
-  activity log / bulk summary" for archive actions and recorded it as "useful
-  future scope, not needed here".
-- No product doc in `docs/` or the bundled OpenWork documentation describes the
-  in-app bell; the only prose is the Desktop Notifications settings copy, which
-  calls native OS notifications "separate from the in-app notification bell".
-- No GitHub issue asks for user-action confirmations in the center.
+- The first successful inventory is a silent baseline, including an empty one.
+  It adds no entries; its labels are kept as one summary row ("4 things were
+  already shared with you", Paper A7), or "Nothing shared with you yet" when
+  empty (A5 first week).
+- A repeated inventory adds nothing. Later revisions and removal/re-grant
+  transitions are distinct observations.
+- Connections retain the usable connection ID across direct and plugin grants;
+  an unbound plugin configuration is represented by its plugin, not a fabricated
+  connection. Binding it cannot remove an already usable connection.
+- The feed uses stable resource identities and records when this device
+  **observed** a change. The timestamp is not the time someone granted access
+  or published a version.
+- Actor, team, audience count, deletion reason and connection-health history
+  are not inferred. Copy follows the Paper boards without the actor: “… was
+  shared with you”, “… was added to the … marketplace”, “… is ready to use”,
+  “A new version of … was published”, “… is no longer shared with you”.
+- Failed/partial reads preserve the last successful baselines and entries;
+  they never become empty inventories. The UI offers Retry and keeps the last
+  verification time visible.
+- A change added and removed between successful syncs can be missed. This is
+  deliberately not complete historical or compliance evidence.
 
-## Observed implementation (origin/dev 2fcbae60e)
+The client reuses existing authorized Den reads. There is no new notification
+endpoint, table, server event writer or audit schema. Complete-inventory reads
+reject malformed/partial responses rather than silently turning omitted rows
+into removals. Rows of a config object type the app does not model (for
+example MCP Apps) are outside the inventory and do not count as missing.
+Grant-scoped marketplace references are resolved directly so a
+paginated management catalog cannot expand or truncate the member feed.
 
-- Store: `react-app/kernel/notification-store.ts`, Zustand + `localStorage`
-  key `openwork:notifications:v1`, 100 entries / 30 days, unread entries with
-  the same `dedupeKey` coalesce, actions are serializable descriptors
-  (`open-model-picker`, `reload-engine`, `open-extensions-marketplace`,
-  `install-marketplace-plugin`) so they remain valid after a restart.
-- Scope: one store per app profile, shared across workspaces and accounts; no
-  per-entry dismiss, closing the panel marks everything read, "Clear all"
-  drops everything.
-- Producers of center entries today: provider sync (`new-providers-listener`),
-  engine reload receipts / pending updates / reload failure
-  (`reload-coordinator`), marketplace plugin added / updated / removed
-  (`extensions-store`), background failure sinks in `settings-route`
-  (updater check, workspace refresh, server reconnect), and session title
-  generation failure (`session-sync`).
-- Archive / unarchive (`domains/session/sidebar/use-session-archive.tsx`) uses
-  `toast.undo(...)` with closure-based Undo and View actions and never calls
-  `notifyEvent` / `notifyAlert`. Task completion, failure, permission and
-  question prompts go to native OS notifications only
-  (`shell/desktop-notifications.ts`) when the window is not in view; they are
-  not written to the center either.
-- The user's report is therefore consistent with the code: the center is
-  empty until a background event happens, and archiving never writes to it.
+## Identity and persistence
 
-## Comparators (primary sources)
+`openwork:member-activity:v1` stores comparison baselines and up to 100 entries
+from the last 30 days per deployment/organization/member, for up to five recent
+contexts. Baselines survive entry expiry. The active identity and refresh state
+are never persisted. A newly verified identity selects only its own context;
+identity changes invalidate in-flight deliveries.
 
-| Product | Ephemeral confirmation | Durable in-app inbox | Own-action confirmations in the inbox? |
-| --- | --- | --- | --- |
-| VS Code | Toast (auto-hides; 3 at a time, spam-protected) | Notification center keeps every notification until closed; `SILENT` priority = center only, Do Not Disturb hides non-error toasts but the center still shows them ([docs](https://code.visualstudio.com/docs/editing/getting-started/userinterface), [notification.ts](https://github.com/microsoft/vscode/blob/99489178/src/vs/platform/notification/common/notification.ts), [PR #149645](https://github.com/microsoft/vscode/pull/149645)) | Only if the producer used the notification API; ordinary editor actions do not notify. |
-| Cursor | In-app completion sound; OS banner when the app is in the background for "done" and "needs attention" ([forum answer by Cursor staff](https://forum.cursor.com/t/agent-eta-completion-notification-sound/168130)) | No documented in-app inbox | Not documented. |
-| Linear | Real-time desktop / mobile / Slack alerts | Inbox "for work that needs attention", subscription-driven, snooze / read / archive, 2,000-entry cap ([Inbox](https://linear.app/docs/inbox), [Notifications](https://linear.app/docs/notifications)) | Inbox is fed by key events on *subscribed* issues, not by a log of your own clicks. |
-| Slack | Badge + push | Activity view: DMs, mentions, threads, reactions, invitations, apps, reminders; clear vs. mark read are distinct, cleared items remain in a "Cleared" filter ([Activity](https://slack.com/help/articles/19693583638803-Get-your-work-done-from-the-Activity-view), [new Activity](https://slack.com/help/articles/46751260742035-Introducing-the-new-Activity-view-in-Slack)) | No; Activity is other people's activity directed at you. |
-| Notion | Desktop push 10 s after an @-mention; suppressed while viewing the page | Sidebar Inbox: mentions, replies, person-property assignment, reminders, invitations; read / unread / archive ([Inbox & notifications](https://www.notion.com/help/updates-and-notifications), [Notification settings](https://www.notion.com/help/notification-settings)) | No; you are not notified for your own edits. |
-| Material Design | Snackbar with Undo is the recommended pattern for reversible operations ([M3 snackbar](https://m3.material.io/components/snackbar/guidelines)) | — | — |
+Only minimal display metadata, resource IDs, content revisions/digests,
+observation times and internal destinations are stored. Skill content,
+connection URLs, credentials and raw provider configuration are not retained.
+Read state is one "seen up to" time per member context, not a per-entry flag. Closing the popover advances it
+(Paper A1/A5); there is no mark-all-read control, and it never mutates history.
+It is device-local: the Den-backed cross-device read state in D0 is a
+follow-up.
 
-Pattern: durable inboxes hold things that *happened to you* (background
-outcomes, other people, system state) and need attention; confirmations of
-what you just did are transient, ideally with Undo. Only VS Code keeps a
-history of every toast, and it does so because its toasts *are* its
-notifications — it has no separate feedback channel. None of these products
-document logging the user's own archive-style actions to a notification inbox.
+Existing device notices retain their separate bounded local store. Its legacy
+read field remains an in-memory compatibility detail and is not serialized.
+Old unscoped cloud/provider entries cannot be attributed to a member and are
+not migrated into the member feed. Resource-change producers now request a
+verified member refresh instead of adding duplicate, profile-wide notices.
 
-## Options evaluated
+## Presentation
 
-| Option | Noise | Expectation fit | Undo validity | Persistence | Isolation / privacy | Scope |
-| --- | --- | --- | --- | --- | --- | --- |
-| A. Keep scoped inbox, fix copy (chosen) | none added | closes the gap the copy created | n/a | unchanged | unchanged | one string + spec |
-| B. Retain important errors / background completions / actionable events | low | good; matches Alert/Event classes already defined | needs serializable actions (e.g. `open-session`) | fine | task events would need workspace + session identity in a profile-wide store | new action types, new producers for task.completed / failed / permission; product decision on which events |
-| C. Retain all toasts / events | high; every archive, rename, install, error becomes an unread badge | over-delivers; contradicts #2215 | closure-based Undo cannot be persisted; a persisted "Undo archive" can be stale (already restored, deleted, workspace gone) | 100-entry cap fills fast | archive titles from every workspace land in one profile-wide list | large; reverses a merged design |
-| D. Separate activity / history log from attention inbox | none in the inbox | best long term | history entries are records, not actions | needs its own store and retention | needs per-workspace filtering | new surface; needs a product owner |
+- The shared sidebar/titlebar bell is named **Activity**, opens on demand, shows
+  a dot while anything is unread, and is highlighted on `/activity`.
+- With unread entries the popover shows the latest five, unread first with a
+  dot (A1). With none it says **You’re caught up** above the last three (A5).
+  An available resource row opens its existing destination; unavailable rows
+  have no dead action.
+- `/activity` uses the normal conversation sidebar, groups entries by observed
+  day, and filters All / Skills / Plugins / Connections (A2). Model changes
+  appear under All. Row actions: **Try it** puts a newly shared skill
+  into the New session composer (nothing is sent), **Browse** for plugins,
+  **Open** otherwise.
+- The empty popover follows Paper A4: a quiet bell, **Nothing new**, a short
+  explanation and no View all. The full page offers **Browse Library**. A filter
+  with no results says what it hid, in the row lanes, with **Show all
+  activity** (A6).
+- Refreshing preserves existing rows. An initial load uses lane-matched
+  skeletons; failure keeps known rows under a neutral banner, “Couldn’t
+  refresh. Showing activity from 10:42.”, with Retry (A6). A removal stays
+  visible and muted with a lock and **Ask an admin** (P4/C5), without naming an
+  unrecorded actor or reason. Earlier rows for that resource stay readable but
+  have no action.
+- Admins get the same member surface, not an Organization switch.
+- New entries never open the panel, change routes or create popups.
 
-Option A is the smallest evidence-backed resolution. Options B and D are
-reasonable follow-ups but need an explicit product decision; the parallel
-archive fix (#4818) already listed D as future scope. Option C is not
-recommended.
+These choices follow DESIGN.md P1/P2 (state rather than explanatory prose),
+P5 (existing primitives), S2 (compact rows), S5 (no automatic navigation),
+C5/C6 (neutral unavailable states and useful recovery), and P10 (visual proof).
 
-## Root cause of the mismatch
+## Verification boundaries
 
-The empty-state hint `notifications.empty_hint` ("Updates from OpenWork Cloud
-and your workspaces will show up here.") described the *sources* of entries
-without describing the *class*. A person who just archived a session and saw a
-"Session archived" toast reads "your workspaces" as covering that event, opens
-the bell, and finds it empty. The hint now names what qualifies (new models,
-extension changes, applied reloads, errors needing attention) and says that
-confirmations of your own actions appear briefly instead. Other locales do not
-define this key and fall back to English.
+- `apps/app/tests/member-activity-store.test.ts`: successful snapshots → scoped
+  entries, silent initialization, revisions, deduplication, removal/re-grant,
+  persistence, corruption/expiry and identity boundaries.
+- `apps/app/tests/member-activity-sync.test.ts`: existing inventory reads → feed,
+  partial failures, stale delivery and connection configuration versus health.
+- `apps/app/tests/member-activity-ui.test.tsx`: bell → page, design copy, filters,
+  actions, unread → caught up, first-week and non-happy states.
+- `evals/specs/member-activity-sync.e2e.test.ts`: real Den grants and version
+  changes → real app Activity, refresh failures, restart and another member on
+  the same device. HTTP reads witness the synchronization boundary.
+- `evals/specs/notification-center-scope.e2e.test.ts`: device notices and
+  archive/Undo stay out of Activity, and Activity stays reachable with the
+  sidebar hidden. The legacy event seam here is not evidence of Cloud sync.
 
-## Regression proof
+The previous notification-center contract (PR #2215, later scope clarification)
+kept user-action confirmations out of the bell. That delivery distinction is
+preserved; per-entry unread tracking is replaced by the ENG-278 member-feed
+"seen up to" time.
 
-`evals/specs/notification-center-scope.e2e.test.ts` (world
-`evals/worlds/notification-center.ts`) asserts on a real desktop:
+## Not yet at Paper parity
 
-1. fresh profile: `notifications.list` is empty, the bell has no badge, the
-   panel shows the new hint and not the old one;
-2. archiving a session (v1 engine) shows the undoable toast and leaves
-   `notifications.list` empty and the bell unbadged, before and after Undo;
-3. the real provider-sync window event lands as exactly one unread
-   `providers` entry with the `open-model-picker` action and a `1` badge, a
-   second sync coalesces into the same entry, and a repeat of an already-seen
-   provider adds nothing, with no popup for any of them;
-4. the entry survives a reload unread, closing the panel marks it read and
-   clears the badge, and the read state survives another reload.
-
-Not covered here, by design: task completion / failure / permission prompts
-(OS notifications, separate contract) and per-workspace isolation of the
-profile-wide store (no behavior change in this PR).
+These need Den data the desktop does not read today (see the D0 board):
+actor names and avatars, **Compare** for skill versions (updates open the
+skill), version numbers, "You joined …", and read state shared with Den.

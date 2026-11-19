@@ -1,13 +1,26 @@
 /** @jsxImportSource react */
 import {
-  CheckCircle2,
+  CLAUDE_AGENT_HOST_PROVIDER_ID,
+  CLAUDE_AGENT_PROVIDER_ID,
+  CLAUDE_CODE_INSTALL_POLL_MS,
+  CLAUDE_CODE_NAME,
+  CLAUDE_CODE_SETUP_URL,
+  CLAUDE_CODE_SIGN_IN_COMMAND,
+  claudeAgentConnected,
+  claudeAgentProblem,
+  claudeCodeMissing,
+  type ClaudeAgentSetupState,
+} from "@/app/lib/claude-agent";
+import {
+  ArrowUpRight,
+  Check,
   ChevronLeft,
-  ChevronRight,
   Loader2,
   Search,
 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,11 +37,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/sonner";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { openDesktopUrl } from "@/app/lib/desktop";
 import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
+import { OrganizationMark, ProviderSectionLabel, ProviderStatus, ProviderTile } from "../../settings/pages/provider-rows";
+import { autoProviderSubtitle } from "../../models/model-catalog";
+import { showsRetiredOpencodeZen } from "@/app/cloud/desktop-app-restrictions";
+import type { SecretFieldHandle } from "@/components/secret-field";
+import { SecretTextInput } from "../../../design-system/secret-text-input";
+import { reportActivationEvent } from "../../cloud/activation/use-activation";
 import { TextInput } from "../../../design-system/text-input";
 import type {
   ProviderAuthMethod,
@@ -49,7 +69,7 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
   methodLabel: string;
 };
 
-const PROVIDER_LABELS: Record<string, string> = {
+export const PROVIDER_LABELS: Record<string, string> = {
   openwork: "OpenWork",
   opencode: "OpenCode Zen",
   openai: "OpenAI",
@@ -61,14 +81,29 @@ const PROVIDER_LABELS: Record<string, string> = {
 const OPENWORK_MODELS_PROVIDER_ID = "openwork";
 
 export type ProviderAuthModalProps = {
+  /** Claude Code sign-in, offered as a way to connect Anthropic. Absent when the person cannot use it. */
+  claudeAgent?: ClaudeAgentSetupState;
+  /** Resolves with the success message once the engine confirms the Claude Code login; rejects with the reason. */
+  onConnectClaudeAgent?: () => Promise<unknown>;
+  /**
+   * Connects like onConnectClaudeAgent, first making sure Claude Code is signed in: when it is not, Claude Code's
+   * own sign-in opens in the browser. Used where `claudeAgent.canSignIn` says OpenWork can run it.
+   */
+  onSignInClaudeAgent?: () => Promise<unknown>;
+  /** Stops waiting on a Claude Code sign-in the person gave up on. */
+  onCancelClaudeAgentSignIn?: () => unknown;
+  /** Looks again for Claude Code on this computer; the answer arrives as `claudeAgent.installed`. */
+  onCheckClaudeAgentInstalled?: () => unknown;
   open: boolean;
   loading: boolean;
   submitting: boolean;
   error: string | null;
   preferredProviderId?: string | null;
-  workerType?: "local" | "remote";
   providers: ProviderAuthProvider[];
   connectedProviderIds: string[];
+  /** Listed by the engine but without the person's own key (built-in Zen): offered under "Available to add". */
+  keylessProviderIds?: ReadonlySet<string>;
+  gatewayProviderIds?: ReadonlySet<string>;
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string, methodIndex?: number) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
@@ -78,20 +113,24 @@ export type ProviderAuthModalProps = {
     code?: string,
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   onRefreshProviders?: () => Promise<unknown>;
-  showOpenWorkModelsSubscribe?: boolean;
-  onSubscribeOpenWorkModels?: () => void | Promise<void>;
+  openWorkModelsState?: "included" | "off" | "unavailable";
+  /** True when the organization lists OpenWork Models, so it is not repeated under On this device. */
+  hideOpenWorkModelsDeviceRow?: boolean;
+  organizationName?: string;
+  organizationProviderIds?: ReadonlySet<string>;
+  organizationProviderCount?: number;
+  onOpenDen?: () => void;
   onClose: () => void;
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
-  const workerType = props.workerType === "remote" ? "remote" : "local";
-  const isRemoteWorker = workerType === "remote";
-
   const [view, setView] = useState<
-    "list" | "method" | "api" | "oauth-code" | "oauth-auto" | "openwork-subscribe"
+    "list" | "method" | "api" | "oauth-code" | "oauth-auto" | "external"
   >("list");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState("");
+  // The key stays in the field until submit takes it; only emptiness is state.
+  const apiKeyField = useRef<SecretFieldHandle>(null);
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [oauthCodeInput, setOauthCodeInput] = useState("");
   const [oauthSession, setOauthSession] = useState<ProviderOAuthSession | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -101,8 +140,19 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
+  const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
+  // Claude Code turned up while this step was waiting for it to be installed.
+  const [claudeFound, setClaudeFound] = useState(false);
+  const claudeWasMissing = useRef(false);
+  const checkClaudeInstalled = useRef(props.onCheckClaudeAgentInstalled);
+  checkClaudeInstalled.current = props.onCheckClaudeAgentInstalled;
 
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const isMobile = useIsMobile();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const providerButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+  const returnProviderIdRef = useRef<string | null>(null);
+  const previousViewRef = useRef(view);
   const providerPollRef = useRef<number | null>(null);
   const oauthAutoPollRef = useRef<number | null>(null);
   const oauthCodeCopiedResetRef = useRef<number | null>(null);
@@ -174,6 +224,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
     const providersById = new Map(providers.map((provider) => [provider.id, provider]));
     const nextEntries = Object.keys(methods)
+      .filter((id) => !props.gatewayProviderIds?.has(id))
       .flatMap((id) => {
         const provider = providersById.get(id);
         const entryMethods = (methods[id] ?? []).filter((method) => {
@@ -182,7 +233,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           }
           if (!isOpenAiProvider(id, provider?.name)) return true;
           if (method.type !== "oauth") return true;
-          if (isRemoteWorker) return isOpenAiHeadlessMethod(method);
           return !isOpenAiHeadlessMethod(method);
         });
         if (entryMethods.length === 0) return [];
@@ -190,28 +240,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           id,
           name: formatProviderName(id, provider?.name),
           methods: entryMethods,
-          connected: connected.has(id),
+          connected: connected.has(id) && !props.keylessProviderIds?.has(id),
           env: Array.isArray(provider?.env) ? provider.env : [],
         } satisfies ProviderAuthEntry];
       })
       .sort(compareProviders);
 
-    if (props.showOpenWorkModelsSubscribe) {
-      const connectedToOpenWork = connected.has(OPENWORK_MODELS_PROVIDER_ID);
-      return [
-        {
-          id: OPENWORK_MODELS_PROVIDER_ID,
-          name: "OpenWork",
-          methods: [{ type: "cloud", label: "Subscribe" }],
-          connected: connectedToOpenWork,
-          env: [],
-        },
-        ...nextEntries.filter((entry) => entry.id.trim().toLowerCase() !== OPENWORK_MODELS_PROVIDER_ID),
-      ];
-    }
-
-    return nextEntries;
-  }, [isRemoteWorker, props.authMethods, props.connectedProviderIds, props.providers, props.showOpenWorkModelsSubscribe]);
+    return nextEntries.filter((entry) => entry.id !== OPENWORK_MODELS_PROVIDER_ID && entry.id !== "openwork-free");
+  }, [props.authMethods, props.connectedProviderIds, props.gatewayProviderIds, props.keylessProviderIds, props.providers]);
 
   const selectedEntry = useMemo(
     () => entries.find((entry) => entry.id === selectedProviderId) ?? null,
@@ -219,7 +255,21 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   );
 
   const resolvedView = selectedEntry ? view : "list";
-  const errorMessage = localError ?? props.error;
+  const claudeChecking = Boolean(props.claudeAgent?.checking);
+  const claudeBusy = Boolean(props.claudeAgent?.busy);
+  const claudeSigningIn = Boolean(props.claudeAgent?.signingIn);
+  // OpenWork opens Claude Code's sign-in itself here; elsewhere the person runs the command in a terminal.
+  const claudeCanSignIn = Boolean(props.claudeAgent?.canSignIn && props.onSignInClaudeAgent);
+  // The engine's provider list can fail independently of Claude Code, whose
+  // step shows only its own result: the last check's reason, or none while checking.
+  const claudeReason = claudeChecking || claudeSigningIn ? null : props.claudeAgent?.error ?? claudeAgentProblem(props.claudeAgent)?.message ?? null;
+  const claudeInstalled = props.claudeAgent?.installed;
+  // Where OpenWork can look, a missing Claude Code is its own state with the way to get it, not an error to read.
+  const claudeMissing = claudeCanSignIn && !claudeChecking && !claudeSigningIn
+    && (claudeInstalled === false || (claudeInstalled === undefined && claudeCodeMissing(claudeReason)));
+  // "Not installed" is either that state or, once Claude Code is found, out of date.
+  const claudeError = claudeCanSignIn && claudeCodeMissing(claudeReason) ? null : claudeReason;
+  const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
 
   // Connected providers lead the list so the two groups render as one flat
   // array — keyboard navigation keeps indexing straight into display order.
@@ -274,7 +324,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
     setView("list");
     setSelectedProviderId(null);
-    setApiKeyInput("");
+    apiKeyField.current?.clear();
+    setHasApiKey(false);
     setOauthCodeInput("");
     setOauthSession(null);
     setSearchQuery("");
@@ -282,6 +333,9 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     setOauthCodeCopied(false);
     setOauthBrowserOpened(false);
+    setClaudeCommandCopied(false);
+    setClaudeFound(false);
+    claudeWasMissing.current = false;
   };
 
   const stopProviderPolling = () => {
@@ -299,6 +353,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleClose = () => {
+    // Closing gives up on a Claude Code sign-in still open in the browser.
+    if (props.claudeAgent?.busy && claudeCanSignIn) void props.onCancelClaudeAgentSignIn?.();
     void props.onRefreshProviders?.();
     stopOauthAutoPolling();
     stopProviderPolling();
@@ -323,9 +379,14 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setActiveEntryIndex((current) => Math.max(0, Math.min(current, total - 1)));
   }, [filteredEntries.length, props.open, resolvedView]);
 
-  useEffect(() => {
-    if (!props.open || resolvedView !== "list") return;
-    queueMicrotask(() => searchInputRef.current?.focus());
+  useLayoutEffect(() => {
+    const previous = previousViewRef.current;
+    previousViewRef.current = resolvedView;
+    if (!props.open || previous === resolvedView) return;
+    const providerButton = returnProviderIdRef.current
+      ? providerButtonsRef.current.get(returnProviderIdRef.current) : null;
+    const target = resolvedView === "list" ? providerButton ?? titleRef.current : titleRef.current;
+    target?.focus({ preventScroll: true });
   }, [props.open, resolvedView]);
 
   useEffect(() => {
@@ -334,12 +395,18 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const preferredId = props.preferredProviderId?.trim().toLowerCase() ?? "";
     if (!preferredId || autoOpenedPreferredProviderIdRef.current === preferredId) return;
 
-    const entry = entries.find((item) => item.id.trim().toLowerCase() === preferredId);
-    if (!entry) return;
+    // "Sign in again" on the Claude Code row opens its step under Anthropic.
+    const claudeCode = preferredId === CLAUDE_AGENT_PROVIDER_ID;
+    const entry = entries.find((item) => item.id.trim().toLowerCase() === (claudeCode ? CLAUDE_AGENT_HOST_PROVIDER_ID : preferredId));
+    const externalMethod = claudeCode ? entry?.methods.find((method) => method.type === "external") : undefined;
+    if (!entry || (claudeCode && !externalMethod)) return;
 
     autoOpenedPreferredProviderIdRef.current = preferredId;
     queueMicrotask(() => {
-      handleEntrySelect(entry);
+      if (!externalMethod) { handleEntrySelect(entry); return; }
+      setSelectedProviderId(entry.id);
+      returnProviderIdRef.current = entry.id;
+      void handleMethodSelect(externalMethod, entry);
     });
   }, [
     entries,
@@ -348,6 +415,32 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     props.preferredProviderId,
     resolvedView,
   ]);
+
+  // Look for Claude Code when its step opens and whenever the person comes back to this window; while it is
+  // missing, keep looking, since installing takes a minute or two and can finish with this window in view.
+  const claudeStepOpen = props.open && resolvedView === "external" && claudeCanSignIn;
+  useEffect(() => {
+    if (!claudeStepOpen) return;
+    const check = () => {
+      if (document.visibilityState === "visible") void checkClaudeInstalled.current?.();
+    };
+    check();
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    const timer = claudeMissing ? window.setInterval(check, CLAUDE_CODE_INSTALL_POLL_MS) : null;
+    return () => {
+      window.removeEventListener("focus", check);
+      document.removeEventListener("visibilitychange", check);
+      if (timer !== null) window.clearInterval(timer);
+    };
+  }, [claudeMissing, claudeStepOpen]);
+
+  useEffect(() => {
+    if (claudeMissing) { claudeWasMissing.current = true; setClaudeFound(false); return; }
+    if (!claudeWasMissing.current || claudeInstalled !== true) return;
+    claudeWasMissing.current = false;
+    setClaudeFound(true);
+  }, [claudeInstalled, claudeMissing]);
 
   useEffect(() => {
     return () => {
@@ -515,19 +608,17 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
-  const handleMethodSelect = async (method: ProviderAuthMethod) => {
-    if (!selectedEntry || actionDisabled) return;
+  const handleMethodSelect = async (method: ProviderAuthMethod, entry = selectedEntry) => {
+    if (!entry || actionDisabled) return;
     setLocalError(null);
 
     if (method.type === "oauth") {
-      await startOauth(selectedEntry, method.methodIndex);
+      await startOauth(entry, method.methodIndex);
       return;
     }
 
-    if (method.type === "cloud") {
-      setView("openwork-subscribe");
-      return;
-    }
+    if (method.type === "cloud") return;
+    if (method.type === "external") { setView("external"); return; }
 
     setView("api");
   };
@@ -536,14 +627,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (actionDisabled) return;
     setLocalError(null);
     setSelectedProviderId(entry.id);
-
-    if (props.showOpenWorkModelsSubscribe && entry.id.trim().toLowerCase() === OPENWORK_MODELS_PROVIDER_ID) {
-      setView("openwork-subscribe");
-      return;
-    }
+    returnProviderIdRef.current = entry.id;
 
     if (entry.methods.length === 1) {
-      void handleMethodSelect(entry.methods[0]);
+      void handleMethodSelect(entry.methods[0], entry);
       return;
     }
 
@@ -558,7 +645,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const handleApiSubmit = async () => {
     if (!selectedEntry || actionDisabled) return;
 
-    const trimmed = apiKeyInput.trim();
+    const trimmed = (apiKeyField.current?.take() ?? "").trim();
     if (!trimmed) {
       setLocalError("API key is required.");
       return;
@@ -567,6 +654,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
     try {
       await props.onSubmitApiKey(selectedEntry.id, trimmed);
+      void reportActivationEvent("own_provider");
       toast.success(`${selectedEntry.name} connected`, {
         description: "API key saved locally by OpenCode.",
       });
@@ -575,6 +663,37 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save API key";
       setLocalError(message);
+    }
+  };
+
+  const copyClaudeCommand = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setLocalError(`Clipboard is unavailable. Run ${CLAUDE_CODE_SIGN_IN_COMMAND} in your terminal.`);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(CLAUDE_CODE_SIGN_IN_COMMAND);
+      setClaudeCommandCopied(true);
+    } catch {
+      setLocalError(`Could not copy the command. Run ${CLAUDE_CODE_SIGN_IN_COMMAND} in your terminal.`);
+    }
+  };
+
+  const openClaudeInstall = () => openExternalUrl(claudeAgentProblem(props.claudeAgent)?.url ?? CLAUDE_CODE_SETUP_URL);
+
+  const handleClaudeConnect = async () => {
+    const connect = claudeCanSignIn ? props.onSignInClaudeAgent : props.onConnectClaudeAgent;
+    if (!connect || claudeBusy || actionDisabled) return;
+    setLocalError(null);
+    try {
+      const result = await connect();
+      // No message means the check was dropped (the workspace changed); nothing to report.
+      if (typeof result !== "string") return;
+      void reportActivationEvent("own_provider");
+      toast.success(result);
+      props.onClose();
+    } catch {
+      // The reason is published as the Claude Code step's error.
     }
   };
 
@@ -591,16 +710,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   };
 
   const handleBack = () => {
-    if (resolvedView === "openwork-subscribe") {
-      resetState();
-      return;
-    }
-
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
       } else {
-        setView("list");
+        resetState();
       }
       setOauthSession(null);
       setOauthCodeInput("");
@@ -610,9 +724,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
 
+    if (resolvedView === "external" && (selectedEntry?.methods.length ?? 0) > 1) {
+      setView("method");
+      setLocalError(null);
+      return;
+    }
+
     if (resolvedView === "api" && (selectedEntry?.methods.length ?? 0) > 1) {
       setView("method");
-      setApiKeyInput("");
+      apiKeyField.current?.clear();
+    setHasApiKey(false);
       setLocalError(null);
       return;
     }
@@ -671,20 +792,64 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const methodDescription = (entry: ProviderAuthEntry, method: ProviderAuthMethod) => {
     const label = methodLabel(method).toLowerCase();
     if (isOpenAiProvider(entry.id, entry.name) && (label.includes("headless") || label.includes("device"))) {
-      return isRemoteWorker
-        ? "Use OpenAI's device flow for remote workers, where the browser callback may not resolve on your local machine."
-        : "Use OpenAI's device flow when the local browser callback is unreliable.";
+      return "Use OpenAI's device flow when the local browser callback is unreliable.";
     }
     if (method.type === "oauth") {
       return "Continue in the browser and let OpenWork finish the connection automatically.";
     }
-    if (method.type === "cloud") {
-      return "Subscribe to OpenWork Models.";
-    }
+    if (method.type === "cloud") return "Managed by your organization.";
+    if (method.type === "external") return "Use your Claude plan through Claude Code on this computer.";
     if (isOpencodeZenProvider(entry.id)) {
       return "Sign in to OpenCode Zen with an API key to unlock paid models alongside the free tier.";
     }
     return "Paste a secret key that OpenWork stores locally on this device.";
+  };
+
+  const searchText = searchQuery.trim().toLowerCase();
+  const showIncludedAuto = !props.hideOpenWorkModelsDeviceRow && Boolean(props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free"))
+    && (!searchText || "openwork models auto free".includes(searchText));
+  const showRetiredZen = showsRetiredOpencodeZen({ providerIds: entries.map((entry) => entry.id), query: searchText });
+
+  const entrySubtitle = (entry: ProviderAuthEntry) => {
+    if (entry.connected) return entry.methods.some((method) => method.type === "oauth") ? "Signed in on this device" : "API key on this device";
+    const oauth = entry.methods.some((method) => method.type === "oauth");
+    const apiKey = entry.methods.some((method) => method.type === "api");
+    const external = entry.methods.some((method) => method.type === "external");
+    const signIn = external ? `Sign in with ${CLAUDE_CODE_NAME}` : isOpenAiProvider(entry.id, entry.name) ? "Sign in with ChatGPT" : isAnthropicProvider(entry.id, entry.name) ? "Sign in with Claude" : "Sign in";
+    const how = (oauth || external) && apiKey ? `${signIn} or paste an API key` : external ? signIn : oauth ? `${signIn} in the browser` : "Paste an API key";
+    return props.organizationProviderIds?.has(entry.id) ? `${how} · also available from ${props.organizationName || "your organization"}` : how;
+  };
+
+  const renderEntry = (entry: ProviderAuthEntry, index: number) => {
+    const active = index === activeEntryIndex;
+    return (
+      <button
+        key={entry.id}
+        type="button"
+        data-provider-id={entry.id}
+        ref={(element) => {
+          if (element) providerButtonsRef.current.set(entry.id, element);
+          else providerButtonsRef.current.delete(entry.id);
+        }}
+        className={`group flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-60 ${active ? "bg-dls-hover" : "hover:bg-dls-hover/60"}`}
+        disabled={actionDisabled}
+        aria-current={active ? "true" : undefined}
+        onMouseEnter={() => setActiveEntryIndex(index)}
+        onFocus={() => setActiveEntryIndex(index)}
+        onClick={() => handleEntrySelect(entry)}
+      >
+        <ProviderTile providerId={entry.id} name={entry.name} size="sm" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-dls-text">{entry.name}</div>
+          <div className="line-clamp-2 text-xs text-muted-foreground">{entrySubtitle(entry)}</div>
+        </div>
+        {entry.connected ? null : (
+          <span className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${active ? "bg-dls-text text-dls-surface" : "text-muted-foreground"}`}>
+            Connect
+          </span>
+        )}
+      </button>
+    );
   };
 
   return (
@@ -694,11 +859,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
         if (!open) handleClose();
       }}
     >
-      <DialogContent className="flex max-h-[calc(100vh-2rem)] min-h-0 w-full max-w-lg flex-col overflow-hidden sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Connect providers</DialogTitle>
-          <DialogDescription>
-            Sign in to services or use providers managed by your organization.
+      <DialogContent
+        initialFocus={() => isMobile ? titleRef.current : searchInputRef.current ?? titleRef.current}
+        className="flex max-h-[min(680px,calc(100dvh-2rem))] min-h-0 w-[calc(100vw-2rem)] max-w-[34rem] flex-col overflow-hidden sm:max-w-[34rem]">
+        <DialogHeader className="pr-8">
+          <DialogTitle ref={titleRef} tabIndex={-1}>Connect a provider</DialogTitle>
+          <DialogDescription className="text-pretty">
+            Connects a provider on this device only.{props.organizationName ? ` Providers from ${props.organizationName} are already included and managed in Den.` : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -716,12 +883,13 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           {!props.loading ? (
             <div className="-mr-1 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {resolvedView === "list" ? (
-                <div className="space-y-3" role="presentation" onKeyDown={handleListKeyDown}>
-                  <div className="relative flex items-center mb-1">
-                    <Search size={16} className="absolute left-3 text-gray-9" />
+                <div className="space-y-4" role="presentation" onKeyDown={handleListKeyDown}>
+                  <div className="sticky top-0 z-10 bg-background pb-1">
+                    <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden />
                     <input
                       ref={searchInputRef}
-                      type="text"
+                      type="search"
+                      aria-label="Search providers"
                       placeholder="Filter providers by name or ID"
                       value={searchQuery}
                       onChange={(event) => {
@@ -732,88 +900,52 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       autoCapitalize="off"
                       spellCheck={false}
                       disabled={actionDisabled}
-                      className="w-full rounded-xl bg-gray-2 px-9 py-2.5 text-[13px] text-gray-12 placeholder:text-gray-9 border border-gray-6/60 focus:border-gray-8 focus:bg-gray-1 focus:outline-none transition-colors shadow-sm"
+                      className="h-10 w-full rounded-xl border border-dls-border bg-dls-surface pl-9 pr-3 text-base text-dls-text placeholder:text-muted-foreground transition-colors focus:border-gray-8 focus:outline-none lg:text-[13px]"
                     />
                   </div>
 
-                  {filteredEntries.length ? (
-                    filteredEntries.map((entry, index) => (
-                      <div key={entry.id}>
-                        {index === 0 && entry.connected ? (
-                          <div className="px-1 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-10">
-                            Connected
+                  {showIncludedAuto || connectedCount ? (
+                    <div role="group" aria-labelledby="connect-provider-device">
+                      <ProviderSectionLabel id="connect-provider-device" count={connectedCount + Number(showIncludedAuto)}>On this device</ProviderSectionLabel>
+                      {showIncludedAuto ? (
+                        <div className="flex items-center gap-3 rounded-xl px-2 py-2" data-testid="included-openwork-provider">
+                          <ProviderTile providerId="openwork" size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-medium text-dls-text">OpenWork Models</div>
+                            <div className="line-clamp-2 text-xs text-muted-foreground">{autoProviderSubtitle()}</div>
                           </div>
-                        ) : null}
-                        {index === connectedCount && !entry.connected ? (
-                          <div className="px-1 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-10">
-                            {connectedCount ? "All providers" : "Providers"}
-                          </div>
-                        ) : null}
-                        <button
-                          type="button"
-                          className={`w-full group flex items-start gap-3.5 rounded-xl px-3.5 py-3 text-left transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed ${
-                            index === activeEntryIndex ? "bg-gray-3/60" : "hover:bg-gray-3/30"
-                          }`}
-                          disabled={actionDisabled}
-                          onMouseEnter={() => setActiveEntryIndex(index)}
-                          onClick={() => handleEntrySelect(entry)}
-                        >
-                          <div className="flex size-9 shrink-0 items-center justify-center rounded-[11px] border border-gray-5/60 bg-gray-1 shadow-sm overflow-hidden">
-                            <ProviderIcon providerId={entry.id} size={20} className="text-gray-12" />
-                          </div>
+                          {props.openWorkModelsState === "off" || props.openWorkModelsState === "unavailable" ? (
+                            <ProviderStatus tone="neutral">{props.openWorkModelsState === "off" ? "Turned off" : "Unavailable"}</ProviderStatus>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {filteredEntries.slice(0, connectedCount).map((entry, index) => renderEntry(entry, index))}
+                    </div>
+                  ) : null}
 
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0 flex items-center gap-2">
-                                <div className="text-[14px] font-medium text-gray-12 truncate tracking-tight">
-                                  {entry.name}
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-end shrink-0">
-                                {entry.connected ? (
-                                  <div className="flex items-center gap-1 text-[11px] font-medium text-green-11 bg-green-4/20 border border-green-5/30 px-1.5 py-0.5 rounded-md">
-                                    <CheckCircle2 size={12} strokeWidth={2.5} />
-                                    Connected
-                                  </div>
-                                ) : (
-                                  <div className="text-[12px] font-medium text-gray-9 group-hover:text-gray-12 transition-colors flex items-center gap-0.5 opacity-80 group-hover:opacity-100">
-                                    Connect
-                                    <ChevronRight size={14} className="opacity-0 -ml-2 group-hover:opacity-100 group-hover:ml-0 transition-all duration-200" />
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="text-[11px] text-gray-9 font-mono truncate mt-0.5 opacity-60 group-hover:opacity-80 transition-opacity">
-                              {entry.id}
-                            </div>
+                  {filteredEntries.length > connectedCount ? (
+                    <div role="group" aria-labelledby="connect-provider-available">
+                      <ProviderSectionLabel id="connect-provider-available" count={filteredEntries.length - connectedCount}>Available to add</ProviderSectionLabel>
+                      {filteredEntries.slice(connectedCount).map((entry, offset) => renderEntry(entry, connectedCount + offset))}
+                    </div>
+                  ) : null}
 
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {entry.methods.map((method) => (
-                                <span
-                                  key={`${entry.id}-${method.type}-${method.methodIndex ?? method.label}`}
-                                  className={`text-[10px] font-medium px-2 py-0.5 rounded-md border ${
-                                    method.type === "oauth"
-                                      ? "bg-indigo-3/30 text-indigo-11 border-indigo-5/30"
-                                      : method.type === "cloud"
-                                        ? "bg-emerald-3/30 text-emerald-11 border-emerald-5/30"
-                                        : "bg-gray-3/40 text-gray-11 border-gray-6/40"
-                                  }`}
-                                >
-                                  {methodLabel(method)}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </button>
+                  {showRetiredZen ? (
+                    <div className="flex items-center gap-3 rounded-xl px-2 py-2" data-testid="retired-opencode-zen">
+                      <ProviderTile providerId="opencode" name="OpenCode Zen" size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-dls-text">OpenCode Zen</div>
+                        <div className="line-clamp-2 text-xs text-muted-foreground">Use OpenCode Go with your OpenCode key</div>
                       </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-gray-10 pt-2">
+                      <ProviderStatus tone="locked">No longer offered</ProviderStatus>
+                    </div>
+                  ) : null}
+
+                  {!filteredEntries.length && !showIncludedAuto && !showRetiredZen ? (
+                    <div className="px-2 py-6 text-center text-sm text-muted-foreground">
                       {entries.length ? "No providers match your search." : "No providers available."}
                     </div>
-                  )}
-
-                  <div className="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -849,6 +981,59 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 </div>
               ) : null}
 
+              {resolvedView === "external" && selectedEntry && props.claudeAgent ? (
+                <div className="space-y-4" data-testid="claude-code-setup">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-[11px] border border-gray-5/60 bg-gray-1 shadow-sm overflow-hidden">
+                      <ProviderIcon providerId={selectedEntry.id} size={20} className="text-gray-12" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-12 truncate">{CLAUDE_CODE_NAME}</div>
+                      <div className="text-xs text-gray-10">{claudeCanSignIn ? "Uses your Claude plan through Claude Code on this computer." : "Uses your Claude plan. Sign in to Claude Code first, then connect."}</div>
+                    </div>
+                  </div>
+                  {claudeSigningIn ? (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3" role="status" data-testid="claude-code-waiting">
+                      <Loader2 className="size-4 shrink-0 animate-spin text-gray-10" aria-hidden />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-gray-12">Continue in your browser</div>
+                        <div className="text-xs text-gray-10 text-pretty">Sign in to Claude there. OpenWork connects by itself when you're done.</div>
+                      </div>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => void props.onCancelClaudeAgentSignIn?.()}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : claudeMissing ? (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3" role="status" data-testid="claude-code-missing">
+                      <div className="text-sm text-gray-12">Claude Code is not on this computer yet</div>
+                      <div className="text-xs text-gray-10 text-pretty">Install it from Anthropic. OpenWork finds it by itself once it's installed.</div>
+                    </div>
+                  ) : claudeCanSignIn ? (claudeFound && !claudeChecking ? (
+                    <div className="flex items-center gap-2 text-xs text-gray-10" role="status" data-testid="claude-code-found">
+                      <Check className="size-3.5 text-green-11" aria-hidden />
+                      Claude Code is installed
+                    </div>
+                  ) : null) : (
+                    <div className="rounded-xl border border-gray-6/70 bg-gray-2/40 p-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs text-gray-9">Sign-in command</div>
+                        <div className="text-sm text-gray-12 font-mono break-all">{CLAUDE_CODE_SIGN_IN_COMMAND}</div>
+                      </div>
+                      <Button variant="outline" size="sm" className="shrink-0" onClick={() => void copyClaudeCommand()}>
+                        {claudeCommandCopied ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                  )}
+                  {/* The install card's action covers a missing Claude Code; one that was found needs no link. */}
+                  {claudeMissing || (claudeCanSignIn && claudeInstalled === true) ? null : (
+                    <Button variant="link" className="h-auto gap-1 p-0 text-xs" onClick={() => void openClaudeInstall()}>
+                      Install Claude Code
+                      <ArrowUpRight className="size-3.5" aria-hidden />
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+
               {resolvedView === "api" && selectedEntry ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-3">
@@ -879,18 +1064,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       </button>
                     </div>
                   ) : null}
-                  <TextInput
+                  <SecretTextInput
+                    id="provider-auth-api-key"
                     label="API key"
-                    type="password"
                     placeholder={isOpencodeZenProvider(selectedEntry.id) ? "ock_..." : "sk-..."}
-                    value={apiKeyInput}
-                    onChange={(event) => {
-                      setApiKeyInput(event.currentTarget.value);
-                      if (localError) setLocalError(null);
+                    handleRef={apiKeyField}
+                    onValueChange={(next) => {
+                      setHasApiKey(next);
+                      if (next && localError) setLocalError(null);
                     }}
-                    autoComplete="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
+                    onSubmit={() => void handleApiSubmit()}
                     disabled={actionDisabled}
                   />
                   {selectedEntry.env.length > 0 ? (
@@ -909,26 +1092,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 </div>
               ) : null}
 
-              {resolvedView === "openwork-subscribe" && selectedEntry ? (
-                <div className="rounded-xl border border-blue-6/50 bg-blue-2/25 shadow-sm p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-12">OpenWork Models</div>
-                      <div className="text-xs text-gray-10 mt-1">
-                        Frontier intelligence, hand picked for your team&apos;s most ambitious work.
-                      </div>
-                    </div>
-                    <Button variant="ghost" onClick={handleBack} disabled={actionDisabled}>
-                      Back
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-end">
-                    <Button onClick={() => void props.onSubscribeOpenWorkModels?.()} disabled={actionDisabled}>
-                      Subscribe
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
 
               {resolvedView === "oauth-code" && selectedEntry && oauthSession ? (
                 <div className="rounded-xl border border-gray-6/40 bg-gray-2/50 shadow-sm p-5 space-y-4">
@@ -950,6 +1113,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                     </div>
                   ) : null}
                   <TextInput
+                    className="text-base lg:text-sm"
                     label="Authorization code"
                     type="text"
                     placeholder="Paste code"
@@ -1054,15 +1218,29 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           ) : null}
         </div>
 
-        <DialogFooter className="shrink-0 flex-col gap-3">
+        {resolvedView === "list" ? (
+          <DialogFooter className="shrink-0 flex-row items-center justify-between gap-3 sm:flex-row sm:justify-between">
+            {props.organizationProviderCount !== undefined ? (
+              <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                {props.organizationName ? <OrganizationMark name={props.organizationName} size="sm" /> : null}
+                <span className="truncate" title={`${props.organizationProviderCount === 1 ? "1 provider" : `${props.organizationProviderCount} providers`} already included by ${props.organizationName || "your organization"}`}>{props.organizationProviderCount} included by {props.organizationName || "your organization"}</span>
+                {props.onOpenDen ? <><span aria-hidden>·</span><button type="button" className="shrink-0 font-medium text-dls-text underline-offset-2 hover:underline" onClick={props.onOpenDen}>Manage in Den</button></> : null}
+              </div>
+            ) : <span className="text-xs text-muted-foreground">{props.submitting ? submittingLabel() : "Keys stay on this device."}</span>}
+            <div className="hidden shrink-0 items-center gap-1 sm:flex" aria-hidden>
+              {["↑↓", "↵", "esc"].map((key) => <kbd key={key} className="rounded-md border border-dls-border bg-dls-surface px-1.5 py-0.5 font-sans text-[11px] text-muted-foreground">{key}</kbd>)}
+            </div>
+          </DialogFooter>
+        ) : (
+        <DialogFooter className="shrink-0 flex-col gap-3 sm:flex-col sm:justify-start">
           <div className="min-h-[16px] text-xs text-gray-10">
             {props.submitting ? submittingLabel() : null}
           </div>
           {/* One action bar per view: Back returns to the list, Close dismisses,
               and the view's primary action sits last. */}
           <div className="flex w-full items-center gap-2">
-            {resolvedView === "api" && selectedEntry ? (
-              <Button variant="outline" onClick={handleBack} disabled={actionDisabled}>
+            {(resolvedView === "api" || resolvedView === "external") && selectedEntry ? (
+              <Button variant="outline" onClick={handleBack} disabled={actionDisabled || (resolvedView === "external" && (claudeChecking || claudeSigningIn))}>
                 <ChevronLeft className="size-4" />
                 Back
               </Button>
@@ -1075,7 +1253,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               Close
             </DialogClose>
             {resolvedView === "api" && selectedEntry ? (
-              <Button onClick={handleApiSubmit} disabled={actionDisabled || !apiKeyInput.trim()}>
+              <Button onClick={handleApiSubmit} disabled={actionDisabled || !hasApiKey}>
                 {props.submitting ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
@@ -1086,8 +1264,24 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                 )}
               </Button>
             ) : null}
+            {resolvedView === "external" && selectedEntry && props.claudeAgent && claudeMissing ? (
+              <Button data-testid="claude-code-install" onClick={() => void openClaudeInstall()}>
+                Get Claude Code
+                <ArrowUpRight className="size-4" aria-hidden />
+              </Button>
+            ) : resolvedView === "external" && selectedEntry && props.claudeAgent ? (
+              <Button data-testid="claude-code-connect" onClick={() => void handleClaudeConnect()} disabled={actionDisabled || claudeBusy || !(claudeCanSignIn || props.onConnectClaudeAgent)} aria-busy={claudeChecking || claudeSigningIn}>
+                {claudeSigningIn ? "Waiting for sign-in…" : claudeChecking ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Checking Claude Code…
+                  </>
+                ) : claudeCanSignIn && claudeError ? "Sign in again" : claudeAgentConnected(props.claudeAgent) ? "Check again" : "Connect"}
+              </Button>
+            ) : null}
           </div>
         </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );

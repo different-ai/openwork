@@ -2,6 +2,19 @@ import { AUTOMATION_DESKTOP_RUNNER_PRESENCE_WINDOW_MS } from "@openwork/types/au
 
 /** Shortest window an occurrence stays claimable, whatever the deployment tunes. */
 export const AUTOMATION_MIN_CLAIM_WINDOW_MS = 60_000
+/** Allow an idle 60-second desktop poll plus bounded discovery and claim requests. */
+export const AUTOMATION_MANUAL_CLAIM_WINDOW_MS = 3 * 60_000
+
+export function computeAutomationClaimDeadline(input: {
+  trigger: "scheduled" | "recovery" | "manual"
+  now: number
+  windowMs: number
+  nextDueAt: number | null
+}): number {
+  return input.trigger === "manual"
+    ? input.now + input.windowMs
+    : desktopClaimDeadline(input)
+}
 
 /**
  * How long a desktop occurrence stays claimable. A desktop is a laptop that

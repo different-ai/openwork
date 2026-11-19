@@ -18,6 +18,7 @@
  * via `window.__openworkWebErrorMonitorActive`.
  */
 import { isAnalyticsEnabled } from "./analytics";
+import { formatCrashDiagnostic, redactCrashText } from "./crash-diagnostics";
 import { getOpenWorkDeployment } from "./openwork-deployment";
 import { isElectronRuntime } from "./runtime-env";
 
@@ -96,6 +97,7 @@ function newEventId(): string {
 
 /** Build a minimal Sentry error event. Only error identity + coarse context. */
 export function buildWebErrorEvent(input: WebErrorInput): WebErrorEvent {
+  const diagnostic = formatCrashDiagnostic({ name: input.type, message: input.message, stack: input.stack });
   const event: WebErrorEvent = {
     event_id: newEventId(),
     timestamp: Date.now() / 1000,
@@ -103,11 +105,11 @@ export function buildWebErrorEvent(input: WebErrorInput): WebErrorEvent {
     level: "error",
     environment: "web",
     tags: { boot_phase: input.phase },
-    request: { url: input.url },
-    exception: { values: [{ type: input.type, value: input.message.slice(0, 1000) }] },
+    request: { url: sanitizePageUrl(input.url) },
+    exception: { values: [{ type: diagnostic.name, value: diagnostic.message }] },
   };
-  if (input.release) event.release = input.release;
-  if (input.stack) event.extra = { stack: input.stack.slice(0, 8000) };
+  if (input.release) event.release = redactCrashText(input.release).slice(0, 100);
+  if (diagnostic.stack) event.extra = { stack: diagnostic.stack };
   return event;
 }
 
@@ -126,20 +128,22 @@ const seenErrors = new Set<string>();
 function deliver(target: SentryDsnTarget, input: WebErrorInput) {
   if (sentCount >= MAX_EVENTS_PER_SESSION) return;
   if (!isAnalyticsEnabled()) return;
-  const dedupeKey = `${input.type}:${input.message}`;
-  if (seenErrors.has(dedupeKey)) return;
-  seenErrors.add(dedupeKey);
-  sentCount += 1;
   try {
+    const event = buildWebErrorEvent(input);
+    const { type, value } = event.exception.values[0];
+    const dedupeKey = `${type}:${value}`;
+    if (seenErrors.has(dedupeKey)) return;
+    seenErrors.add(dedupeKey);
+    sentCount += 1;
     void fetch(target.envelopeUrl, {
       method: "POST",
       keepalive: true,
-      body: buildSentryEnvelope(buildWebErrorEvent(input)),
+      body: buildSentryEnvelope(event),
     }).catch(() => {
       // Network failure — drop silently. Monitoring must never surface errors.
     });
   } catch {
-    // fetch unavailable — drop silently.
+    // Event construction or fetch unavailable — drop silently.
   }
 }
 
@@ -187,10 +191,11 @@ export function startWebErrorMonitoring() {
         return;
       }
       if (!(event instanceof ErrorEvent) || !event.message) return;
+      const diagnostic = formatCrashDiagnostic(event.error ?? event.message);
       deliver(target, {
-        type: event.error instanceof Error ? event.error.name : "Error",
-        message: event.message,
-        stack: event.error instanceof Error ? event.error.stack : undefined,
+        type: diagnostic.name,
+        message: diagnostic.message,
+        stack: diagnostic.stack,
         url: sanitizePageUrl(window.location.href),
         release,
         phase: "runtime",
@@ -201,10 +206,11 @@ export function startWebErrorMonitoring() {
 
   window.addEventListener("unhandledrejection", (event) => {
     const reason: unknown = event.reason;
+    const diagnostic = formatCrashDiagnostic(reason, "UnhandledRejection");
     deliver(target, {
-      type: reason instanceof Error ? reason.name : "UnhandledRejection",
-      message: reason instanceof Error ? reason.message : String(reason),
-      stack: reason instanceof Error ? reason.stack : undefined,
+      type: diagnostic.name,
+      message: diagnostic.message,
+      stack: diagnostic.stack,
       url: sanitizePageUrl(window.location.href),
       release,
       phase: "runtime",
@@ -215,17 +221,22 @@ export function startWebErrorMonitoring() {
 /**
  * Report an error a React error boundary caught. React swallows render throws
  * before they reach the window "error" listener above, so the boundary hands
- * them over explicitly, already redacted. Same gate, dedupe and cap as every
+ * them over explicitly. Same formatter, gate, dedupe and cap as every
  * other event; a no-op until startWebErrorMonitoring() has opened the gate.
  */
-export function reportCaughtWebError(error: Pick<Error, "name" | "message" | "stack">) {
+export function reportCaughtWebError(error: unknown) {
   if (!monitor) return;
-  deliver(monitor.target, {
-    type: error.name,
-    message: error.message,
-    stack: error.stack,
-    url: sanitizePageUrl(window.location.href),
-    release: monitor.release,
-    phase: "runtime",
-  });
+  try {
+    const diagnostic = formatCrashDiagnostic(error);
+    deliver(monitor.target, {
+      type: diagnostic.name,
+      message: diagnostic.message,
+      stack: diagnostic.stack,
+      url: sanitizePageUrl(window.location.href),
+      release: monitor.release,
+      phase: "runtime",
+    });
+  } catch {
+    // Recovery must survive unavailable browser APIs, without logging payloads.
+  }
 }

@@ -1,4 +1,8 @@
 import { memo, useCallback } from "react";
+import { ArrowDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
 
 import {
   selectSessionIsStickyBottom,
@@ -62,6 +66,7 @@ type SessionScrollOverlayProps = {
   sessionId: string;
   owner?: string;
   isStreaming: boolean;
+  mobileTurnFullyVisible?: boolean;
   onJumpToLatest: (behavior?: ScrollBehavior) => void;
   onJumpToStartOfMessage: (behavior?: ScrollBehavior) => void;
 };
@@ -70,12 +75,30 @@ export const SessionScrollOverlay = memo(function SessionScrollOverlay({
   sessionId,
   owner,
   isStreaming,
+  mobileTurnFullyVisible = false,
   onJumpToLatest,
   onJumpToStartOfMessage,
 }: SessionScrollOverlayProps) {
   const { isAtBottom, topClippedMessageId } = useSessionScrollOverlayState(sessionScrollKey(sessionId, owner));
+  const isMobile = useIsMobile();
+  if (isMobile && !isDesktopRuntime()) {
+    if (isAtBottom || mobileTurnFullyVisible) return null;
+    return (
+      <div className="pointer-events-none absolute bottom-2 left-1/2 z-30 -translate-x-1/2">
+        <Button
+          variant="outline"
+          size="icon"
+          className="pointer-events-auto size-11 rounded-full shadow-(--dls-card-shadow) motion-reduce:transition-none"
+          onClick={() => onJumpToLatest(window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth")}
+        >
+          <ArrowDown aria-hidden strokeWidth={1.5} />
+          <span className="sr-only">Jump to latest</span>
+        </Button>
+      </div>
+    );
+  }
   const showJumpToStart = !isStreaming && Boolean(topClippedMessageId);
-  const showJumpToLatest = !isAtBottom;
+  const showJumpToLatest = !isAtBottom && !mobileTurnFullyVisible;
 
   if (!showJumpToStart && !showJumpToLatest) {
     return null;

@@ -117,7 +117,7 @@ export function reduceQueuedDrain(state: QueuedDrainState, event: QueuedDrainEve
         if (!event.steer) return state;
         if (phase.kind === "running" || phase.kind === "awaiting_observation") {
           if (phase.itemId === event.itemId) return state;
-        } else if (phase.kind !== "halted" || phase.itemId !== event.itemId) return state;
+        } else if (phase.kind !== "halted" || (phase.reason !== "terminal_failure" && phase.itemId !== event.itemId)) return state;
       }
       const attempts = (state.attemptsByItemId[event.itemId] ?? 0) + 1;
       return {
@@ -228,8 +228,11 @@ function dropAttempt(state: QueuedDrainState, itemId: string): Record<string, nu
 }
 
 /** True when the drain may admit the next queued item. */
-export function canAdmitNextQueuedItem(state: QueuedDrainState): boolean {
-  return state.phase.kind === "ready";
+export function canAdmitNextQueuedItem(state: QueuedDrainState, steer = false): boolean {
+  if (state.phase.kind === "ready") return true;
+  // A requested send (Cmd/Ctrl+Enter or Send now) follows an admitted turn
+  // without waiting for it to finish; never an uncertain or halted one.
+  return steer && (state.phase.kind === "running" || state.phase.kind === "awaiting_observation");
 }
 
 export function hasPendingQueuedAdmission(state: QueuedDrainState): boolean {

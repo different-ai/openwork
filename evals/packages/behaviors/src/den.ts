@@ -79,7 +79,7 @@ export async function signIn(den: DenRef, credentials: { email: string; password
   });
   const token = stringField(result.body, "token");
   if (!result.response.ok || !token) {
-    throw new Error(`Sign-in failed for ${credentials.email}: HTTP ${result.response.status} ${preview(result.body)}`);
+    throw new Error(`Sign-in failed for ${credentials.email}: HTTP ${result.response.status} (authentication response withheld)`);
   }
   return { ...den, token, email: credentials.email, password: credentials.password };
 }
@@ -120,7 +120,7 @@ export async function ensureMemberSession(
   );
   if (isRecord(loginOptions.body) && loginOptions.body.allowPublicSignup === false) {
     throw new Error(
-      `Member bootstrap needs public signup, but this Den runs single-org mode with signup disabled. Start den-api with DEN_ORG_MODE=multi_org, use pnpm world up acme-demo, set DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP=true, or pre-provision ${input.email}.`,
+      `Member bootstrap needs public signup, but this Den runs single-org mode with signup disabled. Start den-api with DEN_ORG_MODE=multi_org, use pnpm world up acme-web, set DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP=true, or pre-provision ${input.email}.`,
     );
   }
   const invite = await denFetch(den, "/v1/invitations", {

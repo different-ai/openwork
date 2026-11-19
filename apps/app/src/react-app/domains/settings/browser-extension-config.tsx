@@ -16,8 +16,8 @@ function OpenWorkBrowserConfig() {
         <MonitorSmartphone className="mt-0.5 size-4 shrink-0 text-blue-11" />
         <div className="space-y-1 text-[13px] leading-relaxed text-dls-secondary">
           <div className="font-medium text-dls-text">Ready by default</div>
-          <div>Each conversation uses its own tabs in the built-in browser. Background work stays with its conversation. Review website access and actions in the browser panel, or choose Take over to sign in and Resume browser when finished.</div>
-          <div>Sign in directly in the built-in browser; your session stays available across browser tasks. Your regular browser profile and login syncing are separate. Site tools support the imperative WebMCP document API; declarative forms and external browser control are not supported yet.</div>
+          <div>Each conversation uses its own tabs in the built-in browser. The session can navigate, read, click, type and use website tools without asking. Choose Take over to pause the agent and sign in; Resume browser hands control back.</div>
+          <div>Sign in directly in the built-in browser; your session stays available across browser tasks. Your regular browser profile stays separate. Site tools support the imperative WebMCP document API; declarative forms and external browser control are not supported yet.</div>
         </div>
       </div>
     </div>

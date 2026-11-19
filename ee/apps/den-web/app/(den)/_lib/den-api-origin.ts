@@ -117,6 +117,26 @@ export function denApiCredentials(endpoint: string, path = endpoint): RequestCre
   return denApiCredentialsForEndpoint(endpoint, window.location.origin, path);
 }
 
+/**
+ * True when a browser request for `path` stays on the web origin (auth routes
+ * and the `/api/browser` proxy), so it never depends on the runtime API origin.
+ */
+export function isSameOriginBrowserRequest(path: string): boolean {
+  if (path.startsWith("/api/auth/")) return true;
+  return path.startsWith("/v1/") && !isPublicDenApiPath(path);
+}
+
+// Browser sessions belong to the web host, which need not be a parent of the
+// public API host. Keep cookie-authenticated JSON requests on that origin;
+// canonical API URLs remain available through denApiEndpoint for other clients.
+export function denBrowserEndpoint(path: string): string {
+  if (typeof window !== "undefined") {
+    if (path.startsWith("/api/auth/")) return path;
+    if (isSameOriginBrowserRequest(path)) return `/api/browser${path}`;
+  }
+  return denApiEndpoint(path);
+}
+
 export function denApiEndpoint(path: string): string {
   if (/^https?:\/\//i.test(path)) {
     return path;

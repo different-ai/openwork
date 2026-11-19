@@ -2,6 +2,8 @@
 
 import { useEffect } from "react"
 
+import { TRUST_CENTER_URL } from "../lib/trust-center"
+
 type ModelContext = {
   provideContext: (context: { tools: Tool[] }) => void | Promise<void>
 }
@@ -20,32 +22,33 @@ const destinations: Record<string, string> = {
   enterprise: "/enterprise",
   cloud: "https://app.openworklabs.com",
   docs: "/docs",
-  trust: "/trust",
+  trust: TRUST_CENTER_URL,
   feedback: "/feedback",
 }
 
 const pricingSummary = {
   plans: [
     {
-      id: "solo",
-      name: "Solo",
+      id: "free",
+      name: "Free",
       price: "Free",
       cadence: "free forever",
       highlights: [
         "Open-source desktop app",
-        "macOS and Linux downloads",
+        "macOS, Windows, and Linux downloads",
         "Bring your own provider keys",
       ],
       cta: { label: "Get Started for free", href: "https://app.openworklabs.com?mode=sign-up" },
     },
     {
-      id: "team-starter",
-      name: "Team Starter",
+      id: "team",
+      name: "Team",
       price: "$10",
-      cadence: "per seat / month",
+      cadence: "per user / month",
       highlights: [
-        "First 5 seats free",
+        "Unlimited users (the Free plan is limited to 5)",
         "API access",
+        "SSO / SAML",
         "Extension Marketplace",
         "Bring your own LLM keys, distributed to your team",
       ],
@@ -57,8 +60,8 @@ const pricingSummary = {
       price: "custom",
       cadence: "contact us",
       highlights: [
-        "Everything in Team Starter",
-        "SSO / SAML and SCIM provisioning",
+        "Everything in Team, including SSO",
+        "SCIM provisioning",
         "Bring your own inference — self-hosted or private models",
         "Desktop policies and version controls",
         "Managed deployment, self-hosted or hosted",

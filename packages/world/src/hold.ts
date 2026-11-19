@@ -5,6 +5,7 @@ import { appendEvent, EVENTS_ENV } from "./events.ts";
 import { formatOutputLines, maskOutputs, normalizeOutputs, type OutputMeta, type WorldOutput } from "./outputs.ts";
 import { receiptName, resolveStage } from "./stage.ts";
 import { assertWorldName } from "./store.ts";
+import { OS_ENV } from "./target.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -26,7 +27,9 @@ export interface ScriptWorldSnapshot {
   outputMeta?: Record<string, OutputMeta>;
   stage?: string;
   recipeHash?: string;
+  invocationHash?: string;
   place?: string;
+  os?: string;
 }
 
 export interface HoldOptions {
@@ -68,7 +71,9 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
   assertWorldName(name);
   const stage = resolveStage(process.env);
   const recipeHash = process.env.OPENWORK_WORLD_RECIPE_HASH;
+  const invocationHash = process.env.OPENWORK_WORLD_INVOCATION_HASH;
   const place = process.env.OPENWORK_WORLD_PLACE;
+  const os = process.env[OS_ENV];
   const stagedName = receiptName(name, stage);
 
   const snapshotDirectory = resolve(options.snapshotDir ?? defaultScriptWorldSnapshotDirectory());
@@ -82,7 +87,7 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
 
   const { values: outputs, meta: outputMeta } = normalizeOutputs(options.outputs ?? {});
   const hasOutputMeta = Object.keys(outputMeta).length > 0;
-  const version = stage !== undefined || recipeHash !== undefined || place !== undefined || hasOutputMeta ? 2 : 1;
+  const version = stage !== undefined || recipeHash !== undefined || invocationHash !== undefined || place !== undefined || os !== undefined || hasOutputMeta ? 2 : 1;
   const snapshot: ScriptWorldSnapshot = {
     version,
     kind: "script",
@@ -94,7 +99,9 @@ export async function hold(options: HoldOptions = {}): Promise<void> {
     ...(hasOutputMeta ? { outputMeta } : {}),
     ...(stage === undefined ? {} : { stage }),
     ...(recipeHash === undefined ? {} : { recipeHash }),
+    ...(invocationHash === undefined ? {} : { invocationHash }),
     ...(place === undefined ? {} : { place }),
+    ...(os === undefined ? {} : { os }),
   };
   await mkdir(dirname(snapshotPath), { recursive: true });
   const temporarySnapshotPath = `${snapshotPath}.tmp`;

@@ -9,7 +9,43 @@ npm install -g openwork-server
 openwork-server --workspace /path/to/workspace --approval auto
 ```
 
-`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+The npm package requires stable Node.js 24.x, version 24.22.1 or newer within that major, on macOS, Linux, and Windows (arm64 or x64); Bun is not required at runtime. Older Node releases and other majors (including 25+) are rejected by the runtime gate. This security baseline also replaces the previous Node.js 22.13 minimum.
+
+### Self-hosted web UI
+
+```bash
+npm install -g openwork-server
+cd /path/to/workspace
+openwork-server web --open
+```
+
+`openwork-server web` serves the OpenWork web UI and API from one origin and
+runs a server-managed OpenCode engine. The npm package bundles the UI and the
+OpenCode plugins; on first run it downloads the exact OpenCode version this
+release was tested with into `~/.openwork/openwork-server/engines/` and reuses
+it afterwards. Updating is `npm i -g openwork-server@latest`; the server prints
+a hint on boot when a newer release exists (`OPENWORK_NO_UPDATE_CHECK=1` to
+silence).
+
+Defaults in `web` mode: bind `127.0.0.1`, approval `auto`, workspace = current
+directory, and the browser is signed in automatically via a bootstrap token
+(pass `--no-bootstrap-token` to require pasting the client token). Tokens are
+persisted in `~/.openwork/openwork-server/web-tokens.json` so they survive
+restarts; `--token`/`--host-token` or `OPENWORK_TOKEN`/`OPENWORK_HOST_TOKEN`
+override them.
+
+In `web` mode the UI's pages never carry CORS headers, and the server only
+answers requests addressed to `localhost`, an IP address or the `--host` name.
+Add other names with `--allowed-hosts` (or `OPENWORK_ALLOWED_HOSTS`,
+comma-separated; `*` allows any).
+
+To reach it from other machines, keep the server on `127.0.0.1` and put a TLS
+proxy in front (e.g. `tailscale serve --bg --https=8787 http://127.0.0.1:8787`),
+then allow the proxy's name (e.g. `--allowed-hosts my-machine.tailnet.ts.net`).
+Browsers require a secure context for the UI on any non-localhost origin.
+Set `OPENWORK_OPENCODE_BIN` to use your own OpenCode install instead of the
+managed download; `/health` reports both the pinned `opencodeVersion` and the
+`opencodeInstalledVersion` actually running.
 
 Or from source:
 
@@ -26,8 +62,8 @@ Add `--verbose` to print resolved config details on startup. Use `--version` to 
 ## Desktop task recovery
 
 The desktop enables `resumeInterruptedTasks` when embedding a server that owns
-its local engines. Standalone servers, attached engines, remote workspaces, and
-read-only servers do not opt in. Recovery works with both OpenCode v1 and v2 and
+its local engines. Standalone servers, attached engines, and read-only
+servers do not opt in. Recovery works with both OpenCode v1 and v2 and
 does not depend on an open conversation tab.
 
 The `desktop_task_recovery` table in the existing runtime SQLite database stores
@@ -145,6 +181,7 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `OPENWORK_APPROVAL_TIMEOUT_MS`
 - `OPENWORK_WORKSPACES` (JSON array or comma-separated list of paths)
 - `OPENWORK_CORS_ORIGINS` (comma-separated list or `*`)
+- `OPENWORK_ALLOWED_HOSTS` (comma-separated host names or `*`; `web` mode always checks the Host)
 - `OPENWORK_OPENCODE_BASE_URL`
 - `OPENWORK_OPENCODE_DIRECTORY`
 - `OPENWORK_OPENCODE_USERNAME`
@@ -157,7 +194,7 @@ Token management (scoped tokens):
 File injection / artifacts:
 
 - `OPENWORK_INBOX_ENABLED` (`1` | `0`)
-- `OPENWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
+- `OPENWORK_INBOX_MAX_BYTES` (default: 10GB)
 - `OPENWORK_OUTBOX_ENABLED` (`1` | `0`)
 
 Sandbox advertisement (for capability discovery):
@@ -198,7 +235,7 @@ Token management (collaborator or owner bearer token):
 
 Inbox/outbox:
 
-- `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
+- `POST /workspace/:id/inbox?path=<path>` (streams the raw body into `.opencode/openwork/inbox/`; multipart is also accepted, up to 250MB)
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
 - `POST /workspace/:id/files/sessions`

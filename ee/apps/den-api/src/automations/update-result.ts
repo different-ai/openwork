@@ -20,3 +20,8 @@ export function automationUpdateChangedRows(result: unknown): boolean {
   const rows = changedRows(result)
   return rows !== null && rows > 0
 }
+
+/** Rows a write touched, across the mysql2 and PlanetScale result shapes; 0 when unknown. */
+export function automationAffectedRows(result: unknown): number {
+  return changedRows(result) ?? 0
+}

@@ -8,6 +8,7 @@ const issuer = process.env.ISSUER;
 const controlToken = process.env.CONTROL_TOKEN;
 const rules = [];
 const requests = [];
+const arrivals = [];
 const hopByHopHeaders = new Set([
   "connection",
   "keep-alive",
@@ -41,9 +42,9 @@ function faultTimes(value) {
   return value;
 }
 
-function takeRule(path) {
+function takeRule(path, method) {
   for (const rule of rules) {
-    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix)) continue;
+    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix) || (rule.method !== undefined && rule.method !== method)) continue;
     rule.remaining -= 1;
     return rule;
   }
@@ -123,7 +124,7 @@ async function control(incoming, response, path) {
     return;
   }
   if (path === "/__openwork_faults/requests" && incoming.method === "GET") {
-    json(response, 200, { requests });
+    json(response, 200, { requests, arrivals });
     return;
   }
   if (path === "/__openwork_faults/clear" && incoming.method === "POST") {
@@ -137,9 +138,9 @@ async function control(incoming, response, path) {
       const body = await readJson(incoming);
       const remaining = faultTimes(body.times);
       if (body.kind === "status") {
-        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining });
+        rules.push({ kind: "status", pathPrefix: body.pathPrefix, statusCode: body.statusCode, body: body.body, remaining, method: body.method?.toUpperCase(), headers: body.headers });
       } else if (body.kind === "latency") {
-        rules.push({ kind: "latency", pathPrefix: body.pathPrefix, delayMs: body.delayMs, remaining });
+        rules.push({ kind: "latency", pathPrefix: body.pathPrefix, delayMs: body.delayMs, remaining, method: body.method?.toUpperCase() });
       } else {
         throw new Error("Unknown fault kind.");
       }
@@ -160,14 +161,19 @@ const server = createServer((incoming, response) => {
       await control(incoming, response, path);
       return;
     }
-    const rule = takeRule(path);
+    const rule = takeRule(path, incoming.method ?? "GET");
+    arrivals.push({ method: incoming.method ?? "GET", path, faulted: rule !== null, at: Date.now() });
     if (rule?.kind === "status") {
       const body = JSON.stringify(rule.body ?? { error: "Injected HTTP " + rule.statusCode });
       requests.push({ method: incoming.method ?? "GET", path, status: rule.statusCode, faulted: true, at: Date.now() });
+      // Den requests from the app in a browser carry credentials, so a
+      // wildcard origin is refused; answer the caller's origin as Den does.
+      const origin = incoming.headers.origin;
       response.writeHead(rule.statusCode, {
-        "access-control-allow-origin": "*",
+        ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", vary: "Origin" } : { "access-control-allow-origin": "*" }),
         "content-length": Buffer.byteLength(body),
         "content-type": "application/json",
+        ...rule.headers,
       });
       response.end(body);
       return;

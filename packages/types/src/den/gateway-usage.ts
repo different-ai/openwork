@@ -1,3 +1,5 @@
+import type { InferenceRequestOutcome } from "./inference"
+
 export type GatewayUsageGroupBy = "model" | "team" | "person"
 export type GatewayUsageOption = { id: string; label: string }
 export type GatewayUsageSeries = { id: string; label: string }
@@ -18,6 +20,12 @@ export type GatewayUsageResponse = {
     to: string
     timezone: "UTC"
     emptyReason?: "no_teams"
+    // Includes completed request records of all outcomes, including rejections.
+    // Optional while the web and API deployments roll out independently.
+    requestCount?: number
+    // Counts only records without total tokens. Null categories mean older
+    // summaries did not retain that breakdown; optional during API rollout.
+    uncountableRequests?: Record<InferenceRequestOutcome, number | null>
     totalTokens: number
     // Null means legacy rollup observation counts cannot establish completeness.
     unreportedRequests: number | null

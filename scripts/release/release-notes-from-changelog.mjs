@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Extract one release's entry from packages/docs/changelog.mdx and print it as
 // GitHub Release notes markdown. Lines of the existing release body that carry
-// the Windows code-signing note (*Windows ...*) are preserved at the end so the
-// generated notes replace only the static "What's new" boilerplate.
+// the Windows code-signing note (*Windows ...*) and any hand-written
+// "## Known ..." section (e.g. "Known open fixes") are preserved at the end so
+// the generated notes replace only the static "What's new" boilerplate.
 //
 // Usage:
 //   node scripts/release/release-notes-from-changelog.mjs <tag> [--docs <path>] [--existing-body <path>]
@@ -56,11 +57,19 @@ while (body.length > 0 && body[body.length - 1].trim() === "") body.pop();
 if (body.length === 0) fail(`${tag} has an empty changelog entry in ${docsPath}`);
 
 const preserved = [];
+const knownIssues = [];
 if (existingBodyPath) {
+  let inKnownIssues = false;
   for (const line of readFileSync(existingBodyPath, "utf8").split("\n")) {
+    if (/^##\s/.test(line)) inKnownIssues = /^##\s+known\b/i.test(line);
+    if (inKnownIssues) {
+      knownIssues.push(line);
+      continue;
+    }
     if (/^\*Windows .*\*\s*$/.test(line)) preserved.push(line.trim());
   }
 }
+while (knownIssues.length > 0 && knownIssues[knownIssues.length - 1].trim() === "") knownIssues.pop();
 
 const notes = [
   `## ${title}`,
@@ -70,5 +79,6 @@ const notes = [
   `Full changelog: https://openworklabs.com/docs/changelog · [Compare](${compareUrl})`,
 ];
 if (preserved.length > 0) notes.push("", ...preserved);
+if (knownIssues.length > 0) notes.push("", ...knownIssues);
 
 process.stdout.write(`${notes.join("\n")}\n`);

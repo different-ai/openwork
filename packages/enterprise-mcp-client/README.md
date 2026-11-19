@@ -77,6 +77,7 @@ then silently writing credentials afterward.
   commits compare the credential revision so a stale concurrent response cannot
   overwrite newer rotated credentials.
 - MCP `isError: true` is a failed provider operation, not a successful request.
+  The error keeps the provider's text so the host can show why it failed.
 - Tool catalogs have page, item, cursor, name, schema depth, schema size, and
   aggregate-byte ceilings.
 - Diagnostic events contain phases, outcome, duration, and HTTP status only.

@@ -34,13 +34,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
+  # Reusable workflows inherit the caller's github.workflow. A recovery caller
+  # already holds Release App-<tag>; use our own namespace to avoid deadlocking
+  # against the parent while still serializing snapshot builds for the same tag.
+  group: release-daytona-snapshot-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   publish-daytona-snapshot:
     name: Build and Push Daytona Snapshot
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Render deploy secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: den-production
+      deployment: false
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       snapshot_name: ${{ steps.resolve.outputs.snapshot_name }}

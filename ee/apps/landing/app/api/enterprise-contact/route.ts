@@ -1,4 +1,4 @@
-import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
+import { ENTERPRISE_BOOKING_URL, SALES_EMAIL, buildResponseHeaders, formRequiresBrowserBody, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 
 type ContactPayload = {
   fullName?: string;
@@ -103,7 +103,10 @@ export async function POST(request: Request) {
 
   const botProtection = await verifyFormBotProtection();
   if (!botProtection.ok) {
-    return jsonResponse(request, { error: botProtection.error }, botProtection.status);
+    return jsonResponse(request, formRequiresBrowserBody(
+      `This form only accepts browser submissions. Email ${SALES_EMAIL} or book a call at ${ENTERPRISE_BOOKING_URL}.`,
+      { email: SALES_EMAIL, book: ENTERPRISE_BOOKING_URL },
+    ), botProtection.status);
   }
 
   const apiKey = process.env.LOOPS_API_KEY?.trim();

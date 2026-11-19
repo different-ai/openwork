@@ -128,6 +128,13 @@ false
   {{- range $field := list "adminTokenSecret" "adminTokenKey" "schedule" "timeZone" -}}
     {{- if not (get $gateway.retention $field) -}}{{- fail (printf "gateway.retention.%s (or inference.retention.%s) is required" $field $field) -}}{{- end -}}
   {{- end -}}
+  {{- /* Same bounds as the Gateway's /internal/rollups/run body; absent keys use the template defaults. */ -}}
+  {{- range $field, $max := dict "maxBucketsPerRun" 1000 "maxSourceRowsPerBucket" 5000 -}}
+    {{- $value := get $gateway.retention $field -}}
+    {{- if and (hasKey $gateway.retention $field) (not (kindIs "invalid" $value)) -}}
+      {{- if or (not (regexMatch `^[0-9]+$` (toString $value))) (lt (int $value) 1) (gt (int $value) $max) -}}{{- fail (printf "gateway.retention.%s (or inference.retention.%s) must be an integer between 1 and %d" $field $field $max) -}}{{- end -}}
+    {{- end -}}
+  {{- end -}}
   {{- if or (hasKey $gateway.env "GATEWAY_ADMIN_TOKEN") (hasKey $gateway.env "INFERENCE_ADMIN_TOKEN") -}}{{- fail "Use gateway.retention.adminTokenSecret instead of inference.env/gateway.env admin token aliases when retention is enabled" -}}{{- end -}}
 {{- end -}}
 {{- if $enabled -}}

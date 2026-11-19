@@ -77,7 +77,7 @@ export async function resolveOpenworkConnection(): Promise<ResolvedOpenworkConne
     try {
       const info = await openworkServerInfo() as OpenworkServerInfo;
       const normalizedBaseUrl =
-        normalizeOpenworkServerUrl(info.baseUrl ?? info.connectUrl ?? info.lanUrl ?? info.mdnsUrl ?? "") ??
+        normalizeOpenworkServerUrl(info.baseUrl ?? "") ??
         "";
       const resolvedToken = info.ownerToken?.trim() || info.clientToken?.trim() || "";
       if (info.running === true && hasUsableConnection(normalizedBaseUrl, resolvedToken)) {

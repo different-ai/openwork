@@ -41,6 +41,8 @@ export type EngineSpawnTemplate = {
   cwd: string;
   runtimeConfigPath: string;
   env: Record<string, string | undefined>;
+  /** Private engine v1 storage for when a standalone OpenCode v2 owns the shared one. */
+  stateDir?: string;
   /** Ports a standby must avoid (the OpenWork server, and the live engine). */
   reservedPorts: () => number[];
   /** Readiness budget for a standby spawn. Defaults to the managed-engine default. */
@@ -88,11 +90,37 @@ export type EnginePoolHooks = {
 
 export type RolloverReason = string;
 
+/**
+ * What a refresh request did. `updated_live`, `reloaded_in_place` and `rolled_over`
+ * mean the engine now serves the requested config; `skipped` and `coalesced`
+ * leave the caller's change owed, so a caller tracking a pending reload must
+ * keep it pending until one of the applied outcomes arrives.
+ */
 export type RolloverOutcome =
-  | { action: "skipped"; reason: "unchanged" }
+  | { action: "updated_live" }
+  | { action: "skipped"; reason: "unchanged" | "disposed" }
   | { action: "reloaded_in_place" }
   | { action: "coalesced" }
   | { action: "rolled_over"; generationId: string; drainingSessions: number };
+
+export type AppliedRolloverOutcome = Extract<RolloverOutcome, { action: "updated_live" | "reloaded_in_place" | "rolled_over" }>;
+
+export function rolloverOutcomeApplied(outcome: RolloverOutcome): outcome is AppliedRolloverOutcome {
+  return outcome.action === "updated_live" || outcome.action === "reloaded_in_place" || outcome.action === "rolled_over";
+}
+
+type RolloverRequest = {
+  reason: RolloverReason;
+  workspace: WorkspaceInfo;
+  manual: boolean;
+  awaitPostRefreshSync: boolean;
+  forceStandby: boolean;
+};
+
+type RolloverWaiter = {
+  resolve: (outcome: RolloverOutcome) => void;
+  reject: (error: unknown) => void;
+};
 
 type GenerationStatus = "starting" | "primary" | "draining" | "dead";
 
@@ -190,6 +218,15 @@ function abortSettleMs(): number {
   return nonNegativeIntFromEnv("OPENWORK_ENGINE_ABORT_SETTLE_MS", 5_000);
 }
 
+/**
+ * Budget for seeding a healthy standby (managed provider credentials) before
+ * it may become primary. A seed that hangs past this is a failed rollover,
+ * never a silent flip onto an engine without keys.
+ */
+function standbyPrepareTimeoutMs(): number {
+  return positiveIntFromEnv("OPENWORK_ENGINE_STANDBY_PREPARE_TIMEOUT_MS", 30_000);
+}
+
 function portOf(url: string): number {
   try {
     return Number(new URL(url).port) || 0;
@@ -210,21 +247,18 @@ export function isEngineConnectionFailure(error: unknown): boolean {
   let current: unknown = error;
   for (let depth = 0; depth < 6 && current !== null && current !== undefined; depth += 1) {
     if (typeof current === "string") {
-      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(current);
+      return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(current);
     }
     if (!isRecord(current) || visited.has(current)) return false;
     visited.add(current);
     const code = current.code;
-    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT") return true;
+    // An engine that dies mid-request closes the socket (UND_ERR_SOCKET, EPIPE).
+    if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EPIPE" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_SOCKET") return true;
     const message = current.message;
-    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|socket hang up|Unable to connect|Headers Timeout Error/i.test(message)) return true;
+    if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(message)) return true;
     current = current.cause;
   }
   return false;
-}
-
-export function isConnectionRefusedClassError(error: unknown): boolean {
-  return isEngineConnectionFailure(error);
 }
 
 function isRoutableGeneration(
@@ -388,13 +422,9 @@ export class EnginePool {
   private readonly hooks: EnginePoolHooks;
   private generations: Generation[] = [];
   private inFlight: Promise<RolloverOutcome> | null = null;
-  private pendingRollover: {
-    reason: RolloverReason;
-    workspace: WorkspaceInfo;
-    manual: boolean;
-    awaitPostRefreshSync: boolean;
-    forceStandby: boolean;
-  } | null = null;
+  private pendingRollover: RolloverRequest | null = null;
+  /** Callers coalesced into `pendingRollover`; settled when that rollover runs. */
+  private pendingWaiters: RolloverWaiter[] = [];
   private lastSpawnAt = 0;
   private consecutiveConnectionFailures = 0;
   private lastRecoveryAt = Number.NEGATIVE_INFINITY;
@@ -413,6 +443,11 @@ export class EnginePool {
     this.config = input.config;
     this.template = input.template;
     this.hooks = input.hooks;
+  }
+
+  /** Directory every generation of this engine starts in. */
+  cwd(): string {
+    return this.template.cwd;
   }
 
   /**
@@ -513,6 +548,11 @@ export class EnginePool {
     return { target: primaryConnection, fallback };
   }
 
+  /** Live proxied event streams, i.e. clients currently listening to this engine. */
+  eventProxyCount(): number {
+    return this.eventProxyControllers.size;
+  }
+
   openEventProxy(clientSignal?: AbortSignal): EngineEventProxyLease {
     const controller = new AbortController();
     this.eventProxyControllers.add(controller);
@@ -528,6 +568,21 @@ export class EnginePool {
         this.eventProxyControllers.delete(controller);
       },
     };
+  }
+
+  /**
+   * How the event fan-in should treat frames from a generation. With one
+   * primary generation and no ownership pinned elsewhere, every frame is
+   * forwarded verbatim and never parsed; `filter` requires the payload-level
+   * check in `shouldForwardEvent`, which is what a rollover needs.
+   */
+  eventForwardMode(generationId: string): "forward" | "filter" | "drop" {
+    const generation = this.generationForId(generationId);
+    if (!generation) return "drop";
+    if (generation.status !== "primary" || this.generations.filter(isRoutableGeneration).length !== 1) return "filter";
+    for (const owner of this.sessionOwnership.values()) if (owner !== generation.id) return "filter";
+    for (const owner of this.pinnedRequests.values()) if (owner !== generation.id) return "filter";
+    return "forward";
   }
 
   shouldForwardEvent(generationId: string, payload: unknown): boolean {
@@ -600,8 +655,8 @@ export class EnginePool {
     /** Apply a config change through a healthy standby even when the primary is idle. */
     forceStandby?: boolean;
   }): Promise<RolloverOutcome> {
-    if (this.disposed) return { action: "skipped", reason: "unchanged" };
-    const request = {
+    if (this.disposed) return { action: "skipped", reason: "disposed" };
+    const request: RolloverRequest = {
       reason: input.reason,
       workspace: input.workspace,
       manual: input.manual === true,
@@ -620,29 +675,43 @@ export class EnginePool {
       this.hooks.logger?.log("info", "Engine rollover coalesced into the in-flight request.", {
         "engine.rollover.reason": request.reason,
       });
-      return { action: "coalesced" };
+      // The in-flight spawn may have read config and credentials from before
+      // this request. Settle only when the queued rollover itself lands, so a
+      // caller never records a change as applied that the engine has not read.
+      return new Promise<RolloverOutcome>((resolve, reject) => {
+        this.pendingWaiters.push({ resolve, reject });
+      });
     }
+    const waiters = this.pendingWaiters;
+    this.pendingWaiters = [];
     const run = this.runRollover(request);
     this.inFlight = run;
     try {
-      return await run;
+      const outcome = await run;
+      for (const waiter of waiters) waiter.resolve(outcome);
+      return outcome;
+    } catch (error) {
+      for (const waiter of waiters) waiter.reject(error);
+      throw error;
     } finally {
       this.inFlight = null;
       const next = this.pendingRollover;
       this.pendingRollover = null;
       if (next && !this.disposed) {
         void this.requestRollover(next).catch(() => undefined);
+      } else if (this.disposed) {
+        this.settleWaitersOnDispose();
       }
     }
   }
 
-  private async runRollover(request: {
-    reason: RolloverReason;
-    workspace: WorkspaceInfo;
-    manual: boolean;
-    awaitPostRefreshSync: boolean;
-    forceStandby: boolean;
-  }): Promise<RolloverOutcome> {
+  private settleWaitersOnDispose(): void {
+    const waiters = this.pendingWaiters;
+    this.pendingWaiters = [];
+    for (const waiter of waiters) waiter.resolve({ action: "skipped", reason: "disposed" });
+  }
+
+  private async runRollover(request: RolloverRequest): Promise<RolloverOutcome> {
     const { workspace, reason, manual, awaitPostRefreshSync, forceStandby } = request;
     // The standby reads config from disk at spawn, so make sure the file is
     // current before deciding anything.
@@ -655,9 +724,13 @@ export class EnginePool {
     // reloaded onto it. Skipping here is what keeps a repeating no-op sync
     // from spawning an engine every pass. Other directories reloaded in place
     // do not count: their dispose left this one serving the previous config.
+    // A forced request is exempt: its caller knows an input the fingerprint
+    // cannot see changed (a rotated credential, a persisted policy), and
+    // skipping it left the engine serving with the old key.
     const directory = directoryKey(workspace);
     if (
       !manual
+      && !forceStandby
       && primary
       && (primary.fingerprint === fingerprint || primary.reloadedDirectories.get(directory) === fingerprint)
     ) {
@@ -666,7 +739,7 @@ export class EnginePool {
 
     const busy = forceStandby
       ? true
-      : await this.hooks.engineBusy(this.config, workspace).catch(() => false);
+      : await this.hooks.engineBusy(this.config, workspace).catch(() => true);
     if (!busy) {
       await this.hooks.reloadInPlace(this.config, workspace, { awaitPostRefreshSync });
       if (primary) primary.reloadedDirectories.set(directory, fingerprint);
@@ -683,7 +756,7 @@ export class EnginePool {
           "engine.rollover.reason": reason,
         });
         await this.waitForDrain();
-        if (this.disposed) return { action: "skipped", reason: "unchanged" };
+        if (this.disposed) return { action: "skipped", reason: "disposed" };
         return this.runRollover(request);
       }
       // Cap: one primary plus one draining. Park this change; it lands when
@@ -760,20 +833,19 @@ export class EnginePool {
 
     if (this.hooks.prepareStandby) {
       try {
-        await this.hooks.prepareStandby(this.config, {
-          workspace,
-          generationId: generation.id,
-          baseUrl: handle.url,
-          username: handle.username,
-          password: handle.password,
-        });
+        await this.prepareStandbyBounded(generation, workspace);
       } catch (error) {
-        // The standby is healthy and the primary is still serving; a failed
-        // seed only means the next sync pass delivers credentials instead.
-        this.hooks.logger?.log("warn", "Engine standby preparation failed; flipping anyway.", {
+        // A standby without its credentials would answer every run with
+        // "API key is missing" while status called the reload landed. Keep
+        // the primary serving, close the standby, and let the caller's retry
+        // path bring the change back once seeding works.
+        this.generations = this.generations.filter((entry) => entry.id !== generation.id);
+        await handle.close().catch(() => undefined);
+        this.hooks.logger?.log("error", "Engine standby preparation failed; the live engine is untouched.", {
           "engine.rollover.reason": reason,
           "engine.rollover.failure": error instanceof Error ? error.message : String(error),
         });
+        throw error;
       }
     }
 
@@ -793,8 +865,14 @@ export class EnginePool {
       }).catch(() => undefined);
     }
 
-    const drainingSessions = await this.nonIdleSessionIds(primary);
+    const activity = await this.nonIdleSessionIds(primary);
     const pinnedRequestIds = await this.pendingRequestIds(primary);
+    const drainingSessions = activity.sessionIds;
+    if (primary && !activity.complete) {
+      for (const [sessionId, owner] of this.sessionOwnership) {
+        if (owner === primary.id && !drainingSessions.includes(sessionId)) drainingSessions.push(sessionId);
+      }
+    }
     this.flip(generation, primary, drainingSessions, pinnedRequestIds);
 
     this.hooks.logger?.log("info", "Engine rollover flipped to the new generation.", {
@@ -810,6 +888,34 @@ export class EnginePool {
     if (primary) this.startDrainMonitor(primary, workspace);
 
     return { action: "rolled_over", generationId: generation.id, drainingSessions: drainingSessions.length };
+  }
+
+  /** Seed the standby within a bounded budget; a hung seed is a failed rollover. */
+  private async prepareStandbyBounded(generation: Generation, workspace: WorkspaceInfo): Promise<void> {
+    const prepare = this.hooks.prepareStandby;
+    if (!prepare) return;
+    const standby: EnginePoolStandby = {
+      workspace,
+      generationId: generation.id,
+      baseUrl: generation.handle.url,
+      username: generation.handle.username,
+      password: generation.handle.password,
+    };
+    const budgetMs = standbyPrepareTimeoutMs();
+    let expire: (error: Error) => void = () => undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      expire = reject;
+    });
+    const timer = setTimeout(
+      () => expire(new Error(`Engine standby preparation did not complete within ${budgetMs}ms`)),
+      budgetMs,
+    );
+    timer.unref?.();
+    try {
+      await Promise.race([prepare(this.config, standby), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -837,7 +943,6 @@ export class EnginePool {
     this.config.opencodeUsername = next.handle.username;
     this.config.opencodePassword = next.handle.password;
     for (const entry of this.config.workspaces) {
-      if (entry.workspaceType === "remote") continue;
       entry.baseUrl = next.handle.url;
       entry.opencodeUsername = next.handle.username;
       entry.opencodePassword = next.handle.password;
@@ -880,24 +985,36 @@ export class EnginePool {
   private startDrainMonitor(generation: Generation, workspace: WorkspaceInfo): void {
     generation.drainDeadline = Date.now() + drainTimeoutMs();
     this.watchDrainActivity(generation);
+    let ticking = false;
     const tick = async (): Promise<void> => {
-      if (generation.status !== "draining") return;
-      const remaining = await this.nonIdleSessionIds(generation);
-      this.updateActiveSessions(generation, remaining);
-      if (remaining.length === 0) {
-        await this.retire(generation, "idle");
-        return;
-      }
-      if (generation.drainDeadline !== null && Date.now() >= generation.drainDeadline) {
-        this.hooks.logger?.log("warn", "Engine drain saw no session activity for the grace period; aborting the remaining sessions.", {
-          "engine.drain.sessions": remaining.join(","),
-          "engine.drain.session_count": remaining.length,
-        });
-        for (const sessionId of remaining) {
-          await this.abortSession(generation, sessionId).catch(() => undefined);
+      if (ticking || generation.status !== "draining") return;
+      ticking = true;
+      try {
+        const activity = await this.nonIdleSessionIds(generation);
+        if (generation.status !== "draining") return;
+        const remaining = activity.complete
+          ? activity.sessionIds
+          : [...new Set([...(this.activeSessionsByGeneration.get(generation.id) ?? []), ...activity.sessionIds])];
+        this.updateActiveSessions(generation, remaining);
+        if (activity.complete && remaining.length === 0) {
+          await this.retire(generation, "idle");
+          return;
         }
-        await new Promise((resolve) => setTimeout(resolve, abortSettleMs()));
-        await this.retire(generation, "forced");
+        if (generation.drainDeadline !== null && Date.now() >= generation.drainDeadline) {
+          this.hooks.logger?.log("warn", "Engine drain saw no session activity for the grace period; aborting the remaining sessions.", {
+            "engine.drain.sessions": remaining.join(","),
+            "engine.drain.session_count": remaining.length,
+            "engine.drain.activity_complete": activity.complete,
+          });
+          for (const sessionId of remaining) {
+            if (generation.status !== "draining") return;
+            await this.abortSession(generation, sessionId).catch(() => undefined);
+          }
+          await new Promise((resolve) => setTimeout(resolve, abortSettleMs()));
+          await this.retire(generation, "forced");
+        }
+      } finally {
+        ticking = false;
       }
     };
     const timer = setInterval(() => void tick().catch(() => undefined), drainPollIntervalMs());
@@ -933,11 +1050,7 @@ export class EnginePool {
         if (response.ok && response.body) {
           await this.consumeDrainActivityEvents(generation, response.body, signal);
         }
-      } catch {
-        // Losing the stream only pauses activity credit. The poll loop still
-        // owns the abort decision, and an unreachable engine reports no
-        // sessions to drain in the first place.
-      }
+      } catch {}
       if (signal.aborted || generation.status !== "draining") return;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, drainActivityReconnectMs());
@@ -1042,6 +1155,7 @@ export class EnginePool {
     this.disposed = true;
     this.hooks.onDisposed?.();
     this.pendingRollover = null;
+    this.settleWaitersOnDispose();
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = null;
     this.abortEventProxies();
@@ -1196,6 +1310,7 @@ export class EnginePool {
       cwd: this.template.cwd,
       excludedPorts: this.template.reservedPorts(),
       ...(this.template.spawnTimeoutMs ? { timeoutMs: this.template.spawnTimeoutMs } : {}),
+      ...(this.template.stateDir ? { stateDir: this.template.stateDir } : {}),
       env: {
         ...this.template.env,
         OPENCODE_CONFIG: this.template.runtimeConfigPath,
@@ -1243,9 +1358,10 @@ export class EnginePool {
     throw new Error("Standby OpenCode engine did not report healthy");
   }
 
-  private async nonIdleSessionIds(generation: Generation | null): Promise<string[]> {
-    if (!generation || generation.status === "dead" || !generation.handle.isAlive()) return [];
+  private async nonIdleSessionIds(generation: Generation | null): Promise<{ sessionIds: string[]; complete: boolean }> {
+    if (!generation || generation.status === "dead" || !generation.handle.isAlive()) return { sessionIds: [], complete: true };
     const sessionIds = new Set<string>();
+    let complete = true;
     await Promise.all(this.engineProbeDirectories().map(async (directory) => {
       try {
         const url = new URL("/session/status", generation.handle.url);
@@ -1254,26 +1370,32 @@ export class EnginePool {
           headers: { Authorization: buildEngineAuthProbeHeader(generation.handle.username, generation.handle.password) },
           signal: AbortSignal.timeout(5_000),
         });
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(`Session status probe returned HTTP ${response.status}`);
         const payload: unknown = await response.json();
-        if (!isRecord(payload)) return;
+        if (!isRecord(payload)) throw new Error("Session status probe returned a malformed payload");
         for (const [sessionId, status] of Object.entries(payload)) {
-          if (isRecord(status) && status.type !== "idle") sessionIds.add(sessionId);
+          if (!isRecord(status) || (status.type !== "idle" && status.type !== "busy" && status.type !== "retry")) {
+            complete = false;
+          } else if (status.type !== "idle") {
+            sessionIds.add(sessionId);
+          }
         }
       } catch {
-        // Unknown activity never keeps a drain open forever; the grace timeout
-        // still bounds it, and an unreachable engine has nothing left to drain.
+        complete = false;
       }
     }));
-    return [...sessionIds];
+    if (!generation.handle.isAlive()) return { sessionIds: [], complete: true };
+    if (!complete) {
+      this.hooks.logger?.log("warn", "Engine session activity probe incomplete; preserving known active sessions until confirmed idle or the inactivity deadline.", {
+        "engine.generation_id": generation.id,
+        "engine.drain.activity_complete": false,
+      });
+    }
+    return { sessionIds: [...sessionIds], complete };
   }
 
   private engineProbeDirectories(): Array<string | null> {
-    const directories = new Set(
-      this.config.workspaces
-        .filter((workspace) => workspace.workspaceType !== "remote")
-        .map((workspace) => workspace.path),
-    );
+    const directories = new Set(this.config.workspaces.map((workspace) => workspace.path));
     return directories.size > 0 ? [...directories] : [null];
   }
 

@@ -3,8 +3,10 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
 
-const srcDir = path.dirname(fileURLToPath(import.meta.url))
-const serviceDir = path.resolve(srcDir, "..")
+let serviceDir = path.dirname(fileURLToPath(import.meta.url))
+while (!existsSync(path.join(serviceDir, "package.json")) && path.dirname(serviceDir) !== serviceDir) {
+  serviceDir = path.dirname(serviceDir)
+}
 
 for (const filePath of [path.join(serviceDir, ".env.local"), path.join(serviceDir, ".env")]) {
   if (existsSync(filePath)) {

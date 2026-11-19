@@ -54,11 +54,10 @@ export function consumeOrgSelectionRequest(): boolean {
  * directory: always when a pick is required, and on explicit request when a
  * pick is merely available. Consumes any pending request as a side effect.
  */
-export function shouldOpenOrgSelection(orgs: readonly DenOrgSummary[]): boolean {
+export function shouldOpenOrgSelection(
+  orgs: readonly DenOrgSummary[],
+  requested = consumeOrgSelectionRequest(),
+): boolean {
   const mode = getOrgSelectionMode(orgs);
-  if (mode === "required") {
-    return true;
-  }
-  const requested = consumeOrgSelectionRequest();
-  return mode === "available" && requested;
+  return mode === "required" || (mode === "available" && requested);
 }

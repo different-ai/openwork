@@ -1,0 +1,42 @@
+import { randomBytes } from "node:crypto";
+import { z } from "zod";
+import { serve } from "./serve-node.js";
+import { server as browserTools } from "./opencode-plugins/openwork-chrome-devtools.js";
+import { server as computerTools } from "./opencode-plugins/openwork-computer-use.js";
+
+const requestSchema = z.object({
+  name: z.string().min(1),
+  input: z.unknown(),
+  sessionId: z.string().min(1),
+  /** A subagent's chat, from the engine's session tree. */
+  rootSessionId: z.string().min(1).max(256).optional(),
+  /** That subagent's short description or agent name, for its cursor. */
+  agentName: z.string().min(1).max(200).optional(),
+});
+
+/** Only the existing conversation-scoped browser and computer tools, with
+ * their usual approval and policy checks. This credential does not authorize
+ * app commands or the read bridge; the desktop's credential stays in the host. */
+export async function createV2BrowserBridge(assertHostExecution: () => Promise<void> = async () => {}) {
+  const token = randomBytes(32).toString("base64url");
+  const tools = { ...(await browserTools()).tool, ...(await computerTools()).tool };
+  const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
+    if (request.headers.get("authorization") !== `Bearer ${token}`) return new Response(null, { status: 401 });
+    if (request.method !== "POST" || new URL(request.url).pathname !== "/browser") return new Response(null, { status: 404 });
+    try {
+      const text = await request.text();
+      if (text.length > 64_000) return new Response(null, { status: 413 });
+      const call = requestSchema.parse(JSON.parse(text));
+      await assertHostExecution();
+      const tool = Object.hasOwn(tools, call.name) ? tools[call.name as keyof typeof tools] : undefined;
+      if (!tool) return new Response(null, { status: 404 });
+      const result = await tool.execute(call.input, { sessionID: call.sessionId, ...(call.rootSessionId ? { rootSessionID: call.rootSessionId, ...(call.agentName ? { agentName: call.agentName } : {}) } : {}), abort: request.signal });
+      if (typeof result === "string") return Response.json({ content: [{ type: "text", text: result }] });
+      return Response.json({ content: [{ type: "text", text: result.output },
+        ...result.attachments.map(file => ({ type: "file", uri: file.url, mime: file.mime }))], metadata: result.metadata });
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "Browser request failed" }, { status: 400 });
+    }
+  } });
+  return { url: `http://127.0.0.1:${server.port}/browser`, token, close: () => server.stop() };
+}

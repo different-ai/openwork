@@ -1,8 +1,8 @@
 import { RoadmapPageShell } from "../../../components/roadmap-page-shell";
 import { getGithubData } from "../../../lib/github";
-import { baseOpenGraph } from "../../../lib/seo";
+import { baseOpenGraph, withSocialMetadata } from "../../../lib/seo";
 
-export const metadata = {
+export const metadata = withSocialMetadata({
   title: "OpenWork Roadmap",
   description:
     "What OpenWork supports today and what is coming next across desktop, hosted workspaces, external agents, and new surfaces.",
@@ -11,12 +11,12 @@ export const metadata = {
   },
   openGraph: {
     ...baseOpenGraph,
-    title: "OpenWork Roadmap | Your workspace, on every surface",
+    title: "OpenWork Roadmap | A workspace for everyone, on any platform",
     description:
-      "The roadmap for the OpenWork desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.",
+      "What is ready, being built, and coming soon across every OpenWork product.",
     url: "https://openworklabs.com/roadmap"
   }
-};
+});
 
 export default async function DocsRoadmapPage() {
   const github = await getGithubData();

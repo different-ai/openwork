@@ -30,18 +30,41 @@ export function getNativeMenuPoint(
   };
 }
 
-export function computeBounds(el: HTMLElement) {
-  const rect = el.getBoundingClientRect();
+type BrowserOccluderBounds = { x: number; y: number; width: number; height: number };
 
-  return {
-    x: rect.x,
-    y: rect.y,
-    width: rect.width,
-    height: rect.height,
-  };
+function isShownOverlay(overlay: Element): overlay is HTMLElement {
+  // An element in another window is an instance of that window's HTMLElement.
+  const OwnHTMLElement = overlay.ownerDocument.defaultView?.HTMLElement ?? HTMLElement;
+  return overlay instanceof OwnHTMLElement && overlay.getAttribute("aria-hidden") !== "true" && overlay.getClientRects().length > 0;
 }
 
-export function hasNativeBrowserOccluder() {
+function overlapsBounds(overlay: HTMLElement, bounds: BrowserOccluderBounds | null) {
+  if (!bounds) return false;
+  const rect = overlay.getBoundingClientRect();
+  return rect.right > bounds.x && rect.left < bounds.x + bounds.width
+    && rect.bottom > bounds.y && rect.top < bounds.y + bounds.height;
+}
+
+/**
+ * Whether app UI must sit above the native browser page, which always paints
+ * over the renderer. Without options this is the original check: any shown
+ * `role="dialog"`/`alertdialog`. With options (floating browser presentation)
+ * it also covers open `<dialog>` elements anywhere, and menus, listboxes and
+ * tooltips that overlap the page, but never `exclude`, the browser's own
+ * full-screen dialog. `doc` is the window the page is in: nothing in the app
+ * window can cover a popped-out browser.
+ */
+export function hasNativeBrowserOccluder(options?: { bounds: BrowserOccluderBounds | null; exclude?: Element | null; doc?: Document }) {
+  if (options) {
+    const doc = options.doc ?? document;
+    for (const overlay of doc.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')) {
+      if (overlay !== options.exclude && isShownOverlay(overlay)) return true;
+    }
+    for (const overlay of doc.querySelectorAll('[role="menu"], [role="listbox"], [role="tooltip"]')) {
+      if (isShownOverlay(overlay) && !options.exclude?.contains(overlay) && overlapsBounds(overlay, options.bounds)) return true;
+    }
+    return false;
+  }
   const overlays = document.querySelectorAll('[role="dialog"], [role="alertdialog"]');
   for (const overlay of overlays) {
     if (!(overlay instanceof HTMLElement)) {

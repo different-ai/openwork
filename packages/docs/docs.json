@@ -9,11 +9,32 @@
   },
   "colors": {
     "primary": "#011627",
-    "light": "#3b82f6",
+    "light": "#cbd5e1",
     "dark": "#011627"
   },
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#011627"
+    }
+  },
+  "seo": {
+    "metatags": {
+      "og:image": "https://openworklabs.com/docs/images/openwork-social.png",
+      "og:image:alt": "OpenWork — Your AI workspace. Without vendor lock-in.",
+      "twitter:image:alt": "OpenWork — Your AI workspace. Without vendor lock-in."
+    }
+  },
   "api": {
-    "openapi": "openapi.json"
+    "openapi": "https://api.openworklabs.com/openapi.json?public=1"
+  },
+  "markdown": {
+    "instructions": [
+      "For agents: install the OpenWork desktop app with `brew install --cask openwork` (macOS) or from https://openworklabs.com/download. Do not run `npx openwork`; the npm package named `openwork` is a different project.",
+      "Connect an agent to OpenWork with the MCP Gateway: `claude mcp add --transport http openwork https://api.openworklabs.com/mcp/agent`. Teams sign up at https://app.openworklabs.com?mode=sign-up.",
+      "Step-by-step agent guide: https://openworklabs.com/docs/start-here/use-openwork-from-an-ai-agent.md",
+      "Connect Slack (any organization admin): https://openworklabs.com/docs/slack/connect-slack.md. OpenWork in Slack (@openwork bot) is private alpha for approved organizations. Setup guide: https://openworklabs.com/docs/slack/overview.md. Agent skill: https://openworklabs.com/.well-known/agent-skills/set-up-openwork-slack/SKILL.md."
+    ]
   },
   "navigation": {
     "tabs": [
@@ -22,20 +43,61 @@
         "pages": [
           "start-here/get-started",
           "start-here/downloads",
+          "start-here/use-openwork-from-an-ai-agent",
           "start-here/pricing-and-licensing",
-          "start-here/stewardship",
-          "start-here/migrate-from-claude-cowork",
           {
-            "group": "Connect your stack",
+            "group": "Move from Claude",
+            "pages": [
+              "start-here/migrate-from-claude-cowork",
+              "start-here/import-claude-history"
+            ]
+          },
+          "start-here/stewardship",
+          {
+            "group": "Help improve OpenWork",
+            "pages": [
+              "start-here/missing-docs",
+              "start-here/missing-languages"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Desktop App",
+        "pages": [
+          {
+            "group": "Get started",
+            "pages": [
+              "desktop-app/first-task",
+              "desktop-app/why-sign-in"
+            ]
+          },
+          {
+            "group": "Connect services",
+            "pages": [
+              "start-here/connect-your-stack/connect-services",
+              "start-here/connect-your-stack/add-an-mcp-server",
+              "start-here/connect-your-stack/enable-exa-search"
+            ]
+          },
+          {
+            "group": "Skills",
+            "pages": [
+              "start-here/do-work-with-it/create-a-skill-from-chat",
+              "start-here/do-work-with-it/skills-plugins-and-mcp"
+            ]
+          },
+          {
+            "group": "Models and providers",
             "pages": [
               "start-here/connect-your-stack/sign-in-with-chatgpt",
               "start-here/connect-your-stack/openwork-vs-opencode-models",
               "start-here/connect-your-stack/using-opencode-zen-go-models",
               "start-here/connect-your-stack/add-anthropic-api-key",
+              "start-here/connect-your-stack/sign-in-with-your-anthropic-subscription",
               "start-here/connect-your-stack/add-a-custom-llm",
-              "start-here/connect-your-stack/connect-services",
-              "start-here/connect-your-stack/add-an-mcp-server",
-              "start-here/connect-your-stack/enable-exa-search"
+              "start-here/connect-your-stack/use-local-models",
+              "start-here/connect-your-stack/use-gemini-and-vertex-ai"
             ]
           },
           {
@@ -45,12 +107,36 @@
               "start-here/do-work-with-it/use-desktop-apps",
               "start-here/do-work-with-it/cross-chat-memory",
               "start-here/do-work-with-it/work-with-excel-workbooks",
-              "start-here/do-work-with-it/what-uses-tokens",
               "start-here/do-work-with-it/workflows",
-              "start-here/do-work-with-it/skills-plugins-and-mcp",
-              "start-here/do-work-with-it/create-a-skill-from-chat",
-              "start-here/do-work-with-it/publish-and-copy-a-skill",
-              "start-here/do-work-with-it/share-your-setup"
+              "start-here/do-work-with-it/automations"
+            ]
+          },
+          {
+            "group": "Use it in the browser",
+            "pages": [
+              "cloud/run-in-the-cloud/open-cloud-in-browser",
+              "cloud/run-in-the-cloud/shared-workspace"
+            ]
+          },
+          {
+            "group": "My Library",
+            "pages": [
+              "my-library/overview",
+              "my-library/models-and-keys",
+              "my-library/share"
+            ]
+          },
+          {
+            "group": "Workbot",
+            "pages": [
+              "workbot/overview",
+              "workbot/my-bot"
+            ]
+          },
+          {
+            "group": "Maintenance",
+            "pages": [
+              "desktop-app/maintenance/back-up-conversation-history"
             ]
           },
           {
@@ -58,12 +144,211 @@
             "pages": [
               "start-here/troubleshooting/diagnostic-prompts"
             ]
+          }
+        ]
+      },
+      {
+        "tab": "Integrations",
+        "pages": [
+          "integrations/overview",
+          "integrations/mcp",
+          "integrations/client-plugins",
+          {
+            "group": "OpenCode — ready",
+            "pages": [
+              "model-context-protocol/opencode-plugin"
+            ]
           },
           {
-            "group": "Help improve OpenWork",
+            "group": "Native integrations",
             "pages": [
-              "start-here/missing-docs",
-              "start-here/missing-languages"
+              "integrations/native-integrations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Slack",
+        "pages": [
+          {
+            "group": "Connect Slack",
+            "pages": [
+              "slack/connect-slack"
+            ]
+          },
+          {
+            "group": "OpenWork in Slack (private alpha)",
+            "pages": [
+              "slack/overview",
+              "slack/set-up-the-slack-app",
+              "slack/connect-your-account",
+              "slack/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "AI Gateway",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "ai-gateway/overview",
+              "ai-gateway/openwork-models",
+              "ai-gateway/users-and-teams",
+              "ai-gateway/third-party-tools",
+              "ai-gateway/cursor",
+              "ai-gateway/claude-code",
+              "ai-gateway/claude-desktop",
+              "ai-gateway/codex",
+              "ai-gateway/codex-desktop",
+              "ai-gateway/provider-support",
+              "ai-gateway/compare-litellm-bifrost",
+              "ai-gateway/litellm",
+              "ai-gateway/truefoundry",
+              "ai-gateway/truefoundry-too-many-tokens",
+              "ai-gateway/how-requests-flow",
+              "ai-gateway/auto-model-routing",
+              "ai-gateway/google-agent-platform",
+              "ai-gateway/amazon-bedrock",
+              "ai-gateway/microsoft-foundry"
+            ]
+          },
+          {
+            "group": "Providers for your org",
+            "pages": [
+              "cloud/share-with-your-team/managed-llm-provider",
+              "cloud/share-with-your-team/custom-llm-provider",
+              "cloud/share-with-your-team/per-member-llm-credentials",
+              "cloud/share-with-your-team/truefoundry-per-member-keys"
+            ]
+          },
+          {
+            "group": "Usage and cost",
+            "pages": [
+              "ai-gateway/usage-dashboard",
+              "ai-gateway/my-usage",
+              "ai-gateway/counting-usage",
+              "ai-gateway/token-costs",
+              "ai-gateway/limits",
+              "start-here/do-work-with-it/what-uses-tokens"
+            ]
+          },
+          {
+            "group": "Benchmarks",
+            "pages": [
+              "benchmarks/overview",
+              "benchmarks/how-it-was-run"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "MCP Gateway",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "cloud/run-in-the-cloud/cloud-mcp",
+              "start-here/connect-openwork-mcp"
+            ]
+          },
+          {
+            "group": "Connect a client",
+            "pages": [
+              "model-context-protocol/opencode",
+              "model-context-protocol/claude-code",
+              "model-context-protocol/codex",
+              "model-context-protocol/claude-desktop",
+              "model-context-protocol/chatgpt",
+              "model-context-protocol/cursor",
+              "model-context-protocol/vs-code",
+              "model-context-protocol/windsurf",
+              "model-context-protocol/zed",
+              "model-context-protocol/gemini-cli",
+              "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
+            ]
+          },
+          {
+            "group": "Connections",
+            "pages": [
+              "cloud/share-with-your-team/connectors",
+              "cloud/share-with-your-team/connect-your-own-account",
+              "cloud/share-with-your-team/shared-mcp-connections",
+              "cloud/share-with-your-team/microsoft-365",
+              "cloud/share-with-your-team/google-cloud-cli",
+              "cloud/share-with-your-team/mcp-server-compatibility",
+              "cloud/share-with-your-team/tool-tester"
+            ]
+          },
+          {
+            "group": "Share skills and plugins",
+            "pages": [
+              "cloud/share-with-your-team/plugins",
+              "cloud/share-with-your-team/plugin-agents-commands-hooks",
+              "cloud/share-with-your-team/github-sources",
+              "model-context-protocol/agent-plugins",
+              "cloud/share-with-your-team/collections",
+              "start-here/do-work-with-it/publish-and-copy-a-skill",
+              "start-here/do-work-with-it/share-your-setup"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Artifacts",
+        "pages": [
+          "dashboards/overview",
+          "dashboards/build-an-mcp-app"
+        ]
+      },
+      {
+        "tab": "SSO",
+        "pages": [
+          {
+            "group": "Set up your organization",
+            "pages": [
+              "cloud/get-started",
+              "cloud/team-quickstart",
+              "cloud/members-and-rbac"
+            ]
+          },
+          {
+            "group": "SSO and SCIM",
+            "pages": [
+              "cloud/auth-and-security",
+              "cloud/sso-oidc",
+              "cloud/sso-google-workspace",
+              "cloud/scim-google-workspace",
+              "cloud/sso-okta",
+              "cloud/scim-okta",
+              "cloud/sso-microsoft-entra",
+              "cloud/scim-microsoft-entra"
+            ]
+          },
+          {
+            "group": "Policies and operations",
+            "pages": [
+              "cloud/share-with-your-team/desktop-policies",
+              "cloud/share-with-your-team/agent-permissions",
+              "cloud/share-with-your-team/team-prompt-cards",
+              "cloud/share-with-your-team/prompts",
+              "cloud/security-and-operations",
+              "cloud/enterprise"
+            ]
+          },
+          {
+            "group": "Observability",
+            "pages": [
+              "cloud/analytics",
+              "cloud/audit-logs"
+            ]
+          },
+          {
+            "group": "Organization settings",
+            "pages": [
+              "cloud/billing",
+              "cloud/api-keys"
             ]
           }
         ]
@@ -85,6 +370,7 @@
               "self-host/deploy-to-your-cloud/aws",
               "self-host/deploy-to-your-cloud/azure",
               "self-host/deploy-to-your-cloud/google-cloud",
+              "self-host/deploy-to-your-cloud/managed-installer",
               "self-host/deploy-to-your-cloud/first-administrator"
             ]
           },
@@ -104,6 +390,7 @@
               "self-host/gateway",
               "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
+              "self-host/export-import-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"
@@ -112,69 +399,15 @@
           {
             "group": "Troubleshoot",
             "pages": [
+              "self-host/diagnostics",
               "start-here/network-diagnostics"
             ]
           }
         ]
       },
       {
-        "tab": "Cloud",
-        "pages": [
-          "cloud/get-started",
-          "cloud/team-quickstart",
-          {
-            "group": "Share with your team",
-            "pages": [
-              "cloud/share-with-your-team/collections",
-              "cloud/share-with-your-team/desktop-policies",
-              "cloud/share-with-your-team/team-prompt-cards",
-              "cloud/share-with-your-team/managed-llm-provider",
-              "cloud/share-with-your-team/per-member-llm-credentials",
-              "cloud/share-with-your-team/custom-llm-provider",
-              "cloud/share-with-your-team/shared-mcp-connections",
-              "cloud/share-with-your-team/mcp-server-compatibility",
-              "cloud/share-with-your-team/dashboards"
-            ]
-          },
-          {
-            "group": "Run in the cloud",
-            "pages": [
-              "cloud/run-in-the-cloud/shared-workspace",
-              "cloud/run-in-the-cloud/open-cloud-in-browser"
-            ]
-          },
-          {
-            "group": "MCP Gateway",
-            "pages": [
-              "cloud/run-in-the-cloud/cloud-mcp",
-              "model-context-protocol/agent-plugins",
-              "model-context-protocol/opencode",
-              "model-context-protocol/claude-code",
-              "model-context-protocol/codex",
-              "model-context-protocol/claude-desktop",
-              "model-context-protocol/chatgpt",
-              "model-context-protocol/cursor",
-              "model-context-protocol/vs-code",
-              "model-context-protocol/windsurf",
-              "model-context-protocol/zed",
-              "model-context-protocol/gemini-cli",
-              "cloud/run-in-the-cloud/connect-openwork-mcp-remote-machine"
-            ]
-          },
-          "cloud/members-and-rbac",
-          "cloud/sso-google-workspace",
-          "cloud/scim-google-workspace",
-          "cloud/sso-okta",
-          "cloud/scim-okta",
-          "cloud/sso-microsoft-entra",
-          "cloud/scim-microsoft-entra",
-          "cloud/security-and-operations",
-          "cloud/enterprise"
-        ]
-      },
-      {
         "tab": "API",
-        "openapi": "/openapi.json"
+        "openapi": "https://api.openworklabs.com/openapi.json?public=1"
       },
       {
         "tab": "Roadmap",
@@ -200,6 +433,14 @@
       "destination": "/cloud/run-in-the-cloud/cloud-mcp"
     },
     {
+      "source": "/mcp",
+      "destination": "/start-here/connect-openwork-mcp"
+    },
+    {
+      "source": "/ai-gateway",
+      "destination": "/ai-gateway/overview"
+    },
+    {
       "source": "/quickstart",
       "destination": "/start-here/get-started"
     },
@@ -221,7 +462,27 @@
     },
     {
       "source": "/start-here/connect-your-stack/connect-slack-mcp",
-      "destination": "/cloud/share-with-your-team/shared-mcp-connections#slack"
+      "destination": "/slack/connect-slack"
+    },
+    {
+      "source": "/desktop-app",
+      "destination": "/desktop-app/first-task"
+    },
+    {
+      "source": "/mcp-gateway",
+      "destination": "/cloud/run-in-the-cloud/cloud-mcp"
+    },
+    {
+      "source": "/dashboards",
+      "destination": "/dashboards/overview"
+    },
+    {
+      "source": "/cloud/share-with-your-team/dashboards",
+      "destination": "/dashboards/build-an-mcp-app"
+    },
+    {
+      "source": "/sso",
+      "destination": "/cloud/auth-and-security"
     }
   ],
   "errors": {

@@ -10,14 +10,17 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type {
-  OpenworkAffordanceDescriptor,
-  OpenworkAffordanceEffects,
-  OpenworkAffordanceOrigin,
-  OpenworkAffordanceRequest,
-  OpenworkAffordanceResult,
+import {
+  openworkAffordanceFailureCodeSchema,
+  type OpenworkAffordanceDescriptor,
+  type OpenworkAffordanceEffects,
+  type OpenworkAffordanceFailureCode,
+  type OpenworkAffordanceOrigin,
+  type OpenworkAffordanceRequest,
+  type OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+import { undeclaredArgsError } from "./undeclared-args";
 import { useUiControlMailbox } from "./use-ui-control-mailbox";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
@@ -57,12 +60,19 @@ export type OpenworkControlSnapshot = {
 
 export type OpenworkControlResult =
   | { ok: true; actionId: string; result?: unknown }
-  | { ok: false; actionId: string; error: string };
+  | { ok: false; actionId: string; error: string; code?: OpenworkAffordanceFailureCode; hint?: string };
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
   /** The conversation whose agent issued the request, when it came through the agent bridge. */
   origin?: OpenworkAffordanceOrigin;
+  /**
+   * True when an agent issued the command through the server bridge, which
+   * answers within seconds and has no person on the other end. A warning for
+   * that request goes back through the agent's own conversation as a
+   * structured result, never through a dialog.
+   */
+  bridged: boolean;
 };
 
 export type OpenworkControlTargetRef = {
@@ -152,11 +162,16 @@ function describeError(error: unknown) {
 
 function returnedActionError(result: unknown) {
   if (!result || typeof result !== "object") return null;
-  const payload = result as { ok?: unknown; error?: unknown };
+  const payload: { ok?: unknown; error?: unknown; code?: unknown; hint?: unknown } = result;
   if (payload.ok !== false) return null;
-  return typeof payload.error === "string" && payload.error.trim()
-    ? payload.error
-    : "Action returned an error.";
+  const code = openworkAffordanceFailureCodeSchema.safeParse(payload.code);
+  return {
+    error: typeof payload.error === "string" && payload.error.trim()
+      ? payload.error
+      : "Action returned an error.",
+    ...(code.success ? { code: code.data } : {}),
+    ...(typeof payload.hint === "string" && payload.hint.trim() ? { hint: payload.hint } : {}),
+  };
 }
 
 function isBrowser() {
@@ -400,6 +415,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     actionId: string,
     args?: unknown,
     origin?: OpenworkAffordanceOrigin,
+    bridged = false,
   ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
@@ -427,14 +443,14 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration, origin });
+      const result = await action.execute(effectiveArgs, { setNarration, origin, bridged });
       const resultError = returnedActionError(result);
       if (resultError) {
-        setNarration(`Could not ${action.label}: ${resultError}`);
+        setNarration(`Could not ${action.label}: ${resultError.error}`);
         if (spotlightRunRef.current === runId) {
           setSpotlight({ visible: false, phase: "target", rect: null });
         }
-        return { ok: false, actionId, error: resultError };
+        return { ok: false, actionId, ...resultError };
       }
       setNarration(`Done: ${action.label}`);
       await wait(SPOTLIGHT_TIMING_MS.done);
@@ -479,16 +495,19 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
         revision,
       };
     }
+    const argsError = undeclaredArgsError(action, request.args);
+    if (argsError) return { ok: false, id: request.id, error: argsError, code: "invalid-args", revision };
     try {
       const effectiveArgs = request.args === undefined ? action.previewArgs : request.args;
-      const result = await action.execute(effectiveArgs, { setNarration: () => undefined });
+      const result = await action.execute(effectiveArgs, { setNarration: () => undefined, bridged: false });
       const resultError = returnedActionError(result);
       if (resultError) {
         return {
           ok: false,
           id: request.id,
-          error: resultError,
-          code: "failed",
+          error: resultError.error,
+          code: resultError.code ?? "failed",
+          ...(resultError.hint ? { hint: resultError.hint } : {}),
           revision,
         };
       }
@@ -544,14 +563,15 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    const result = await executeAction(request.id, request.args, request.origin);
+    const result = await executeAction(request.id, request.args, request.origin, true);
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
         ok: false,
         id: request.id,
         error: result.error,
-        code: result.error.startsWith("Already acting:") ? "conflict" : "failed",
+        code: result.code ?? (result.error.startsWith("Already acting:") ? "conflict" : "failed"),
+        ...(result.hint ? { hint: result.hint } : {}),
         revision: contextRevisionRef.current,
       };
     }
@@ -789,7 +809,7 @@ export function OpenworkRouteControlActions() {
           type: "string",
           required: true,
           description:
-            "Settings tab: general | ai | preferences | permissions | shell | environment | advanced | appearance | updates | recovery | debug | cloud-account | cloud-providers",
+            "Settings tab: general | ai | ollama | preferences | permissions | shell | environment | advanced | appearance | computer | updates | recovery | debug | cloud-account | usage | cloud-providers",
         },
       ],
       previewArgs: { panel: "ai" },
@@ -834,7 +854,6 @@ export function OpenworkRouteControlActions() {
           { id: "extensions", label: "Library", description: "Skills, connections, and tools your agent can use." },
           { id: "files", label: "File management", description: "Read, write, and organize files in your workspace." },
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
-          { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
           { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },

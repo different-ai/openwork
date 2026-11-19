@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { LockKeyhole } from "lucide-react";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
@@ -12,10 +13,13 @@ import { parseInferencePayload, type InferenceStatus } from "../../_lib/inferenc
 import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
-import { getBillingRoute, getCustomLlmProvidersRoute, getGatewayProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { billingNotConfiguredMessage, isBillingNotConfiguredError, startCheckout } from "../../_lib/billing-checkout";
+import { getAiGatewayProvidersRoute, getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
+import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
+import { useFeatureIntro } from "../_features/feature-intros";
 
 /**
  * Editorial detail per model: what a knowledge worker should reach for it for,
@@ -83,7 +87,7 @@ const MODEL_COLUMNS: readonly DenTableColumn<LineupModel>[] = [
   },
 ];
 
-function ModelsLineup({ subscribed }: { subscribed: boolean }) {
+function ModelsLineup({ subscribed, sold }: { subscribed: boolean; sold: boolean }) {
   return (
     <section className="grid gap-3.5">
       <DenSectionHeader
@@ -91,7 +95,9 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
         description={
           subscribed
             ? `Every member of your workspace can use all ${MODEL_LINEUP.length} models.`
-            : `Every member of your workspace can use all ${MODEL_LINEUP.length} models, the moment you subscribe.`
+            : sold
+              ? `Every member of your workspace can use all ${MODEL_LINEUP.length} models, the moment you subscribe.`
+              : `${MODEL_LINEUP.length} models, where OpenWork Models is sold.`
         }
       />
       <div className="overflow-hidden rounded-[16px] border border-gray-100 bg-white">
@@ -101,7 +107,7 @@ function ModelsLineup({ subscribed }: { subscribed: boolean }) {
   );
 }
 
-export function InferenceScreen() {
+export function InferenceScreen({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const dashboard = useOrgDashboard();
@@ -110,29 +116,32 @@ export function InferenceScreen() {
   const access = getOrgAccessFlags(
     dashboard.orgContext?.currentMember.role ?? "member",
     dashboard.orgContext?.currentMember.isOwner ?? false,
-    dashboard.orgContext?.roles,
+    dashboard.orgContext?.currentMember.permissions,
   );
-  const redirect = !access.isAdmin ? "/dashboard"
-    : gatewayAccess === "enabled" ? getGatewayProvidersRoute(dashboard.orgSlug)
-    : runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug)
-    : null;
+  const locked = !checking && !access.canViewModelsSettings;
+  const redirect = !locked && runtimeConfig.orgMode === "single_org" ? getCustomLlmProvidersRoute(dashboard.orgSlug) : null;
 
   useEffect(() => {
     if (!checking && !dashboard.orgError && redirect) router.replace(redirect);
   }, [checking, dashboard.orgError, redirect, router]);
 
   if (dashboard.orgError && !checking) return <DenNotice tone="error" message={dashboard.orgError} />;
+  if (locked) {
+    return <div data-testid="models-access-state" data-access-state="denied">
+      <DenNotice tone="neutral" icon={LockKeyhole} message="Viewing OpenWork Models needs the “View OpenWork Models settings” permission. Ask an organization owner or admin for access." />
+    </div>;
+  }
   if (checking || redirect) {
-    return <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500" data-testid="models-access-state" data-access-state={checking ? "checking" : "denied"}>
-      {checking ? "Checking workspace access..." : "Redirecting to your dashboard..."}
+    return <div className="flex min-h-[320px] items-center justify-center px-6 text-[14px] text-gray-500" data-testid="models-access-state" data-access-state={checking ? "checking" : "redirecting"}>
+      {checking ? "Checking workspace access..." : "Redirecting to your providers..."}
     </div>;
   }
 
   // Do not mount data fetching or management actions until this workspace is verified.
-  return <InferenceContent key={dashboard.orgId} />;
+  return <InferenceContent key={dashboard.orgId} embedded={embedded} />;
 }
 
-function InferenceContent() {
+function InferenceContent({ embedded }: { embedded: boolean }) {
   const router = useRouter();
   const { activeOrg, orgContext, refreshOrgData, runReauthableAction } = useOrgDashboard();
   const [status, setStatus] = useState<InferenceStatus | null>(null);
@@ -140,13 +149,18 @@ function InferenceContent() {
   const [saving, setSaving] = useState(false);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A checkout answered 503 billing_not_configured: same neutral state as a
+  // deployment that reports it does not sell OpenWork Models.
+  const [checkoutNotSold, setCheckoutNotSold] = useState(false);
 
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
+    orgContext?.currentMember.permissions,
   );
-  const canManageModels = access.isAdmin;
+  // Subscribing starts a billing checkout; enabling changes the inference setting.
+  const canSubscribe = access.canManageBilling;
+  const canToggleModels = access.canManageModelsSettings;
   const activeOrgSlug = activeOrg?.slug ?? null;
 
   async function loadStatus() {
@@ -177,8 +191,8 @@ function InferenceContent() {
   // instead of bouncing the user to the billing page. Billing stays the
   // status/portal view.
   async function startSubscribeCheckout() {
-    if (!canManageModels) {
-      setError("Only workspace admins can start OpenWork Models checkout.");
+    if (!canSubscribe) {
+      setError("Starting OpenWork Models checkout needs the “Manage billing” permission.");
       return;
     }
 
@@ -186,34 +200,27 @@ function InferenceContent() {
     try {
       await runReauthableAction("inference-checkout", async () => {
         setSubscribeBusy(true);
-        const { response, payload } = await requestJson(
-          "/v1/billing/stripe/checkout",
-          { method: "POST", body: JSON.stringify({ type: "inference" }) },
-          12000,
-        );
-        if (!response.ok) {
-          throw getRequestError(payload, response, `Checkout failed (${response.status}).`);
-        }
-        const url = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : null;
-        if (!url) {
-          throw new Error("Checkout response did not include a URL.");
-        }
+        const { url } = await startCheckout({ type: "inference" });
         window.location.href = url;
       });
     } catch (checkoutError) {
-      setError(checkoutError instanceof Error ? checkoutError.message : "Could not start checkout.");
+      if (isBillingNotConfiguredError(checkoutError)) {
+        setCheckoutNotSold(true);
+      } else {
+        setError(checkoutError instanceof Error ? checkoutError.message : "Could not start checkout.");
+      }
       setSubscribeBusy(false);
     }
   }
 
   async function toggleEnabled() {
-    if (!canManageModels) {
-      setError("Only workspace admins can manage OpenWork Models.");
-      return;
-    }
     if (!status) return;
     if (status.enabled || !status.subscribed) {
       router.push(getBillingRoute(activeOrg?.slug));
+      return;
+    }
+    if (!canToggleModels) {
+      setError("Turning OpenWork Models on needs the “Manage OpenWork Models” permission.");
       return;
     }
     setError(null);
@@ -248,30 +255,58 @@ function InferenceContent() {
   }
 
   const enabled = status?.enabled === true;
+  // Feature intros: this tab already is the setup step (Subscribe / Enable),
+  // so its intro only reports setup and stays reachable from `?`; nothing replaces the page.
+  useFeatureIntro("ai-gateway.openwork-models", embedded && status ? { openworkModels: status.enabled } : null);
   const subscribed = status?.subscribed === true;
-  const showGettingStarted = !loading && status !== null && !subscribed;
+  // Not sold here: no Subscribe, no price, a neutral lock with the alternative (DESIGN P4, C5).
+  const notSold = !subscribed && (status?.billingConfigured === false || checkoutNotSold);
+  const showGettingStarted = !loading && status !== null && !subscribed && !notSold;
   const memberCount = status?.memberCount ?? 0;
   const actionLabel = subscribed ? (enabled ? "Manage subscription" : "Enable") : "Subscribe";
   const memberCaption = memberCount > 0
     ? `${memberCount} active member${memberCount === 1 ? "" : "s"}`
     : "billed per active member";
 
+  const description = "Reliable, hand-picked models for knowledge work. No API keys to manage.";
+  const caption = notSold ? null : `$10 / user / month · ${memberCaption}`;
+  const actionLockReason = notSold
+    ? null
+    : !subscribed
+      ? (canSubscribe ? null : "Subscribing needs the “Manage billing” permission.")
+      : enabled
+        ? (access.canViewBilling ? null : "Managing the subscription needs the “View billing” permission.")
+        : (canToggleModels ? null : "Turning OpenWork Models on needs the “Manage OpenWork Models” permission.");
+  const action = notSold ? null : <DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
+    loading={loading || saving || subscribeBusy} disabled={actionLockReason !== null} variant={enabled ? "secondary" : "primary"}>
+    {actionLabel}
+  </DenButton>;
+
   return (
-    <div className="mx-auto grid w-full max-w-[960px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8">
-      <DenPageHeader title="OpenWork Models"
-        description="Reliable, hand-picked models for knowledge work. No API keys to manage."
-        caption={`$10 / user / month · ${memberCaption}`}
-        action={<DenButton type="button" onClick={subscribed ? toggleEnabled : () => void startSubscribeCheckout()}
-          loading={loading || saving || subscribeBusy} disabled={!canManageModels} variant={enabled ? "secondary" : "primary"}>
-          {actionLabel}
-        </DenButton>} />
+    <div className={embedded ? "grid gap-6" : "mx-auto grid w-full max-w-[960px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8"}>
+      {embedded ? <DenSectionHeader title="OpenWork Models"
+        description={<>{description}{caption ? <span className="block">{caption}</span> : null}</>}
+        action={action} /> : <DenPageHeader title="OpenWork Models"
+        description={description} caption={caption} action={action} />}
 
       {error ? <DenNotice message={error} tone="error" /> : null}
 
-      {canManageModels ? null : (
+      {notSold ? (
+        <div data-testid="models-not-sold">
+          <DenNotice
+            tone="neutral"
+            icon={LockKeyhole}
+            message={<><span className="font-medium text-gray-900">{billingNotConfiguredMessage("inference")}</span> Your team can use its own providers instead.</>}
+            action={<DenButton variant="secondary" size="sm" href={getAiGatewayProvidersRoute(activeOrgSlug)}>Add a team provider</DenButton>}
+          />
+        </div>
+      ) : null}
+
+      {actionLockReason === null ? null : (
         <DenNotice
-          tone="info"
-          message="Only workspace admins can subscribe or enable OpenWork Models. Ask an owner, super-admin, or admin for this workspace."
+          tone="neutral"
+          icon={LockKeyhole}
+          message={`${actionLockReason} Ask an organization owner or admin for access.`}
         />
       )}
 
@@ -279,7 +314,9 @@ function InferenceContent() {
         <p className="text-sm leading-6 text-[#637291]">One subscription activates models for everyone in your workspace. After subscribing, choose a model from the OpenWork group in the app and start a task.</p>
       </DenCard> : null}
 
-      <ModelsLineup subscribed={subscribed} />
+      {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
+
+      <ModelsLineup subscribed={subscribed} sold={!notSold} />
 
       <p className="text-[13px] text-gray-400">
         Prefer your own provider accounts?{" "}

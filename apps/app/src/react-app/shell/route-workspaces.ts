@@ -1,10 +1,10 @@
 // Shared pure helpers for the workspace-scoped routes (session-route,
-// settings-route). These were duplicated in both route files and had drifted:
-// settings-route was missing the remote-workspace clobber fix in
-// mergeRouteWorkspaces and used older session-status logic. One copy now.
+// settings-route). These were duplicated in both route files and had
+// drifted. One copy now.
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
+import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { deleteNativeSession } from "@/app/lib/opencode-session-native";
@@ -12,6 +12,7 @@ import { OpenworkServerError, type OpenworkWorkspaceInfo } from "@/app/lib/openw
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
+import type { SessionLink } from "@openwork/types/session-link";
 import {
   normalizeDirectoryPath,
   normalizeSessionStatus,
@@ -32,6 +33,7 @@ export type RouteSession = Session & {
   state?: unknown;
   runStatus?: unknown;
   slug?: string | null;
+  openworkSessionLink?: SessionLink | null;
 };
 
 // Absent for v1 prefix reads; null means an exhausted v2 cursor traversal.
@@ -58,7 +60,7 @@ export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, 
   }).listSessionsPage({ limit, cursor });
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
-async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
+export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
   const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
     // Servers predating the preview endpoint still use v1.
     if (error instanceof OpenworkServerError && error.status === 404) return null;
@@ -78,11 +80,15 @@ async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promis
 export async function createRouteSessionOnEngine(
   endpoint: ResolvedWorkspaceEndpoint,
   directory?: string,
+  /** The session this one is started from. Only the v2 engine records it. */
+  link?: SessionLink,
 ): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
-  const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
-    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
-    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
+  if (isOpencodeV2BaseUrl(native.opencodeBaseUrl)) {
+    const client = createClientV2(native.opencodeBaseUrl, directory, { token: native.token });
+    return { session: unwrap(await client.session.create({ directory, ...(link ? { link } : {}) })), endpoint: native };
+  }
+  const client = createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
   return { session: unwrap(await client.session.create({ directory })), endpoint: native };
 }
 
@@ -92,6 +98,12 @@ export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, di
 
 export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
   return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
+}
+
+/** The OpenWork server's own `opencode_config_invalid` answer already says which file and field. */
+function openworkConfigErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object" || !("code" in error) || error.code !== "opencode_config_invalid") return null;
+  return "message" in error && typeof error.message === "string" && error.message.trim() ? error.message : null;
 }
 
 export async function listRouteSessions(
@@ -107,10 +119,16 @@ export async function listRouteSessions(
     let items: RouteSession[];
     try {
       items = unwrap(result);
-    } catch (error) {
+    } catch (thrown) {
+      // A folder whose OpenCode config is invalid lists nothing. Say why,
+      // instead of an empty list that looks like lost chats.
+      const configMessage = describeOpencodeConfigError(result.error) ?? openworkConfigErrorMessage(result.error);
+      const error = configMessage
+        ? Object.assign(new Error(configMessage), { code: "opencode_config_invalid" })
+        : thrown;
       if (error instanceof Error) {
         Object.assign(error, { status: result.response.status });
-        if (result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
+        if (!configMessage && result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
           Object.assign(error, { code: result.error.code });
         }
       }
@@ -149,29 +167,10 @@ export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
 export function workspaceLabel(workspace: OpenworkWorkspaceInfo) {
   return (
     workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
     workspace.name?.trim() ||
     workspace.path?.trim() ||
     t("session.workspace_fallback")
   );
-}
-
-export function workspaceExportFilename(workspace: OpenworkWorkspaceInfo) {
-  const slug = workspaceLabel(workspace).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${slug || "workspace"}-openwork-export.json`;
-}
-
-export function downloadWorkspaceJson(filename: string, payload: unknown) {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function folderNameFromPath(path: string) {
@@ -408,18 +407,7 @@ export function mergeRouteWorkspaces(
     }),
   );
 
-  // If a server workspace's id matches a desktop workspace marked as remote,
-  // skip the server's view entirely. The local OpenWork server may have stale
-  // registrations from earlier (buggy) activate calls that show up here as
-  // `workspaceType: "local"`, which would otherwise clobber the desktop's
-  // remote routing fields and send workspace-scoped requests back to the
-  // local server.
-  const remoteDesktopIds = new Set(
-    desktopWorkspaces.flatMap((workspace) => workspace.workspaceType === "remote" ? [workspace.id] : []),
-  );
-  const filteredServer = serverWorkspaceList.filter((workspace) => !remoteDesktopIds.has(workspace.id));
-
-  const mergedServer = filteredServer.map((workspace) => {
+  const mergedServer = serverWorkspaceList.map((workspace) => {
     const match =
       desktopById.get(workspace.id) ??
       desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
