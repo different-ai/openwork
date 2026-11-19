@@ -14,9 +14,13 @@ appears at the top of the window and stays until it is dismissed:
 | Under 2 GB | **Your disk is almost full** · "1.4 GB left. Free up space so OpenWork can keep saving your work." |
 | Under 200 MB | **Your disk is full** · "120 MB left. OpenWork can't save changes until you free up space." |
 
-The message goes away by itself once there is room again. A dismissed message
-is not repeated for a day unless the disk gets fuller (from "almost full" to
-"full"), or a save actually fails for lack of space.
+The message goes away by itself once there is room again. Each message is
+shown once: "almost full" once, then "full" once if the disk gets fuller.
+After someone cleans up (4 GB or more free), running low again shows the
+message again. A disk that only creeps back just above the limit does not
+count as cleaned up, so it does not bring the message back each time it dips
+under. A save that fails for lack of space also brings it back, at most once
+an hour.
 
 Without the feature, people learn the disk is full only when something fails.
 

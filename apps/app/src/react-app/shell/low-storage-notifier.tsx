@@ -5,7 +5,7 @@ import { markFeatureUsed } from "@/app/lib/den"
 import { createOpenworkServerClient, isLoopbackOpenworkServerUrl, openworkDiskFullEvent, type OpenworkDiskSpace } from "@/app/lib/openwork-server"
 import { toast } from "@/components/ui/sonner"
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature"
-import { LOW_STORAGE_FEATURE, lowStorageNotice, parseLowStorageAnnouncement, type LowStorageAnnouncement } from "./low-storage"
+import { LOW_STORAGE_FEATURE, lowStorageCleanedUp, lowStorageNotice, parseLowStorageAnnouncement, type LowStorageAnnouncement } from "./low-storage"
 import { resolveOpenworkConnection } from "./openwork-connection"
 
 const LOW_STORAGE_POLL_MS = 5 * 60 * 1000
@@ -84,7 +84,7 @@ export function LowStorageNotifier() {
     if (!status) return
     if (status.level === "ok") {
       dismiss()
-      writeAnnounced(null)
+      if (lowStorageCleanedUp(status)) writeAnnounced(null)
       saveFailed.current = false
       return
     }
