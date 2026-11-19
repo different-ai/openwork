@@ -21,7 +21,6 @@ const action = z.discriminatedUnion("type", [
 const query = z.object({ role: z.string().max(64).optional(), name: z.string().max(300).optional(), text: z.string().max(300).optional(), exact: z.boolean().optional() })
   .describe("Only controls whose role, name or text match; exact false matches substrings.");
 const contextSchema = z.object({ sessionID: z.string().min(1), abort: z.instanceof(AbortSignal).optional() });
-
 function operationTool<T extends z.ZodRawShape>(operation: string, description: string, shape: T, prepare: (args: z.infer<z.ZodObject<T>>) => Record<string, unknown> = args => args) {
   const schema = z.object(shape);
   return { description, args: shape, async execute(raw: unknown, context: unknown) {
