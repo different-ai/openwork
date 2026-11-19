@@ -115,10 +115,10 @@ touch ${marker}.ready
 
 /** The fields read from the API's operation replies and error envelopes. */
 const apiReply = z.object({
-  id: z.string().optional(),
-  state: z.string().optional(),
-  machineId: z.string().optional(),
-  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+  id: z.string().nullish(),
+  state: z.string().nullish(),
+  machineId: z.string().nullish(),
+  error: z.object({ code: z.string().nullish(), message: z.string().nullish() }).nullish(),
 })
 
 /** Creates a sandbox whose user is `ubuntu`, which the SDK's create does not offer yet. */
@@ -135,7 +135,10 @@ async function createAsUbuntu(sandboxName: string, templateId: string): Promise<
   let op = await call("POST", "/v1/machines", { name: sandboxName, templateId, guestUser: "ubuntu", vault: false, metadata: { kind: "headless-computer-build" } })
   const deadline = Date.now() + 10 * 60_000
   while (op.state !== "succeeded") {
-    if (!op.id || op.state === "failed" || Date.now() > deadline) throw new Error(`create ${sandboxName} ${op.state === "failed" ? "failed" : "did not finish"}: ${op.error?.message ?? ""}`)
+    if (!op.id || op.state === "failed" || Date.now() > deadline) {
+      if (op.machineId) await Sandbox.kill(op.machineId, conn).catch(() => undefined)
+      throw new Error(`create ${sandboxName} ${op.state === "failed" ? "failed" : "did not finish"}: ${op.error?.message ?? ""}`)
+    }
     await new Promise(resolve => setTimeout(resolve, 2_000))
     op = await call("GET", `/v1/operations/${encodeURIComponent(op.id)}`)
   }

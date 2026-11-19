@@ -234,16 +234,20 @@ export function createInstaboxProvider(options: InstaboxProviderOptions = {}): S
         await bounded(async () => (await required(h)).pause(), opts.timeoutMs)
       },
       snapshots: {
-        /** Waits until the snapshot is saved, so a create from it boots at once. */
+        /** Waits until the snapshot is saved, so a create from it boots at once. One not saved in time is deleted. */
         async create(h, name, opts): Promise<ImageRef> {
-          return bounded(async () => {
-            let snap = await (await required(h)).createSnapshot({ name })
-            while (snap.status === "pending") {
-              await new Promise(r => setTimeout(r, 1_000))
-              snap = await Sandbox.getSnapshot(snap.id, conn)
+          const deadline = Date.now() + opts.timeoutMs
+          let snap = await bounded(async () => (await required(h)).createSnapshot({ name }), opts.timeoutMs)
+          while (snap.status === "pending") {
+            if (Date.now() > deadline) {
+              await Sandbox.deleteSnapshot(snap.id, conn).catch(() => undefined)
+              throw new SandboxError({ providerId: ID, code: "timeout", message: `instabox snapshot was not saved within ${opts.timeoutMs}ms` })
             }
-            return { id: snap.id, version: snap.createdAt }
-          }, opts.timeoutMs)
+            await new Promise(r => setTimeout(r, 1_000))
+            const id = snap.id
+            snap = await bounded(() => Sandbox.getSnapshot(id, conn), Math.max(1, deadline - Date.now()) + 10_000)
+          }
+          return { id: snap.id, version: snap.createdAt }
         },
         async destroy(image, opts) {
           await bounded(() => Sandbox.deleteSnapshot(image.id, conn), opts.timeoutMs)
