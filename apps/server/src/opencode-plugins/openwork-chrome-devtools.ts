@@ -1,6 +1,7 @@
 // Preserve the installed extension identity while routing browser operations
 // through the desktop's conversation-scoped host. No unrestricted CDP tools.
 import { z } from "zod";
+import { coerceNestedJsonArgs } from "./browser-tool-args.js";
 import { uiBridgeRequest } from "./openwork-ui-bridge.js";
 
 const tabId = z.string().min(1).optional().describe("A tab returned by browser_tabs or browser_open in this conversation. Defaults to this conversation's active tab.");
@@ -26,7 +27,7 @@ function operationTool<T extends z.ZodRawShape>(operation: string, description: 
   return { description, args: shape, async execute(raw: unknown, context: unknown) {
     const parsed = contextSchema.safeParse(context);
     if (!parsed.success) return JSON.stringify({ ok: false, code: "missing_session", error: "This browser call needs a requesting conversation." });
-    const result = await uiBridgeRequest("/browser/task", { method: "POST", body: { operation, args: prepare(schema.parse(raw)), sessionId: parsed.data.sessionID }, signal: parsed.data.abort, timeoutMs: null });
+    const result = await uiBridgeRequest("/browser/task", { method: "POST", body: { operation, args: prepare(schema.parse(coerceNestedJsonArgs(raw))), sessionId: parsed.data.sessionID }, signal: parsed.data.abort, timeoutMs: null });
     // The engine's native tool result retains image attachments alongside text.
     const withImage = z.object({ image: z.object({ mimeType: z.literal("image/png"), data: z.string() }) }).passthrough().safeParse(result);
     if (withImage.success) {
