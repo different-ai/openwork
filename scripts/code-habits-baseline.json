@@ -98,7 +98,7 @@
     "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx": 1,
     "apps/app/src/react-app/domains/session/modals/question-modal.tsx": 3,
     "apps/app/src/react-app/domains/session/modals/use-model-picker.ts": 2,
-    "apps/app/src/react-app/domains/session/panel/agent-viewport.ts": 2,
+    "apps/app/src/react-app/domains/session/panel/agent-viewport.ts": 1,
     "apps/app/src/react-app/domains/session/panel/browser-presentation.tsx": 1,
     "apps/app/src/react-app/domains/session/panel/floating-slot.tsx": 2,
     "apps/app/src/react-app/domains/session/panel/floating-window.ts": 3,

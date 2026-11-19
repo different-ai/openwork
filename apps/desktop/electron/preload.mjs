@@ -311,7 +311,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     taskControl(tabId, action) { return ipcRenderer.invoke("openwork:browser:taskControl", tabId, action); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
-    setAgentViewport(key) { return ipcRenderer.invoke("openwork:browser:setAgentViewport", key); },
+    setTabPageSize(tabId, key) { return ipcRenderer.invoke("openwork:browser:setTabPageSize", tabId, key); },
     startAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:startAgentTurn", sessionId); },
     endAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:endAgentTurn", sessionId); },
     setAgentPermissionRules(rules) { return ipcRenderer.invoke("openwork:browser:setAgentPermissionRules", rules); },

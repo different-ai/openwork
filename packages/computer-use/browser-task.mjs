@@ -615,7 +615,8 @@ function relevantPassages(text, question, maxChars) {
 }
 
 /**
- * `prepare` runs before each operation on a tab and may settle its viewport.
+ * `prepare` runs before each operation on a tab with that operation's args and
+ * may settle its viewport, including a `pageSize` the agent asked for.
  * A host that draws the page scaled reports that scale in `inputScale`, since
  * CDP input is in view pixels, and may `capture` the page at full resolution.
  */
@@ -714,7 +715,7 @@ function cutObservation(mask, page, interactive) {
 
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
-  prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
+  prepare = async (_tab, _args) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
   // A page receives files only after the person approves exactly these, in the chat.
   checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
   approveFiles = /** @type {(sessionId: string, request: { app: string, url: string, files: string[] }, signal: AbortSignal) => Promise<boolean | { allowed: boolean, code?: string, error?: string, revalidate?: (frameUrl?: string) => Promise<boolean> }>} */ (async (_sessionId, _request, _signal) => false),
@@ -1142,7 +1143,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while checking access. Observe again.");
         }
         requestSignal.throwIfAborted();
-        await prepare(tab);
+        await prepare(tab, args);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
         if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText, sessionId }, mask));
