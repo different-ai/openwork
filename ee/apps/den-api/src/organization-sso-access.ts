@@ -9,7 +9,7 @@ import {
   SsoConnectionTable,
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
@@ -266,6 +266,8 @@ async function readSsoRequiredOrganizations(organizationIds: readonly string[]):
 
 /** When this session proved each organization's SSO (the identity provider's authentication time). */
 async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date>> {
+  // Synthetic sessions (including internal MCP principals) cannot hold browser SSO proofs.
+  if (!isDenTypeId("session", sessionId)) return new Map()
   // primary: the rows are written by the SSO callback that created the session.
   const rows = await db.$primary
     .select({ organizationId: SessionSsoProofTable.organizationId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
@@ -276,8 +278,9 @@ async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date
 
 /**
  * Organizations among `organizationIds` this session may not open until it
- * signs in through their SSO. A request without a session (an API key,
- * an MCP token) is checked where that credential was issued instead.
+ * signs in through their SSO. Missing, synthetic or malformed session IDs
+ * have no proof. Callers handle credentials with verified issuance checks
+ * separately (for example, API keys issued behind the organization SSO gate).
  */
 export async function findSsoBlockedOrganizations(input: { sessionId: string | null; organizationIds: readonly string[] }): Promise<Map<string, SsoAccessBlock>> {
   const required = await readSsoRequiredOrganizations(input.organizationIds)
@@ -377,6 +380,7 @@ export async function recordDeviceSessionSsoAuthentication(input: { sessionId: s
 
 /** The approving session's proof for one organization, for a device approval to snapshot. */
 export async function readSessionSsoProof(input: { sessionId: string; userId: string; organizationId: string }) {
+  if (!isDenTypeId("session", input.sessionId)) return null
   const [proof] = await db.$primary
     .select({ providerId: SessionSsoProofTable.ssoProviderId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
     .from(SessionSsoProofTable)
