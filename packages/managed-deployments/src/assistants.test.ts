@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { quickCreateUrl, updateStackCommand } from "@openwork/managed-deployments/aws"
+import { quickCreateDefaults, quickCreateUrl, updateStackCommand } from "@openwork/managed-deployments/aws"
 import { summarizeHealth } from "@openwork/managed-deployments/lifecycle"
 import { awsTargetSchema, managedDeploymentLaunchInputSchema, healthReportSchema } from "@openwork/managed-deployments/schema"
 
@@ -62,7 +62,7 @@ test("only an Update can carry changed assistant settings", () => {
   assert.equal(managedDeploymentLaunchInputSchema.safeParse({ kind: "configure", assistants }).success, false)
 })
 
-test("AWS install and update handoffs carry identical explicit assistant parameters", () => {
+test("AWS install defaults and explicit update parameters have identical assistant values", () => {
   const input = {
     deploymentId: "00000000-0000-4000-8000-000000000001", runId: "00000000-0000-4000-8000-000000000002", challenge: "a".repeat(64),
     target: awsTargetSchema.parse({ ...target, assistants }), domainName: "openwork.example.test", ownerEmail: "admin@example.test", size: "small",
@@ -71,14 +71,15 @@ test("AWS install and update handoffs carry identical explicit assistant paramet
   const url = new URL(quickCreateUrl(input))
   const params = new URLSearchParams(url.hash.split("?")[1])
   for (const [key, value] of Object.entries({ HeadlessRunnerEnabled: "true", WorkbotEnabled: "true", SlackAssistantEnabled: "true", HeadlessModelProtocol: "anthropic", HeadlessModelBaseUrl: assistants.modelBaseUrl, HeadlessModel: assistants.model, HeadlessModelSecretArn: modelSecretArn, HeadlessComputerProvider: "freestyle", HeadlessComputerSecretArn: computerSecretArn, HeadlessComputerSnapshot: "", DaytonaApiUrl: "https://app.daytona.io/api", DaytonaTarget: "us" })) {
-    assert.equal(params.get(`param_${key}`), value)
+    assert.equal(params.get(`param_${key}`) ?? quickCreateDefaults.get(key), value)
     assert.ok(updateStackCommand(input).includes(JSON.stringify({ ParameterKey: key, ParameterValue: value })))
   }
   const legacy = new URLSearchParams(new URL(quickCreateUrl({ ...input, target: awsTargetSchema.parse(target) })).hash.split("?")[1])
   assert.equal(legacy.has("param_HeadlessRunnerEnabled"), false, "legacy installer templates receive no new parameters")
   const disabled = new URLSearchParams(new URL(quickCreateUrl({ ...input, includeAssistantParameters: true, target: awsTargetSchema.parse(target) })).hash.split("?")[1])
-  assert.equal(disabled.get("param_HeadlessRunnerEnabled"), "false")
-  assert.equal(disabled.get("param_HeadlessModelSecretArn"), "")
+  assert.equal(disabled.has("param_HeadlessRunnerEnabled"), false)
+  assert.equal(disabled.has("param_HeadlessModelSecretArn"), false)
+  assert.equal(disabled.get("param_HeadlessModelBaseUrl"), "")
   const daytona = new URLSearchParams(new URL(quickCreateUrl({ ...input, target: awsTargetSchema.parse({ ...target, assistants: { ...assistants, computerProvider: "daytona", computerSnapshot: "computer-snapshot", daytonaApiUrl: "https://daytona.example.test/api", daytonaTarget: "eu" } }) })).hash.split("?")[1])
   assert.equal(daytona.get("param_HeadlessComputerProvider"), "daytona")
   assert.equal(daytona.get("param_HeadlessComputerSnapshot"), "computer-snapshot")

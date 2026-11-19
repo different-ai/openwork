@@ -47,6 +47,7 @@ test("with the feature off the sign-in cannot be saved and AWS links are the pla
   const launch = await owner("POST", `/v1/managed-deployments/${id}/launch`, { kind: "install" })
   assert.equal(launch.status, 200, summary(launch))
   assert.ok(text(field(launch.body, "approvalUrl"), "approval URL").startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/"))
+  assert.equal(field(launch.body, "handoff", "directUrl"), null)
 })
 
 test("only someone who can manage deployments saves a sign-in, and only an AWS access portal is accepted", async () => {
@@ -86,6 +87,7 @@ test("a saved sign-in opens the approval link, CloudShell and the stack through 
   const approval = portalRequest(text(field(reopened.body, "approvalUrl"), "portal approval URL"))
   assert.deepEqual({ account: approval.account, role: approval.role }, { account: "123456789012", role: "AdministratorAccess" })
   assert.equal(approval.destination, plain)
+  assert.equal(field(reopened.body, "handoff", "directUrl"), plain)
   assert.equal(field(reopened.body, "handoff", "url"), field(reopened.body, "approvalUrl"))
   assert.ok(text(field(reopened.body, "handoff", "instructions"), "instructions").includes("through your access portal as AdministratorAccess"))
   assert.ok(portalRequest(text(field(reopened.body, "deployment", "consoleUrl"), "stack URL")).destination.includes("/cloudformation/"))
@@ -101,6 +103,7 @@ test("a saved sign-in opens the approval link, CloudShell and the stack through 
   const update = await owner("POST", path, { kind: "update" })
   assert.equal(update.status, 200, summary(update))
   assert.equal(portalRequest(text(field(update.body, "handoff", "url"), "CloudShell URL")).destination, "https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1")
+  assert.equal(field(update.body, "handoff", "directUrl"), "https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1")
 })
 
 test("a portal URL alone saves a null role and every AWS link leaves role selection to the portal", async () => {
@@ -125,6 +128,7 @@ test("a portal URL alone saves a null role and every AWS link leaves role select
   const approval = portalRequest(text(field(install.body, "approvalUrl"), "approval URL"))
   assert.deepEqual({ account: approval.account, role: approval.role }, { account: "123456789012", role: null })
   assert.ok(approval.destination.startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/"))
+  assert.equal(field(install.body, "handoff", "directUrl"), approval.destination)
   assert.ok(text(field(install.body, "handoff", "instructions"), "instructions").includes("through your access portal, where you choose your role, then opens the installer"))
 
   const listed = await owner("GET", "/v1/managed-deployments")
@@ -141,6 +145,7 @@ test("a portal URL alone saves a null role and every AWS link leaves role select
   assert.equal(update.status, 200, summary(update))
   const shell = portalRequest(text(field(update.body, "handoff", "url"), "CloudShell URL"))
   assert.deepEqual(shell, { account: "123456789012", role: null, destination: "https://us-east-1.console.aws.amazon.com/cloudshell/home?region=us-east-1" })
+  assert.equal(field(update.body, "handoff", "directUrl"), shell.destination)
   assert.ok(text(field(update.body, "handoff", "instructions"), "instructions").includes("where you choose your role"))
   assert.equal((await owner("PUT", SIGN_IN_PATH, { awsSignIn: signIn })).status, 200)
 })
@@ -153,6 +158,11 @@ test("the sign-in belongs to one organization, stops applying when the feature i
 
   assert.equal((await den.setFeature(org.orgId, "managedDeploymentAwsSignIn", false)).status, 200)
   assert.equal(await savedSignIn(), null)
+  const offId = await create()
+  const offLaunch = await owner("POST", `/v1/managed-deployments/${offId}/launch`, { kind: "install" })
+  assert.equal(offLaunch.status, 200, summary(offLaunch))
+  assert.equal(field(offLaunch.body, "handoff", "directUrl"), null)
+  assert.ok(text(field(offLaunch.body, "approvalUrl"), "feature-off approval URL").startsWith("https://us-east-1.console.aws.amazon.com/cloudformation/"))
   const off = await owner("GET", "/v1/managed-deployments")
   for (const deployment of list(field(off.body, "deployments"))) assert.ok(text(field(deployment, "consoleUrl"), "stack URL").startsWith("https://us-east-1.console.aws.amazon.com/"))
 
