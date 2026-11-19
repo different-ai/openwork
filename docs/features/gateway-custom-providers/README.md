@@ -1,17 +1,19 @@
 # AI Gateway: custom OpenAI-compatible providers
 
-Feature key: `gatewayCustomProviders` · Deployments: cloud and self-hosted · Default: off · Author: [@OmarMcAdam](https://github.com/OmarMcAdam)
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> The flag-off screenshot below is a historical comparison.
+
+Retired rollout key: `gatewayCustomProviders` · Deployments: cloud and self-hosted · Status: generally available (no flag) · Author: [@OmarMcAdam](https://github.com/OmarMcAdam)
 
 ## What changes
 
 In Den › AI Gateway › Add a provider, the **Another provider** row ("Anything
 with an OpenAI-compatible API, self-hosted included") used to open the first
 models.dev provider whose SDK is `@ai-sdk/openai-compatible` (today 302.AI),
-with that provider's address and models. With the feature on it opens a
-four-step wizard for any OpenAI-compatible provider instead. With it off,
-nothing changes.
+with that provider's address and models. It now opens a four-step wizard for
+any OpenAI-compatible provider instead.
 
-![Feature off: Another provider opens a catalog provider](flag-off.png)
+![Before: Another provider opened a catalog provider](flag-off.png)
 
 1. **Connection**: a name (what members see in the model picker), the API
    address (for example `https://api.example.com/v1`; a trailing
@@ -66,8 +68,7 @@ networks are refused before anything is contacted, with a plain message:
 Proof: `pnpm evals:e2e gateway-custom-provider --local`
 (`evals/proofs/gateway-custom-provider.proof.test.ts`) runs a real Den, a real
 AI Gateway and a mock OpenAI-compatible provider (allowlisted through
-`GATEWAY_EGRESS_ALLOWED_ORIGINS`) in headless Chrome: Another provider with the
-feature off, the wizard with a detailed list, a models.dev match and a custom
+`GATEWAY_EGRESS_ALLOWED_ORIGINS`) in headless Chrome: the wizard with a detailed list, a models.dev match and a custom
 model, a failing test with a wrong key that returns to step 1, a passing test
 and Add, Re-fetch models and Save on the provider's page, a member's chat
 completion through AI Gateway reaching the provider with the custom model's id,
@@ -76,8 +77,7 @@ and a refused private address. It needs network access to models.dev
 
 ## API (den-api)
 
-All routes need Manage Gateway providers, enabled Gateway management and the
-feature. With the feature off they answer 404 `feature_disabled`.
+All routes need Manage Gateway providers and enabled Gateway management.
 
 | Route | What it does |
 |---|---|
@@ -112,16 +112,9 @@ to `settings.upstreamBaseUrl` + `/chat/completions`.
 
 ## Try it
 
-1. Turn `gatewayCustomProviders` on for an organization in /admin.
-2. Sign in as an organization admin with AI Gateway configured.
-3. Den › AI Gateway › Add a provider › **Another provider**: enter a name, an
+1. Sign in as an organization admin with AI Gateway configured.
+2. Den › AI Gateway › Add a provider › **Another provider**: enter a name, an
    OpenAI-compatible address and key, pick models, **Test**, then **Add**.
-
-## Turning it off
-
-The kill switch hides the routes (404) and the wizard. Providers already added
-keep working for members; they can still be removed, have access changed and be
-renamed through the generic provider routes.
 
 ## What to watch
 

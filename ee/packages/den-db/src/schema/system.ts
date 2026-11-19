@@ -1,4 +1,4 @@
-import { bigint, int, mysqlTable, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, int, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 export const RateLimitTable = mysqlTable(
@@ -22,5 +22,16 @@ export const AdminAllowlistTable = mysqlTable(
   },
   (table) => [uniqueIndex("admin_allowlist_email").on(table.email)],
 )
+
+/**
+ * This Den installation's stable identity (one row, `singleton = "den"`),
+ * created on first use. Config blob exports carry it as `source.instanceId`
+ * so imports can tell "same instance" from "another instance".
+ */
+export const DenInstanceTable = mysqlTable("den_instance", {
+  singleton: varchar("singleton", { length: 16 }).notNull().primaryKey(),
+  instanceId: denTypeIdColumn("denInstance", "instance_id").notNull(),
+  createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+})
 
 export const rateLimit = RateLimitTable

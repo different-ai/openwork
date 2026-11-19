@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useStore } from "zustand";
-import { Check, Loader2, LockKeyhole } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { createAuditOperationContext } from "@openwork/types/den/audit";
 import { normalizeGatewayCustomBaseUrl, type GatewayCustomDiscoverResponse } from "@openwork/types/den/gateway-custom-providers";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -13,7 +13,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenSelect } from "../../_components/ui/select";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
-import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute, orgFeatureEnabled } from "../../_lib/den-org";
+import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { createCustomProvider, discoverCustomProviderModels, testCustomProvider, testRequestFailure } from "./custom-provider-data";
 import { chatCompletionsUrl, checkSelectedModels, type ConnectionField } from "./custom-provider-models";
@@ -29,25 +29,10 @@ const CARD_TITLE = "text-[13px] font-medium text-gray-900";
 const LABEL = "mt-3 block text-[12px] font-medium text-gray-700";
 const INVALID = "border-red-300 ring-2 ring-red-100";
 
-/** Custom provider pages exist only while `gatewayCustomProviders` is on for the organization. */
-export function CustomProvidersFeatureGate({ children }: { children: React.ReactNode }) {
-  const { orgContext, orgSlug } = useOrgDashboard();
-  if (!orgContext) return null;
-  if (!orgFeatureEnabled(orgContext, "gatewayCustomProviders")) {
-    return (
-      <div data-testid="custom-provider-feature-off">
-        <DenNotice tone="neutral" icon={LockKeyhole} message="Custom providers aren't turned on for your organization yet. Ask OpenWork to turn them on."
-          action={<Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "secondary", size: "sm" })}>Add another provider</Link>} />
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
-
 export function CustomProviderWizardScreen({ embedded = false }: { embedded?: boolean }) {
   // One store per visit: in memory only, gone when the admin leaves the page.
   const [store] = useState(() => createWizardStore());
-  return <CustomProvidersFeatureGate><Wizard store={store} embedded={embedded} /></CustomProvidersFeatureGate>;
+  return <Wizard store={store} embedded={embedded} />;
 }
 
 function discoveryMessage(name: string, response: GatewayCustomDiscoverResponse): string {

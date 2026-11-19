@@ -76,7 +76,7 @@ locals {
     SMTP_PORT   = nonsensitive(tostring(var.smtp.port))
     SMTP_USER   = nonsensitive(var.smtp.username)
     SMTP_SECURE = nonsensitive(local.bool[var.smtp.secure])
-  }, var.extra_environment) : k => v if v != "" }
+  }, local.ai_gateway_environment, var.extra_environment) : k => v if v != "" }
 
   # Container Apps secrets. Which ones exist must be known at plan time, so
   # the optional ones are chosen from their inputs, never from generated values.

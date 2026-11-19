@@ -43,8 +43,8 @@ function useCurrentIntro(): FeatureIntro | null {
 
 /**
  * `?` in the top bar (DESIGN.md I8): reopens the current page's intro at any
- * time, even when set up. Shortcut `?` when not typing. Hidden with the flag
- * off or when no intro covers the page. Render inside <Suspense> (search params).
+ * time, even when set up. Shortcut `?` when not typing. Hidden until the
+ * organization is loaded or when no intro covers the page. Render inside <Suspense> (search params).
  */
 export function FeatureIntroHelpButton() {
   const { record, contextFor } = useFeatureIntroRuntime();

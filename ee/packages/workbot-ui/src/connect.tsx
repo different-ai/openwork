@@ -3,11 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
-import { useWorkbotConnections, type WorkbotConnection } from "./data";
+import { useWorkbotApps, useWorkbotConnections, type WorkbotConnection } from "./data";
 import { workbotHost } from "./host";
 import { readConnectionResult } from "./connect-result";
 
 const startedSchema = z.object({ authorizeUrl: z.string().url().nullable(), callbackOrigin: z.string().url() });
+/** What the flow needs from an everyday connection or an app on the profile's Apps list. */
+type Connectable = Pick<WorkbotConnection, "id" | "connectMode" | "connectUrl">;
 type Attempt = { id: string; requestId: string; inline: boolean; popup: Window | null; callbackOrigin: string | null; result: boolean | null; startedAt: number; closedReads: number };
 const buttonClass = "h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-colors duration-150 hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
@@ -19,6 +21,8 @@ export function useWorkbotConnect() {
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
   const [sameTabUrl, setSameTabUrl] = useState<string | null>(null);
   const connections = useWorkbotConnections({ enabled: true, waiting: pendingId !== null });
+  // The same request: apps beyond the everyday ones (profile) are ready when Den says so there.
+  const apps = useWorkbotApps({ enabled: true, waiting: pendingId !== null });
   const refresh = (resources = false) => {
     void client.invalidateQueries({ queryKey: ["workbot", "connections"] });
     if (resources) {
@@ -36,11 +40,11 @@ export function useWorkbotConnect() {
   useEffect(() => {
     const current = attempt.current;
     const returned = current && (!current.inline || current.result === true || (current.popup?.closed && !sameTabUrl));
-    if (current && returned && pendingId && connections.dataUpdatedAt >= current.startedAt && connections.data?.find(connection => connection.id === pendingId)?.ready) {
+    if (current && returned && pendingId && connections.dataUpdatedAt >= current.startedAt && (connections.data?.find(connection => connection.id === pendingId)?.ready || apps.data?.find(app => app.id === pendingId)?.ready)) {
       refresh(true);
       finish();
     }
-  }, [connections.data, connections.dataUpdatedAt, pendingId, sameTabUrl]);
+  }, [connections.data, apps.data, connections.dataUpdatedAt, pendingId, sameTabUrl]);
   useEffect(() => {
     const receive = (event: MessageEvent<unknown>) => {
       const current = attempt.current;
@@ -64,7 +68,7 @@ export function useWorkbotConnect() {
     }, 1000);
     return () => { window.removeEventListener("message", receive); window.clearInterval(timer); };
   }, [sameTabUrl]);
-  const start = async (connection: WorkbotConnection) => {
+  const start = async (connection: Connectable) => {
     if (attempt.current) { attempt.current.popup?.focus(); return; }
     setError(null);
     if (connection.connectMode === "admin") { setError({ id: connection.id, message: "An admin must finish setting up this app before you can connect." }); return; }
@@ -104,7 +108,7 @@ export function useWorkbotConnect() {
 }
 
 type ConnectFlow = ReturnType<typeof useWorkbotConnect>;
-export function WorkbotConnectionButton({ connection, flow, label = "Connect" }: { connection: WorkbotConnection; flow: ConnectFlow; label?: string }) {
+export function WorkbotConnectionButton({ connection, flow, label = "Connect" }: { connection: Connectable; flow: ConnectFlow; label?: string }) {
   const waiting = flow.pendingId === connection.id;
   return <span className="inline-flex flex-wrap items-center gap-2">
     {connection.connectMode === "admin" ? <span role="status" className="text-[13px] text-[var(--wb-muted)]">Needs admin setup</span>

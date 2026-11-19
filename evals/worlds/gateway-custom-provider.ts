@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Seed } from "@openwork/env";
 import { gatewayEnvironment, startAcmeGateway } from "../../worlds/lib/acme-gateway.ts";
-import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { isRecord } from "./library.ts";
 
 /** Listed by the mock with OpenRouter-style details; models.dev's OpenRouter list has the same id. */
@@ -86,8 +86,7 @@ async function startOpenAiCompatibleUpstream(stack: AsyncDisposableStack) {
 }
 
 /**
- * Custom OpenAI-compatible providers in AI Gateway: a real Den (with
- * `gatewayCustomProviders` still off for the organization), a real AI Gateway,
+ * Custom OpenAI-compatible providers in AI Gateway: a real Den, a real AI Gateway,
  * and a mock OpenAI-compatible provider the operator allowlisted
  * (GATEWAY_EGRESS_ALLOWED_ORIGINS, read by both Den and the gateway). The
  * owner is signed in on AI Gateway › Add a provider; one member can use
@@ -111,8 +110,6 @@ export async function gatewayCustomProviderWorld(seed: Seed) {
       web,
       organizationId,
       upstream,
-      /** Turns the feature on for the seeded organization, as OpenWork staff would in /admin. */
-      enableCustomProviders: () => enableOrganizationCapabilities(seed, den.admin, { gatewayCustomProviders: true }, organizationId),
       /** Den's discovery route, as the signed-in owner (probe.api is read-only). */
       discover: (body: Record<string, unknown>) => seed.api(den.admin, "/v1/inference-providers/custom/discover-models", { method: "POST", body: JSON.stringify(body) }),
       providers: () => seed.api(den.admin, "/v1/inference-providers?scope=manageable"),

@@ -9,6 +9,7 @@ Self-hosted versions of the workplace apps a company runs, so agents can be test
 | **Open Drive** | Files and folders, Office documents, upload sessions | Microsoft Graph `/v1.0/me/drive` |
 | **Open Jira** | Issues, JQL, an IT service desk | Jira Data Center REST v2, Jira Service Management |
 | **Open Confluence** | Spaces and pages | Confluence Data Center REST |
+| **Open Slack** | Direct messages from an app's bot (workshop gateway only) | Slack Web API subset |
 
 Each app has a web UI and an MCP endpoint, so OpenWork connects to them like any other connector. The Jira and Confluence tools match the community [`mcp-atlassian`](https://github.com/sooperset/mcp-atlassian) server (same names and schemas). That server also works against Open Jira and Open Confluence unchanged.
 
@@ -24,6 +25,10 @@ OPEN_WORKPLACE_SIGNIN='{"tenantId":"<guid>","clientId":"…","clientSecret":"…
 ```
 
 For OpenWork Den, point `DEN_MICROSOFT_OAUTH_AUTHORIZE_URL` / `DEN_MICROSOFT_OAUTH_TOKEN_URL` at `<origin>/{tenantId}/oauth2/v2.0/authorize|token` and `DEN_MICROSOFT_GRAPH_BASE_URL` at `<origin>/v1.0`. `pnpm world up preview-workbot -- --open-workplace` wires all of it (`worlds/lib/open-workplace.ts`). The ID token is unsigned: it is a fictional identity hint, never a credential. Sandbox only.
+
+## As a real app's Slack
+
+`src/workshop-slack.mjs` is a fictional Slack inside the [workshop gateway](WORKSHOP.md#slack-for-an-apps-own-bot), so an app that messages people from its own Slack app (OpenWork's Workbot) can be tried without a Slack workspace. The app registers a sample Slack app and gets a bot token, each person connects the Slack connector (`/slack/mcp`) in their own browser, and the bot's direct messages show up on that person's `/slack` page. It speaks a subset of the Slack Web API (`auth.test`, `conversations.open`, `chat.postMessage`, `conversations.history` and a few more). There are no channels yet, and it sends the app no events. Sandbox only.
 
 ## Multi-participant workshops
 

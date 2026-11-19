@@ -100,7 +100,9 @@ export function useMemberActivitySync(enabled: boolean) {
       isDocumentVisible: () => document.visibilityState === "visible",
       sync: (reason) => refresh(reason === "sign_in" ? "now" : "check"),
     });
-    const unsubscribeProviders = subscribeProviderCatalogChanges(refreshNow);
+    // A reopened engine event stream reports no change of its own, and a quiet
+    // one can reopen often: Den's revision decides whether to reload.
+    const unsubscribeProviders = subscribeProviderCatalogChanges((scope) => refresh(scope.reason === "reconnect" ? "check" : "now"));
     window.addEventListener(ACTIVITY_REFRESH_EVENT, refreshNow);
     window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refreshNow);
     window.addEventListener(denSessionUpdatedEvent, refreshNow);

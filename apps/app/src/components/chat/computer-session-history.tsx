@@ -4,7 +4,6 @@ import { ComputerCrew } from "./computer-crew"
 import type { DynamicToolUIPart } from "ai"
 import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, MoreHorizontal, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
-import { markFeatureUsed } from "@/app/lib/den"
 import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -74,7 +73,7 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   turnEndedAt?: number | null
   /** When the turn started: the chat's subagents may have saved files before its own first step. */
   turnStartedAt?: number | null
-  /** `parallelComputerUse`: the chat's subagents on its computer, one row each. */
+  /** The chat's subagents on its computer, one row each. */
   crew?: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }
 }) {
   // The output folder is read again as the session works and when its turn ends.
@@ -141,7 +140,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
       onOpenChange={value => {
         setOpen(value)
         if (!value) setPlaying(false)
-        else markFeatureUsed("computerSessionHistory")
       }}
     >
       <div className="flex min-w-0 items-center">

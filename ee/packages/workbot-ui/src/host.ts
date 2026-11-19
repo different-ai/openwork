@@ -17,24 +17,22 @@ export type WorkbotHost = {
   user: { name: string | null } | null
   /** The apps the person has connected, for the header. A hook: called once on every render of the header. */
   useConnectedApps: () => Array<{ id: string; name: string }>
-  /** Logo URLs to try in order for an app, by its display name. */
-  appIcons: (name: string) => string[]
+  /** Logo URLs to try in order for an app, by its display name, then by its website ("exa.ai") when it has one. */
+  appIcons: (name: string, site?: string) => string[]
   /** Where the avatar in the header leads. */
   homeHref: string
   /** Workbot's Calendar tab is on for this person (on while Workbot is on). */
   calendar?: boolean
   /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
-  /** The Computer view of Workbot's computer: its native desktop apps (`computerUse`). Omitted means off. */
+  /** Access to the native apps on Workbot's remote computer. Omitted means unavailable. */
   computer?: boolean
-  /** The Browser view of Workbot's computer (`browserUse`), rolled out separately from `computer`. Omitted means off. */
+  /** Access to the browser on Workbot's remote computer. Omitted means unavailable. */
   browser?: boolean
   /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
   /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
-  /** Native dictation entry point; omitted means off. Speech stays with the OS. */
-  nativeDictation?: boolean
   /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
   /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
@@ -53,6 +51,15 @@ export type WorkbotHost = {
   verifyDocumentIdentity?(): Promise<boolean>
   /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
+  /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
+  profileComputers?: boolean
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`). Off when unset. */
+  deviceActivity?: boolean
+  /**
+   * The calm chat look: a labelled sidebar, Workbot's name and status as one pill, a narrower column, replies as plain
+   * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.
+   */
+  calmChat?: boolean
   /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
   /**
@@ -86,6 +93,20 @@ export function setWorkbotHost(host: WorkbotHost) {
 /** The views of Workbot's computer this person has, Browser first; the Computer tab shows while there is one. */
 export function computerViews(host: WorkbotHost): Array<"browser" | "computer"> {
   return [...(host.browser === true ? ["browser" as const] : []), ...(host.computer === true ? ["computer" as const] : [])];
+}
+
+/**
+ * What the tab for Workbot's computer is called everywhere it is offered (header, navigation drawer, command palette,
+ * the Open action under a reply): "Browser" when the browser is the only view this person has, "Computer" otherwise.
+ */
+export function computerTabLabel(host: WorkbotHost): "Browser" | "Computer" {
+  const views = computerViews(host);
+  return views.length === 1 && views[0] === "browser" ? "Browser" : "Computer";
+}
+
+/** The calm chat look is on (`calmChat`). False before a host is set, so shared pieces render their usual look. */
+export function calmChat(): boolean {
+  return current?.calmChat === true
 }
 
 export function workbotHost(): WorkbotHost {

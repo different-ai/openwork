@@ -3,21 +3,22 @@ import { hasReviewedReadTools, reviewedReadTool } from "@openwork/automations/ag
 
 /**
  * What a member's background agent ("Your agent") may read through Connect. Its turn runs with a read-scoped token
- * (`mcp:read`) that also carries this allowlist as scopes Den alone mints: the core sources that are on
- * (`calendar`, `email`, `chat`) and the connections behind every source it may read.
+ * (`mcp:read`) that also carries this allowlist as scopes Den alone mints: the core source that is on (`calendar`)
+ * and the connections behind every source it may read.
  *
  * - A plain `mcp:read` token never calls a connection's own tools: provider hints can't prove a tool won't change
  *   anything. An agent token may, but only on its connections and only tools we reviewed as reads, per service
  *   (`REVIEWED_READ_TOOLS`). A service without a reviewed list can't be a source at all; its provider's hints and tool
  *   names never make a tool callable.
- * - Native Google Workspace and Microsoft 365 reads are limited to the core sources that are on: calendar events,
- *   mail, and Teams chats. Nothing else (files, drafts, sites) and never a non-GET.
+ * - Native Google Workspace and Microsoft 365 reads are limited to calendar events while the calendar is on. Nothing
+ *   else (mail, chats, files, drafts, sites) and never a non-GET.
  *
  * With `workbotAgentBrief` (a check's token carries `openwork:agent-tools`), any connection can be a source and the
  * token carries the exact tools its check may call per connection, decided when the check starts
  * (`decideAgentReadTool` in @openwork/automations): an admin's choice, a reviewed list, the provider's annotations, then
  * the tool's name. Never one its provider marks destructive, even if it was allowed when the check started. Den's own
- * providers may also be read outside calendar, mail and chat: any GET, except operations an admin turned off.
+ * providers may also be read outside the calendar (mail, chats, files) when the provider's connection is one of the
+ * check's sources: any GET, except operations an admin turned off.
  *
  * These scopes are never requested through OAuth or shown to clients; Den adds them when it mints the turn's token.
  */
@@ -31,7 +32,7 @@ const CORE_SCOPE_PREFIX = "openwork:agent-core:"
 export const AGENT_TOOLS_SCOPE = "openwork:agent-tools"
 /** `openwork:agent-tool:<connectionId>:<tool name, URI-encoded>`: one tool the check may call. */
 const TOOL_SCOPE_PREFIX = "openwork:agent-tool:"
-/** `openwork:agent-native:<connectionId>`: Den's own provider, read outside calendar, mail and chat. */
+/** `openwork:agent-native:<connectionId>`: Den's own provider, read outside the calendar. */
 const NATIVE_SCOPE_PREFIX = "openwork:agent-native:"
 /** `openwork:agent-native-deny:<connectionId>:<operation name>`: one of its reads an admin turned off. */
 const NATIVE_DENY_SCOPE_PREFIX = "openwork:agent-native-deny:"
@@ -48,7 +49,7 @@ export type AgentReadAllowlist = {
    * reviewed lists decide.
    */
   tools?: ReadonlyMap<string, ReadonlySet<string>> | null
-  /** `workbotAgentBrief`: Den's own providers read outside calendar, mail and chat, with the operations turned off. */
+  /** `workbotAgentBrief`: Den's own providers read outside the calendar, with the operations turned off. */
   nativeReads?: ReadonlyMap<string, ReadonlySet<string>>
 }
 
@@ -63,7 +64,7 @@ function pairKey(kind: AgentCoreSource, connectionId: string) {
 /**
  * The extra token scopes for an agent turn that may read these sources through these connections. `tools` (with
  * `workbotAgentBrief`, even empty) carries the exact tools per connection; `nativeReads`, Den's own providers read
- * outside calendar, mail and chat.
+ * outside the calendar.
  */
 export function agentReadScopes(input: {
   kinds: readonly AgentCoreSource[]
@@ -143,19 +144,17 @@ export function agentReadAllowlist(scopes: ReadonlySet<string>): AgentReadAllowl
   return { kinds, connectionIds, pairs, tools, nativeReads }
 }
 
-/** Which core source a native capability reads, from its route; null for anything else (files, drafts, sites…). */
+/** Which core source a native capability reads, from its route; null for anything else (mail, chats, files, drafts, sites…). */
 export function nativeSourceKind(path: string): AgentCoreSource | null {
   const resource = path.replace(/^\/v1\/capabilities\/[^/]+\//, "").split("/")[0] ?? ""
   if (resource === "calendar-event" || resource === "calendar-events") return "calendar"
-  if (resource.startsWith("gmail-message") || resource.startsWith("gmail-attachment") || resource.startsWith("mail-message") || resource.startsWith("mail-attachment")) return "email"
-  if (resource === "teams-chats") return "chat"
   return null
 }
 
 /**
- * A native capability the agent may call: a GET on one of its connections, for a core source read through that
- * connection, or (`workbotAgentBrief`) any other read on a provider it reads outside calendar, mail and chat that an
- * admin didn't turn off.
+ * A native capability the agent may call: a GET on one of its connections, for the calendar read through that
+ * connection, or (`workbotAgentBrief`) any other read (mail, chats, files) on a provider that is one of its sources and
+ * that an admin didn't turn off.
  */
 export function agentMayUseNative(allowlist: AgentReadAllowlist, connectionId: string, operation: { method: string; path: string; name?: string }): boolean {
   if (operation.method.toUpperCase() !== "GET" || !allowlist.connectionIds.has(connectionId)) return false

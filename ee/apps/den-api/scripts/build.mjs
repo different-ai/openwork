@@ -113,6 +113,19 @@ function productionExportTarget(value) {
   return undefined
 }
 
+/**
+ * Whether an export target is on disk. A pattern target ("./src/flags/*.ts", from a "./flags/*" export) exists when
+ * at least one file matches it.
+ */
+function exportTargetExists(dependencyDir, target) {
+  const star = target.indexOf("*")
+  if (star === -1) return existsSync(path.resolve(dependencyDir, target))
+  const prefix = path.resolve(dependencyDir, target.slice(0, star))
+  const suffix = target.slice(star + 1)
+  const directory = target[star - 1] === "/" ? prefix : path.dirname(prefix)
+  return filesUnder(directory).some((file) => file.startsWith(prefix) && file.endsWith(suffix) && file.length > prefix.length + suffix.length)
+}
+
 function missingWorkspaceExports(packageDir, checkExport) {
   const visited = new Set()
   const missing = []
@@ -149,7 +162,7 @@ function missingWorkspaceExports(packageDir, checkExport) {
 export function missingProductionWorkspaceExports(packageDir = serviceDir) {
   return missingWorkspaceExports(packageDir, (value, dependencyDir) => {
     const target = productionExportTarget(value)
-    return target && !existsSync(path.resolve(dependencyDir, target)) ? target : undefined
+    return target && !exportTargetExists(dependencyDir, target) ? target : undefined
   })
 }
 
@@ -162,7 +175,7 @@ export function missingProductionWorkspaceTypes(packageDir = serviceDir) {
     }
     const target = typeof types === "string" ? types : types["openwork-build"]
     if (!target?.endsWith(".d.ts")) return "missing openwork-build declaration export"
-    return existsSync(path.resolve(dependencyDir, target)) ? undefined : target
+    return exportTargetExists(dependencyDir, target) ? undefined : target
   })
 }
 

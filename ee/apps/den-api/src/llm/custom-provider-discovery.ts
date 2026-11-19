@@ -1,5 +1,5 @@
 /**
- * AI Gateway custom OpenAI-compatible providers (feature `gatewayCustomProviders`):
+ * AI Gateway custom OpenAI-compatible providers:
  * reading `GET {baseUrl}/models`, turning each entry into a models.dev-shaped
  * model record and matching it against the models.dev `openrouter` provider.
  *

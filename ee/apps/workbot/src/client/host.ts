@@ -1,4 +1,4 @@
-import type { WorkbotHost } from "@openwork-ee/workbot-ui"
+import { clearThreadSnapshots, type WorkbotHost } from "@openwork-ee/workbot-ui"
 import { z } from "zod"
 import { appIconCandidates } from "./app-icons"
 
@@ -17,7 +17,6 @@ export const meSchema = z.object({
   calendar: z.boolean().default(false),
   documents: z.boolean().default(false),
   documentEditing: z.boolean().default(false),
-  nativeDictation: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
@@ -27,9 +26,11 @@ export const meSchema = z.object({
   canSchedule: z.boolean().default(false),
   /** Side chats are on for this person (while Workbot is on). */
   sideChats: z.boolean().default(false),
-  /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older servers omit it. */
-  accountMenu: z.boolean().default(false),
-  /** The Cmd+K / Ctrl+K command palette; older servers omit it. */
+  profileComputers: z.boolean().default(false),
+  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`); absent means off. */
+  deviceActivity: z.boolean().default(false),
+  /** Calm chat look (`workbotCalmChat`); absent means off. */
+  calmChat: z.boolean().default(false),
   denUrl: z.string().nullable(),
 })
 export type Me = z.infer<typeof meSchema>
@@ -45,6 +46,8 @@ export async function signOut() {
   const response = await fetch("/auth/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(15_000) }).catch(() => null)
   // Never say signed out while the sign-in cookie may still be there.
   if (!response?.ok) throw new Error("Workbot couldn't sign you out. Check your connection and try again.")
+  // Chats kept on this device for instant opening leave with the person.
+  clearThreadSnapshots()
   window.location.assign("/auth/signed-out")
 }
 
@@ -116,6 +119,8 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
       // The parent owns auth recovery, including when Documents is retained
       // behind another workspace page. Never navigate that owner away on 401.
       if (response.status === 401) {
+        // Signed out elsewhere or expired: nothing kept on this device outlives the sign-in.
+        clearThreadSnapshots()
         if (recovery.refreshIdentity) { if (!recovery.authorization) void recovery.refreshIdentity().catch(() => {}) }
         else if (window.location.pathname !== "/documents") signIn()
       }
@@ -128,7 +133,7 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     errorMessage: messageOf,
     user: { name: me.name },
     useConnectedApps: () => noApps,
-    appIcons: (name) => appIconCandidates(name, me.denUrl),
+    appIcons: (name, site) => appIconCandidates(name, me.denUrl, site),
     homeHref: me.denUrl ? `${me.denUrl}/dashboard` : "/",
     calendar: me.calendar,
     documents: me.documents,
@@ -136,7 +141,6 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
     browser: me.browser,
     browserDemonstrations: me.browserDemonstrations,
     documentEditing: me.documents && me.documentEditing,
-    nativeDictation: me.nativeDictation,
     workspaceAssistant: me.workspaceAssistant,
     guidedNavigation: me.workspaceAssistant && me.guidedNavigation,
     usageRecovery: me.denUrl && me.organizationId ? { denUrl: me.denUrl, organizationId: me.organizationId } : undefined,
@@ -151,7 +155,10 @@ export function createHost(me: Me, recovery: { authorization?: WorkbotHost["docu
         && current.userId === me.userId && current.organizationId === me.organizationId
     },
     sideChats: me.sideChats,
-    account: me.accountMenu ? { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace } : undefined,
+    profileComputers: me.profileComputers,
+    deviceActivity: me.deviceActivity,
+    calmChat: me.calmChat,
+    account: { email: me.email, organizationName: me.organizationName, signOut, switchWorkspace },
     identity: me.userId && me.organizationId ? { principalId: me.userId, organizationId: me.organizationId } : undefined,
   }
 }

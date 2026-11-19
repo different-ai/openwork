@@ -1,8 +1,7 @@
 "use client";
 
-import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { Copy, RefreshCw, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
@@ -32,22 +31,15 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-/** The page shell on its own route; inside Auth & Security the tab names it, so no second title (P2). */
-function ScimFrame({ embedded, description, children }: { embedded: boolean; description: string; children: ReactNode }) {
-  if (embedded) return <div data-testid="scim-tab-content">{children}</div>;
-  return <DashboardPageTemplate icon={Shield} title="SCIM" description={description}>{children}</DashboardPageTemplate>;
-}
-
 export type ScimScreenProps = {
-  /** Shown as the User provisioning tab of Settings › Auth & Security. */
-  embedded?: boolean;
   /** `?setup=1` from an intro's action: open the connector settings instead of the intro (DESIGN.md I5). */
   setupMode?: boolean;
   /** Latest setup facts, so the Auth & Security section intro follows changes made here. */
   onIntroFacts?: (facts: AuthSecurityFacts) => void;
 };
 
-export function ScimScreen({ embedded = false, setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
+/** The User provisioning tab of Settings › Auth & Security. The tab names it, so no second title (P2). */
+export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
@@ -340,36 +332,30 @@ export function ScimScreen({ embedded = false, setupMode = false, onIntroFacts }
     }
   }
 
-  // Feature intro facts (DESIGN.md I2) once the connector has loaded; embedded in Auth & Security only.
+  // Feature intro facts (DESIGN.md I2) once the connector has loaded.
   const introState = loaded ? scimIntroState(connection, health) : null;
   const scimIncluded = orgContext?.entitlements.scim;
   useEffect(() => {
-    if (!embedded || !introState || scimIncluded === undefined) return;
+    if (!introState || scimIncluded === undefined) return;
     onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
-  }, [embedded, introState, scimIncluded, ssoReady, onIntroFacts]);
+  }, [introState, scimIncluded, ssoReady, onIntroFacts]);
   // `?setup=1` skips the intro that stands in for an empty connector; a created one still gets its banner.
-  const introFacts = embedded && introState && scimIncluded !== undefined && !(setupMode && introState === "none")
+  const introFacts = introState && scimIncluded !== undefined && !(setupMode && introState === "none")
     ? { scim: introState, scimIncluded, ssoReady }
     : null;
 
   if (!orgContext) {
     return (
-      <ScimFrame
-        embedded={embedded}
-        description="Provision organization members from your identity provider with an org-scoped SCIM connector."
-      >
+      <div data-testid="scim-tab-content">
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading organization details...
         </div>
-      </ScimFrame>
+      </div>
     );
   }
 
   return (
-    <ScimFrame
-      embedded={embedded}
-      description="Create one SCIM connector per workspace, then give your identity provider the base URL and bearer token shown here."
-    >
+    <div data-testid="scim-tab-content">
       {!access.canViewScim ? (
         <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
           {permissionLockReason("scim.view")}
@@ -582,6 +568,6 @@ export function ScimScreen({ embedded = false, setupMode = false, onIntroFacts }
           </div>
         </FeatureIntroGate>
       )}
-    </ScimFrame>
+    </div>
   );
 }

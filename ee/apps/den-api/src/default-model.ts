@@ -242,6 +242,8 @@ export async function saveDefaultModel(input: {
   teamId: TeamId | null
   model: DefaultModelChoice | null
   updatedByOrgMemberId: MemberId
+  /** Id for the row when this save creates it (config-blob imports reuse the source id); new otherwise. */
+  id?: DenTypeId<"orgDefaultModel">
 }): Promise<void> {
   const scopeKey = input.teamId ?? DEFAULT_MODEL_EVERYONE_SCOPE
   const now = new Date()
@@ -260,7 +262,7 @@ export async function saveDefaultModel(input: {
       return
     }
     await tx.insert(OrgDefaultModelTable).values({
-      id: createDenTypeId("orgDefaultModel"),
+      id: input.id ?? createDenTypeId("orgDefaultModel"),
       organizationId: input.organizationId,
       teamId: input.teamId,
       scopeKey,

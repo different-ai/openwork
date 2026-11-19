@@ -21,35 +21,77 @@ Only owners and admins can add connectors under **Manage**.
 
 ## Add a connector
 
-1. In OpenWork Cloud, open **Manage › Connectors**.
-2. Click **Add connector**.
-3. Pick an app from the list. To use another server, paste its MCP URL into
-   the filter box, or click **Add any MCP**.
-4. On the **Add {name}** page, OpenWork runs four checks: **Finds {name}**,
+<Frame caption="Add Notion for your organization, then use it from the desktop app (2 min, no sound). Recorded on the real product.">
+  <video
+    controls
+    className="w-full aspect-video"
+    src="/images/add-a-connector/add-a-connector-tutorial.mp4"
+  ></video>
+</Frame>
+
+1. In OpenWork Cloud, open **Manage › Connectors** and click **Add connector**.
+2. Pick an app from the list and click **Add**. To use another server, paste
+   its MCP address into the search box, or click **Add another MCP**.
+
+   <Frame>
+     ![The Add a connector list in OpenWork Cloud](/images/add-a-connector/catalog.png)
+   </Frame>
+3. On the **Add {name}** page, OpenWork runs four checks: **Finds {name}**,
    **Knows how you sign in**, **Sign in to {name}**, and **Has things your AI
    can do**. Finish any check that asks for something:
    - If the app needs a key, paste it and click **Save key**.
-   - If the app needs its own OAuth app, enter the **Client ID** and **Client
-     secret**, then click **Save app**.
-   - Click **Sign in with {name}**. The app opens in a new tab. Come back when
-     you're done.
-5. Under **How people sign in**, choose **Each person signs in** or **One
-   account for everyone**. Connectors that use an API key always use **One
-   account for everyone**.
+   - If the app needs its own OAuth app (it shows **Approved apps only** in the
+     list), copy the **Callback URL** into that OAuth app, then enter its
+     **Client ID** and **Client secret** and click **Save changes**. See
+     [OAuth redirect URL](#oauth-redirect-url).
+   - Click **Sign in with {name}**. The app's own sign-in page opens in a new
+     tab.
+
+   <Frame>
+     ![Add Notion: two checks passed and a Sign in with Notion button](/images/add-a-connector/sign-in-check.png)
+   </Frame>
+4. Approve access on the app's page. When it says **You're connected**, close
+   that tab and go back to OpenWork. The checks finish on their own.
+
+   <Frame>
+     ![Notion's own page asking to grant OpenWork access](/images/add-a-connector/notion-approve.png)
+   </Frame>
+5. Under **How people connect**, choose **Each person signs in** or **One
+   account for everyone**. Connectors that use an API key offer **Each person
+   adds a key** or **One key for everyone** instead.
 6. Under **Who can use it**, turn on **Everyone in the organization**, or click
    **Add person** or **Add team**. At first, only you can use it.
+
+   <Frame>
+     ![Notion passed all 4 checks, with How people connect and Who can use it](/images/add-a-connector/who-can-use-it.png)
+   </Frame>
 7. Click **Add {name}**.
 
-People you gave access to find the connector in their Library.
+People you gave access to find the connector in their Library. In the desktop
+app it shows **Ready** under **Library › Connectors**, with nothing to install.
+
+<Frame>
+  ![The desktop app's Library with Notion shared from OpenWork and Ready](/images/add-a-connector/desktop-library.png)
+</Frame>
+
+Then ask for something the app can do, in plain words. In the video, the agent
+reads a launch plan in Notion and writes a new **Launch risks** page back to
+Notion with the signed-in person's account.
+
+<Frame>
+  ![The Launch risks page the agent created in Notion](/images/add-a-connector/notion-page-created.png)
+</Frame>
 
 If you leave before you finish, the connector shows **Setup not finished** in
 the list. Click **Finish** to pick up where you stopped.
 
 ### Apps in the list
 
-The **Add a connector** list includes Google Workspace, Microsoft 365, GitHub,
-Notion, Linear, Stripe, Sentry, Granola, Polar, Slack, Exa, Render, and
-Context7.
+The **Add a connector** list has more than 30 apps, including Google
+Workspace, Microsoft 365, GitHub, Notion, Linear, Stripe, Sentry, Granola,
+Slack, Exa, Context7, Airtable, Figma, PostHog and Vercel. Apps marked
+**Approved apps only** (GitHub, Slack, Render, Figma) need an OAuth app you
+register with the provider first.
 
 - Exa needs an API key from your Exa account. See
   [Enable Exa search](/start-here/connect-your-stack/enable-exa-search).
@@ -202,7 +244,7 @@ sign-in does not replace this step. Without it, connecting can fail with
 5. Install or approve the app for your Slack workspace.
 6. In OpenWork Cloud, open **Manage › Connectors › Add connector** and pick
    **Slack**. Paste the **Client ID** and **Client secret** from the Slack app's
-   **Basic Information › App Credentials**, then click **Save app**.
+   **Basic Information › App Credentials**, then click **Save changes**.
 7. Click **Sign in with Slack**, then finish the steps in
    [Add a connector](#add-a-connector).
 8. Members open **Your Connections**, or **Settings › Library** in the desktop

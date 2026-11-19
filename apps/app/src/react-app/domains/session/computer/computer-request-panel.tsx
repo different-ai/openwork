@@ -4,7 +4,6 @@ import { useLocation, useNavigate } from "react-router"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
-import { markFeatureUsed } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { settingsNavigationFromPathname } from "@/react-app/shell/workspace-routes"
 
@@ -103,7 +102,6 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
 
   async function answer(next: "allow" | "always" | "dismiss" | "remember") {
     if (busy) return
-    if (next === "remember") markFeatureUsed("browserUploadPermissions")
     setBusy(next)
     setError("")
     try {

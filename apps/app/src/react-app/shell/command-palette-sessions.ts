@@ -1,6 +1,6 @@
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { t } from "@/i18n";
-import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-settle";
+import { sessionActivityAt } from "@/react-app/domains/session/sidebar/session-activity";
 import { getRootSessions } from "@/react-app/domains/session/sidebar/utils";
 
 import type { SessionOption } from "./command-palette";
@@ -14,11 +14,11 @@ export type CommandPaletteSessionRef = {
 export function buildCommandPaletteSplitSessions(
   sessions: SessionOption[],
   current: CommandPaletteSessionRef | null | undefined,
+  secondary?: CommandPaletteSessionRef | null,
 ) {
   if (!current) return [];
-  return sessions.filter((session) => (
-    session.workspaceId !== current.workspaceId || session.sessionId !== current.sessionId
-  ));
+  return sessions.filter((session) => ![current, secondary].some((visible) => visible
+    && session.workspaceId === visible.workspaceId && session.sessionId === visible.sessionId));
 }
 
 export function buildCommandPaletteSessions(

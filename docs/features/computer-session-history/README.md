@@ -1,5 +1,7 @@
 # Computer session history
 
+> **Generally available:** `computerSessionHistory` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 Feature: `computerSessionHistory`. Cloud and self-hosted. Author: `reachjalil`.
 Off by default.
 

@@ -8,19 +8,20 @@ import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
 import ru from "./locales/ru";
+import it from "./locales/it";
 import ko from "./locales/ko";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "ko";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it" | "ko";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "ko"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it", "ko"];
 
 /**
  * Language options for UI - single source of truth
@@ -36,6 +37,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
   { value: "es" as Language, label: "Spanish", nativeName: "Español" },
   { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
+  { value: "it" as Language, label: "Italian", nativeName: "Italiano" },
   { value: "ko" as Language, label: "Korean", nativeName: "한국어" },
 ] as const;
 
@@ -68,6 +70,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   ca,
   es,
   ru,
+  it,
   ko,
 };
 
@@ -134,6 +137,7 @@ const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
   ca: new Intl.PluralRules("ca"),
   es: new Intl.PluralRules("es"),
   ru: new Intl.PluralRules("ru"),
+  it: new Intl.PluralRules("it"),
   ko: new Intl.PluralRules("ko"),
 };
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {

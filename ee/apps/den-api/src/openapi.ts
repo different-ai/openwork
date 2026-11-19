@@ -68,7 +68,7 @@ export const forbiddenSchema = z.object({
   message: z.string().optional(),
 }).meta({ ref: "ForbiddenError" })
 
-/** ssoPerOrganization: the organization requires SSO and this session did not sign in through it. */
+/** the organization requires SSO and this session did not sign in through it. */
 export const ssoRequiredSchema = z.object({
   error: z.literal("sso_required"),
   message: z.string(),

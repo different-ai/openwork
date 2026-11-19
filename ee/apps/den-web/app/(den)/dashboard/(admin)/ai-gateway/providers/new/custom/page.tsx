@@ -1,7 +1,7 @@
 import { CustomProviderWizardScreen } from "../../../../../_components/custom-provider-wizard-screen";
 import { GatewayDashboardCapabilityGuard } from "../../../../../_components/gateway-dashboard-capability-guard";
 
-/** Add a custom OpenAI-compatible provider (feature `gatewayCustomProviders`; the screen shows a notice while it is off). */
+/** Add a custom OpenAI-compatible provider. */
 export default function NewAiGatewayCustomProviderPage() {
   return (
     <GatewayDashboardCapabilityGuard area="manage-providers">

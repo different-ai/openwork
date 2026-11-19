@@ -3,8 +3,6 @@ import { bodyLimit } from "hono/body-limit"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
 import { calendarRecurrenceMatches, calendarRecurrenceFields, calendarRecurrenceSchema, calendarTimeZoneSchema, recurrenceToRrule, validateRecurrenceChoice, validateRecurrenceUntil } from "../../capability-sources/google-calendar-events.js"
 import { orgMemberRoute } from "../../middleware/route-access.js"
 import { jsonValidator, paramValidator, queryValidator } from "../../middleware/validation.js"
@@ -43,7 +41,7 @@ const eventPatchSchema = z.object({
   sendUpdates: sendUpdatesSchema,
   confirmNotifications: z.boolean().optional(),
   ...calendarRecurrenceFields,
-  recurrence: calendarRecurrenceSchema.nullable().optional().describe("Replace recurrence on the series master, not an occurrence. null clears recurrence. Setting recurrence/rrule requires both start and end dateTime values with explicit matching IANA timeZone. Requires googleCalendarRecurrence."),
+  recurrence: calendarRecurrenceSchema.nullable().optional().describe("Replace recurrence on the series master, not an occurrence. null clears recurrence. Setting recurrence/rrule requires both start and end dateTime values with explicit matching IANA timeZone."),
 }).strict().superRefine((input, ctx) => {
   validateRecurrenceChoice(input, ctx)
   if (input.start && "dateTime" in input.start && z.string().datetime({ offset: true }).safeParse(input.start.dateTime).success) validateRecurrenceUntil(input, input.start.dateTime, ctx)
@@ -224,9 +222,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
     const changingRecurrence = recurrence !== undefined || rrule !== undefined
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
-    if (changingRecurrence && !await organizationFeatureEnabled(context.organization.id, "googleCalendarRecurrence", { userId: context.currentMember.userId })) {
-      return c.json({ error: "invalid_request", message: "Recurring meeting changes are disabled (googleCalendarRecurrence); omit recurrence/rrule." }, 400)
-    }
     const patch = { ...fields, ...(changingRecurrence ? { recurrence: recurrence === null ? [] : recurrence ? recurrenceToRrule(recurrence) : rrule } : {}) }
     const url = calendarUrl(calendarId, eventId)
     if (changingRecurrence) {
@@ -235,7 +230,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
       const event = await confirmedBody(current.response, eventSchema)
       if (!event || event.id !== eventId) return unconfirmed(c, false)
       if (event.recurringEventId) return c.json({ error: "invalid_request", message: "Change recurrence on the series master using recurringEventId, not this occurrence ID. Use this occurrence ID only to edit one meeting." }, 400)
-      markFeaturesUsed({ organizationId: context.organization.id, memberId: context.currentMember.id, keys: ["googleCalendarRecurrence"] })
     }
     url.searchParams.set("sendUpdates", sendUpdates)
     url.searchParams.set("maxAttendees", "100")

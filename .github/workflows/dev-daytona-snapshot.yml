@@ -269,11 +269,20 @@ jobs:
             exit 0
           fi
 
+          # Redeploy the commit Den API runs now. An empty body would deploy
+          # the dev head, which production-deploy.yml may not have released.
+          live="$(curl -sf "https://api.render.com/v1/services/${RENDER_DEN_SERVICE_ID}/deploys?limit=20" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            | jq -r '[.[] | (.deploy // .) | select(.status == "live")][0].commit.id // empty')"
+          if [ -z "$live" ]; then
+            echo "::warning::No live den-api deploy found; skipping redeploy. The pin will take effect on the next den-api deploy."
+            exit 0
+          fi
           response="$(curl -s -w '\n%{http_code}' -X POST \
             "https://api.render.com/v1/services/${RENDER_DEN_SERVICE_ID}/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
-            -d '{}')"
+            -d "$(jq -n --arg commit "$live" '{commitId: $commit}')")"
           code="$(printf '%s' "$response" | tail -1)"
           body="$(printf '%s' "$response" | sed '$d')"
           if [ "$code" -ge 400 ]; then

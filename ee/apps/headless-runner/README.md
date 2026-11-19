@@ -43,11 +43,14 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). See [Several conversations per person](#several-conversations-per-person) for the rest |
+| `GET` | `/v1/computers` | | `{ version: 1, generatedAt, sources, sandboxes }`: every conversation computer as its provider reports it now, for Den's admin page. The runner asks the sandbox gateway (`sources[].source: "gateway"`, with each pool's health) and its own provider (`"direct"`) with its keys, and returns each computer's key (the `hc-…` slug), provider id, status and reason, place, size and times; never a conversation id or a credential. A source that does not answer comes back with `status: "unreachable"` and an error code while the other is still listed; a provider that cannot be listed in one read (Daytona) is `unsupported`. At most 2,000 computers per source (`truncated`). Answered by the router on celld, so it wakes no cell; `sources: []` when the runner has no computers |
+| `GET` | `/v1/computers/:source/:id` | | One of them in full, for the admin page's computer view: `{ version: 1, generatedAt, computer, limits, settings, placement, events, eventsError }`. `source` is `gateway` or `direct`; `id` is the provider's id from the list. `computer` is the list's record; `limits` are the provider's own rules for it; `settings` is how this runner treats that source's computers (the image new ones are built from, seconds before it pauses one, days it keeps one). `placement` is the gateway's decision with every pool it weighed. `events` are the gateway's lifecycle events, newest first (at most 40), never commands, file calls or ports; `null` with `eventsError` when the provider keeps none (`unsupported`) or the runner's key may not read them (`http_403`: the gateway needs `audit:read`). Nothing is run on the computer, so reading never wakes a paused one or keeps an idle one awake. `404 unknown_computer` for one the provider does not have or that is not this runner's, `502 provider_unreachable` with a `code`, `400 invalid_computer` |
+| `POST` | `/v1/cells/ids` | `{ names }` (at most 2,000) | celld only. `{ ids: { [name]: id } }`: the cell host's id for each cell name (`session:<session id>`, `owner:<owner>`, `service`); a name that is not a cell's is left out. A node's state report lists the cells it holds in memory by id alone, and this is how Den's admin page says whose each one is. Derived from the name by the router: no cell is woken or touched |
+| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). `maxSteps` (0–100000) is the session's own limit on model calls per turn instead of `HEADLESS_MAX_STEPS`: `0` means no limit, and `null` goes back to the runner's. See [Several conversations per person](#several-conversations-per-person) for the rest |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Workbot derives one per member, and one per side chat |
 | `GET` | `/v1/sessions` | `?owner=&limit=` | `{ sessions: [{ id, ref, title, createdAt, updatedAt }] }`: one owner's conversations that have a message, most recently used first (on celld, chats in their own session cells included: [Session cells](./OWNER-CELLS.md#session-cells-each-workbot-chat-in-its-own-cell)) |
 | `POST` | `/v1/owner/split` | owner header (celld) | `{ split: "started" \| "running" \| "done" \| "not_needed" }`: moves the owner's chats into their own cells in the background (celld only; the Node host answers `not_needed`). Idempotent |
-| `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, attachments?, interrupt?, execution?: "steps", credentials: { modelApiKey?, mcpToken?, readOnly?, resumeGrant?, indexCapability? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. `execution: "steps"` runs the turn one step at a time ([Step mode](#step-mode)); the turn shows `execution: "steps"`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued`. `attachments` are saved-file ids (`fl_…`); `prompt` may be empty when there are attachments, and an unknown id returns `400 unknown_file`. `interrupt: true` makes the answer in progress wrap up at its next safe point, keeping what it wrote (it ends `aborted` with error `superseded`), and answers this message next. `credentials.readOnly: true` leaves out the tools that change anything (writing, editing or deleting files, `save_file`, the computer, reactions, tasks) and runs the turn's tool calls at the same time. `credentials.resumeGrant` (`hrg_…`) lets the runner keep the turn going on its own (see [Self-resume](#self-resume)); ignored without it. `credentials.indexCapability` is kept with the session for [Den's session index](#dens-session-index). `404 unknown_session` |
+| `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, attachments?, interrupt?, execution?: "steps", credentials: { modelApiKey?, mcpToken?, readOnly?, resumeGrant?, indexCapability? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. `execution: "steps"` runs the turn one step at a time ([Step mode](#step-mode)); the turn shows `execution: "steps"`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued`. `attachments` are saved-file ids (`fl_…`); `prompt` may be empty when there are attachments, and an unknown id returns `400 unknown_file`. `interrupt: true` makes the answer in progress wrap up at its next safe point, keeping what it wrote (it ends `aborted` with error `superseded`), and answers this message next. `credentials.readOnly: true` leaves out the tools that change anything (writing, editing or deleting files, `save_file`, the computer, reactions, tasks) and runs the turn's tool calls at the same time. In any other turn, a step runs its calls at the same time only when every one of them just reads (the local read tools, and MCP tools whose `annotations.readOnlyHint` is true); otherwise one by one, in order. `credentials.resumeGrant` (`hrg_…`) lets the runner keep the turn going on its own (see [Self-resume](#self-resume)); ignored without it. `credentials.indexCapability` is kept with the session for [Den's session index](#dens-session-index). `404 unknown_session` |
 | `DELETE` | `/v1/sessions/:id/turns/:messageId` | `?after=1` | `{ removed: [messageId] }`: removes the message and what it led to (its answer, tasks and reports); `after=1` also removes every later message, for editing a message. `409 turn_busy` while any of them is queued or running |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=&turns=&before=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn. Every read is bounded: without `messageId` it returns the newest `turns` turns (default 30, at most 200) before `before` (a turn's messageId, or a message `seq`, which never changes: the turns before the one holding it), their messages and `hasEarlier`, so a long conversation reads as cheaply as a short one, sealed history included ([Sealed history](#sealed-history-and-large-outputs)); `503 history_unavailable` when sealed history or a large output can't be read right now (nothing partial is returned); with `messageId`, that turn's transcript and, in `turns`, the turn with the tasks it started and their reports. `limit` (default 100) caps the messages. `busy` means the conversation is answering; background tasks don't count. A task's turn has `kind: task`, `parent` (the turn that started it) and `title`; its report has `kind: report` and `parent` (the task) |
 | `GET` | `/v1/sessions/:id/events` | | Server-sent events: `ready` first, then messages whose JSON `type` is `changed { messageId, status? }` (re-read the session), `text { messageId, step, delta, reset? }` (model text as it is written) or `tool { messageId, step, tool }` (a tool call started). Nothing is stored or replayed; a reader that misses one re-reads the session. A comment every 15 s keeps proxies from closing it. With `Upgrade: websocket`, celld answers with a hibernatable WebSocket instead (same checks): `{"type":"ready"}`, then each event as one JSON message, exactly the SSE `data:` JSON; it survives a deploy switch and doesn't hold one up, and it answers a `ping` text message with `pong`. The Node host answers without upgrading, so clients fall back to SSE (headless-protocol's `openEventsSocket` returns null) |
@@ -55,6 +58,7 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204`: its rows go (scrubbed first), then its sealed segments, large bodies and saved files' bytes, and its computer (see [Deleting a conversation](#deleting-a-conversation)). `409 session_busy` while a turn is queued or running |
+| `DELETE` | `/v1/sessions/:id/computer` | | `204`: only its computer goes; the conversation, its files and its memory stay, and its next use makes a new computer. `409 session_busy` while a turn is queued or running, `404 unknown_session` |
 | `GET` | `/v1/sessions/:id/export` | | Every row of the conversation, sealed turns and large outputs inline (lossless; never segment files or step checkpoints), to [move it to Node](#move-conversations-to-node). A conversation on its owner's memory (`memoryScope: "owner"`) also carries that memory (`owner_memory`). `409 session_busy` while a turn is queued or running |
 | `POST` | `/v1/sessions/:id/import` | an export | Node only (celld answers `405`). `201 { id, rows }`, or `409 session_exists`. `owner_memory` is merged into the owner's memory (a file is written unless the owner already has a version at least as new; nothing is deleted); `400` (nothing written) for another conversation's, a cut-off or a newer runner's export |
 | `GET` | `/v1/files/status` | | `{ enabled, kind, maxFileBytes, maxSessionBytes }` |
@@ -68,10 +72,10 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` or `aborted`. `failed` and `interrupted` can be resumed by re-sending the same `messageId` with fresh credentials; `aborted` cannot. Resuming continues the same turn (Workbot's "Try again" does this), so the conversation never gets a second copy of the message. A failed turn's `errorDetail` says what the model provider answered, with its request id, and the turn's `turn ended` log line carries it too; it is for support, never for the person. The `error` field holds a stable code:
 
 - `model_credentials_missing`
-- `mcp_unavailable`
+- `mcp_unavailable` (connecting to `HEADLESS_MCP_URL` failed three times in a row, 0.5 s and 2 s apart, before the turn's tools were listed; see [Step mode](#step-mode) for later steps)
 - `model_http_<status>`
 - `turn_timeout`
-- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set)
+- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set: the turn made that many model calls)
 - `stuck_repeating`
 - `output_limit` (the model's replies stopped at `HEADLESS_MAX_OUTPUT_TOKENS` three times in a row)
 - `runner_restarted`
@@ -136,7 +140,9 @@ The model sees a conversation in whole turns (a message and everything that answ
   context never reads them. Removing a message that reaches a sealed turn rewrites that segment (a new object under a
   new name, the manifest swapped in one transaction, the old object deleted after).
 - **Orphan cleanup** (background job `segment-orphans`): retries object deletions queued in `storage_deletions`, and
-  once a day deletes this cell's segment and body objects that nothing references and that are over 24 hours old.
+  deletes this cell's segment and body objects that nothing references and that are over 24 hours old. That check
+  runs a day after the cell last stored an object (noted before each upload), not on a schedule: a conversation that
+  stores nothing is never checked, so the job gives an idle cell no reason to wake.
 
 `HEADLESS_SEGMENTS=off` (the default) is the kill switch: nothing new is sealed or moved; reading existing segments
 and large bodies keeps working. The schema is versioned by numbered migrations in a `meta` table (`schema_version`;
@@ -203,8 +209,9 @@ the runner keeps the latest with the session, never with the turn, in logs or in
 `ok`/`stale` are acknowledged; `rate_limited` is kept and retried (so is `index_disabled`, which only Dens from before
 the index was always on send); other rejections are dropped.
 Failures back off (immediately, 30 s, 2 min, 10 min, then hourly); rows older than 7 days, or that never got a
-capability, are dropped. Once a day the cell queues a fresh snapshot of every session. A Den outage delays the
-index, never a turn.
+capability, are dropped. At most once a day the cell queues a fresh snapshot of every session. Both happen when the
+flusher runs for an update: it asks for a run only while it has one to send, so it never wakes an idle cell. A Den
+outage delays the index, never a turn.
 
 ## Step mode
 
@@ -218,6 +225,12 @@ interrupt, the repeat check and `credentials_refresh` work the same way.
 - **A step** is: build the context, one streaming model call, that call's tool calls, then one SQLite transaction
   that writes the step's messages and tool results, the turn's next step (`step_schedule`) and the attempt reset. A
   crash leaves the whole step or none of it.
+- **Tools and memory are read once per run.** The first step lists the OpenWork MCP tools and reads `memory/`;
+  later steps show the model the same list and memory, as a turn run in one go does, so every request starts the
+  same and no later step waits on either before its model call. A later step connects only when the model calls
+  an MCP tool, starting as soon as the model begins writing that call. If that connection fails (three tries),
+  the step's MCP calls get an error saying they were not made and the next step connects again; the turn does not
+  end `mcp_unavailable`. A restart or a fresh MCP token lists the tools again.
 - **Between steps nothing runs.** On celld, steps run from the cell's durable alarm (the same alarm as self-resume,
   set for whichever is due first), each to completion, lanes in parallel. Between two alarms the cell is idle, so a
   runner deploy switches it to the new code there instead of cancelling a step after `CELLD_DEPLOY_MAX_AGE_S`. On
@@ -255,7 +268,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Opt-in per session.** Configuring files or a computer makes them *available*; a session only gets them when it is created (or updated) with `files: true` / `computer: true`. Slack replies and Automations don't ask, so they keep their exact behavior: no file tools, no computer, no uploads, and the preview route never starts a computer for them.
 - **Files belong to one session.** Every read, download, preview and delete looks a file up by session id *and* file id, and bytes are stored under `sessions/<sessionId>/<fileId>`. Deleting a session deletes its bytes and its computer.
 - **Limits.** `HEADLESS_FILES_MAX_BYTES` (100 MB) per file, enforced while the upload streams in (with or without `Content-Length`), and on `save_file` and computer outputs. `HEADLESS_FILES_MAX_SESSION_BYTES` (5 GB) per session in total. Past either, the upload gets `413`, and the model is told why so it can say so.
-- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer.
+- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. Neither the storage credentials nor the Freestyle key ever enter a computer. With an S3 store a computer does receive links: each reaches one object with one method, carries a signature rather than the credentials, and stops working within minutes.
 - **Computers.** One VM per session, created only when that session first runs a command; it holds no credentials and has outbound internet only.
 
 ## Computer (optional)
@@ -268,9 +281,11 @@ The runner is a private service with one caller (Den), which authorizes each per
 | `look { paths }` | Shows up to 4 files from the VM like any tool file: images and PDFs as model input, Office files and text as text |
 
 - **Files:** uploads are copied into `/workspace/files`; files written to `/workspace/out` become saved files after each command. A new version of an out file updates the same saved file (same id, newer `updatedAt`).
+- **How the bytes move:** with `HEADLESS_FILES=s3` the computer fetches uploads from the bucket and sends outputs to it itself, with `curl` over those links, so files never pass through the runner; the computer must be able to reach the bucket's endpoint. An output goes to a holding object first and is kept only after the runner has measured it against the limits. With a disk store, or when a transfer doesn't arrive, files go through the runner as before. Which uploads are already on a computer is recorded there, in `/workspace/.jobs/.copied.json`.
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
 - **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
+- **Listing them:** `GET /v1/computers` lists every conversation's computer at the sandbox gateway and at the direct provider, by the labels the runner puts on each one (`kind: headless-computer`, and the deployment's scope when it has one). Den's `/admin › Computer fleet` page reads it, and `GET /v1/computers/:source/:id` for one computer's own page.
 - **Image:** the snapshot is built from the package's install script: `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
 - Every file under `memory/` in the scratch workspace is shown to the model at the start of each turn, so long-term memory survives older turns dropping out of context
 
@@ -314,11 +329,11 @@ Nothing on celld changes, so pointing the URLs back is the rollback.
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |
 | `HEADLESS_PORT` | `8795` | |
 | `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
-| `HEADLESS_MAX_STEPS` | `0` | Model calls per turn. `0` means no limit: a long task ends with its answer, Stop, or the stuck check |
+| `HEADLESS_MAX_STEPS` | `0` | Model calls per turn; past it the turn ends `max_steps_exceeded`. `0` means no limit: a long task ends with its answer, Stop, the stuck check or the turn timeout. A session may set its own with `maxSteps` |
 | `HEADLESS_TURN_TIMEOUT_MS` | `0` | `0` means no limit. Otherwise at least `10000`, applied to each stretch between credential refreshes |
 | `HEADLESS_CREDENTIAL_REFRESH_MS` | `3000000` | A turn with an MCP token pauses between steps after this long so the caller resumes it with a fresh one. Keep it under the token lifetime (60 minutes for Den) |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `16384` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens`. A streamed call has no total time limit, only 180 s without any data; a non-streamed call must finish in 180 s. A reply cut off there never ends a turn: a call it was writing gets an error, a reply with no complete call is dropped, and the next step asks for less |
-| `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Past this, the oldest whole turns are left out, down to 60% of it (see [Long conversations](#long-conversations)). A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
+| `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Past this, the oldest whole turns are left out, down to 60% of it (see [Long conversations](#long-conversations)). A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight. Images and PDFs from the turn's tool results have their own limits, whatever this is set to: a request carries the newest 16 images and 20 MB (base64) of them; past either, the oldest results' are replaced by a note, in one cut down to 60% |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
 | `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, or `s3`. Only sessions created with `files: true` use them. Off means the file routes answer `files_not_configured` |
 | `HEADLESS_FILES_MAX_BYTES` | `104857600` (100 MB) | Largest single kept file |
@@ -514,9 +529,11 @@ the old one.
 
 A new guest on the same image needs no rebuild. The runner installs its guest
 into the computers it starts, which adds about 4 s to a new computer's first
-open. Guests change most days, and a template takes about five minutes to build
-and a Differently configuration change to adopt, so the template follows the
-image and not the guest.
+open, and into an idle computer just before pausing it, so one used since the
+deploy opens without that wait. A computer paused before the deploy gets the
+guest on its next open. Guests change most days, and a template takes about
+five minutes to build and a Differently configuration change to adopt, so the
+template follows the image and not the guest.
 
 Opt-in verification, creating and cleaning one real computer:
 

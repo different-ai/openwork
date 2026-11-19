@@ -2,9 +2,21 @@
 
 import { useEffect, useRef, useState } from "react"
 import { browserSpeechConstructor, createBrowserDictation, type BrowserSpeechConstructor } from "./browser-dictation"
+import { dictationMeterSamples } from "./dictation-waveform"
 
 export type NativeDictationResult = { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" }
 export type DictationPlatform = "macos" | "windows" | "mobile" | "unsupported"
+// Meter updates repaint only the waveform, not the editor and entire composer.
+function createMeter() {
+  let levels: number[] = []
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => levels,
+    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
+    reset() { levels = []; listeners.forEach(listener => listener()) },
+    push(level: number) { levels = [...levels.slice(1 - dictationMeterSamples), level]; listeners.forEach(listener => listener()) },
+  }
+}
 export function dictationPlatform(userAgent: string, touchPoints = 0): DictationPlatform {
   if (/iPhone|iPad|iPod|Android/i.test(userAgent) || (/Macintosh/i.test(userAgent) && touchPoints > 1)) return "mobile"
   if (/Macintosh|Mac OS X/i.test(userAgent)) return "macos"
@@ -25,14 +37,22 @@ export function useNativeDictation(options: {
   recognition?: BrowserSpeechConstructor
   /** Tooltip naming who transcribes for `recognition`. */
   recognitionTitle?: string
+  /** On-device host recognition: meter audio and await final words on Send. */
+  local?: boolean
 }) {
   const [platform, setPlatform] = useState<DictationPlatform>("unsupported")
   const [state, setState] = useState<"starting" | "listening" | "stopping" | "idle">("idle")
   const [nativeMode, setNativeMode] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [meter] = useState(createMeter)
+  const [installingModel, setInstallingModel] = useState(false)
+  const [modelDownloadProgress, setModelDownloadProgress] = useState<number | null>(null)
   const session = useRef<ReturnType<typeof createBrowserDictation> | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
+  // A recognizer can publish again between a React commit and its effects.
+  // Remember our unacknowledged drafts so an older echo is not a user edit.
+  const publishedDrafts = useRef(new Set<string>())
   const currentOptions = useRef(options)
   currentOptions.current = options
   const Constructor = options.recognition ?? browserSpeechConstructor()
@@ -41,28 +61,47 @@ export function useNativeDictation(options: {
   const available = native || Boolean(Constructor)
   useEffect(() => { setPlatform(dictationPlatform(navigator.userAgent, navigator.maxTouchPoints)) }, [])
   useEffect(() => {
-    setState("idle"); setNativeMode(false); setError(null)
+    setState("idle"); setNativeMode(false); setError(null); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
     return () => {
       generation.current++
+      publishedDrafts.current.clear()
       request.current?.abort(); request.current = null
-      session.current?.commit(); session.current = null
+      session.current?.cancel(); session.current = null
     }
   }, [options.enabled, options.scope])
   function commit() {
     generation.current++
+    publishedDrafts.current.clear()
     request.current?.abort(); request.current = null
     const text = session.current?.commit() ?? currentOptions.current.text
     session.current = null
     setState("idle"); setNativeMode(false)
     return text
   }
+  function cancel() {
+    generation.current++
+    publishedDrafts.current.clear()
+    request.current?.abort(); request.current = null
+    session.current?.cancel(); session.current = null
+    setState("idle"); setNativeMode(false); meter.reset(); setInstallingModel(false); setModelDownloadProgress(null)
+  }
+  async function finish() {
+    const id = generation.current
+    const scope = currentOptions.current.scope
+    const text = await session.current?.finish()
+    return id === generation.current && scope === currentOptions.current.scope && currentOptions.current.enabled
+      ? text ?? null : null
+  }
   useEffect(() => {
     // Edits outside the text input (chips, imported drafts, navigation) also
     // fence recognition so a late interim result cannot overwrite them.
-    if (session.current && options.text !== session.current.text()) commit()
+    if (!session.current) return
+    if (publishedDrafts.current.delete(options.text)) {
+      if (options.text === session.current.text()) publishedDrafts.current.clear()
+    } else if (options.text !== session.current.text()) cancel()
   }, [options.text])
   useEffect(() => {
-    const hidden = () => { if (document.visibilityState === "hidden" && session.current) commit() }
+    const hidden = () => { if (document.visibilityState === "hidden" && session.current) cancel() }
     document.addEventListener("visibilitychange", hidden)
     return () => document.removeEventListener("visibilitychange", hidden)
   }, [])
@@ -71,31 +110,57 @@ export function useNativeDictation(options: {
     if (session.current) { if (state === "listening") session.current.stop(); return }
     options.focusInput()
     setError(null)
+    meter.reset()
+    setInstallingModel(false)
+    setModelDownloadProgress(null)
     if (native) return launchNative()
     const Speech = options.recognition ?? browserSpeechConstructor()
     if (!Speech) return
     const id = ++generation.current
+    publishedDrafts.current.clear()
     // A host recognizer that fails before listening (permission, language,
     // missing speech service) hands over to system dictation instead.
-    const fallback = Boolean(options.recognition) && nativeCapable
+    // A local-only session must not silently hand audio to system/online dictation.
+    const fallback = Boolean(options.recognition) && nativeCapable && !options.local
     let listened = false
     let failed: string | null = null
     const owner = createBrowserDictation({
       recognition: new Speech(), text: options.text, selection: options.selection(),
-      language: document.documentElement.lang || navigator.language || "en-US",
-      onText: text => { if (id === generation.current) currentOptions.current.onText(text) },
+      language: options.recognition ? navigator.language || "en-US" : document.documentElement.lang || navigator.language || "en-US",
+      finalizationTimeoutMs: options.local ? 6000 : undefined,
+      resultFrames: options.local && typeof window.requestAnimationFrame === "function"
+        && !window.matchMedia("(prefers-reduced-motion: reduce)").matches ? {
+          request: callback => window.requestAnimationFrame(callback),
+          cancel: frame => window.cancelAnimationFrame(frame),
+          now: () => performance.now(),
+        } : undefined,
+      onLevel: level => { if (id === generation.current) meter.push(level) },
+      onStatus: (_status, progress) => {
+        if (id !== generation.current || listened) return
+        setInstallingModel(progress !== 1)
+        setModelDownloadProgress(progress ?? null)
+      },
+      onText: text => {
+        if (id !== generation.current) return
+        publishedDrafts.current.add(text)
+        currentOptions.current.onText(text)
+      },
       onState: next => {
         if (id !== generation.current) return
         if (next === "listening") listened = true
         setState(next)
+        if (next !== "starting") setInstallingModel(false)
         if (next !== "idle") return
+        setModelDownloadProgress(null)
         session.current = null
         if (failed !== null) void launchNative(failed)
       },
-      onError: message => {
+      onError: (message, code) => {
         if (id !== generation.current) return
         if (fallback && !listened) failed = message
-        else setError(message)
+        else setError(options.local && !listened && code !== "model-unavailable"
+          ? "Local dictation couldn’t start. Check microphone and Speech Recognition permissions and your system language."
+          : message)
       },
     })
     session.current = owner
@@ -117,12 +182,14 @@ export function useNativeDictation(options: {
     finally { if (id === generation.current) { request.current = null; setState("idle") } }
   }
   return {
-    available, error, nativeMode, state,
+    available, error, nativeMode, state, meter, installingModel, modelDownloadProgress,
+    local: Boolean(options.local),
+    localRecording: Boolean(options.local && !nativeMode && state !== "idle"),
     active: options.enabled && (state !== "idle" || nativeMode),
     busy: state === "starting" || state === "stopping",
-    toggle, commit,
+    toggle, commit, cancel, finish,
     edit(text: string) {
-      if (session.current && text !== session.current.text()) commit()
+      if (session.current && text !== session.current.text()) cancel()
       currentOptions.current.onText(text)
     },
     title: error ?? (native ? "Dictate message with system dictation" : options.recognition

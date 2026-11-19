@@ -15,6 +15,7 @@ import {
   GatewayUsageChargeTable,
   GatewayUsageEventTable,
   GatewayUsageRollupTable,
+  WorkbotUsageDayTable,
   HeadlessSessionIndexTable,
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
@@ -121,6 +122,7 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
   await deleteInBatches((limit) => db.delete(GatewayUsageAuditTable).where(eq(GatewayUsageAuditTable.organizationId, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId)).limit(limit))
+  await deleteInBatches((limit) => db.delete(WorkbotUsageDayTable).where(eq(WorkbotUsageDayTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId)).limit(limit))
   await deleteInBatches((limit) => db.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId)).limit(limit))

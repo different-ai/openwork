@@ -98,7 +98,7 @@ export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message
           type="button"
           data-subagent-notice={notice.outcome}
           className={cn(rowClassName, "group cursor-pointer transition-colors hover:text-foreground")}
-          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. Open sub-agent chat`}
+          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. ${notice.linkedSession ? "Open session" : "Open sub-agent chat"}`}
           onClick={() => onOpenSubagentSession(notice.childSessionId)}
         >
           {content}

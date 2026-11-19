@@ -31,18 +31,18 @@ function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
   const prefetchCatalog = usePrefetchConnectorCatalog();
   return (
     <div className="flex flex-col items-center gap-3">
-      <div className="flex w-full flex-col items-center gap-5 rounded-2xl border border-gray-100 bg-white px-6 pb-14 pt-16 text-center" data-testid="connectors-empty">
+      <div className="flex w-full flex-col items-center gap-4 border-y border-[var(--den-list-line)] px-6 py-10 text-center" data-testid="connectors-empty">
         <ConnectorLogoStrip size="md" />
         <div className="flex flex-col gap-1.5">
-          <p className="text-[15px] font-semibold leading-5 text-gray-900">No connectors yet</p>
-          <p className="text-[13px] leading-[18px] text-gray-500">Apps your organization&apos;s AI can use. You choose who gets each one.</p>
+          <p className="text-sm font-medium leading-5 text-[var(--dls-text-primary)]">No connectors yet</p>
+          <p className="text-[13px] leading-[18px] text-[var(--dls-text-secondary)]">Apps your organization&apos;s AI can use. You choose who gets each one.</p>
         </div>
-        <LinkButton variant="primary" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
+        <LinkButton variant="secondary" size="sm" href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>
           <Plus className="h-4 w-4" aria-hidden />
           Add connector
         </LinkButton>
       </div>
-      <p className="text-[12px] leading-4 text-gray-400">Members can still add apps for themselves in My Library.</p>
+      <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">Members can still add apps for themselves in My Library.</p>
     </div>
   );
 }
@@ -155,7 +155,7 @@ export function AdminConnectorsScreen() {
           href={row.href}
           kind="connection"
           testName={connection.name}
-          logo={<ConnectorLogo name={connection.name} url={connection.url} size="xs" />}
+          logo={<ConnectorLogo name={connection.name} url={connection.url} size="sm" />}
           name={connection.name}
           description={note}
           source={row.attention ? undefined : row.status}
@@ -174,13 +174,13 @@ export function AdminConnectorsScreen() {
           // One toolbar: find and add sit together on the title's row (DESIGN P6, S2).
           <div className="flex w-full items-center gap-2 sm:w-auto">
             {showFilter && !connections.error ? <FilterInput value={query} onChange={setQuery} className="min-w-0 flex-1 sm:w-56 sm:flex-none" /> : null}
-            <DenButton size="sm" icon={Plus} href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>Add</DenButton>
+            <DenButton size="sm" variant="secondary" icon={Plus} href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>Add</DenButton>
           </div>
         )}
       </div>
 
       {connections.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {connections.error instanceof Error ? connections.error.message : "Connectors did not load."}
         </p>
       ) : null}
@@ -207,7 +207,7 @@ export function AdminConnectorsScreen() {
             ) : null}
           </LibraryCompactSurface> : null}
           {!connections.isLoading && visible.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
+            <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">Nothing matches.</p>
           ) : null}
         </>
       ) : null}

@@ -12,9 +12,17 @@ import { useWorkbotReadiness } from "./workbot-readiness-data";
 
 type BlockedWorkbotEntry = Exclude<WorkbotEntry, { kind: "open" }>;
 
+/** The dialog's one action, for viewers who can fix what blocks Workbot themselves. */
+function entryAction(entry: BlockedWorkbotEntry): { href: string; label: string; testId: string } | null {
+  if (entry.kind === "add-provider") return { href: entry.href, label: WORKBOT_ENTRY_COPY.addProviderAction, testId: "workbot-entry-dialog-add-provider" };
+  if (entry.kind === "off" && entry.teamsHref) return { href: entry.teamsHref, label: WORKBOT_ENTRY_COPY.offAction, testId: "workbot-entry-dialog-open-teams" };
+  return null;
+}
+
 /**
- * Shown instead of leaving for Workbot when it has no AI provider. Title only (DESIGN.md P2): the admin's action names
- * the fix, and the member's title says who can change it, with a neutral lock (P4, C5).
+ * Shown instead of leaving for Workbot when it has no AI provider or an admin turned it off for the viewer. Title only
+ * (DESIGN.md P2): the admin's action names the fix, and the member's title says who can change it, with a neutral
+ * lock (P4, C5).
  */
 export function WorkbotEntryDialog({ entry, open, onOpenChange }: {
   entry: BlockedWorkbotEntry;
@@ -22,6 +30,7 @@ export function WorkbotEntryDialog({ entry, open, onOpenChange }: {
   onOpenChange: (open: boolean) => void;
 }) {
   const addProvider = entry.kind === "add-provider";
+  const action = entryAction(entry);
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -34,21 +43,21 @@ export function WorkbotEntryDialog({ entry, open, onOpenChange }: {
           <div className="flex items-start gap-2.5">
             {addProvider ? null : <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-gray-500" strokeWidth={1.5} aria-hidden />}
             <Dialog.Title className="text-[15px] font-medium leading-5 text-gray-950">
-              {addProvider ? WORKBOT_ENTRY_COPY.addProviderTitle : WORKBOT_ENTRY_COPY.askAdminTitle}
+              {addProvider ? WORKBOT_ENTRY_COPY.addProviderTitle : entry.kind === "off" ? WORKBOT_ENTRY_COPY.offTitle : WORKBOT_ENTRY_COPY.askAdminTitle}
             </Dialog.Title>
           </div>
           <div className="mt-5 flex justify-end gap-2">
             <Dialog.Close data-testid="workbot-entry-dialog-close" className={buttonVariants({ variant: "secondary" })}>
-              {addProvider ? "Not now" : "Close"}
+              {action ? "Not now" : "Close"}
             </Dialog.Close>
-            {entry.kind === "add-provider" ? (
+            {action ? (
               <Link
-                href={entry.href}
-                data-testid="workbot-entry-dialog-add-provider"
+                href={action.href}
+                data-testid={action.testId}
                 onClick={() => onOpenChange(false)}
                 className={buttonVariants({ variant: "primary" })}
               >
-                {WORKBOT_ENTRY_COPY.addProviderAction}
+                {action.label}
               </Link>
             ) : null}
           </div>
@@ -76,8 +85,8 @@ export function useWorkbotEntry({ orgId, orgSlug, orgContext, access, enabled }:
   const blocked = entry.kind !== "open";
   const { refetch } = readiness;
 
-  // While blocked, check again as people move around Den (for example after adding a provider), so the next
-  // Workbot click uses fresh state. Once Workbot is ready this stops.
+  // While blocked, check again as people move around Den (for example after adding a provider, or turning Workbot
+  // on for a team), so the next Workbot click uses fresh state. Once Workbot is ready this stops.
   const checkedPathRef = useRef(pathname);
   useEffect(() => {
     if (checkedPathRef.current === pathname) return;

@@ -41,6 +41,8 @@ export type RequestLogStartInput = {
   requestBytes?: number | null
   startedAt?: Date
   gatewayUsage?: GatewayUsageSnapshot
+  /** The headless runner conversation that made the call (parseHeadlessSessionHeader); the rollup attributes it to Workbot. */
+  headlessSession?: string | null
   signal?: AbortSignal
   /** Per-request prices that override the models.dev snapshot (synced LiteLLM models). */
   pricing?: PricingCatalog
@@ -251,7 +253,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         organization_id: input.identity.organizationId,
         org_membership_id: input.identity.orgMembershipId,
         inference_key_id: input.identity.kind === "models" ? input.identity.inferenceKeyId : null,
-        gateway_key_id: input.identity.kind === "gateway" ? input.identity.gatewayKeyId : null,
+        gateway_key_id: input.identity.kind === "gateway" && input.identity.keySource === "member" ? input.identity.gatewayKeyId : null,
+        gateway_api_key_id: input.identity.kind === "gateway" && input.identity.keySource === "api_key" ? input.identity.gatewayKeyId : null,
         gateway_provider_id: input.identity.kind === "gateway" ? input.gatewayProviderId ?? null : null,
         gateway_provider_credential_id: input.identity.kind === "gateway" ? input.gatewayProviderCredentialId ?? null : null,
         model_group_id: input.identity.kind === "gateway" ? input.modelGroupId ?? null : null,
@@ -268,6 +271,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         metadata: {
           ...(input.requestedModelSource ? { requested_model_source: input.requestedModelSource } : {}),
           ...(input.gatewayUsage ? { gateway_usage: input.gatewayUsage } : {}),
+          ...(input.headlessSession ? { headless_session: input.headlessSession } : {}),
         },
       }
       const row = pending
@@ -299,6 +303,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         org_membership_id: started.identity.orgMembershipId,
         inference_key_id: pending.inference_key_id,
         gateway_key_id: pending.gateway_key_id,
+        gateway_api_key_id: pending.gateway_api_key_id,
         gateway_provider_id: pending.gateway_provider_id,
         gateway_provider_credential_id: pending.gateway_provider_credential_id,
         model_group_id: pending.model_group_id,

@@ -3,6 +3,9 @@ import { DeviceCodeTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { readSessionSsoProof } from "./organization-sso-access.js"
+import type { FeatureDatabase } from "@openwork-ee/den-db/organization-features"
+import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js"
+import { desktopDeviceLoginEnabled } from "./desktop-device-login.js"
 
 /**
  * OAuth 2.0 Device Authorization Grant (RFC 8628) for command-line sign-in.
@@ -58,9 +61,9 @@ async function isActiveMember(input: { userId: string; organizationId: string })
   return (await activeMemberId(input)) !== null
 }
 
-async function activeMemberId(input: { userId: string; organizationId: string }): Promise<string | null> {
+async function activeMemberId(input: { userId: string; organizationId: string }, database: FeatureDatabase | typeof db.$primary = db.$primary): Promise<string | null> {
   // primary: a person removed moments ago must not land in the organization.
-  const [member] = await db.$primary
+  const [member] = await database
     .select({ id: MemberTable.id })
     .from(MemberTable)
     .where(and(
@@ -80,9 +83,7 @@ async function activeMemberId(input: { userId: string; organizationId: string })
 export async function takeDeviceSessionOrganization(input: { deviceCode: string; userId: string }): Promise<PendingDeviceOrganization | null> {
   const pending = pendingDeviceOrganizations.get(input.deviceCode)
   pendingDeviceOrganizations.delete(input.deviceCode)
-  if (!pending || pending.userId !== input.userId) {
-    return null
-  }
+  if (!pending || pending.userId !== input.userId) return null
   return await isActiveMember(pending) ? pending : null
 }
 
@@ -106,7 +107,7 @@ export async function lookupDeviceUserCode(userCode: string, now = new Date()): 
 
 export type DeviceDecisionResult =
   | { ok: true; status: "approved" | "denied" }
-  | { ok: false; status: 403 | 404 | 409; error: "not_a_member" | "invalid_user_code" | "already_decided"; message: string }
+  | { ok: false; status: 400 | 403 | 404 | 409; error: "not_a_member" | "invalid_user_code" | "already_decided" | "organization_required" | "access_denied"; message: string }
   | { ok: false; response: Response }
 
 /**
@@ -115,7 +116,7 @@ export type DeviceDecisionResult =
  * `/api/auth/device/token` then receives a session in that organization. A
  * code already bound to someone else, already decided, or expired is refused.
  */
-export async function decideDeviceUserCode(input: {
+type DeviceDecisionInput = {
   userCode: string
   userId: string
   decision: "approve" | "deny"
@@ -124,19 +125,37 @@ export async function decideDeviceUserCode(input: {
   now?: Date
   /** Runs once the chosen organization's active membership is verified, before any write; a Response refuses the decision. */
   beforeEffect?: (membership: { organizationId: string; memberId: string; userId: string }) => Promise<Response | null>
-}): Promise<DeviceDecisionResult> {
+}
+
+export async function decideDeviceUserCode(input: DeviceDecisionInput): Promise<DeviceDecisionResult> {
+  const [code] = await db.$primary.select({ clientId: DeviceCodeTable.clientId }).from(DeviceCodeTable)
+    .where(eq(DeviceCodeTable.userCode, normalizeDeviceUserCode(input.userCode))).limit(1)
+  if (code?.clientId !== DEN_DESKTOP_DEVICE_CLIENT_ID) return decideDeviceCode(input, db, false)
+  return db.transaction((tx) => decideDeviceCode(input, tx, true))
+}
+
+async function decideDeviceCode(input: DeviceDecisionInput, database: FeatureDatabase, desktop: boolean): Promise<DeviceDecisionResult> {
   const now = input.now ?? new Date()
   const userId = normalizeDenTypeId("user", input.userId)
   const organizationId = input.decision === "approve" && input.organizationId
     ? normalizeDenTypeId("organization", input.organizationId)
     : null
+  if (desktop) {
+    if (input.decision === "approve" && !organizationId) {
+      return { ok: false, status: 400, error: "organization_required", message: "Choose an organization to sign in to OpenWork Desktop." }
+    }
+    if (!await desktopDeviceLoginEnabled(database, organizationId ? { organizationId, userId } : undefined)) {
+      return { ok: false, status: 403, error: "access_denied", message: "Device sign-in is not available for this account and organization." }
+    }
+  }
+  const reader = desktop ? database : db.$primary
   if (organizationId) {
-    const memberId = await activeMemberId({ userId, organizationId })
+    const memberId = await activeMemberId({ userId, organizationId }, reader)
     if (!memberId) return { ok: false, status: 403, error: "not_a_member", message: "You are not a member of that organization." }
     const blocked = input.beforeEffect ? await input.beforeEffect({ organizationId, memberId, userId }) : null
     if (blocked) return { ok: false, response: blocked }
   }
-  const [row] = await db.$primary
+  const [row] = await reader
     .select({ id: DeviceCodeTable.id, status: DeviceCodeTable.status, userId: DeviceCodeTable.userId, expiresAt: DeviceCodeTable.expiresAt })
     .from(DeviceCodeTable)
     .where(eq(DeviceCodeTable.userCode, normalizeDeviceUserCode(input.userCode)))
@@ -155,7 +174,7 @@ export async function decideDeviceUserCode(input: {
   const status = input.decision === "approve" ? "approved" : "denied"
   // Guarded write: only a still-pending code that is unbound or bound to this
   // person changes, so two tabs racing cannot both decide.
-  const result = await db
+  const result = await database
     .update(DeviceCodeTable)
     .set({ status, userId, organizationId, ssoProviderId: proof?.providerId ?? null, ssoAuthenticatedAt: proof?.authenticatedAt ?? null })
     .where(and(

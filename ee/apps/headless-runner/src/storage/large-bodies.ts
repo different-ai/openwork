@@ -46,6 +46,8 @@ export class LargeBodies {
     /** Null: new large bodies are off (HEADLESS_SEGMENTS=off); existing ones are still restored. */
     private readonly threshold: number | null,
     private readonly onUploadFailed: (error: unknown) => void = () => undefined,
+    /** Called before each upload: the store notes that it holds objects (orphan checks follow only then). */
+    private readonly onStore: () => void = () => undefined,
   ) {
     this.cache = new ByteCache(CACHE_BYTES, CACHE_AGE_MS)
   }
@@ -62,6 +64,7 @@ export class LargeBodies {
     const sha256 = sha256Hex(bytes)
     const storageKey = bodyKey(sessionId, sha256)
     try {
+      this.onStore()
       await this.blobs.put(storageKey, bytes, "text/plain; charset=utf-8")
     } catch (error) {
       this.onUploadFailed(error)

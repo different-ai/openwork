@@ -1,8 +1,10 @@
 "use client";
 
+import { AUTOMATION_CARD_CLASS, COMPACT_INPUT_CLASS } from "../../_components/ui/dashboard-styles";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import {
   agentPermissionDefaultDecision,
+  agentPermissionMemberDecides,
   AGENT_PERMISSION_EVERYONE,
   agentPermissionDecisionLabels,
   agentPermissionDecisionsFor,
@@ -20,7 +22,7 @@ import {
   type AgentPermissionSetting,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions";
-import { Check, Info, Lock, LockKeyhole, Plus, X } from "lucide-react";
+import { Check, Info, Lock, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -36,8 +38,8 @@ import {
   getEveryoneAgentsRoute,
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
-  permissionLockReason,
   orgFeatureEnabled,
+  permissionLockReason,
   type DenOrgContext,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -54,13 +56,16 @@ import {
   agentPermissionBlockedBy,
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
+  hostExecutionRowVisible,
   storedAgentPermissionDecision,
-  effectiveAgentPermissionSettings,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
   type AgentPermissionsArea,
 } from "./agent-permissions-presentation";
 import { useDenToast } from "./den-toast";
+import { ItemPanel } from "./item-list";
+import { ReadOnlyNotice, ScopeChip, UseEveryonesButton } from "./scoped-setting";
+import { teamScopeOf, type TeamScope } from "./team-scope";
 
 export type { AgentPermissionsArea } from "./agent-permissions-presentation";
 
@@ -91,13 +96,6 @@ export function changedDefinitions(settings: AgentPermissionSettings): AgentPerm
 
 export function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
-}
-
-/** "1 override" / "{n} overrides" for a team's own settings, or null when it follows Everyone. */
-export function overrideSummary(policy: AgentPermissionPolicy | undefined): string | null {
-  if (!policy || !hasTeamRecord(policy)) return null;
-  const count = changedDefinitions(policy.settings).length;
-  return count === 0 ? null : plural(count, "override", "overrides");
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +147,6 @@ export function WithPolicies({ orgId, children }: { orgId: string; children: (da
     );
   }
   return <>{children(query.data)}</>;
-}
-
-export function ReadOnlyNotice() {
-  return <DenNotice tone="neutral" icon={LockKeyhole} message={<span id="agent-permissions-read-only">Read only. {permissionLockReason("agent_permissions.manage")}</span>} />;
 }
 
 // Desktop apps re-read their organization's config every 5 minutes and when
@@ -254,7 +248,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
   return (
     <div className="flex flex-col gap-4" data-testid={area === "browser" ? "agent-permissions-browser" : "agent-permissions-agents"} data-scope={policy.scopeId}>
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
-        <p className="min-w-0 flex-1 text-[13px] text-gray-500" data-testid="agent-permissions-intro">{intro}</p>
+        <p className="min-w-0 flex-1 text-[13px] text-[var(--dls-text-secondary)]" data-testid="agent-permissions-intro">{intro}</p>
         {team ? (
           <div className="flex shrink-0 items-center gap-4">
             <Link
@@ -281,13 +275,12 @@ function ScopeAgents({ access, data, policy, team, area }: {
           </div>
         ) : null}
       </div>
-      {!editable ? <ReadOnlyNotice /> : null}
+      {!editable ? <ReadOnlyNotice permission="agent_permissions.manage" id="agent-permissions-read-only" /> : null}
       <AgentPermissionsEditor
         scopeId={policy.scopeId}
         team={team}
         settings={settings}
         everyone={data.everyone.settings}
-        teams={team ? [] : data.teams.filter(hasTeamRecord)}
         area={area}
         editable={editable}
         onChange={(next) => { setSaveError(null); setDraft(next); }}
@@ -379,6 +372,7 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
 /** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
+  hostExecution: "Off runs commands and files in a local sandbox, and blocks apps, the built-in browser and local MCP servers",
   fileEdits: "Create, change and delete files in the member's folders",
   externalFolders: "Read and change files outside the member's workspace folders",
   computerUse: "See and control apps on the member's computer",
@@ -387,6 +381,7 @@ const ROW_COPY: Record<string, string> = {
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
+  fileSends: "Drive uploads and saves, and Gmail and Outlook drafts with attachments",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
   localMcpServers: "MCP servers the member added themselves",
@@ -394,61 +389,57 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, everyone, teams, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
   /** The team's name, or null when editing Everyone's. */
   team: string | null;
   settings: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
-  /** Teams with their own saved changes, for Everyone's status lane. */
-  teams: AgentPermissionPolicy[];
   area?: AgentPermissionsArea;
   editable: boolean;
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
+  const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   const { orgContext } = useOrgDashboard();
-  const harnessEnabled = orgFeatureEnabled(orgContext, "agentHarnessPermissions");
-  const browserUploadsEnabled = orgFeatureEnabled(orgContext, "browserUploadPermissions");
-  const computerUseEnabled = orgFeatureEnabled(orgContext, "computerUse");
-  const effectiveSettings = effectiveAgentPermissionSettings(settings, computerUseEnabled);
-  const effectiveEveryone = effectiveAgentPermissionSettings(everyone, computerUseEnabled);
+  const features = { sandboxOnly: orgFeatureEnabled(orgContext, "sandboxTools") };
+  const hostExecution = hostExecutionRowVisible(features, settings, team === null ? null : everyone);
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
-      <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-        {visibleAgentPermissionGroups(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled).map((group) => (
+      {/* The standard list panel; each group brings its own top and bottom padding. */}
+      <ItemPanel className="!py-0">
+        {visibleAgentPermissionGroups(area, { hostExecution }).map((group) => (
           <div key={group.label} className="pb-1">
-            <h3 className="px-5 pb-1 pt-3 text-[12px] font-medium text-gray-500">{group.label}</h3>
+            <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
-              const changedBy = teams.filter((policy) => normalizeAgentPermissionSettings(policy.settings)[definition.key] !== undefined);
               return (
                 <PermissionRow
                   key={`${scopeId}-${definition.key}`}
                   definition={definition}
                   team={team}
+                  scope={scope}
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
-                  everyoneStatus={changedBy.length === 0 ? null : changedBy.length === 1 ? `Changed for ${changedBy[0]?.name ?? ""}` : `Changed for ${changedBy.length} teams`}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, effectiveSettings, team === null ? null : effectiveEveryone)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
             })}
           </div>
         ))}
-      </div>
-      <TryRequest area={area} harnessEnabled={harnessEnabled} browserUploadsEnabled={browserUploadsEnabled} computerUseEnabled={computerUseEnabled} everyone={team === null ? effectiveSettings : effectiveEveryone} team={team === null ? null : { name: team, settings: effectiveSettings }} />
+      </ItemPanel>
+      <TryRequest area={area} everyone={team === null ? settings : everyone} team={team === null ? null : { name: team, settings: settings }} />
     </div>
   );
 }
 
-export function PermissionRow({ definition, team, setting, everyoneSetting, everyoneStatus, editable, blockedBy, onChange }: {
+export function PermissionRow({ definition, team, scope, setting, everyoneSetting, editable, blockedBy, onChange }: {
   definition: AgentPermissionDefinition;
   team: string | null;
+  /** Everyone or the team, for the row's chip. */
+  scope: TeamScope;
   setting: AgentPermissionSetting | undefined;
   everyoneSetting: AgentPermissionSetting | undefined;
-  /** On Everyone's tab: which teams changed this row, or null. */
-  everyoneStatus: string | null;
   editable: boolean;
   blockedBy: { key: string; reason: string } | null;
   onChange: (setting: AgentPermissionSetting | null) => void;
@@ -468,37 +459,18 @@ export function PermissionRow({ definition, team, setting, everyoneSetting, ever
   const inheritedBlock = team ? everyoneSetting?.block ?? [] : [];
 
   return (
-    <div className="px-5 py-3" data-testid={`agent-permission-${definition.key}`} data-decision={effective} data-changed={changed || undefined}>
+    <div className="py-3" data-testid={`agent-permission-${definition.key}`} data-decision={effective} data-changed={changed || undefined}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
-          <p id={labelId} className="text-[14px] font-medium leading-5 text-gray-900">{definition.label}</p>
-          <p className="truncate text-[13px] leading-[18px] text-gray-500" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
+          <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
+          <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
-        <div className="flex w-[150px] shrink-0 flex-col items-start gap-0.5 text-[12px] leading-4" data-testid={`agent-permission-${definition.key}-source`}>
-          {team === null ? (
-            everyoneStatus ? <span className="text-gray-500">{everyoneStatus}</span> : null
-          ) : changed ? (
-            <>
-              <span className="inline-flex items-center gap-1.5 text-gray-700">
-                <span className="size-1.5 shrink-0 rounded-full bg-blue-500" aria-hidden="true" />
-                <span className="truncate">Changed for {team}</span>
-              </span>
-              {editable ? (
-                <button
-                  type="button"
-                  aria-label={`Use Everyone's setting for ${definition.label}`}
-                  onClick={() => onChange(null)}
-                  className="rounded pl-3 text-[12px] text-gray-500 underline underline-offset-2 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-gray-400"
-                >
-                  Use Everyone&apos;s
-                </button>
-              ) : null}
-            </>
-          ) : (
-            <span className="text-gray-500">From Everyone</span>
-          )}
+        {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
+        <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
+          <ScopeChip scope={scope} changed={changed} />
+          {changed && editable ? <UseEveryonesButton settingLabel={definition.label} onClick={() => onChange(null)} /> : null}
         </div>
-        <div className={`flex shrink-0 justify-end ${definition.key === "browserUploads" ? "w-[190px]" : "w-[140px]"}`}>
+        <div className={`flex shrink-0 justify-end ${agentPermissionMemberDecides(definition.key) ? "w-[190px]" : "w-[140px]"}`}>
           {definition.control === "toggle" ? (
             <DenSwitch
               size="sm"
@@ -510,6 +482,7 @@ export function PermissionRow({ definition, team, setting, everyoneSetting, ever
           ) : (
             <div className="w-full">
               <DenSelect
+                size="sm"
                 aria-labelledby={labelId}
                 disabled={!editable}
                 value={agentPermissionChoiceValue(definition, ownDecision, effective)}
@@ -703,10 +676,10 @@ function PatternLine({ list, label, noun, testId, kind, patterns, inherited, edi
 // Try a request
 // ---------------------------------------------------------------------------
 
-function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEnabled, everyone, team }: { area: AgentPermissionsArea; harnessEnabled: boolean; computerUseEnabled: boolean; browserUploadsEnabled: boolean; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
-  const kinds = visibleAgentPermissionTryKinds(area, harnessEnabled, computerUseEnabled, browserUploadsEnabled);
+function TryRequest({ area, everyone, team }: { area: AgentPermissionsArea; everyone: AgentPermissionSettings; team: { name: string; settings: AgentPermissionSettings } | null }) {
+  const kinds = visibleAgentPermissionTryKinds(area);
   const [selectedAction, setAction] = useState<AgentPermissionAction>(kinds[0]?.action ?? "shell");
-  // A rollout refresh can hide the selected kind without remounting this draft.
+  // Changing the selected area can hide the selected kind without remounting this draft.
   const action = kinds.find((entry) => entry.action === selectedAction)?.action ?? kinds[0]?.action ?? "shell";
   const [value, setValue] = useState("");
   const kind = kinds.find((entry) => entry.action === action);
@@ -725,12 +698,12 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
     : "No permission applies";
 
   return (
-    <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3" data-testid="agent-permission-try">
+    <div className={`mt-4 ${AUTOMATION_CARD_CLASS} px-4 py-3`} data-testid="agent-permission-try">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="mr-1 text-[13px] font-medium text-gray-900">Try a request</span>
+        <span className="mr-1 text-[13px] font-medium text-[var(--dls-text-primary)]">Try a request</span>
         {kinds.length > 1 ? (
           <div className="w-[170px]">
-            <DenSelect aria-label="Request type" value={action} onChange={(event) => setAction(kinds.find((entry) => entry.action === event.target.value)?.action ?? "shell")}>
+            <DenSelect size="sm" aria-label="Request type" value={action} onChange={(event) => setAction(kinds.find((entry) => entry.action === event.target.value)?.action ?? "shell")}>
               {kinds.map((entry) => <option key={entry.action} value={entry.action}>{entry.label}</option>)}
             </DenSelect>
           </div>
@@ -738,7 +711,7 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
         <DenInput
           aria-label="Request to try"
           data-testid="agent-permission-try-input"
-          className="h-9 min-w-[200px] flex-1 font-mono text-[12px]"
+          className={`${COMPACT_INPUT_CLASS} min-w-[200px] flex-1 font-mono text-[12px]!`}
           placeholder={kind?.placeholder}
           value={value}
           onChange={(event) => setValue(event.target.value)}
@@ -762,7 +735,7 @@ function TryRequest({ area, harnessEnabled, computerUseEnabled, browserUploadsEn
 
 export function EditorSkeleton() {
   return (
-    <div role="status" aria-label="Loading agent permissions" className="flex flex-col gap-2 rounded-2xl border border-gray-100 bg-white p-5" data-testid="agent-permissions-loading">
+    <div role="status" aria-label="Loading agent permissions" className="flex flex-col gap-2 py-2" data-testid="agent-permissions-loading">
       {[0, 1, 2, 3, 4, 5].map((index) => (
         <div key={index} className="flex items-center gap-4 py-1.5" aria-hidden="true">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">

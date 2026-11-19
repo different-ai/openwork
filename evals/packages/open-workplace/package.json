@@ -2,7 +2,7 @@
   "name": "@openwork/open-workplace",
   "version": "0.0.0",
   "private": true,
-  "description": "Open Outlook, Open Calendar, Open Drive, Open Jira and Open Confluence: self-hosted workplace apps for testing agents end to end.",
+  "description": "Open Outlook, Open Calendar, Open Drive, Open Jira, Open Confluence and Open Slack: self-hosted workplace apps for testing agents end to end.",
   "type": "module",
   "exports": {
     "./microsoft365": "./src/microsoft365.mjs",

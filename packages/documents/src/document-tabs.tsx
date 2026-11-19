@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
-import { FileText, X } from "lucide-react"
+import { X } from "lucide-react"
 import type { DocumentItem } from "./index"
+import { ItemIcon } from "./item-icon"
 
 export type DocumentTabControls = { requestClose(): void; checkAccess(): Promise<void> }
 export type DocumentTabControlsChange = (id: string, controls: DocumentTabControls | null) => void
@@ -26,7 +27,7 @@ export function DocumentTabs({ items, activeId, dirtyIds, busyIds, onSelect, onC
     setAnnouncement(`Moved ${items.find(item => item.id === id)?.name ?? "document"} to position ${at + 1} of ${next.length}.`)
   }
   return <nav className="ow-document-tabs" aria-label="Open documents" onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget instanceof Node ? event.relatedTarget : null)) setTarget(null) }}>
-    <button type="button" className="ow-document-tab-files" aria-current={activeId === "files" ? "page" : undefined} onClick={() => onSelect("files")}>Files</button>
+    <button type="button" className="ow-document-tab-files" aria-current={activeId === "files" ? "page" : undefined} onClick={() => onSelect("files")}>All documents</button>
     {items.map((item, index) => <div key={item.id} className="ow-document-tab" data-document-id={item.id} data-active={activeId === item.id} data-dragging={dragging === item.id} data-drop={target?.id === item.id ? target.edge : undefined} onDragOver={event => {
       if (!dragged.current || dragged.current === item.id) return
       event.preventDefault(); event.dataTransfer.dropEffect = "move"
@@ -55,7 +56,7 @@ export function DocumentTabs({ items, activeId, dirtyIds, busyIds, onSelect, onC
           const button = event.currentTarget; requestAnimationFrame(() => button.scrollIntoView({ block: "nearest", inline: "nearest" }))
         }
         else if (event.key === "Delete" && !busyIds.has(item.id)) { event.preventDefault(); onClose(item.id) }
-      }}><FileText size={14} aria-hidden/><span className="ow-document-tab-name">{item.name}</span>{dirtyIds.has(item.id) && <span className="ow-document-tab-dirty" aria-hidden/>}</button>
+      }}><ItemIcon item={item} size={14}/><span className="ow-document-tab-name">{item.name}</span>{dirtyIds.has(item.id) && <span className="ow-document-tab-dirty" aria-hidden/>}</button>
       <button type="button" className="ow-document-tab-close" aria-label={`Close ${item.name}`} title={`Close ${item.name}`} disabled={busyIds.has(item.id)} onClick={() => onClose(item.id)}><X size={14} strokeWidth={1.5} aria-hidden/></button>
     </div>)}
     <span className="ow-documents-sr-only" aria-live="polite">{announcement}</span>

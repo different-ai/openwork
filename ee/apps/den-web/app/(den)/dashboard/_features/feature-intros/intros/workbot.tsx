@@ -1,6 +1,6 @@
 import { MessageCircle } from "lucide-react";
 import { getNewAiGatewayProviderRoute, getWorkbotSettingsRoute, permissionLockReason } from "../../../../_lib/den-org";
-import { WORKBOT_ENTRY_HREF } from "../../../_lib/workbot-entry";
+import { WORKBOT_ENTRY_COPY, WORKBOT_ENTRY_HREF } from "../../../_lib/workbot-entry";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { WorkbotExample } from "./examples/workbot/workbot-example";
@@ -19,6 +19,8 @@ export type WorkbotFacts = {
    * isn't deployed, since adding a provider wouldn't make it work there.
    */
   needsProvider?: boolean;
+  /** An admin turned Workbot off for the viewer (Workbot settings per team). Absent means on. */
+  workbotOff?: boolean;
 };
 
 type Ctx = FeatureIntroContext<WorkbotFacts>;
@@ -60,6 +62,13 @@ export const workbotIntros = [
         locked: { reason: `Workbot needs an AI provider first. ${permissionLockReason("gateway_providers.manage")}` },
       },
       { when: (ctx) => ctx.can("canManageModelsSettings"), label: "Choose the default model", href: WORKBOT_DEFAULT_MODEL_ANCHOR },
+      {
+        // Off for the viewer: the action stays, locked, with who can change it (DESIGN.md P4, I6).
+        when: (ctx) => ctx.orgContext.capabilities.workbot === true && ctx.facts.needsProvider !== true && ctx.facts.workbotOff === true,
+        label: "Open Workbot",
+        href: WORKBOT_ENTRY_HREF,
+        locked: { reason: WORKBOT_ENTRY_COPY.offTitle },
+      },
       {
         when: (ctx) => ctx.orgContext.capabilities.workbot === true && ctx.facts.needsProvider !== true,
         label: "Open Workbot",

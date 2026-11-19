@@ -67,7 +67,7 @@ export type AutoRouteNameResolver = (modelID: string) => string | undefined;
 const AUTO_ROUTE_SLACK_MS = 2_000;
 
 /**
- * The gateway's routing decision for a Smart reply (feature `autoRouter`).
+ * The gateway's routing decision for a Smart reply.
  * Each Smart step makes one request, so its decision arrives between the
  * reply's start and its completion; the latest one in that window wins, which
  * is the one that answered when a request was retried.

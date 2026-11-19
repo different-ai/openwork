@@ -77,7 +77,7 @@ Each model reaches a person through a **key set**. The key set decides which ups
 | Key set | Upstream key on each request | Example |
 | --- | --- | --- |
 | Organization key | The one key the admin saved | OpenAI, Anthropic, LiteLLM "One organization key" |
-| Each person's own credential | That person's own key or sign-in, never someone else's | Google sign-in for Vertex, LiteLLM "Each person's own key" |
+| Each person's own credential | That person's own key or sign-in, never someone else's | Google sign-in for Vertex, LiteLLM "Each person's own key", LiteLLM "Microsoft sign-in" |
 | Keys OpenWork creates | The LiteLLM key OpenWork created for that person and team | LiteLLM "OpenWork creates keys" |
 
 If a person's own credential is missing, the gateway refuses the request and the app shows a **Connect** prompt for that provider. It never falls back to an organization key.

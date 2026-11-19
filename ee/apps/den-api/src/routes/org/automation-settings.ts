@@ -1,6 +1,7 @@
 import {
   organizationAutomationSettingsSchema,
   readOrganizationAutomationSettings,
+  type OrganizationAutomationSettings,
   withOrganizationAutomationSettings,
 } from "@openwork/types/den/automation-settings"
 import type { Hono } from "hono"
@@ -11,6 +12,7 @@ import { env } from "../../env.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
+import type { OrganizationContext } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const automationSettingsViewSchema = z.object({
@@ -38,6 +40,18 @@ function view(metadata: unknown) {
     deploymentEnabled: env.automations.enabled,
     headlessRunnerConfigured: availability.headlessRunnerConfigured,
   }
+}
+
+/**
+ * PUT /v1/org/automation-settings without the HTTP layer (also used by
+ * config-blob imports, src/config-blobs/areas/settings-general.ts).
+ */
+export async function saveOrganizationAutomationSettings(organizationId: OrganizationContext["organization"]["id"], input: Partial<OrganizationAutomationSettings>) {
+  if (input.cloud === true && !headlessAutomationsConfigured()) {
+    return { ok: false as const, error: "headless_runner_required" as const, message: "Cloud Automations need OpenWork's headless runner on this deployment. Ask your OpenWork operator to set it up." }
+  }
+  const metadata = await updateOrganizationMetadata(organizationId, current => withOrganizationAutomationSettings(current, input))
+  return { ok: true as const, metadata }
 }
 
 /** Settings › Automations: whether members may create and run Desktop and Cloud Automations. */
@@ -79,12 +93,9 @@ export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRo
     jsonValidator(automationSettingsInputSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
-      const input = c.req.valid("json")
-      if (input.cloud === true && !headlessAutomationsConfigured()) {
-        return c.json({ error: "headless_runner_required", message: "Cloud Automations need OpenWork's headless runner on this deployment. Ask your OpenWork operator to set it up." }, 409)
-      }
-      const metadata = await updateOrganizationMetadata(c.get("organizationContext").organization.id, current => withOrganizationAutomationSettings(current, input))
-      return c.json(view(metadata))
+      const saved = await saveOrganizationAutomationSettings(c.get("organizationContext").organization.id, c.req.valid("json"))
+      if (!saved.ok) return c.json({ error: saved.error, message: saved.message }, 409)
+      return c.json(view(saved.metadata))
     },
   )
 }

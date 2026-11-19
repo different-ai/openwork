@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
-import { Check, Lock, X } from "lucide-react";
+import { Check, Lock, MoreHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@/components/ui/popover";
 import { ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
 import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
@@ -10,16 +11,16 @@ import { readDenSettings } from "@/app/lib/den";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
 import { activationCardModel, type ActivationRow, type ActivationRowAction } from "./activation-model";
-import { reportActivationEvent, useActivation } from "./use-activation";
+import { useActivation } from "./use-activation";
 
 /**
  * "Get set up" in the sidebar, above the account. Nothing before the first answer,
- * signed out, when unavailable, or once all six steps are done; one quiet "Next" line after the person hides
- * it. Opens a popover with the six steps, each with at most one action (DESIGN S2, S7).
+ * signed out, when unavailable, once all six steps are done, or after Hide setup in the ⋯ menu; one quiet "Next"
+ * line after Den counts it dismissed elsewhere. Opens a popover with the six steps, each with at most one action (DESIGN S2, S7).
  */
 export function ActivationCard(props: { onOpenExtensions: () => void }) {
-  const { state } = useActivation();
-  const model = activationCardModel(state);
+  const { state, hidden, hide } = useActivation();
+  const model = activationCardModel(state, { hidden });
   const navigate = useNavigate();
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
@@ -29,7 +30,7 @@ export function ActivationCard(props: { onOpenExtensions: () => void }) {
     setOpen(false);
     const denBaseUrl = readDenSettings().baseUrl;
     if (action === "invite") platform.openLink(denDashboardUrl(denBaseUrl, "members"));
-    else if (action === "gateway") platform.openLink(denDashboardUrl(denBaseUrl, "gatewayProviders"));
+    else if (action === "gateway") navigate("/settings/ai?share=1");
     else if (action === "provider") navigate("/settings/ai");
     else props.onOpenExtensions();
   };
@@ -66,16 +67,14 @@ export function ActivationCard(props: { onOpenExtensions: () => void }) {
         <div className="flex items-center gap-2 px-2 pb-1.5 pt-1">
           <PopoverTitle className="flex-1 text-sm font-semibold">Get set up</PopoverTitle>
           <span className="text-xs tabular-nums text-muted-foreground">{model.done} of {model.total}</span>
-          {!model.dismissed ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Hide checklist"
-              onClick={() => { setOpen(false); void reportActivationEvent("dismiss"); }}
-            >
-              <X className="size-4" />
-            </Button>
-          ) : null}
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Setup options" />}>
+              <MoreHorizontal className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => { setOpen(false); hide(); }}>Hide setup</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <ol className="flex flex-col">
           {model.rows.map((row) => <ActivationStepRow key={row.id} row={row} onAction={act} />)}

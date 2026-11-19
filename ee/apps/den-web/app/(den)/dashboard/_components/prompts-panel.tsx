@@ -3,19 +3,20 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
-import { Lock, Pencil, Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { ORG_PROMPT_MAX_LENGTH, type OrgPrompt } from "@openwork/types/den/prompts";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getEveryoneRoute, getOrgAccessFlags, permissionLockReason, type DenOrgContext } from "../../_lib/den-org";
+import { getEveryoneRoute, getOrgAccessFlags, type DenOrgContext } from "../../_lib/den-org";
 import { FeatureIntroGate } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ConfirmDialog } from "./item-list";
 import { usePromptSettings, useRemovePrompt, useSavePrompt } from "./prompts-data";
+import { ReadOnlyNotice } from "./scoped-setting";
 
 const PROMPT_ROWS = 15;
 /** Saved prompts and the editor share one type ramp, so Edit swaps the field in place. */
@@ -69,6 +70,7 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
   return (
     <FeatureIntroGate introKey="team-detail.prompts" facts={introFacts}>
     <section className="flex flex-col gap-8" data-testid="prompts-panel">
+      {settings.data.canEdit ? null : <ReadOnlyNotice permission="prompts.manage" />}
       {everyonePrompt ? (
         <div className="flex flex-col gap-2">
           <PromptHeader
@@ -76,7 +78,7 @@ export function PromptsPanel({ team }: { team: { id: string; name: string } | nu
             state="Applies first"
             action={settings.data.canEdit ? (
               <Link href={`${getEveryoneRoute(orgSlug)}?tab=prompts`} className={buttonVariants({ variant: "ghost", size: "inline" })} data-testid="prompt-everyone-edit">
-                Edit on Everyone
+                Open Everyone
               </Link>
             ) : null}
           />
@@ -153,12 +155,7 @@ function PromptEditor({ orgId, team, prompt, canEdit, startEditing = false, onEd
     }
   }
 
-  const headerAction = editing ? null : !canEdit ? (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-gray-500">
-      <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-      {permissionLockReason("prompts.manage")}
-    </span>
-  ) : prompt ? (
+  const headerAction = !editing && canEdit && prompt ? (
     <DenButton variant="secondary" size="sm" icon={Pencil} onClick={() => setDraft(saved)} data-testid="prompt-edit">Edit</DenButton>
   ) : null;
 

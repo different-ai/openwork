@@ -94,6 +94,7 @@
               "start-here/connect-your-stack/openwork-vs-opencode-models",
               "start-here/connect-your-stack/using-opencode-zen-go-models",
               "start-here/connect-your-stack/add-anthropic-api-key",
+              "start-here/connect-your-stack/sign-in-with-your-anthropic-subscription",
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/use-local-models",
               "start-here/connect-your-stack/use-gemini-and-vertex-ai"
@@ -157,6 +158,12 @@
             "pages": [
               "model-context-protocol/opencode-plugin"
             ]
+          },
+          {
+            "group": "Native integrations",
+            "pages": [
+              "integrations/native-integrations"
+            ]
           }
         ]
       },
@@ -189,9 +196,17 @@
               "ai-gateway/overview",
               "ai-gateway/openwork-models",
               "ai-gateway/users-and-teams",
+              "ai-gateway/third-party-tools",
+              "ai-gateway/cursor",
+              "ai-gateway/claude-code",
+              "ai-gateway/claude-desktop",
+              "ai-gateway/codex",
+              "ai-gateway/codex-desktop",
               "ai-gateway/provider-support",
               "ai-gateway/compare-litellm-bifrost",
               "ai-gateway/litellm",
+              "ai-gateway/truefoundry",
+              "ai-gateway/truefoundry-too-many-tokens",
               "ai-gateway/how-requests-flow",
               "ai-gateway/auto-model-routing",
               "ai-gateway/google-agent-platform",
@@ -212,10 +227,18 @@
             "group": "Usage and cost",
             "pages": [
               "ai-gateway/usage-dashboard",
+              "ai-gateway/my-usage",
               "ai-gateway/counting-usage",
               "ai-gateway/token-costs",
               "ai-gateway/limits",
               "start-here/do-work-with-it/what-uses-tokens"
+            ]
+          },
+          {
+            "group": "Benchmarks",
+            "pages": [
+              "benchmarks/overview",
+              "benchmarks/how-it-was-run"
             ]
           }
         ]
@@ -273,7 +296,7 @@
         ]
       },
       {
-        "tab": "Dashboards",
+        "tab": "Artifacts",
         "pages": [
           "dashboards/overview",
           "dashboards/build-an-mcp-app"
@@ -294,6 +317,7 @@
             "group": "SSO and SCIM",
             "pages": [
               "cloud/auth-and-security",
+              "cloud/sso-oidc",
               "cloud/sso-google-workspace",
               "cloud/scim-google-workspace",
               "cloud/sso-okta",
@@ -366,6 +390,7 @@
               "self-host/gateway",
               "self-host/gateway-upgrade",
               "self-host/declarative-configuration",
+              "self-host/export-import-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"

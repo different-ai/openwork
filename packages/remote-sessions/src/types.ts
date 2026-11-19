@@ -4,6 +4,13 @@ export type CreationMode = "idempotent" | "at_most_once"
 export type SendReplayMode = "idempotent" | "at_most_once"
 export type Status = "running" | "waiting" | "idle" | "error"
 export type WaitingFor = "permission" | "question"
+/**
+ * What a remote caller may reach on this computer, as its owner chose: "off"
+ * nothing at all (no task is started, no session is reached, nothing is
+ * reported), "created" only sessions that were started remotely, "all" also
+ * those started on the computer itself once the caller attaches to one.
+ */
+export type SessionAccess = "off" | "created" | "all"
 export interface Model { providerId: string; modelId: string; variant?: string | null }
 export interface SessionError { code: string; message: string }
 /** One question of a pending question request, as the person sees it. */
@@ -19,7 +26,7 @@ export interface PendingQuestionItem {
 export type Pending =
   | { kind: "question"; requestId: string; questions: PendingQuestionItem[] }
   | { kind: "permission"; requestId: string; title: string; detail: string; command?: string }
-export interface Command {
+export interface CreateCommand {
   commandId: string
   kind: "remote_session_create"
   title: string
@@ -28,6 +35,21 @@ export interface Command {
   expiresAt: number
   workspaceId?: string | null
 }
+/**
+ * Reach a session that already exists on the computer. Nothing is created or
+ * sent: `prompt` and `model` are always null and only keep both kinds one shape.
+ */
+export interface AttachCommand {
+  commandId: string
+  kind: "remote_session_attach"
+  title: string
+  prompt: null
+  model: null
+  expiresAt: number
+  workspaceId: string
+  sessionId: string
+}
+export type Command = CreateCommand | AttachCommand
 export interface Receipt { sessionId: string; workspaceId: string }
 export interface Progress {
   status: Status
@@ -49,10 +71,14 @@ export type Complete =
 export interface ReadInput { from: "start" | "end"; cursor: string | null; limit: number }
 export interface SendInput { prompt: string; messageId: string | null; model: Model | null }
 export interface StopInput { messageId: string | null }
-/** The person's own answer. A remote surface never sends "always": every permission is approved once. */
+/**
+ * The person's own answer. A remote surface never sends "always": every permission is approved once.
+ * "dismiss" closes a question without answering it; a permission cannot be dismissed.
+ */
 export type AnswerInput =
   | { kind: "question"; requestId: string; answers: string[][] }
   | { kind: "permission"; requestId: string; decision: "once" | "reject" }
+  | { kind: "dismiss"; requestId: string }
 interface RequestBase {
   requestId: string
   kind: "remote_session_request"
@@ -97,6 +123,8 @@ export const TRANSCRIPT_PARTS_MAX = 200
 export const TRANSCRIPT_TOOL_FIELD_MAX = 2000
 export const TRANSCRIPT_TEXT_PART_MAX = 20_000
 export const TRANSCRIPT_REASONING_PART_MAX = 4_000
+/** Open questions and permissions one read lists; the rest follow as these are answered. */
+export const PENDING_ITEMS_MAX = 5
 export interface ReadResult {
   title: string | null
   status: Status
@@ -110,6 +138,8 @@ export interface ReadResult {
   historyScope?: "context" | "full"
   /** The question or permission the session waits on, when the adapter can read it. */
   pending?: Pending | null
+  /** Every open question and permission, `pending` first (at most PENDING_ITEMS_MAX); any can be answered by its requestId. */
+  pendingItems?: Pending[]
 }
 export interface SendResult { messageId: string | null; alreadyPresent: boolean }
 export interface StopResult { stopped: boolean; reason: "different_turn" | null }
@@ -140,16 +170,24 @@ export interface HarnessAdapter {
   readonly creation?: CreationMode
   /** Defaults to idempotent; native ports without durable message-ID deduplication MUST opt into at_most_once. */
   readonly sendReplay?: SendReplayMode
-  create(command: Command, signal: AbortSignal): Promise<Receipt>
+  create(command: CreateCommand, signal: AbortSignal): Promise<Receipt>
+  /**
+   * Confirm that command.sessionId exists in command.workspaceId and return exactly that receipt.
+   * No effect on the session: no prompt, no title change, nothing created. It is replayed after
+   * an interruption whatever `creation` says. Throw SessionRunnerError "session_unavailable" when
+   * the session is not there. Absent: this harness cannot attach.
+   */
+  attach?(command: AttachCommand, signal: AbortSignal): Promise<Receipt>
   send(receipt: Receipt, input: SendInput & { messageId: string }, signal: AbortSignal): Promise<SendResult>
   read(receipt: Receipt, input: ReadInput, signal: AbortSignal): Promise<ReadResult>
   /** Must compare input.messageId to the native current turn before aborting it. */
   stop(receipt: Receipt, input: StopInput, signal: AbortSignal): Promise<StopResult>
   observe(receipt: Receipt, signal: AbortSignal): Promise<Progress>
   /**
-   * Reply to the session's pending question or permission through the native path.
-   * Must validate the answer against the live request and throw SessionRunnerError
-   * "stale_request" when input.requestId is no longer pending. Absent: unsupported.
+   * Reply to one of the session's open questions or permissions through the native path.
+   * Must validate the answer against the live request named by input.requestId and throw
+   * SessionRunnerError "stale_request" when it is no longer open, "invalid_answer" when the
+   * answer does not fit it (a "dismiss" fits a question only). Absent: unsupported.
    */
   answer?(receipt: Receipt, input: AnswerInput, signal: AbortSignal): Promise<void>
 }
@@ -167,12 +205,17 @@ export interface Turn {
 }
 export interface CommandEntry {
   command: Command
-  /** Creation capability is pinned at admission; upgrades must not reinterpret old ambiguous effects. */
+  /** Creation capability is pinned at admission; upgrades must not reinterpret old ambiguous effects. An attach ignores it. */
   creation: CreationMode
   sendReplay: SendReplayMode
+  /** A create's deterministic session ID; an attach's own sessionId. */
   intendedSessionId: string
   /** Durable logical clock includes rejected/dropped reports, not just acknowledged reports. */
   lastObservedAt: number | null
+  /**
+   * An attach goes from prepared straight to delivered or failed, and holds a receipt only while delivered.
+   * A failed create may keep its receipt for inspection; only a non-failed entry holds a session.
+   */
   phase: "prepared" | "created" | "delivered" | "failed"
   receipt: Receipt | null
   promptMessageId: string | null

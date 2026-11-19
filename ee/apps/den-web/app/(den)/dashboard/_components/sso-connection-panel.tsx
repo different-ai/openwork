@@ -7,6 +7,7 @@ import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { getOrgAccessFlags, parseOrgSsoPayload, type DenOrgSsoConnection } from "../../_lib/den-org";
+import { issuerProblemFromSave, manualIssuerProblem, OidcIssuerField, parseOidcIssuerCheck, type OidcIssuerCheck } from "./sso-oidc-issuer-field";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 function formatDateTime(value: string | null) {
@@ -24,7 +25,7 @@ function readSsoTestMessage(value: unknown) {
   return value.intentId;
 }
 
-/** Where one connection's requests go: the single-connection routes, or one connection by id (multipleSsoConnections). */
+/** Where one connection's requests go: one connection by id, or adding a new one. */
 export type SsoConnectionEndpoints = {
   /** GET → { connection }; null while adding a connection. */
   load: string | null;
@@ -32,12 +33,6 @@ export type SsoConnectionEndpoints = {
   save: (kind: FormMode) => string;
   /** Delete, test, enable, disable and domain verification hang off this; null while adding. */
   base: string | null;
-};
-
-export const LEGACY_SSO_ENDPOINTS: SsoConnectionEndpoints = {
-  load: "/v1/sso",
-  save: (kind) => `/v1/sso/${kind}`,
-  base: "/v1/sso",
 };
 
 export function ssoConnectionEndpoints(connectionId: string | null): SsoConnectionEndpoints {
@@ -50,8 +45,6 @@ export function ssoConnectionEndpoints(connectionId: string | null): SsoConnecti
 
 export type SsoConnectionPanelProps = {
   endpoints: SsoConnectionEndpoints;
-  /** multipleSsoConnections: name field, several domains, wording for one of several connections. */
-  multiple?: boolean;
   /** The saved connection after every load or change (null: none). */
   onConnectionChange?: (connection: DenOrgSsoConnection | null) => void;
   /** Adding (endpoints.load null): the new connection was saved. */
@@ -65,7 +58,6 @@ export type SsoConnectionPanelProps = {
 /** One SSO connection: its setup form, domain verification, test, enable and disable. */
 export function SsoConnectionPanel({
   endpoints,
-  multiple = false,
   onConnectionChange,
   onCreated,
   onDeleted,
@@ -106,6 +98,47 @@ export function SsoConnectionPanel({
   const [jwksEndpoint, setJwksEndpoint] = useState("");
   const [userInfoEndpoint, setUserInfoEndpoint] = useState("");
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
+
+  // The issuer field checks the provider and reports on itself.
+  const [issuerCheck, setIssuerCheck] = useState<OidcIssuerCheck>({ state: "idle" });
+  const issuerCheckRun = useRef(0);
+
+  function changeOidcIssuer(value: string) {
+    issuerCheckRun.current += 1;
+    setIssuer(value);
+    setIssuerCheck({ state: "idle" });
+  }
+
+  /** Reports on the issuer under its field; the save runs the same check on the server. */
+  async function checkOidcIssuer(value: string, manual: boolean) {
+    const run = ++issuerCheckRun.current;
+    const typed = value.trim();
+    if (!typed || !orgId) {
+      setIssuerCheck({ state: "idle" });
+      return;
+    }
+    if (manual) {
+      const problem = manualIssuerProblem(typed);
+      setIssuerCheck(problem ? { state: "failed", message: problem } : { state: "idle" });
+      return;
+    }
+    let host = typed;
+    try {
+      host = new URL(typed).host;
+    } catch {
+      setIssuerCheck({ state: "failed", message: "Enter the full address, starting with https://." });
+      return;
+    }
+    setIssuerCheck({ state: "checking", host });
+    try {
+      const { response, payload } = await requestJson("/v1/sso/oidc/check", { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({ issuer: typed }) }, 15000);
+      if (run !== issuerCheckRun.current) return;
+      // A check that could not run says nothing: the save still checks.
+      setIssuerCheck(response.ok ? parseOidcIssuerCheck(payload) : { state: "idle" });
+    } catch {
+      if (run === issuerCheckRun.current) setIssuerCheck({ state: "idle" });
+    }
+  }
 
   function setConnection(next: DenOrgSsoConnection | null) {
     setConnectionState(next);
@@ -177,6 +210,8 @@ export function SsoConnectionPanel({
     setFormMode(nextConnection.kind);
     setName(nextConnection.name ?? "");
     setIssuer(nextConnection.issuer);
+    issuerCheckRun.current += 1;
+    setIssuerCheck({ state: "idle" });
     setDomain(nextConnection.domains.join(", ") || nextConnection.domain);
     if (nextConnection.saml) {
       setEntryPoint(nextConnection.saml.entryPoint ?? "");
@@ -185,7 +220,8 @@ export function SsoConnectionPanel({
     if (nextConnection.oidc) {
       setClientId(nextConnection.oidc.clientId ?? "");
       setScopes(nextConnection.oidc.scopes.length > 0 ? nextConnection.oidc.scopes.join(" ") : "openid email profile");
-      setSkipDiscovery(nextConnection.oidc.skipDiscovery);
+      // Saved connections always store their endpoints; with the setup check the form starts from discovery again.
+      setSkipDiscovery(false);
       setAuthorizationEndpoint(nextConnection.oidc.authorizationEndpoint ?? "");
       setTokenEndpoint(nextConnection.oidc.tokenEndpoint ?? "");
       setJwksEndpoint(nextConnection.oidc.jwksEndpoint ?? "");
@@ -284,10 +320,7 @@ export function SsoConnectionPanel({
         setSaving(true);
         try {
           const path = endpoints.save(formMode);
-          // Several domains (multipleSsoConnections) go as a list; one as before.
-          const domainFields = multiple
-            ? { domains: domain.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean), name: name.trim() || null }
-            : { domain };
+          const domainFields = { domains: domain.split(/[\s,]+/).map((entry) => entry.trim()).filter(Boolean), name: name.trim() || null };
           const body = formMode === "saml"
             ? {
                 issuer,
@@ -312,6 +345,13 @@ export function SsoConnectionPanel({
 
           const { response, payload } = await requestJson(path, { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify(body) }, 20000);
           if (!response.ok) {
+            const issuerProblem = formMode === "oidc" && response.status === 400 ? issuerProblemFromSave(payload) : null;
+            if (issuerProblem) {
+              // The issuer was refused: say so on its field, not in the page banner.
+              issuerCheckRun.current += 1;
+              setIssuerCheck({ state: "failed", message: issuerProblem });
+              return;
+            }
             throw getRequestError(payload, response, `Failed to save SSO settings (${response.status}).`);
           }
 
@@ -339,7 +379,7 @@ export function SsoConnectionPanel({
       return;
     }
 
-    if (!orgId || !endpoints.base || !window.confirm(multiple ? `Delete ${connection?.displayName ?? "this SSO connection"}? People who sign in through it will need another connection or sign-in method.` : "Delete this SSO connection?")) {
+    if (!orgId || !endpoints.base || !window.confirm(`Delete ${connection?.displayName ?? "this SSO connection"}? People who sign in through it will need another connection or sign-in method.`)) {
       return;
     }
     const basePath = endpoints.base;
@@ -496,9 +536,7 @@ export function SsoConnectionPanel({
   }
 
   async function handleDisable() {
-    const disablePrompt = multiple
-      ? `Disable ${connection?.displayName ?? "this connection"}? People who sign in through it will use another connection or sign-in method.`
-      : "Disable SSO for this workspace? Members will use their other available sign-in methods.";
+    const disablePrompt = `Disable ${connection?.displayName ?? "this connection"}? People who sign in through it will use another connection or sign-in method.`;
     if (!access.canManageSso || !endpoints.base || !window.confirm(disablePrompt)) return;
     setDisabling(true);
     setError(null);
@@ -542,6 +580,27 @@ export function SsoConnectionPanel({
   }
 
   const ssoFormDisabled = formReadOnly || saving || !orgContext.entitlements.sso;
+  const oidcSetupCheck = formMode === "oidc";
+  const manualEndpointFields = (
+    <>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">Authorization endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">Token endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">JWKS endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" disabled={ssoFormDisabled} />
+      </label>
+      <label className="block text-[14px] text-gray-700 md:col-span-2">
+        <span className="mb-2 block font-medium">UserInfo endpoint</span>
+        <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" disabled={ssoFormDisabled} />
+      </label>
+    </>
+  );
 
   return (
     <>
@@ -558,19 +617,37 @@ export function SsoConnectionPanel({
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                {multiple ? (
-                  <label className="block text-[14px] text-gray-700 md:col-span-2">
-                    <span className="mb-2 block font-medium">Name on the sign-in button</span>
-                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={connection?.displayName ?? "Okta"} disabled={ssoFormDisabled} data-testid="sso-connection-name" />
-                  </label>
-                ) : null}
-                <label className="block text-[14px] text-gray-700">
-                  <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
+                <label className="block text-[14px] text-gray-700 md:col-span-2">
+                  <span className="mb-2 block font-medium">Name on the sign-in button</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={name} onChange={(event) => setName(event.target.value)} maxLength={120} placeholder={connection?.displayName ?? "Okta"} disabled={ssoFormDisabled} data-testid="sso-connection-name" />
                 </label>
-                <label className="block text-[14px] text-gray-700">
-                  <span className="mb-2 block font-medium">{multiple ? "Email domains" : "Domain"}</span>
-                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder={multiple ? "example.com, example.org" : "example.com"} disabled={ssoFormDisabled} data-testid="sso-connection-domains" />
+                {oidcSetupCheck ? (
+                  <OidcIssuerField
+                    value={issuer}
+                    onChange={changeOidcIssuer}
+                    onCheck={(value) => void checkOidcIssuer(value, skipDiscovery)}
+                    check={issuerCheck}
+                    onUseIssuer={(next) => {
+                      changeOidcIssuer(next);
+                      void checkOidcIssuer(next, skipDiscovery);
+                    }}
+                    manual={skipDiscovery}
+                    onManualChange={(next) => {
+                      setSkipDiscovery(next);
+                      void checkOidcIssuer(issuer, next);
+                    }}
+                    manualFields={manualEndpointFields}
+                    disabled={ssoFormDisabled}
+                  />
+                ) : (
+                  <label className="block text-[14px] text-gray-700">
+                    <span className="mb-2 block font-medium">{formMode === "saml" ? "IdP Issuer URL" : "Issuer URL"}</span>
+                    <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={issuer} onChange={(event) => setIssuer(event.target.value)} placeholder="https://idp.example.com" disabled={ssoFormDisabled} />
+                  </label>
+                )}
+                <label className={`block text-[14px] text-gray-700 ${oidcSetupCheck ? "md:col-span-2" : ""}`}>
+                  <span className="mb-2 block font-medium">Email domains</span>
+                  <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={domain} onChange={(event) => setDomain(event.target.value)} placeholder="example.com, example.org" disabled={ssoFormDisabled} data-testid="sso-connection-domains" />
                 </label>
                 {formMode === "saml" ? (
                   <>
@@ -614,63 +691,41 @@ export function SsoConnectionPanel({
                         <option value="client_secret_post">client_secret_post</option>
                       </select>
                     </label>
-                    <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
-                      <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} disabled={ssoFormDisabled} />
-                      Use manual OIDC endpoints instead of discovery
-                    </label>
-                    {skipDiscovery ? (
+                    {oidcSetupCheck ? null : (
                       <>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">Authorization endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={authorizationEndpoint} onChange={(event) => setAuthorizationEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/authorize" disabled={ssoFormDisabled} />
+                        <label className="flex items-center gap-3 rounded-[18px] border border-gray-200 px-4 py-3 text-[14px] text-gray-700 md:col-span-2">
+                          <input type="checkbox" checked={skipDiscovery} onChange={(event) => setSkipDiscovery(event.target.checked)} disabled={ssoFormDisabled} />
+                          Use manual OIDC endpoints instead of discovery
                         </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">Token endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={tokenEndpoint} onChange={(event) => setTokenEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/token" disabled={ssoFormDisabled} />
-                        </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">JWKS endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={jwksEndpoint} onChange={(event) => setJwksEndpoint(event.target.value)} placeholder="https://idp.example.com/oauth2/v1/keys" disabled={ssoFormDisabled} />
-                        </label>
-                        <label className="block text-[14px] text-gray-700 md:col-span-2">
-                          <span className="mb-2 block font-medium">UserInfo endpoint</span>
-                          <input className="w-full rounded-[18px] border border-gray-200 px-4 py-3" value={userInfoEndpoint} onChange={(event) => setUserInfoEndpoint(event.target.value)} placeholder="Optional" disabled={ssoFormDisabled} />
-                        </label>
+                        {skipDiscovery ? manualEndpointFields : null}
                       </>
-                    ) : null}
+                    )}
                   </>
                 )}
               </div>
 
               <div className="mt-6 flex flex-wrap gap-3">
-                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={ssoFormDisabled}>{saving ? "Saving..." : connection || !multiple ? "Save SSO connection" : "Add SSO connection"}</DenButton>
-                {connection || !multiple ? (
+                <DenButton variant="primary" icon={RefreshCw} onClick={() => void handleSave()} disabled={ssoFormDisabled}>{saving ? "Saving..." : connection ? "Save SSO connection" : "Add SSO connection"}</DenButton>
+                {connection ? (
                   <DenButton variant="secondary" icon={Trash2} onClick={() => void handleDelete()} disabled={deleting || !connection || !access.canManageSso}>{deleting ? "Deleting..." : "Delete connection"}</DenButton>
                 ) : null}
               </div>
             </div>
           ) : null}
 
-          {multiple && !connection ? null : (
+          {!connection ? null : (
           <div id="sso-connection" className="scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                {multiple && connection ? (
-                  <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">{connection.displayName}</p>
-                ) : (
-                  <>
-                    <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">Current connection</p>
-                    <p className="mt-1 text-[14px] leading-6 text-gray-500">Use the generated sign-in and provider setup URLs below.</p>
-                  </>
-                )}
+                <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">{connection.displayName}</p>
               </div>
               {connection && !editing ? (
                 <div className="flex flex-wrap gap-3">
                   <DenButton variant="secondary" onClick={() => setEditing(true)} disabled={!access.canManageSso}>Edit connection</DenButton>
                   {connection.status === "enabled" ? (
-                    <DenButton variant="secondary" onClick={() => void handleDisable()} disabled={disabling || !access.canManageSso}>{disabling ? "Disabling..." : multiple ? "Disable connection" : "Disable SSO"}</DenButton>
+                    <DenButton variant="secondary" onClick={() => void handleDisable()} disabled={disabling || !access.canManageSso}>{disabling ? "Disabling..." : "Disable connection"}</DenButton>
                   ) : connection.testStatus === "succeeded" ? (
-                    <DenButton variant="primary" icon={CheckCircle2} onClick={() => void handleEnable()} disabled={enabling || !access.canManageSso}>{enabling ? "Enabling..." : multiple ? "Enable connection" : "Enable SSO"}</DenButton>
+                    <DenButton variant="primary" icon={CheckCircle2} onClick={() => void handleEnable()} disabled={enabling || !access.canManageSso}>{enabling ? "Enabling..." : "Enable connection"}</DenButton>
                   ) : (
                     <DenButton variant="primary" icon={Shield} onClick={handleOpenTestDialog} disabled={!access.canManageSso || !connection.domainVerified}>Enable Config</DenButton>
                   )}
@@ -694,7 +749,7 @@ export function SsoConnectionPanel({
                             <span className="rounded-full border border-amber-300 bg-white/80 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-800">Pending verification</span>
                           </div>
                           <p className="mt-1 max-w-2xl leading-6 text-[var(--dls-text-secondary)]">
-                            {multiple ? "This connection stays off" : "SSO remains inactive and is not offered to users"} until this DNS check proves that your workspace controls <strong>{connection.domains.join(", ") || connection.domain}</strong>.{connection.domains.length > 1 ? " Add the same TXT value at each domain's record name." : ""}
+                            This connection stays off until this DNS check proves that your workspace controls <strong>{connection.domains.join(", ") || connection.domain}</strong>.{connection.domains.length > 1 ? " Add the same TXT value at each domain's record name." : ""}
                           </p>
                         </div>
                       </div>
@@ -740,7 +795,7 @@ export function SsoConnectionPanel({
                   <div className="flex items-start gap-3 rounded-[20px] border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-900">
                     <CheckCircle2 className="mt-0.5 shrink-0" size={18} aria-hidden="true" />
                     <div>
-                      <p className="font-semibold">{connection.domains.length > 1 ? "Domains verified" : "Domain verified"}{connection.status === "enabled" ? (multiple ? " · Connection enabled" : " · SSO enabled") : ""}</p>
+                      <p className="font-semibold">{connection.domains.length > 1 ? "Domains verified" : "Domain verified"}{connection.status === "enabled" ? " · Connection enabled" : ""}</p>
                       <p className="mt-1 text-emerald-800">{connection.status === "enabled" ? "This tested configuration is active." : "The configuration is still disabled. Test it before enabling SSO."} The DNS TXT record was a one-time proof and may now be removed.</p>
                     </div>
                   </div>

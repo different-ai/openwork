@@ -32,8 +32,8 @@ export type PluginsFacts = {
   mcps?: number;
   /** Connected GitHub accounts (Sources). */
   githubSources?: number;
-  /** Plugin page: shared with everyone, a team or anyone besides its owner. */
-  sharedBeyondOwner?: boolean;
+  /** Plugin page: shared with everyone, a team or anyone besides its owner, directly or through a collection. Null: unknown. */
+  sharedBeyondOwner?: boolean | null;
   /** Plugin page: the viewer may change who can use it (owner, plugin manager or `sharing.manage_all`). */
   canEditAccess?: boolean;
 };

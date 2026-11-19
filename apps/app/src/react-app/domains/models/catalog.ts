@@ -133,6 +133,24 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
   };
 }
 
+/**
+ * Names the chosen organization model while the saved sign-in is still being checked. Organization models
+ * are not offered until that check answers, but the one already chosen keeps the name and settings it had
+ * in the last list instead of reading as nothing selected. Display only: never listed or selectable.
+ */
+export function restoringModelOption(input: {
+  current: ModelRef | undefined;
+  /** The saved sign-in has been neither verified nor rejected yet. */
+  restoring: boolean;
+  runtime: readonly ModelOption[] | null;
+  fallback?: readonly ModelOption[];
+}): ModelOption | undefined {
+  const { current } = input;
+  if (!input.restoring || !current || !isCloudManagedProviderKey(current.providerID)) return undefined;
+  const key = modelRefKey(current);
+  return [...(input.runtime ?? []), ...(input.fallback ?? [])].find((option) => modelRefKey(option) === key);
+}
+
 /** A saved choice blocked by policy or a disabled provider is not listed, even if its provider reappears. */
 export function withoutBlockedSelection(options: readonly ModelCatalogOption[], retained: RetainedModelSelection | undefined): ModelCatalogOption[] {
   if (!retained || (retained.reason !== "policy" && retained.reason !== "disabled")) return [...options];

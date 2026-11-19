@@ -20,7 +20,7 @@ import { Freestyle, FreestyleApiError, type Vm } from "freestyle"
 
 const apiKey = process.env.FREESTYLE_API_KEY
 if (!apiKey) {
-  console.error("Set FREESTYLE_API_KEY (see the get-env-var skill: dev, /openwork-ops).")
+  console.error("Set FREESTYLE_API_KEY (Infisical: dev, /openwork-ops).")
   process.exit(1)
 }
 const [{ default: identity }, { default: guestBundle }] = await Promise.all([import("../dist/desktop-identity.mjs"), import("../dist/desktop-guest-bundle.mjs")]).catch(() => {

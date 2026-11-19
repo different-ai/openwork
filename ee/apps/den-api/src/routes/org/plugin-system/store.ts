@@ -64,6 +64,7 @@ import {
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem } from "./external-keys.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -816,6 +817,7 @@ function serializeConfigObject(row: ConfigObjectRow, latestVersion: ConfigObject
     currentRelativePath: row.currentRelativePath,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     latestVersion: latestVersion ? serializeVersion(latestVersion) : null,
     objectType: row.objectType,
@@ -1012,6 +1014,7 @@ function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: Plu
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     extension: serializePluginExtension(row, componentCounts),
     marketplaces,
@@ -1691,6 +1694,10 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
+  /** The object's stable key (config-blob imports keep the source's); a slug of the title otherwise. */
+  externalKey?: string
+  /** Use this id for the new object (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
   /** Where an imported object came from in its source repository; a re-import matches and prunes on it. */
@@ -1711,7 +1718,7 @@ export async function createConfigObject(input: {
   const projection = deriveProjection({ objectType: input.objectType, value: input.value })
   const organizationId = input.context.organizationContext.organization.id
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const configObjectId = createDenTypeId("configObject")
+  const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
 
   await db.transaction(async (tx) => {
@@ -1785,6 +1792,7 @@ export async function createConfigObject(input: {
     }
   })
 
+  await firstExternalKey({ kind: "config_object", organizationId, id: configObjectId }, projection.title, input.externalKey)
   return getConfigObjectDetail(input.context, configObjectId)
 }
 
@@ -1878,6 +1886,31 @@ export async function createConfigObjectVersion(input: {
   })
 
   return getConfigObjectDetail(input.context, row.id)
+}
+
+/** Change (or clear, with null) the stable key a configuration import finds this object by. */
+export async function setConfigObjectExternalKey(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; externalKey: string | null }) {
+  const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+  }
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  if (input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "config_object", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
+  return getConfigObjectDetail(input.context, row.id)
+}
+
+/** The key a new item starts with: the one asked for when it is free, else a slug of its name. */
+async function firstExternalKey(item: KeyedItem, name: string, wanted: string | undefined): Promise<string | null> {
+  if (wanted && await setExternalKey(item, wanted, { onlyWhenUnset: true })) return wanted
+  return assignDefaultExternalKey(item, name)
+}
+
+async function changeExternalKey(item: KeyedItem, key: string | null) {
+  if (!await setExternalKey(item, key)) {
+    throw new PluginArchRouteFailure(409, "external_key_taken", `Another ${item.kind === "plugin" ? "plugin" : "skill, agent or command"} in this organization already has the key "${key}".`)
+  }
 }
 
 export async function setConfigObjectLifecycle(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; action: "archive" | "delete" | "restore" }) {
@@ -2784,6 +2817,10 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 export async function createPlugin(input: {
   context: PluginArchActorContext
   description?: string | null
+  /** The plugin's stable key (config-blob imports keep the source's); a slug of the name otherwise. */
+  externalKey?: string
+  /** Use this id for the new plugin (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: PluginId
   name: string
   sourceFormat?: string | null
   sourceRepositoryUrl?: string | null
@@ -2813,7 +2850,8 @@ export async function createPlugin(input: {
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("plugin"),
+    externalKey: null,
+    id: input.id ?? createDenTypeId("plugin"),
     name,
     organizationId: input.context.organizationContext.organization.id,
     sourceFormat: normalizeOptionalString(input.sourceFormat ?? undefined),
@@ -2838,7 +2876,7 @@ export async function createPlugin(input: {
     })
   })
 
-  return serializePlugin(row, 0)
+  return serializePlugin({ ...row, externalKey: await firstExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, name, input.externalKey) }, 0)
 }
 
 function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
@@ -3031,8 +3069,11 @@ export async function createPluginBundle(input: {
   return getPluginDetail(input.context, plugin.id)
 }
 
-export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
+export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; externalKey?: string | null; name?: string; pluginId: PluginId }) {
   const row = await ensureEditablePlugin(input.context, input.pluginId)
+  if (input.externalKey !== undefined && input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -3498,6 +3539,7 @@ async function ensureDefaultMarketplacePlugins(input: {
         createdByOrgMembershipId,
         deletedAt: null,
         description: entry.description,
+        externalKey: null,
         id: createDenTypeId("plugin"),
         name: entry.name,
         organizationId,
@@ -3665,7 +3707,8 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string }) {
+/** `id`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string; id?: MarketplaceId }) {
   const now = new Date()
   const row = {
     externalKey: input.externalKey ?? null,
@@ -3673,7 +3716,7 @@ export async function createMarketplace(input: { context: PluginArchActorContext
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("marketplace"),
+    id: input.id ?? createDenTypeId("marketplace"),
     logoUrl: normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name.trim(),
     organizationId: input.context.organizationContext.organization.id,
@@ -4115,7 +4158,7 @@ export async function listConnectorInstances(input: { connectorAccountId?: Conne
   return pageItems(filtered, input.cursor, input.limit)
 }
 
-export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; name: string; remoteId?: string | null }) {
+export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; id?: ConnectorInstanceId; name: string; remoteId?: string | null }) {
   const account = await getConnectorAccountRow(input.context.organizationContext.organization.id, input.connectorAccountId)
   if (!account) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
@@ -4126,7 +4169,7 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
     connectorType: input.connectorType,
     createdAt: now,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    id: createDenTypeId("connectorInstance"),
+    id: input.id ?? createDenTypeId("connectorInstance"),
     instanceConfigJson: input.config ?? null,
     lastSyncCursor: null,
     lastSyncStatus: null,
@@ -5591,7 +5634,7 @@ async function derivePluginMcpRequirementAccess(input: {
   }
 }
 
-async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
+export async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
   const access = await derivePluginMcpRequirementAccess({
     configObjectId: row.configObjectId,
     organizationId: row.organizationId,

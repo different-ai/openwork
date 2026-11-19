@@ -5,13 +5,14 @@ import { once } from "node:events";
 import test from "node:test";
 import {
   assertForward, assertPromotionPolicy, assertSameLatest, assertTrustedEvent, checkPromotionPolicy, compareVersions, latestStable, PROMOTION_ENVIRONMENT,
-  promote, publisherConfig, releaseConfig, releaseImages, renderClient, shouldPrepare, stableVersion, verifyRuntimeImage,
+  assertReleaseImages, promote, publisherConfig, releaseBuildArguments, releaseConfig, releaseImages, releaseRepositories, renderClient, shouldPrepare, stableVersion, verifyRuntimeImage,
 } from "./managed-stable-release.mjs";
 
 const repository = "example/project";
 const commit = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
-const candidate = { version: "1.2.10", tag: "v1.2.10", commit, bundleSha256: "c".repeat(64) };
+const images = Object.fromEntries(Object.entries(releaseRepositories("aws")).map(([kind, registry]) => [kind, `${registry}@${digest}`]));
+const candidate = { version: "1.2.10", tag: "v1.2.10", commit, images, bundleSha256: "c".repeat(64) };
 const config = {
   version: candidate.version,
   templateUrl: "https://releases.s3.us-east-1.amazonaws.com/template.json?versionId=template1",
@@ -121,11 +122,12 @@ test("workflow_run fork refs are rejected; trusted completions are only signals"
 const image = (pin) => ({ Os: "linux", Architecture: "amd64", RepoDigests: [pin], Config: { Labels: { "org.opencontainers.image.revision": commit, "org.opencontainers.image.source": `https://github.com/${repository}` } } });
 const manifest = () => ({ Descriptor: { platform: { os: "linux", architecture: "amd64" }, digest }, OCIManifest: { config: { digest: `sha256:${"f".repeat(64)}` } } });
 test("shared builder resolver selects unique Linux/amd64 pins and verifies source labels", () => {
-  const pins = releaseImages(candidate, repository, manifest, image);
+  const pins = releaseImages({ provider: "aws", candidate, repository, inspectManifest: manifest, inspectRuntime: image });
+  assert.deepEqual(Object.keys(pins).sort(), ["ai_gateway", "den_api", "den_web", "headless_runner", "workbot"]);
   assert.match(pins.den_api, /openwork-den-api@sha256:/);
   assert.match(pins.den_web, /openwork-den-web@sha256:/);
   for (const badManifest of [() => [], () => [manifest(), manifest()], () => ({ ...manifest(), Descriptor: { ...manifest().Descriptor, platform: { os: "linux", architecture: "arm64" } } })]) {
-    assert.throws(() => releaseImages(candidate, repository, badManifest, image), /Linux\/amd64/);
+    assert.throws(() => releaseImages({ provider: "aws", candidate, repository, inspectManifest: badManifest, inspectRuntime: image }), /Linux\/amd64/);
   }
   const pin = pins.den_api;
   for (const invalid of [
@@ -134,6 +136,64 @@ test("shared builder resolver selects unique Linux/amd64 pins and verifies sourc
     { ...image(pin), Config: { Labels: { ...image(pin).Config.Labels, "org.opencontainers.image.revision": "d".repeat(40) } } },
     { ...image(pin), Config: { Labels: { ...image(pin).Config.Labels, "org.opencontainers.image.source": "https://github.com/untrusted/fork" } } },
   ]) assert.throws(() => verifyRuntimeImage(invalid, pin, candidate, repository), /does not match/);
+});
+
+test("provider-aware stable selection never confuses the AWS five with GCP core plus independent health", () => {
+  const seen = [];
+  const inspectManifest = (ref) => { seen.push(ref); return manifest(); };
+  const aws = releaseImages({ provider: "aws", candidate, repository, inspectManifest, inspectRuntime: image });
+  assertReleaseImages("aws", aws);
+  for (const registry of Object.values(releaseRepositories("aws"))) {
+    assert.ok(seen.includes(`${registry}:${candidate.version}`));
+    assert.ok(seen.includes(`${registry}@${digest}`));
+  }
+  assert.equal(seen.length, 10);
+  for (const invalid of [{ ...candidate, version: "dev" }, { ...candidate, tag: "v1.2.9" }, { ...candidate, commit: "dev" }]) {
+    assert.throws(() => releaseImages({ provider: "aws", candidate: invalid, repository,
+      inspectManifest: () => { assert.fail("Invalid stable source must not contact the registry"); }, inspectRuntime: image }));
+  }
+  assert.ok(seen.every((ref) => !ref.includes(":dev") && !ref.includes(":latest")));
+  const gcp = releaseImages({ provider: "gcp", candidate, repository, inspectManifest, inspectRuntime: image });
+  assert.deepEqual(Object.keys(gcp), ["den_api", "den_web"]);
+  assertReleaseImages("gcp", gcp);
+  assert.throws(() => assertReleaseImages("aws", gcp), /inventory/);
+  assert.throws(() => releaseRepositories(), /provider/);
+  assert.throws(() => releaseRepositories("azure"), /provider/);
+  assert.deepEqual(releaseBuildArguments("aws", candidate.version, "out", "pins.json"),
+    ["infra/managed-deployments/tools/build-release.mjs", "aws", candidate.version, "out", "--image-pins", "pins.json", "--include-assistants"]);
+  assert.ok(!releaseBuildArguments("gcp", candidate.version, "out", "pins.json").includes("--include-assistants"));
+});
+
+test("runner and AI Gateway missing stable tags or invalid digest/platform/source/revision fail before publication", async () => {
+  for (const kind of ["headless_runner", "workbot", "ai_gateway"]) {
+    const registry = releaseRepositories("aws")[kind];
+    for (const mutation of [
+      (value) => ({ ...value, Architecture: "arm64" }),
+      (value) => ({ ...value, RepoDigests: [] }),
+      (value) => ({ ...value, Config: { Labels: { ...value.Config.Labels, "org.opencontainers.image.revision": "d".repeat(40) } } }),
+      (value) => ({ ...value, Config: { Labels: { ...value.Config.Labels, "org.opencontainers.image.source": "https://github.com/untrusted/fork" } } }),
+    ]) {
+      const { calls, args } = fixture();
+      await assert.rejects((async () => {
+        const images = releaseImages({ provider: "aws", candidate, repository, inspectManifest: manifest,
+          inspectRuntime: (pin) => pin.startsWith(`${registry}@`) ? mutation(image(pin)) : image(pin) });
+        await promote({ ...args, candidate: { ...candidate, images } });
+      })(), /does not match/);
+      assert.deepEqual(calls, []);
+    }
+    for (const failure of ["missing", "platform", "digest"]) {
+      assert.throws(() => releaseImages({ provider: "aws", candidate, repository, inspectRuntime: image,
+        inspectManifest: (ref) => {
+          if (!ref.startsWith(registry)) return manifest();
+          if (failure === "missing") throw new Error("Stable tag unavailable");
+          return { ...manifest(), Descriptor: { ...manifest().Descriptor, ...(failure === "platform" ? { platform: { os: "linux", architecture: "arm64" } } : { digest: "invalid" }) } };
+        },
+      }));
+    }
+  }
+  const { calls, args } = fixture();
+  await assert.rejects(promote({ ...args, candidate: { ...candidate, images: { den_api: images.den_api, den_web: images.den_web } } }), /inventory/);
+  assert.deepEqual(calls, []);
 });
 
 test("atomic configuration contains only four fields and immutable provider URLs", () => {

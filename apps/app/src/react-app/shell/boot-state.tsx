@@ -11,6 +11,7 @@ import {
 } from "react";
 
 import { failStartup, markStartupStep } from "../../app/lib/startup-diagnostics";
+import { captureOnboardingEvent } from "../../app/lib/analytics";
 
 export type BootPhaseId =
   | "idle"
@@ -70,8 +71,16 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
   // latch so subsequent background refreshes never re-show the overlay.
   const [routeReady, setRouteReady] = useState(false);
   const startedAtRef = useRef<number | null>(null);
+  const reportedPhase = useRef<BootPhaseId>("idle");
+  const recordPhase = useCallback((phase: BootPhaseId) => {
+    if (reportedPhase.current === phase) return;
+    reportedPhase.current = phase;
+    if (phase === "ready") captureOnboardingEvent("onboarding_startup_ready");
+    if (phase === "error") captureOnboardingEvent("onboarding_startup_failed", { reason: "startup_failed" });
+  }, []);
 
   const setPhase = useCallback((phase: BootPhaseId, detail?: string | null) => {
+    recordPhase(phase);
     setSnapshot((current) => {
       const nextStartedAt =
         current.phase === "idle" && phase !== "idle"
@@ -87,21 +96,25 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
         error: phase === "error" ? current.error : null,
       };
     });
-  }, []);
+  }, [recordPhase]);
 
   const setError = useCallback((message: string | null) => {
     // Boot errors come from the desktop runtime boot: the engine did not start.
-    if (message) failStartup("engine", "engine_failed");
+    if (message) {
+      failStartup("engine", "engine_failed");
+      recordPhase("error");
+    }
     setSnapshot((current) => ({
       ...current,
       error: message,
       phase: message ? "error" : current.phase,
       message: message ? PHASE_MESSAGES.error : current.message,
     }));
-  }, []);
+  }, [recordPhase]);
 
   const markReady = useCallback(() => {
     markStartupStep("engine");
+    recordPhase("ready");
     setSnapshot((current) => ({
       ...current,
       phase: "ready",
@@ -110,7 +123,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
       completedAt: Date.now(),
       error: null,
     }));
-  }, []);
+  }, [recordPhase]);
 
   const markRouteReady = useCallback(() => {
     setRouteReady(true);

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 import { ENCRYPTION_KEY, SLACK_CONNECTION_ID, encryptForDen } from "./workbot-proactive.ts";
 
 const HOUR_MS = 3_600_000;
@@ -61,10 +61,10 @@ function hashId(...parts: string[]) {
 }
 
 /**
- * My agent in the Library (`workbotProactive`): Den with Workbot and Your agent on for one organization, the
+ * My agent in the Library: Den with Workbot and Your agent on for one organization, the
  * Workbot Slack app installed (synthetic credentials, nobody linked), and the member's agent as the wake left it this
  * morning: its time zone, a DM it sent (in the delivery ledger and as a check), a quiet check, and earlier checks this
- * week. My agent starts off, so the proof shows the Library before and after. No calendar, model or Slack is reached:
+ * week. My agent is generally available. No calendar, model or Slack is reached:
  * the member's agent is not due during the proof, and "chat" is the Connect call Workbot makes for the member.
  */
 export async function workbotAgentLibraryWorld(seed: Seed) {
@@ -84,7 +84,7 @@ export async function workbotAgentLibraryWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     // Your agent on for everyone, with one responsibility the admin turned off (the member sees it locked).
     const enabled = await seed.api(den.admin, "/v1/org/workbot-settings/proactive", { method: "PUT", body: JSON.stringify({ enabled: true, responsibilities: { waiting_on_you: false } }) });
     if (!enabled.response.ok) throw new Error(`Turning on Your agent failed: ${enabled.text.slice(0, 300)}`);
@@ -150,17 +150,7 @@ export async function workbotAgentLibraryWorld(seed: Seed) {
       );
     }
 
-    const headers = (session: DenSession) => ({ authorization: `Bearer ${session.token}`, "x-openwork-org-id": organizationId, "content-type": "application/json" });
-
     const sayInChat = (name: string, body?: unknown) => chatAs(den.members.member, organizationId, name, body);
-
-    // Seed settings and check history with the parent on, then prove its off/on UI and API boundary.
-    const disabled = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-      method: "PUT",
-      headers: headers(den.admin),
-      body: JSON.stringify({ capabilities: { workbotProactive: false } }),
-    });
-    if (!disabled.response.ok) throw new Error(`Turning off Your agent failed: ${disabled.text.slice(0, 300)}`);
 
     const viewport = { width: 1280, height: 2000, deviceScaleFactor: 1 };
     const web = await seed.web({ den, signedInAs: den.members.member, startPath: "/dashboard/library", headless: true, viewport });
@@ -170,15 +160,6 @@ export async function workbotAgentLibraryWorld(seed: Seed) {
       google,
       timeZone,
       sayInChat,
-      /** The platform admin turns My agent on for this organization, as /admin does. */
-      async turnOnMyAgent() {
-        const result = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-          method: "PUT",
-          headers: headers(den.admin),
-          body: JSON.stringify({ capabilities: { workbotProactive: true } }),
-        });
-        if (!result.response.ok) throw new Error(`Turning on My agent failed: ${result.text.slice(0, 300)}`);
-      },
       async [Symbol.asyncDispose]() {
         await stack.disposeAsync();
       },

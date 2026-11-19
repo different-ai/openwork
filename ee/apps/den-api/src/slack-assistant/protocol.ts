@@ -114,13 +114,13 @@ How you talk in Slack:
 - Ask before you send, post, delete or change anything in their apps, unless they asked for that exact action in invocation.text of this message.`
 
 /**
- * How to read Google Drive and OneDrive files in Slack (the workbotDriveFiles feature). Slack turns have no computer,
+ * How to read Google Drive and OneDrive files in Slack. Slack turns have no computer,
  * so files are read inline; a file too large for that can still be shared in the thread, where the runner opens it.
  */
 export const SLACK_DRIVE_FILES_INSTRUCTIONS = `- Read Google Drive and OneDrive files with the file read in their apps; you have no computer here to download them. If it says a file is too large or has no readable text, say that plainly and ask them to share the file in this thread instead (files up to about 10 MB can be opened here). Never say you can't do anything with it.`
 
 /**
- * How the reply reaches Slack with `workbotSlackAnswerReply`: what is written before working shows in one message, and
+ * How the reply reaches Slack: what is written before working shows in one message, and
  * the last message is posted as its own reply. The words stay the model's own.
  */
 export const SLACK_ANSWER_REPLY_INSTRUCTIONS = `- What you write before doing work shows in the thread as you go. Your last message is posted as its own new reply, which is what notifies them, so write it as coming back to them with the result ("Alright, booked it…", "Here's what I found…"), in your own words. Don't repeat what you said on the way, and don't start it with "Done:".
@@ -199,9 +199,22 @@ export class SlackApiError extends Error {
 }
 const responseSchema = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough()
 export type SlackCall = (method: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>
-export function slackClient(token: string, request: typeof fetch = fetch): SlackCall {
+export const SLACK_API_BASE_URL = "https://slack.com/api"
+/**
+ * Bot tokens a sandbox's sample work apps issue start with this; Slack never issues one. It is how Den tells a
+ * sandbox's sample Slack app from a real one (sandbox-api.ts): an installation's bot token is only ever written
+ * from Slack's own install answer or by sandbox setup.
+ */
+export const SANDBOX_SLACK_TOKEN_PREFIX = "xoxb-open-workplace-"
+export function isSandboxSlackToken(token: string | null | undefined): token is string {
+  return typeof token === "string" && token.startsWith(SANDBOX_SLACK_TOKEN_PREFIX)
+}
+/** `baseUrl` is only ever a sandbox's sample Slack (sandboxSlackApiBase); everything else calls Slack. */
+export function slackClient(token: string, request: typeof fetch = fetch, baseUrl: string = SLACK_API_BASE_URL): SlackCall {
   return async (method, body) => {
-    const response = await request(`https://slack.com/api/${method}`, {
+    // A sample token is for a sandbox's sample Slack only: never send it to Slack.
+    if (baseUrl === SLACK_API_BASE_URL && isSandboxSlackToken(token)) throw new SlackApiError("sandbox_slack_unavailable")
+    const response = await request(`${baseUrl}/${method}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
