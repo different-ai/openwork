@@ -267,7 +267,7 @@ function errorReportingConfig(value: z.infer<typeof configSchema>): Config["erro
 
 function computerConfig(value: z.infer<typeof configSchema>): Config["computer"] {
   if (value.HEADLESS_COMPUTER === "off") return undefined
-  const keyName = ({ daytona: "DAYTONA_API_KEY", freestyle: "FREESTYLE_API_KEY", instabox: "INSTABOX_API_KEY" } as const)[value.HEADLESS_COMPUTER]
+  const keyName = value.HEADLESS_COMPUTER === "daytona" ? "DAYTONA_API_KEY" : value.HEADLESS_COMPUTER === "instabox" ? "INSTABOX_API_KEY" : "FREESTYLE_API_KEY"
   const apiKey = value[keyName]
   if (!apiKey) throw new Error(`Invalid headless-runner configuration: HEADLESS_COMPUTER=${value.HEADLESS_COMPUTER} needs ${keyName}`)
   if (value.HEADLESS_COMPUTER === "daytona" && !value.HEADLESS_COMPUTER_SNAPSHOT) throw new Error("Daytona computers need HEADLESS_COMPUTER_SNAPSHOT (snapshot:build:daytona)")

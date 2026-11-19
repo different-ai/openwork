@@ -188,7 +188,8 @@ export function createInstaboxProvider(options: InstaboxProviderOptions = {}): S
       await bounded(() => Sandbox.kill(identity(h.ref), conn), opts.timeoutMs)
     },
     async exec(h: SandboxHandle, spec: ExecSpec): Promise<ExecHandle> {
-      const command = spec.command ?? spec.script!
+      const command = spec.command ?? spec.script
+      if (command === undefined) throw new SandboxError({ providerId: ID, code: "invalid_state", retryable: false, message: "exec needs a command or a script" })
       if (!spec.detach) {
         const r = await run(h, { command, timeoutMs: spec.timeoutMs })
         return { id: randomUUID(), exitCode: async () => r.exitCode, logs: async () => ({ stdout: r.stdout, stderr: r.stderr }) }
@@ -199,7 +200,8 @@ export function createInstaboxProvider(options: InstaboxProviderOptions = {}): S
     async endpoint(h: SandboxHandle, port: number): Promise<Endpoint> {
       return bounded(async () => {
         const published = await (await required(h)).ports.publish(port, { access: "public" })
-        return { url: published.url, expiresAt: null, kind: "stable" as const }
+        const endpoint: Endpoint = { url: published.url, expiresAt: null, kind: "stable" }
+        return endpoint
       }, 60_000)
     },
     storage: {

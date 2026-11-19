@@ -11,10 +11,11 @@
  */
 import { randomUUID } from "node:crypto"
 import { readFile, readdir } from "node:fs/promises"
-import { Sandbox } from "@insforge/instabox-sdk"
+import { CommandExitError, Sandbox } from "@insforge/instabox-sdk"
+import { z } from "zod"
 import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from "../src/image.js"
 
-const apiKey = process.env.INSTABOX_API_KEY
+const apiKey = process.env.INSTABOX_API_KEY ?? ""
 if (!apiKey) {
   console.error("Set INSTABOX_API_KEY (an instabox API key with machines and images scopes).")
   process.exit(1)
@@ -112,30 +113,39 @@ rm -f /etc/sudoers.d/90-instabox-sudo
 touch ${marker}.ready
 `
 
+/** The fields read from the API's operation replies and error envelopes. */
+const apiReply = z.object({
+  id: z.string().optional(),
+  state: z.string().optional(),
+  machineId: z.string().optional(),
+  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+})
+
 /** Creates a sandbox whose user is `ubuntu`, which the SDK's create does not offer yet. */
-async function createAsUbuntu(sandboxName: string, from: { templateId: string } | { snapshotId: string }): Promise<Sandbox> {
+async function createAsUbuntu(sandboxName: string, templateId: string): Promise<Sandbox> {
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await fetch(`${apiUrl}${path}`, {
-      method, headers: { "X-API-Key": apiKey!, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
+      method, headers: { "X-API-Key": apiKey, Accept: "application/json", "Content-Type": "application/json", "Idempotency-Key": randomUUID() },
       ...(body ? { body: JSON.stringify(body) } : {}),
     })
-    const json = await res.json().catch(() => ({})) as { id?: string; state?: string; machineId?: string; error?: { code?: string; message?: string } }
-    if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${json.error?.code ?? ""} ${json.error?.message ?? ""}`)
-    return json
+    const reply = apiReply.parse(await res.json().catch(() => ({})))
+    if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${reply.error?.code ?? ""} ${reply.error?.message ?? ""}`)
+    return reply
   }
-  let op = await call("POST", "/v1/machines", { name: sandboxName, ...from, guestUser: "ubuntu", vault: false, metadata: { kind: "headless-computer-build" } })
+  let op = await call("POST", "/v1/machines", { name: sandboxName, templateId, guestUser: "ubuntu", vault: false, metadata: { kind: "headless-computer-build" } })
   const deadline = Date.now() + 10 * 60_000
   while (op.state !== "succeeded") {
-    if (op.state === "failed" || Date.now() > deadline) throw new Error(`create ${sandboxName} ${op.state === "failed" ? "failed" : "timed out"}: ${op.error?.message ?? ""}`)
+    if (!op.id || op.state === "failed" || Date.now() > deadline) throw new Error(`create ${sandboxName} ${op.state === "failed" ? "failed" : "did not finish"}: ${op.error?.message ?? ""}`)
     await new Promise(resolve => setTimeout(resolve, 2_000))
-    op = await call("GET", `/v1/operations/${encodeURIComponent(op.id!)}`)
+    op = await call("GET", `/v1/operations/${encodeURIComponent(op.id)}`)
   }
-  return Sandbox.connect(op.machineId!, conn)
+  if (!op.machineId) throw new Error(`create ${sandboxName} named no sandbox`)
+  return Sandbox.connect(op.machineId, conn)
 }
 
 const run = async (box: Sandbox, command: string, timeoutMs = 60_000) => {
   try { return await box.commands.run(command, { timeoutMs }) } catch (error) {
-    if (error && typeof error === "object" && "exitCode" in error) return error as { exitCode: number; stdout: string; stderr: string }
+    if (error instanceof CommandExitError) return { exitCode: error.exitCode, stdout: error.stdout, stderr: error.stderr }
     throw error
   }
 }
@@ -143,7 +153,7 @@ const run = async (box: Sandbox, command: string, timeoutMs = 60_000) => {
 const started = Date.now()
 const tag = randomUUID().slice(0, 8)
 console.log(`Building ${name} from ${base}…`)
-const builder = await createAsUbuntu(`workbot-desktop-build-${tag}`, { templateId: base })
+const builder = await createAsUbuntu(`workbot-desktop-build-${tag}`, base)
 let snapshotId: string | undefined
 try {
   const prepare = await run(builder, `sudo mkdir -p ${build}/scripting && sudo chown -R ubuntu:ubuntu ${build}`)
@@ -178,8 +188,10 @@ try {
   await builder.kill().catch(() => undefined)
 }
 
+if (!snapshotId) throw new Error("the build saved no snapshot")
+const savedSnapshotId = snapshotId
 // Check the snapshot as the runner will use it: a fresh sandbox, its desktop started by the bridge, its viewer port.
-const check = await Sandbox.create(snapshotId!, { ...conn, name: `workbot-desktop-check-${tag}`, vault: false })
+const check = await Sandbox.create(savedSnapshotId, { ...conn, name: `workbot-desktop-check-${tag}`, vault: false })
 try {
   const whoami = await run(check, "id -un; sudo -n true 2>/dev/null && echo root || echo no-root")
   if (whoami.stdout.trim() !== "ubuntu\nno-root") throw new Error(`the computer's user should be ubuntu without root, got: ${whoami.stdout.trim()}`)
@@ -196,7 +208,7 @@ try {
   if (reply.status >= 500) throw new Error(`the viewer port answered ${reply.status}`)
   console.log(`Desktop healthy on a fresh sandbox; viewer port answered ${reply.status}.`)
 } catch (error) {
-  await Sandbox.deleteSnapshot(snapshotId!, conn).catch(() => undefined)
+  await Sandbox.deleteSnapshot(savedSnapshotId, conn).catch(() => undefined)
   throw error
 } finally {
   await check.kill().catch(() => undefined)
