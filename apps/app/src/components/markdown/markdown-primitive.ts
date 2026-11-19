@@ -44,6 +44,7 @@ type MarkdownProfile = {
   imagePresentation: "chat" | "simple" | "link";
   tableHeaderClassName: string;
   tableCellClassName: string;
+  tableExpandButton: boolean;
   shikiContainer: (html: string, token: Tokens.Code) => string;
   shikiTheme: ShikiThemeConfig;
 };
@@ -53,6 +54,7 @@ const MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH = 280;
 const CODE_COPY_ICON = `<svg data-openwork-code-copy-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 const CODE_COPIED_ICON = `<svg data-openwork-code-copy-check-icon="" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true" hidden><path d="M20 6 9 17l-5-5"/></svg>`;
 const CODE_WRAP_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-3"/><path d="m12 18-3 3 3 3"/></svg>`;
+const TABLE_EXPAND_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="M9 21H3v-6"/><path d="m3 21 7-7"/></svg>`;
 const INLINE_CODE_FILE_EXTENSIONS = new Set([
   "mp4", "webm", "mov", "m4v", "ogv", "mp3", "wav", "m4a", "csv",
   "astro", "bash", "c", "cc", "cpp", "cs", "css", "dart", "docx", "ex", "exs", "gif", "go", "graphql",
@@ -199,6 +201,10 @@ function codeWrapButton() {
   return `<button type="button" data-openwork-code-wrap="" class="absolute right-11 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Enable word wrap" aria-pressed="false" title="Enable word wrap">${CODE_WRAP_ICON}</button>`;
 }
 
+function tableExpandButton(source: string) {
+  return `<button type="button" data-openwork-table-expand="${escapeAttribute(source)}" class="absolute right-1.5 top-1.5 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/table:opacity-100 [@media(hover:none)]:opacity-100" aria-label="Expand table" title="Expand table">${TABLE_EXPAND_ICON}</button>`;
+}
+
 function chatCodeBlockContainer(html: string, shiki: boolean, command: string | null) {
   const shikiAttribute = shiki ? ` data-openwork-shiki="true"` : "";
   const runAttribute = command ? ` data-openwork-code-run="${escapeAttribute(command)}"` : "";
@@ -338,6 +344,8 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-quote",
       "data-openwork-quote-copy",
       "data-openwork-shiki",
+      "data-openwork-table",
+      "data-openwork-table-expand",
       "decoding",
       "disabled",
       "hidden",
@@ -372,6 +380,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
       imagePresentation: "simple",
       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
       tableCellClassName: "border border-dls-border p-2 align-top",
+      tableExpandButton: false,
       shikiContainer: (html) => `<div data-openwork-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">${html}</div>`,
       shikiTheme: { kind: "single", theme: "github-light" },
     };
@@ -392,6 +401,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
     imagePresentation: "chat",
     tableHeaderClassName: "border border-border p-2 bg-muted text-left",
     tableCellClassName: "border border-border p-2 align-top",
+    tableExpandButton: true,
     shikiContainer: (html, token) => chatCodeBlockContainer(`<div data-openwork-code-scroll="" class="overflow-x-auto px-4 pb-3 pt-11">${html}</div>`, true, runnableShellCommand(token.text, token.lang)),
     shikiTheme: { kind: "dual", light: "github-light", dark: "github-dark" },
   };
@@ -575,7 +585,9 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         const header = token.header.map((cell) => this.tablecell({ ...cell, header: true })).join("");
         const body = token.rows.map((row) => this.tablerow({ text: row.map((cell) => this.tablecell(cell)).join("") })).join("");
 
-        return `<table class="my-4 w-full border-collapse"><thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+        const table = `<thead>${this.tablerow({ text: header })}</thead><tbody>${body}</tbody></table>`;
+        if (!profile.tableExpandButton) return `<table class="my-4 w-full border-collapse">${table}`;
+        return `<div data-openwork-table="" class="group/table relative my-4">${tableExpandButton(token.raw.trim())}<table class="w-full border-collapse">${table}</div>`;
       },
       tablerow({ text }) {
         return `<tr>${text}</tr>`;

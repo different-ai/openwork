@@ -8,6 +8,7 @@ export { default as browserDemonstrations } from "@openwork/features/flags/brows
 export { default as browserSecretHandles } from "@openwork/features/flags/browser-secret-handles"
 export { default as chatRunCommands } from "@openwork/features/flags/chat-run-commands"
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
+export { default as chatTableExpand } from "@openwork/features/flags/chat-table-expand"
 export { default as connectEngineTools } from "@openwork/features/flags/connect-engine-tools"
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"
