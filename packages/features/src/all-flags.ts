@@ -33,6 +33,7 @@ export { default as remoteDesktopDeviceLogin } from "@openwork/features/flags/re
 export { default as remoteTasksOptIn } from "@openwork/features/flags/remote-tasks-opt-in"
 export { default as sandboxGateway } from "@openwork/features/flags/sandbox-gateway"
 export { default as sandboxTools } from "@openwork/features/flags/sandbox-tools"
+export { default as sessionMultiSelect } from "@openwork/features/flags/session-multi-select"
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
 export { default as settingsFind } from "@openwork/features/flags/settings-find"
 export { default as sideChatPanel } from "@openwork/features/flags/side-chat-panel"
