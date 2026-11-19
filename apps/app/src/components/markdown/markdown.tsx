@@ -18,6 +18,7 @@ import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollec
 
 import { applyTextHighlights } from "./text-highlights";
 import {
+  CODE_RUN_BUTTON_HTML,
   createStreamingMarkdownRenderer,
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
@@ -37,6 +38,15 @@ import { enhanceNearViewport } from "./near-viewport";
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
+const CODE_RUN_RESET_DELAY_MS = 2000;
+
+function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
+  for (const block of root.querySelectorAll("[data-openwork-code-run]")) {
+    const existing = block.querySelector(":scope > [data-openwork-code-run-button]");
+    if (!runnable) existing?.remove();
+    else if (!existing) block.insertAdjacentHTML("afterbegin", CODE_RUN_BUTTON_HTML);
+  }
+}
 
 type MarkdownBlockInnerProps = {
   className?: string;
@@ -47,6 +57,7 @@ type MarkdownBlockInnerProps = {
   highlightQuery?: string;
   /** Text-first rail: GitHub pull request and issue links show their mark. */
   githubReferences?: boolean;
+  onRunCommand?: (command: string) => void;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -68,6 +79,7 @@ function MarkdownBlockInner({
   sessionReferences = false,
   highlightQuery,
   githubReferences = false,
+  onRunCommand,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -96,6 +108,7 @@ function MarkdownBlockInner({
   const references = useSessionReferencesMaybe();
   const untrusted = useUntrustedMarkdown();
   const presentation = untrusted ? "remote" : "chat";
+  const runCommand = onRunCommand && !untrusted && !streaming ? onRunCommand : null;
   const resolveReference = sessionReferences && !untrusted ? references?.resolve : undefined;
   const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer(presentation, resolveReference), [presentation, resolveReference]);
   const streamedBlocks = useMemo(
@@ -215,14 +228,16 @@ function MarkdownBlockInner({
 
       applyTextHighlights(root, highlightQuery ?? "");
       syncCodeWrapStates();
+      syncCodeRunButtons(root, runCommand !== null);
     });
-  }, [highlightQuery, rendered]);
+  }, [highlightQuery, rendered, runCommand]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !githubReferences) return;
     decorateGitHubReferences(root);
   }, [githubReferences, rendered]);
+
 
   useEffect(() => {
     const root = rootRef.current;
@@ -385,6 +400,23 @@ function MarkdownBlockInner({
         return;
       }
 
+      const runButton = event.target.closest("[data-openwork-code-run-button]");
+      if (runButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        const command = runButton.closest("[data-openwork-code-block]")?.getAttribute("data-openwork-code-run");
+        if (!command || !runCommand || runButton.disabled) return;
+        runCommand(command);
+        runButton.disabled = true;
+        const label = runButton.querySelector("[data-openwork-code-run-label]");
+        if (label) label.textContent = "Sent";
+        window.setTimeout(() => {
+          runButton.disabled = false;
+          if (label) label.textContent = "Run";
+        }, CODE_RUN_RESET_DELAY_MS);
+        return;
+      }
+
       const quoteCopyButton = event.target.closest("[data-openwork-quote-copy]");
       if (quoteCopyButton instanceof HTMLButtonElement) {
         event.preventDefault();
@@ -508,7 +540,7 @@ function MarkdownBlockInner({
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences, runCommand]);
 
   if (isEmpty) {
     return null;

@@ -194,6 +194,7 @@ import {
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
+import { runCommandPrompt } from "./run-command-prompt";
 import { fileOriginForRuntime } from "../artifacts/resolve-open-target";
 import type { ThreadStatus } from "@/lib/messages";
 import {
@@ -2309,6 +2310,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
+  const chatRunCommandsEnabled = useDesktopFeature("chatRunCommands");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
   const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
@@ -3614,6 +3616,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     void handleResumeInterrupted(interruptedTaskRecoveryPrompt);
   }, [handleResumeInterrupted]);
 
+  const runCommandGuardRef = useRef(createSingleFlight());
+  const handleRunCommand = useCallback((command: string) => {
+    if (archived || !archiveStateKnown || sessionWorkHeld(props.opencodeBaseUrl, props.sessionId)) return;
+    void runCommandGuardRef.current.run(async () => {
+      const messageID = createPromptMessageID();
+      dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
+      if (!claimQueuedSend(props.sessionId, messageID, true)) return;
+      markFeatureUsed("chatRunCommands");
+      const text = runCommandPrompt(command);
+      try {
+        await sendDraft({ messageId: messageID, mode: "prompt", parts: [{ type: "text", text }], attachments: [], text }, messageID);
+      } catch {
+        return;
+      }
+    });
+  }, [archived, archiveStateKnown, props.opencodeBaseUrl, props.sessionId, sendDraft]);
+
   useEffect(() => {
     const refreshConnectionInventory = () => {
       clearCloudInventoryCache();
@@ -4047,6 +4066,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       onStopSubagentSession={archived ? undefined : handleStopSubagentSession}
                       composerSubagentToolCallIds={subagentTrackerToolCallIds}
                       onResumeInterrupted={archived ? undefined : handleResumeInterrupted}
+                      onRunCommand={chatRunCommandsEnabled && !archived && archiveStateKnown && !archiveHeld ? handleRunCommand : undefined}
                       onOpenLibraryDetail={props.onOpenLibraryDetail}
                       onMcpReconnect={handleMcpReconnect}
                       onMcpReopenAuthorization={handleMcpReopenAuthorization}

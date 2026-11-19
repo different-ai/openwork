@@ -44,7 +44,7 @@ type MarkdownProfile = {
   imagePresentation: "chat" | "simple" | "link";
   tableHeaderClassName: string;
   tableCellClassName: string;
-  shikiContainer: string;
+  shikiContainer: (html: string, token: Tokens.Code) => string;
   shikiTheme: ShikiThemeConfig;
 };
 
@@ -129,6 +129,20 @@ function alignAttribute(align: Tokens.TableCell["align"]) {
   return align ? ` style="text-align: ${align}"` : "";
 }
 
+const SHELL_LANGUAGES = new Set(["bash", "sh", "shell", "zsh", "console", "terminal"]);
+
+export function runnableShellCommand(text: string, lang: string | undefined): string | null {
+  const language = lang?.trim().split(/\s+/)[0]?.toLowerCase();
+  if (!language || !SHELL_LANGUAGES.has(language)) return null;
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  const [line] = lines;
+  if (lines.length !== 1 || !line) return null;
+  const command = line.replace(/^\$\s+/, "").trim();
+  return command || null;
+}
+
+export const CODE_RUN_BUTTON_HTML = `<button type="button" data-openwork-code-run-button="" class="absolute right-20 top-2 z-10 inline-flex h-7 items-center justify-center gap-1 rounded-md border border-border/70 bg-background/95 px-2 text-xs font-medium text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60" aria-label="Run command and continue" title="Run command and continue"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M6 4v16l14-8z"/></svg><span data-openwork-code-run-label="">Run</span></button>`;
+
 function codeLanguageClass(lang: string | undefined) {
   const normalized = lang?.trim().split(/\s+/)[0];
 
@@ -185,16 +199,18 @@ function codeWrapButton() {
   return `<button type="button" data-openwork-code-wrap="" class="absolute right-11 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md border border-border/70 bg-background/95 text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Enable word wrap" aria-pressed="false" title="Enable word wrap">${CODE_WRAP_ICON}</button>`;
 }
 
-function chatCodeBlockContainer(html: string, shiki: boolean) {
+function chatCodeBlockContainer(html: string, shiki: boolean, command: string | null) {
   const shikiAttribute = shiki ? ` data-openwork-shiki="true"` : "";
+  const runAttribute = command ? ` data-openwork-code-run="${escapeAttribute(command)}"` : "";
 
-  return `<div data-openwork-code-block=""${shikiAttribute} class="relative my-4 overflow-hidden rounded-[18px] border border-border/70 bg-gray-2/60 font-mono text-xs leading-6 text-foreground">${codeWrapButton()}${codeCopyButton()}${html}</div>`;
+  return `<div data-openwork-code-block=""${shikiAttribute}${runAttribute} class="relative my-4 overflow-hidden rounded-[18px] border border-border/70 bg-gray-2/60 font-mono text-xs leading-6 text-foreground">${codeWrapButton()}${codeCopyButton()}${html}</div>`;
 }
 
 function chatCodeBlockHtml(text: string, lang: string | undefined) {
   return chatCodeBlockContainer(
     `<pre data-openwork-code-scroll="" class="overflow-x-auto px-4 pb-3 pt-11"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`,
     false,
+    runnableShellCommand(text, lang),
   );
 }
 
@@ -308,6 +324,7 @@ function sanitizeMarkdownHtml(value: string) {
       "data-openwork-code-copy-check-icon",
       "data-openwork-code-copy-icon",
       "data-openwork-code-copy-label",
+      "data-openwork-code-run",
       "data-openwork-code-scroll",
       "data-openwork-code-wrap",
       "aria-label",
@@ -355,7 +372,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
       imagePresentation: "simple",
       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
       tableCellClassName: "border border-dls-border p-2 align-top",
-      shikiContainer: `<div data-openwork-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
+      shikiContainer: (html) => `<div data-openwork-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">${html}</div>`,
       shikiTheme: { kind: "single", theme: "github-light" },
     };
   }
@@ -375,7 +392,7 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
     imagePresentation: "chat",
     tableHeaderClassName: "border border-border p-2 bg-muted text-left",
     tableCellClassName: "border border-border p-2 align-top",
-    shikiContainer: chatCodeBlockContainer(`<div data-openwork-code-scroll="" class="overflow-x-auto px-4 pb-3 pt-11">%s</div>`, true),
+    shikiContainer: (html, token) => chatCodeBlockContainer(`<div data-openwork-code-scroll="" class="overflow-x-auto px-4 pb-3 pt-11">${html}</div>`, true, runnableShellCommand(token.text, token.lang)),
     shikiTheme: { kind: "dual", light: "github-light", dark: "github-dark" },
   };
 }
@@ -615,7 +632,7 @@ async function highlightedCodeHtml(
       transformers: markdownTransformers(),
     });
 
-  return profile.shikiContainer.replace("%s", html);
+  return profile.shikiContainer(html, token);
 }
 
 function highlightedCodeExtension(profile: MarkdownProfile, generatedHtmlTokens: WeakSet<object>): MarkedExtension<string, string> {

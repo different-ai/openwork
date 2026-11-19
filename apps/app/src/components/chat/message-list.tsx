@@ -671,7 +671,7 @@ type AssistantMessageProps = {
 
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
-    const { showThinking, highlightQuery } = useMessageList()
+    const { showThinking, highlightQuery, onRunCommand } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
@@ -701,6 +701,7 @@ const AssistantMessage = React.memo(
                     markdown
                     sessionReferences
                     githubReferences
+                    onRunCommand={onRunCommand}
                     isStreaming={isStreaming}
                     highlightQuery={highlightQuery}
                   >
