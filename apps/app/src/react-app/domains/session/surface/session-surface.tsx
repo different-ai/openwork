@@ -13,6 +13,10 @@ import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 import { Check, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { SandboxActivityContext } from "@/components/chat/current-tool-lifecycle-context";
+import { Badge } from "@/components/ui/badge";
+import { sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
+import { sandboxCurrentStepText, useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -1402,6 +1406,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     endpoint: { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
     sessionId: props.sessionId,
   };
+  const sandboxConnection = { client: props.client, workspaceId: props.workspaceId };
+  const { settings: sandboxSettings } = useSandboxSettings(sandboxConnection);
+  const { status: sandboxStatus } = useSandboxStatus(sandboxConnection, Boolean(sandboxSettings.data?.pending));
+  const sandboxPending = sandboxSettings.data?.pending === true;
+  const sandboxMode = sandboxStatus.data?.mode ?? "off";
+  const sandboxStep = sandboxStatus.data?.state === "preparing" ? sandboxCurrentStepText(sandboxStatus.data) : null;
+  const sandboxActivity = useMemo(() => sandboxStep ? { step: sandboxStep, force: sandboxMode === "force" } : null, [sandboxStep, sandboxMode]);
+  const [sandboxSendNotice, setSandboxSendNotice] = useState<{ owner: string; message: string } | null>(null);
   const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
   const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
   const setError = useCallback((nextError: SessionError | null) => {
@@ -2474,6 +2486,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     pendingSendsRef.current.set(submissionId, sessionOwner);
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
+    setSandboxSendNotice(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
       if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
@@ -2526,6 +2539,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return result;
     } catch (nextError) {
+      const transition = sandboxTransitionNote(nextError, sandboxPending || sandboxMode === "force");
+      if (transition && getQueuedSendGeneration(props.sessionId) === generation) {
+        dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
+        if (activeSessionOwnerRef.current === sessionOwner) {
+          setSandboxSendNotice({ owner: sessionOwner, message: transition });
+          setAwaitingAssistantBaseline(null);
+        }
+        throw nextError;
+      }
       const wall = autoAccessWallFromError(nextError, sessionModel.selectedModel);
       if (wall && !isPromptAdmissionUnknown(nextError)) {
         await rememberRejection(wall);
@@ -2568,7 +2590,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
+  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages, sandboxPending, sandboxMode]);
 
   const clearComposer = useCallback(() => {
     clearPersistedDraft();
@@ -4022,6 +4044,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         messages={visibleMessages}
                         active={!archived && archiveStateKnown && !archiveHeld && Boolean(props.onOpenLibraryDetail)}
                       >
+                        <SandboxActivityContext.Provider value={sandboxActivity}>
                         <MessageList
                           messageIdReplacements={pendingReconciliation.messageIdReplacements}
                           viewport={messageViewport}
@@ -4032,6 +4055,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                           retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                           syncHealth={runSyncHealth}
                         />
+                        </SandboxActivityContext.Provider>
                       </SkillSharingProvider>
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -4150,7 +4174,17 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div> : null}
         <RemoteAccessAsk />
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
+        {sandboxSendNotice?.owner === sessionOwner ? <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{sandboxSendNotice.message}</p> : null}
         <ReactSessionComposer
+          sandboxModeControl={sandboxMode === "off" ? null : sandboxStatus.data?.state === "failed" || sandboxStatus.data?.state === "unsupported" ? (
+            <Button data-testid="sandbox-mode-pill" variant="ghost" size="xs" className="rounded-full bg-muted text-muted-foreground" onClick={() => props.onOpenSettingsSection?.("permissions")}>
+              {t("sandbox.attention")}
+            </Button>
+          ) : (
+            <Badge data-testid="sandbox-mode-pill" variant="secondary" title={sandboxStep ?? undefined}>
+              {sandboxStep ? t("sandbox.starting") : sandboxMode === "force" ? t("sandbox.only") : t("sandbox.tag")}
+            </Badge>
+          )}
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
           mentions={mentions}

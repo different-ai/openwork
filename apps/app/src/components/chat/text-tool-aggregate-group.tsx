@@ -4,6 +4,7 @@ import { Fragment } from "react"
 
 import { RAIL_LINE, RAIL_ROW, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
+import { SandboxToolTag, toolRanInSandbox, useSandboxToolStep } from "@/components/chat/current-tool-lifecycle-context"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { TextCommandCard, TextDiffCard, TextDiffStats, TextTechnicalDetails } from "@/components/chat/text-activity-details"
 import { t } from "@/i18n"
@@ -32,6 +33,7 @@ function buildRows(parts: AnyToolPart[], thoughts: AggregateThought[]): TextAggr
     const same = previous !== undefined
       && part.type === "dynamic-tool" && previous.part.type === "dynamic-tool"
       && part.toolName === "read" && previous.part.toolName === "read"
+      && toolRanInSandbox(part) === toolRanInSandbox(previous.part)
       && JSON.stringify(part.input) === JSON.stringify(previous.part.input)
       && settledStatus(part) === "done" && settledStatus(previous.part) === "done"
       && !thoughts.some((thought) => thought.afterIndex === index)
@@ -77,6 +79,9 @@ function TextStepRow({ row, status, disclosureKey }: {
   const part = row.part
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
   const sentence = textStepSentence(part, status)
+  const sandboxStep = useSandboxToolStep(part, status === "running")
+  const sandboxUpdating = part.state === "output-error" && /\bsandbox (?:is )?(?:restarting|updating)\b/i.test(part.errorText)
+  const stepNote = sandboxUpdating ? t("sandbox.applying") : sandboxStep
   const command = commandOf(part)
   const output = outputOf(part)
   const edit = status === "failed" ? null : editTexts(part)
@@ -86,7 +91,8 @@ function TextStepRow({ row, status, disclosureKey }: {
   const tone = status === "failed" ? "failed" : status === "waiting" ? "waiting" : status === "running" ? "running" : "normal"
   const line = (
     <>
-      <TextSentenceLine verb={sentence.verb} object={sentence.object} title={sentence.title} tone={tone} />
+      <TextSentenceLine verb={stepNote ?? sentence.verb} object={stepNote ? undefined : sentence.object} title={stepNote ? undefined : sentence.title} tone={sandboxUpdating ? "normal" : tone} />
+      <SandboxToolTag part={part} />
       {row.repeat > 1 ? <RailMeta><span data-tool-aggregate-repeat>×{row.repeat}</span></RailMeta> : null}
       {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}
       {expandable ? <TrailingChevron open={open} /> : null}
@@ -138,6 +144,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
 
   const inFlightPart = parts.find((part) => isToolPartInFlight(part))
   const currentLifecycle = resolveLifecycle(inFlightPart?.toolCallId ?? "", Boolean(inFlightPart))
+  const groupSandboxStep = useSandboxToolStep(inFlightPart, currentLifecycle === "running")
   const lifecycle = getToolAggregateLifecycle(parts, currentLifecycle)
   const running = lifecycle === "running"
   const rowStatus = (part: AnyToolPart): TextStepStatus => {
@@ -183,7 +190,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
       >
         {lifecycle === "waiting" ? <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" className="shrink-0" /> : null}
         <span data-text-group-summary="" className="min-w-0 shrink truncate">
-          {segments.map((segment, index) => (
+          {groupSandboxStep ?? segments.map((segment, index) => (
             <Fragment key={segment.verb}>
               {index > 0 ? <span className="text-slate-9">, </span> : null}
               <span className="text-muted-foreground">{segment.verb}</span>

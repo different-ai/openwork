@@ -1,33 +1,60 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentPermissionBlockedBy, hostExecutionRowVisible, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
+import { agentPermissionDefinition, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
+import { agentPermissionBlockedBy, agentPermissionToggleState, sandboxRequirementVisibility, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
 
-const keys = (hostExecution: boolean) => visibleAgentPermissionGroups("all", { hostExecution }).flatMap((group) => group.definitions.map((definition) => definition.key));
+const on = { sandboxTools: true };
+const off = { sandboxTools: false };
+const force: AgentPermissionSettings = { hostExecution: { decision: "deny" } };
+const use: AgentPermissionSettings = { sandboxOptOut: { decision: "deny" } };
 
-test("Run tools on this computer sits with commands, and only when the editor offers it", () => {
-  assert.deepEqual(keys(true).slice(0, 2), ["commands", "hostExecution"]);
-  assert.equal(keys(false).includes("hostExecution"), false);
-  assert.equal(visibleAgentPermissionGroups("browser").flatMap((group) => group.definitions).some((definition) => definition.key === "hostExecution"), false);
+test("both requirements sit in Commands and files, not Browser", () => {
+  const [commands] = visibleAgentPermissionGroups("all", sandboxRequirementVisibility(on, {}, null));
+  assert.equal(commands?.label, "Commands and files");
+  assert.deepEqual(commands.definitions.slice(0, 3).map((definition) => definition.key), ["commands", "sandboxOptOut", "hostExecution"]);
+  assert.equal(visibleAgentPermissionGroups("browser").flatMap((group) => group.definitions).some((definition) => definition.key === "hostExecution" || definition.key === "sandboxOptOut"), false);
 });
 
-test("with the rollout off the row shows only where a setting is already saved", () => {
-  const off = { sandboxOnly: false };
-  assert.equal(hostExecutionRowVisible({ sandboxOnly: true }, {}, null), true);
-  assert.equal(hostExecutionRowVisible(off, {}, null), false);
-  assert.equal(hostExecutionRowVisible(off, { hostExecution: { decision: "deny" } }, null), true);
-  assert.equal(hostExecutionRowVisible(off, {}, { hostExecution: { decision: "deny" } }), true);
-  assert.equal(hostExecutionRowVisible(off, {}, {}), false);
-});
-
-test("a required sandbox locks what the host refuses, and says so when the sandbox is off", () => {
-  const required = { hostExecution: { decision: "deny" as const } };
-  for (const key of ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"]) {
-    assert.equal(agentPermissionBlockedBy(key, required, null)?.key, "host-execution", key);
-    assert.equal(agentPermissionBlockedBy(key, {}, required)?.key, "host-execution", `${key} inherits Everyone's`);
-    assert.equal(agentPermissionBlockedBy(key, { hostExecution: { decision: "allow" } }, required), null, `${key} follows the team's own setting`);
+test("stored and inherited requirements remain visible while rollout is off", () => {
+  assert.deepEqual(sandboxRequirementVisibility(off, {}, null), { hostExecution: false, sandboxOptOut: false });
+  for (const [settings, everyone] of [[use, {}], [{}, use]]) {
+    assert.deepEqual(sandboxRequirementVisibility(off, settings, everyone), { hostExecution: false, sandboxOptOut: true });
   }
-  assert.equal(agentPermissionBlockedBy("commands", required, null), null);
-  assert.equal(agentPermissionBlockedBy("hostExecution", required, null, { sandboxOnly: true }), null);
-  assert.equal(agentPermissionBlockedBy("hostExecution", required, null, { sandboxOnly: false })?.key, "sandbox-off");
-  assert.equal(agentPermissionBlockedBy("hostExecution", {}, null, { sandboxOnly: false }), null);
+  for (const [settings, everyone] of [[force, {}], [{}, force]]) {
+    assert.deepEqual(sandboxRequirementVisibility(off, settings, everyone), { hostExecution: true, sandboxOptOut: true });
+  }
+  const [commands] = visibleAgentPermissionGroups("all", sandboxRequirementVisibility(off, {}, null));
+  assert.equal(commands?.definitions.some((definition) => definition.key === "hostExecution" || definition.key === "sandboxOptOut"), false);
+});
+
+test("Force shows Use checked and locked without changing its stored decision", () => {
+  const definition = agentPermissionDefinition("sandboxOptOut");
+  const included = agentPermissionBlockedBy("sandboxOptOut", {}, force, on);
+  assert.deepEqual(included, { key: "force-includes-use", reason: "Included in Force OpenWork Sandbox" });
+  for (const decision of ["allow", "deny"] satisfies ("allow" | "deny")[]) {
+    assert.deepEqual(agentPermissionToggleState(definition, decision, included?.key), { checked: true, disabled: true, onDecision: "deny", offDecision: "allow" });
+    assert.deepEqual(agentPermissionToggleState(definition, decision), { checked: decision === "deny", disabled: false, onDecision: "deny", offDecision: "allow" });
+  }
+});
+
+test("Force annotates dependent controls, and Use alone does not", () => {
+  for (const key of ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"]) {
+    assert.equal(agentPermissionBlockedBy(key, force, null)?.reason, "Blocked while Force OpenWork Sandbox is on.");
+    assert.equal(agentPermissionBlockedBy(key, {}, force)?.reason, "Blocked while Force OpenWork Sandbox is on.");
+    assert.equal(agentPermissionBlockedBy(key, { hostExecution: { decision: "allow" } }, force), null, `${key} follows the team's own setting`);
+    assert.equal(agentPermissionBlockedBy(key, use, null), null);
+  }
+  assert.equal(agentPermissionBlockedBy("fileEdits", force, null), null);
+  assert.equal(agentPermissionBlockedBy("hostExecution", force, null, on), null);
+});
+
+test("rollout off shows the existing requirement and lets an admin switch it off, not on", () => {
+  const keys = ["hostExecution", "sandboxOptOut"] satisfies (keyof AgentPermissionSettings)[];
+  for (const key of keys) {
+    const lock = agentPermissionBlockedBy(key, {}, null, off);
+    assert.equal(lock?.key, "sandbox-off");
+    const definition = agentPermissionDefinition(key);
+    assert.equal(agentPermissionToggleState(definition, "allow", lock?.key).disabled, true);
+    assert.equal(agentPermissionToggleState(definition, "deny", lock?.key).disabled, false);
+  }
 });

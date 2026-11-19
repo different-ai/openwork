@@ -472,11 +472,36 @@ export type OpenworkAuthorizedFoldersResponse = {
 };
 
 export type OpenworkSandboxSettingsResponse = {
+  featureEnabled: boolean;
+  useSandbox: boolean;
+  forceSandbox: boolean;
+  effectiveUseSandbox: boolean;
+  effectiveForceSandbox: boolean;
+  managedUse: boolean;
+  managedForce: boolean;
+  pending: boolean;
+  verification: "verified" | "checking" | "unavailable";
   allowHostExecution: boolean;
   effectiveAllowHostExecution: boolean;
-  pending?: boolean;
   managed: boolean;
-  featureEnabled: boolean;
+};
+
+export type SandboxSettingsUpdate = { useSandbox?: boolean; forceSandbox?: boolean };
+export type SandboxStepId = "download" | "start" | "folders";
+export type SandboxFailureCode = "unsupported_platform" | "virtualization_unavailable" | "image_failed" | "start_failed"
+  | "folders_failed" | "timed_out" | "unavailable";
+export type OpenworkSandboxStatusResponse = {
+  mode: "off" | "use" | "force";
+  state: "off" | "idle" | "preparing" | "ready" | "failed" | "unsupported";
+  steps: { id: SandboxStepId; state: "waiting" | "active" | "done"; completedBytes?: number; totalBytes?: number }[];
+  imageBytes: number | null;
+  imageSource: "bundled" | "download";
+  estimatedRemainingMs: number | null;
+  startedAt: number | null;
+  readyAt: number | null;
+  lastPrepareMs: number | null;
+  folders: { path: string; access: "rw" | "ro"; kind: "workspace" | "folder" }[];
+  error: { code: SandboxFailureCode; message: string; action: string | null; retryable: boolean } | null;
 };
 
 export type OpenworkPermissionAction = "allow" | "ask" | "deny";
@@ -1454,45 +1479,36 @@ const UPLOAD_MIN_BYTES_PER_SECOND = 256 * 1024;
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-async function fetchWithTimeout(
-  fetchImpl: FetchLike,
-  url: string,
-  init: RequestInit,
+async function withRequestTimeout<T>(
+  work: (signal: AbortSignal | null | undefined) => Promise<T>,
+  signal: AbortSignal | null | undefined,
   timeoutMs: number,
 ) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return fetchImpl(url, init);
-  }
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return work(signal);
 
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const signal = controller?.signal;
-  const initWithSignal = signal
-    ? { ...init, signal: init.signal ? AbortSignal.any([signal, init.signal]) : signal }
-    : init;
-
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
+  const controller = new AbortController();
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
-      }
       reject(new Error("Request timed out."));
+      controller.abort();
     }, timeoutMs);
   });
-
   try {
-    return await Promise.race([fetchImpl(url, initWithSignal), timeoutPromise]);
+    return await Promise.race([work(requestSignal), timeout]);
   } catch (error) {
-    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
-    if (name === "AbortError") {
+    if (error && typeof error === "object" && "name" in error && error.name === "AbortError") {
       throw new Error("Request timed out.");
     }
     throw error;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timeoutId);
   }
+}
+
+function fetchWithTimeout(fetchImpl: FetchLike, url: string, init: RequestInit, timeoutMs: number) {
+  return withRequestTimeout((signal) => fetchImpl(url, { ...init, signal }), init.signal, timeoutMs);
 }
 
 async function requestJson<T>(
@@ -1502,20 +1518,22 @@ async function requestJson<T>(
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = options.desktopTransport === "main" && isDesktopRuntime() ? desktopFetchViaMain : resolveFetch(url);
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    {
+  const { response, text } = await withRequestTimeout(async (signal) => {
+    const response = await fetchImpl(url, {
       method: options.method ?? "GET",
-      signal: options.signal,
+      signal,
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
-    },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
-  );
+    });
+    return { response, text: await response.text() };
+  }, options.signal, options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS);
 
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : null;
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch (error) {
+    if (response.ok || response.status !== 404) throw error;
+  }
 
   if (!response.ok) {
     const code = typeof json?.code === "string" ? json.code : "request_failed";
@@ -1659,6 +1677,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     status: 6_000,
     diagnostics: AGENT_CONTEXT_DIAGNOSTICS_REQUEST_TIMEOUT_MS,
     config: 10_000,
+    permissionsRead: 8_000,
     cloudMcpHealth: 12_000,
     cloudMcpProbeHealth: 30_000,
     cloudMcpReconcile: 60_000,
@@ -1941,7 +1960,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkAuthorizedFoldersResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/authorized-folders`,
-        { token, hostToken, timeoutMs: timeouts.config },
+        { token, hostToken, timeoutMs: timeouts.permissionsRead },
       ),
     setAuthorizedFolders: (workspaceId: string, folders: string[]) =>
       requestJson<OpenworkAuthorizedFoldersUpdateResponse>(
@@ -1959,9 +1978,9 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<OpenworkSandboxSettingsResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
-        { token, hostToken, timeoutMs: timeouts.config },
+        { token, hostToken, timeoutMs: timeouts.permissionsRead },
       ),
-    setSandboxSettings: (workspaceId: string, allowHostExecution: boolean) =>
+    setSandboxSettings: (workspaceId: string, body: SandboxSettingsUpdate) =>
       requestJson<OpenworkSandboxSettingsResponse>(
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/sandbox-settings`,
@@ -1969,9 +1988,21 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           token,
           hostToken,
           method: "PUT",
-          body: { allowHostExecution },
+          body,
           timeoutMs: timeouts.config,
         },
+      ),
+    getSandboxStatus: (workspaceId: string) =>
+      requestJson<OpenworkSandboxStatusResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-status`,
+        { token, hostToken, timeoutMs: timeouts.permissionsRead },
+      ),
+    prepareSandbox: (workspaceId: string) =>
+      requestJson<OpenworkSandboxStatusResponse>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sandbox-status/prepare`,
+        { token, hostToken, method: "POST", timeoutMs: timeouts.config },
       ),
     getRuntimeDisabledProviders: (workspaceId: string) =>
       requestJson<OpenworkRuntimeDisabledProvidersResult>(

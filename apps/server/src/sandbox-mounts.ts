@@ -60,6 +60,12 @@ async function canonicalCandidate(path: string): Promise<string> {
   }
 }
 
+export class SandboxFolderError extends Error {
+  constructor(readonly folder: string, cause?: unknown) {
+    super(`The sandbox couldn't connect to “${basename(folder) || folder}”.`, { cause });
+  }
+}
+
 export async function resolveSandboxMounts(mounts: readonly MicrosandboxMount[], excluded: readonly string[], externalDirectory: Readonly<Record<string, unknown>> = {}): Promise<MicrosandboxMount[]> {
   const protectedPaths = await Promise.all(excluded.map(path => canonicalCandidate(resolve(path))));
   const restrictions = await Promise.all(Object.entries(externalDirectory)
@@ -67,8 +73,9 @@ export async function resolveSandboxMounts(mounts: readonly MicrosandboxMount[],
     .map(([path]) => canonicalCandidate(path.slice(0, -2))));
   const resolved: MicrosandboxMount[] = [];
   for (const mount of mounts) {
-    const hostPath = await realpath(mount.hostPath);
-    if (!(await stat(hostPath)).isDirectory()) throw new Error("An Authorized Folder is not a directory.");
+    const hostPath = await realpath(mount.hostPath).catch(error => { throw new SandboxFolderError(mount.guestPath, error); });
+    const metadata = await stat(hostPath).catch(error => { throw new SandboxFolderError(mount.guestPath, error); });
+    if (!metadata.isDirectory()) throw new SandboxFolderError(mount.guestPath);
     if (hostPath === "/" || protectedPaths.some(path => inside(path, hostPath) || inside(hostPath, path))) {
       throw new Error("A sandbox mount would expose protected runtime state. Remove that Authorized Folder.");
     }

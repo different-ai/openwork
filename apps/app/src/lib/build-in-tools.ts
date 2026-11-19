@@ -294,6 +294,23 @@ type BuiltInDynamicToolPart<ToolName extends string, Input, Output = string> =
       }
   );
 
+export function sandboxToolRenderer(name: string) {
+  switch (name) {
+    case "sandbox_shell": return "bash";
+    case "sandbox_read": return "read";
+    case "sandbox_write": return "write";
+    case "sandbox_edit": return "edit";
+    case "sandbox_glob": return "glob";
+    case "sandbox_grep": return "grep";
+    default: return name;
+  }
+}
+
+export function isSandboxCapableTool(name: string) {
+  return name === "bash" || name === "shell" || name === "read" || name === "write"
+    || name === "edit" || name === "glob" || name === "grep";
+}
+
 export type BashToolPart = BuiltInDynamicToolPart<"bash", BashInput>;
 
 export function isBashToolPart(part: ToolUIPart | DynamicToolUIPart): part is BashToolPart {

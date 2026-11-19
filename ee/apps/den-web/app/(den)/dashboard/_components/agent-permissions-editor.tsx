@@ -56,7 +56,8 @@ import {
   agentPermissionBlockedBy,
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
-  hostExecutionRowVisible,
+  agentPermissionToggleState,
+  sandboxRequirementVisibility,
   storedAgentPermissionDecision,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -372,7 +373,6 @@ function ResetToEveryone({ team, changes, previous, remove, removeError, removin
 /** One line per row, in the words people use (DESIGN.md C3); the full detail stays in the type's description. */
 const ROW_COPY: Record<string, string> = {
   commands: "Commands the agent runs in the terminal, like npm test",
-  hostExecution: "Off runs commands and files in a local sandbox, and blocks apps, the built-in browser and local MCP servers",
   fileEdits: "Create, change and delete files in the member's folders",
   externalFolders: "Read and change files outside the member's workspace folders",
   computerUse: "See and control apps on the member's computer",
@@ -401,13 +401,13 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
 }) {
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   const { orgContext } = useOrgDashboard();
-  const features = { sandboxOnly: orgFeatureEnabled(orgContext, "sandboxTools") };
-  const hostExecution = hostExecutionRowVisible(features, settings, team === null ? null : everyone);
+  const features = { sandboxTools: orgFeatureEnabled(orgContext, "sandboxTools") };
+  const sandboxRows = sandboxRequirementVisibility(features, settings, team === null ? null : everyone);
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area, { hostExecution }).map((group) => (
+        {visibleAgentPermissionGroups(area, sandboxRows).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -445,10 +445,14 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
   onChange: (setting: AgentPermissionSetting | null) => void;
 }) {
   const labelId = useId();
+  const blockedById = useId();
   const defaultDecision = agentPermissionDefaultDecision(definition.key);
   const inheritedDecision = everyoneSetting?.decision ?? defaultDecision;
   const ownDecision = setting?.decision;
   const effective = team ? ownDecision ?? inheritedDecision : ownDecision ?? defaultDecision;
+  const toggle = agentPermissionToggleState(definition, effective, blockedBy?.key);
+  const requirementTestId = definition.key === "sandboxOptOut" ? "sandbox-use-requirement"
+    : definition.key === "hostExecution" ? "sandbox-force-requirement" : undefined;
   // A team's row is changed while it has anything of its own; otherwise it follows Everyone.
   const changed = team !== null && normalizeAgentPermissionSetting(definition, setting) !== null;
   // Existing Everyone Allow controls store nothing; upload Ask and Allow stay
@@ -463,7 +467,8 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
           <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
-          <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
+          {/* The sandbox settings deliberately show their full descriptions alongside the labels (P2 exception). */}
+          <p className={`${definition.toggleMeans === "requires" ? "" : "truncate "}text-[12px] leading-4 text-[var(--dls-text-secondary)]`} title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
         {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
         <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
@@ -475,9 +480,11 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
             <DenSwitch
               size="sm"
               aria-label={definition.label}
-              checked={effective === "allow"}
-              disabled={!editable}
-              onChange={(checked) => setDecision(checked ? "allow" : "deny")}
+              aria-describedby={blockedBy ? blockedById : undefined}
+              testId={requirementTestId}
+              checked={toggle.checked}
+              disabled={!editable || toggle.disabled}
+              onChange={(checked) => setDecision(checked ? toggle.onDecision : toggle.offDecision)}
             />
           ) : (
             <div className="w-full">
@@ -497,7 +504,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
         </div>
       </div>
       {blockedBy ? (
-        <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-${blockedBy.key}`}>
+        <p id={blockedById} className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-${blockedBy.key}`}>
           <Lock className="size-3.5 shrink-0" aria-hidden="true" />
           {blockedBy.reason}
         </p>

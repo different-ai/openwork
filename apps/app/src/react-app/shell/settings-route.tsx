@@ -72,6 +72,7 @@ import {
   commitRouteWorkspaceSelection,
   createRouteRefreshLifecycle,
   mapRouteWorkspaceLoads,
+  publishSettingsShellAndLoadHistory,
   routeWorkspaceSelectionCommitter,
 } from "@/react-app/shell/route-refresh-control";
 import { createConnectionsStore, useConnectionsStoreSnapshot } from "@/react-app/domains/connections/store";
@@ -106,7 +107,7 @@ import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
-import { HostExecutionPanel } from "@/react-app/domains/settings/panels/host-execution-panel";
+import { SandboxPanel } from "@/react-app/domains/settings/panels/sandbox-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { SETTINGS_FIND_LABEL } from "@/react-app/domains/settings/find/settings-find";
@@ -1171,16 +1172,14 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const { updateAutoCheck, setUpdateAutoCheck, updateAutoDownload, setUpdateAutoDownload } = electronUpdaterState;
 
   const workspaceSessionGroups = useMemo(
-    // Settings has no per-workspace loading state; the empty set keeps the
-    // previous behavior (error -> "error", otherwise "ready").
-    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId, new Set()),
+    () => toSessionGroups(workspaces, sessionsByWorkspaceId, errorsByWorkspaceId,
+      new Set(workspaces.filter((workspace) => !(workspace.id in sessionsByWorkspaceId)).map((workspace) => workspace.id))),
     [errorsByWorkspaceId, sessionsByWorkspaceId, workspaces],
   );
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
   const settingsFindEnabled = useDesktopFeature("settingsFind");
-  const sandboxToolsEnabled = useDesktopFeature("sandboxTools");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -1577,70 +1576,52 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         await routeWorkspaceSelectionCommitter.settled();
         if (!attempt.isCurrent()) return;
       }
-      const sessionEntries = await mapRouteWorkspaceLoads(
-        nextWorkspaces,
-        async (workspace) => {
+      void publishSettingsShellAndLoadHistory({
+        isCurrent: attempt.isCurrent,
+        publishShell: () => {
+          setOpenworkClient(client);
+          setBaseUrl(normalizedBaseUrl);
+          setToken(resolvedToken);
+          setWorkspaces(nextWorkspaces);
+          setLegacySelectedWorkspaceId((current) => {
+            const preferred = routeWorkspaceIdRef.current || navigationWorkspaceId || current || readActiveWorkspaceId() || "";
+            const next = reconcileSelectedWorkspaceId(preferred, list, desktopList, nextWorkspaces);
+            writeActiveWorkspaceId(next || null);
+            return next;
+          });
+        },
+        loadHistory: () => mapRouteWorkspaceLoads(nextWorkspaces, async (workspace): Promise<{ workspaceId: string; sessions: RouteSession[]; error: string | null }> => {
           const endpoint = routeWorkspaceServerClientResolver(workspace);
-          if (!endpoint) {
-            return { workspaceId: workspace.id, sessions: [], error: null as string | null };
-          }
-          if (!serverWorkspaceIds.has(workspace.id)) {
-            return { workspaceId: workspace.id, sessions: [], error: null as string | null };
+          if (!endpoint || !serverWorkspaceIds.has(workspace.id)) {
+            return { workspaceId: workspace.id, sessions: [], error: null };
           }
           try {
             const response = await readRouteSessionsWithRetry({
               load: () => listRouteSessions(endpoint),
               retryDelaysMs: [250, 750, 1_500],
             });
-            const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
-            const items = workspaceRoot
-              ? response.filter((session) =>
-                  normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
-                )
-              : response;
-            return {
-              workspaceId: workspace.id,
-              sessions: items,
-              error: null as string | null,
-              connectionState: null as WorkspaceConnectionState | null,
-            };
+            const root = normalizeDirectoryPath(workspace.path ?? "");
+            const sessions = root ? response.filter((session) => normalizeDirectoryPath(session?.directory ?? "") === root) : response;
+            return { workspaceId: workspace.id, sessions, error: null };
           } catch (error) {
-            const fallback = error instanceof Error ? error.message : t("app.unknown_error");
-            return {
-              workspaceId: workspace.id,
-              sessions: [],
-              error: fallback,
-              connectionState: null,
-            };
+            return { workspaceId: workspace.id, sessions: [], error: describeRouteError(error) };
+          }
+        }),
+        publishHistory: (entries) => {
+          setSessionsByWorkspaceId(Object.fromEntries(entries.map((entry) => [entry.workspaceId, entry.sessions])));
+          setErrorsByWorkspaceId(Object.fromEntries(entries.map((entry) => [entry.workspaceId, entry.error])));
+          setWorkspaceConnectionOverrides((current) => {
+            const next = { ...current };
+            for (const entry of entries) if (next[entry.workspaceId]?.status === "error") delete next[entry.workspaceId];
+            return next;
+          });
+          const sessionWorkspaceId = findSessionWorkspaceId(navigationSessionId, entries);
+          if (sessionWorkspaceId && !routeWorkspaceIdRef.current) {
+            setLegacySelectedWorkspaceId(sessionWorkspaceId);
+            writeActiveWorkspaceId(sessionWorkspaceId);
           }
         },
-      );
-      if (!attempt.isCurrent()) return;
-
-      setOpenworkClient(client);
-      setBaseUrl(normalizedBaseUrl);
-      setToken(resolvedToken);
-      setWorkspaces(nextWorkspaces);
-      setSessionsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.sessions])));
-      setErrorsByWorkspaceId(Object.fromEntries(sessionEntries.map((entry) => [entry.workspaceId, entry.error])));
-      setWorkspaceConnectionOverrides((current) => {
-        const next = { ...current };
-        for (const entry of sessionEntries) {
-          if (entry.connectionState) {
-            next[entry.workspaceId] = entry.connectionState;
-          } else if (next[entry.workspaceId]?.status === "error") {
-            delete next[entry.workspaceId];
-          }
-        }
-        return next;
-      });
-      setLegacySelectedWorkspaceId((current) => {
-        const sessionWorkspaceId = findSessionWorkspaceId(navigationSessionId, sessionEntries);
-        const preferred = routeWorkspaceIdRef.current || sessionWorkspaceId || navigationWorkspaceId || current || readActiveWorkspaceId() || "";
-        const next = reconcileSelectedWorkspaceId(preferred, list, desktopList, nextWorkspaces);
-        writeActiveWorkspaceId(next || null);
-        return next;
-      });
+      }).catch((error) => console.error("[settings-route] session history failed", error));
     } catch (error) {
       if (!attempt.isCurrent()) return;
       const message = describeRouteError(error);
@@ -1669,9 +1650,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       attempt.finish();
       if (attempt.isCurrent()) {
         setLoading(false);
-        // Settings can be the first route a user lands on (direct link, deep
-        // link, or after reload). Let the boot overlay dismiss once we've
-        // completed our first data load.
         markBootRouteReady();
       }
     }
@@ -2194,6 +2172,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     selectedWorkspace,
     selectedWorkspaceEndpoint,
   ]);
+  const markPermissionsRouteStart = useCallback((element: HTMLSpanElement | null) => {
+    if (element && route.tab === "permissions") performance.mark("openwork:permissions:route-start");
+  }, [route.tab]);
+
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
@@ -2380,8 +2362,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "permissions":
         return (
           <SettingsStack>
+            <span hidden ref={markPermissionsRouteStart} />
             <AuthorizedFoldersPanel
-              openworkServerClient={openworkClient}
+              connecting={loading && !openworkClient}
+              openworkServerClient={selectedWorkspaceEndpoint?.client ?? openworkClient}
               openworkServerStatus={routeOpenworkStatus}
               openworkServerCapabilities={routeOpenworkCapabilities}
               runtimeWorkspaceId={runtimeWorkspaceId}
@@ -2393,11 +2377,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
-            <HostExecutionPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              runtimeWorkspaceId={runtimeWorkspaceId}
-              sandboxRolloutEnabled={sandboxToolsEnabled}
+            <SandboxPanel
+              connecting={loading && !openworkClient}
+              client={selectedWorkspaceEndpoint?.client ?? openworkClient}
+              workspaceId={runtimeWorkspaceId}
               onUpdated={() => {
                 setPermissionsRefreshToken((token) => token + 1);
                 void connectionsStore.refreshMcpServers();
@@ -2868,7 +2851,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           workspaces={workspaceOptions}
           onSelectWorkspace={handleSelectSettingsWorkspace}
           headerStatus={routeOpenworkStatus}
-          busyHint={loading ? t("session.loading_detail") : busyLabel}
+          busyHint={loading && route.tab !== "permissions" ? t("session.loading_detail") : busyLabel}
           onClose={props.onClose ?? (() => navigate(settingsReturnRoute(
             selectedWorkspaceId,
             navigationWorkspaceId,

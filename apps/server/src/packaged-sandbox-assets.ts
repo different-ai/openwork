@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,11 +38,13 @@ export function sandboxImagePin(arch: string = process.arch) {
 // import, not a process-wide success bit that could outlive that cache.
 const imports = new Map<string, Promise<void>>();
 
-export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPath = packagedSandboxResources(), arch: string = process.arch): Promise<string> {
+export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPath = packagedSandboxResources(), arch: string = process.arch, progress?: (bytes: number, cached?: boolean) => void): Promise<string> {
   const pin = sandboxImagePin(arch);
   if (!resourcesPath) return pin.reference;
   const directory = join(resourcesPath, "sandbox-image");
   const archive = join(directory, "alpine.oci.tar");
+  const { size } = await stat(archive);
+  progress?.(size);
   // Check the bundle before looking at the mutable cache. A broken package
   // never passes just because this computer happens to have a warm image.
   const metadata: unknown = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
@@ -58,6 +60,7 @@ export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPa
   try {
     const cached = await sdk.Image.get(pin.reference);
     if (cached.manifestDigest !== pin.manifestDigest) throw new Error("The cached sandbox guest image does not match its pinned digest.");
+    progress?.(size, true);
     return pin.reference;
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "imageNotFound")) throw error;
@@ -72,5 +75,6 @@ export async function prepareSandboxGuestImage(sdk: SandboxImageSdk, resourcesPa
     void pending.finally(() => { if (imports.get(archive) === pending) imports.delete(archive); }).catch(() => {});
   }
   await pending;
+  progress?.(size, false);
   return pin.reference;
 }

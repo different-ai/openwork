@@ -119,7 +119,9 @@ import { withSseHeartbeat } from "./sse-heartbeat.js";
 import { isAllowedHost } from "./allowed-hosts.js";
 import { externalFetch, loopbackFetch, transferResponseBody } from "./server-fetch.js";
 import { registerCoreRoutes } from "./routes/core.js";
-import { sandboxSettingsSchema, writeSandboxSettings } from "./sandbox-settings-store.js";
+import { readAppliedSandboxSettings, readSandboxSettings, sandboxSettingsUpdateSchema, updateSandboxSettings } from "./sandbox-settings-store.js";
+import { closeLocalSandboxRuntime, localSandboxRuntime } from "./local-sandbox-runtime.js";
+import { registerSandboxStatusRoutes } from "./routes/sandbox-status.js";
 import { runtimeDbPath } from "./runtime-db.js";
 import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
@@ -1303,6 +1305,8 @@ export async function startServer(
   // Policy hooks must receive the listener that actually bound, including
   // ephemeral ports and retries after a port collision.
   engineV2Preview.start();
+  const sandboxWorkspace = findManagedEngineWorkspace(config.workspaces);
+  if (sandboxWorkspace) void localSandboxRuntime(config).prepare(sandboxWorkspace.path, "startup");
 
   // Deliver server-managed provider credentials to the engine on startup. The
   // engine process receives a fixed env allowlist, so credentials materialized
@@ -1400,6 +1404,7 @@ export async function startServer(
       reloadBaselineRefreshers.delete(config);
       await stopCloudComputer();
       await server.stop();
+      await closeLocalSandboxRuntime(config).catch(() => console.warn("[openwork:sandbox] shutdown cleanup failed"));
       if (recoveryError) throw recoveryError;
     },
   };
@@ -3031,6 +3036,8 @@ function createRoutes(
     resolveWorkspaceWithoutBootstrap,
   });
 
+  registerSandboxStatusRoutes({ routes, config, requireClientScope, resolveWorkspaceWithoutBootstrap });
+
   registerClaudeImportRoutes({
     routes,
     config,
@@ -3394,36 +3401,76 @@ function createRoutes(
     });
   });
 
-  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
-    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
-    const settings = await managedDesktopPolicy(config).sandboxSettings();
+  function settingsTiming() {
+    let started = performance.now();
+    const phases: string[] = [];
+    return {
+      mark(name: "workspace" | "db" | "policy" | "process") {
+        const now = performance.now();
+        phases.push(`${name};dur=${(now - started).toFixed(2)}`);
+        started = now;
+      },
+      respond(body: unknown) {
+        const response = jsonResponse(body);
+        response.headers.set("Server-Timing", phases.join(", "));
+        return response;
+      },
+    };
+  }
+  async function sandboxSettingsResponse(timing: ReturnType<typeof settingsTiming>, forceChanged?: boolean) {
+    const policy = managedDesktopPolicy(config);
+    const [local, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    timing.mark("db");
+    if (forceChanged !== undefined) await policy.localSandboxAccess();
+    let settings = policy.sandboxSettingsSnapshot(local, applied);
+    timing.mark("policy");
+    if (forceChanged) {
+      await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
+      settings = policy.sandboxSettingsSnapshot(await readSandboxSettings(config), await readAppliedSandboxSettings(config));
+    }
     const processPolicy = await engineV2Preview.projectIsolationStatus();
-    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+    timing.mark("process");
+    const effectiveForceSandbox = settings.effectiveForceSandbox || !processPolicy.effectiveAllowHostExecution;
+    return timing.respond({
+      ...settings, pending: processPolicy.pending, effectiveForceSandbox,
+      effectiveUseSandbox: effectiveForceSandbox || settings.effectiveUseSandbox,
+      effectiveAllowHostExecution: !effectiveForceSandbox,
+    });
+  }
+
+  addRoute(routes, "GET", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    const timing = settingsTiming();
+    await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    timing.mark("workspace");
+    return sandboxSettingsResponse(timing);
   });
   addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
+    const timing = settingsTiming();
     ensureWritable(config);
     requireClientScope(ctx, "collaborator");
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
-    const parsed = sandboxSettingsSchema.safeParse(await readJsonBody(ctx.request));
-    if (!parsed.success) throw new ApiError(400, "invalid_payload", "allowHostExecution must be a boolean");
+    timing.mark("workspace");
+    const parsed = sandboxSettingsUpdateSchema.safeParse(await readJsonBody(ctx.request));
+    if (!parsed.success) throw new ApiError(400, "invalid_payload", "Choose whether to use or require the sandbox.");
     await requireApproval(ctx, {
-      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update host execution permission", paths: [runtimeDbPath(config)],
+      workspaceId: workspace.id, action: "config.sandbox_settings.write", summary: "Update sandbox settings", paths: [runtimeDbPath(config)],
     });
-    // Save intent before checking activity. An active task keeps its process;
-    // new work must pass the desired policy and the process-isolation boundary.
-    await writeSandboxSettings(config, parsed.data);
-    await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
+    // Save intent before checking activity. A Use-only change does not touch the process.
+    const { previous, settings: { useSandbox, forceSandbox } } = await updateSandboxSettings(config, parsed.data);
     await recordAudit(workspace.path, {
       id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
-      action: "config.sandbox_settings.write", summary: "Updated host execution permission", target: runtimeDbPath(config), timestamp: Date.now(),
+      action: "config.sandbox_settings.write", summary: "Updated sandbox settings", target: runtimeDbPath(config), timestamp: Date.now(),
     });
-    const settings = await managedDesktopPolicy(config).sandboxSettings();
-    const processPolicy = await engineV2Preview.projectIsolationStatus();
-    return jsonResponse({ ...settings, pending: processPolicy.pending, effectiveAllowHostExecution: settings.effectiveAllowHostExecution && processPolicy.effectiveAllowHostExecution });
+    if ((useSandbox && !previous.useSandbox) || (forceSandbox && !previous.forceSandbox)) {
+      void localSandboxRuntime(config).prepare(workspace.path, "setting-enabled");
+    }
+    return sandboxSettingsResponse(timing, forceSandbox !== previous.forceSandbox);
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const timing = settingsTiming();
+    const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
+    timing.mark("workspace");
     const opencode = mergeOpencodeConfigs(
       await readOpencodeConfig(workspace.path),
       // Global-first: authorized folders live in the ENGINE_GLOBAL row; the
@@ -3431,8 +3478,11 @@ function createRoutes(
       // startup migration folds them in.
       await readEffectiveRuntimeOpencodeConfig(config, workspace.id),
     );
+    timing.mark("db");
     const foldersConfig = readAuthorizedFoldersFromOpencodeConfig(opencode, workspace.path);
-    return jsonResponse(buildAuthorizedFoldersResponse(workspace, foldersConfig));
+    timing.mark("policy");
+    timing.mark("process");
+    return timing.respond(buildAuthorizedFoldersResponse(workspace, foldersConfig));
   });
 
   addRoute(routes, "PUT", "/workspace/:id/authorized-folders", "client", async (ctx) => {

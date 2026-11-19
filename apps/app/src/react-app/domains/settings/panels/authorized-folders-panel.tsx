@@ -1,7 +1,8 @@
 /** @jsxImportSource react */
-import { useCallback, useEffect, useMemo, useReducer, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type SetStateAction } from "react";
 import { Folder, Info, Plus, X } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -41,6 +42,7 @@ import {
 } from "../settings-layout";
 
 export type AuthorizedFoldersPanelProps = {
+  connecting: boolean;
   openworkServerClient: OpenworkServerClient | null;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
@@ -115,6 +117,8 @@ function AuthorizedFolderItem(props: AuthorizedFolderItemProps) {
 
 export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
   const platform = usePlatform();
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loaded, setLoaded] = useState<{ client: OpenworkServerClient; workspaceId: string; attempt: number; success: boolean } | null>(null);
   const [serverWorkspaceRoot, setServerWorkspaceRoot] = useState("");
   const [folderState, dispatchFolderState] = useReducer(
     authorizedFoldersReducer,
@@ -178,6 +182,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         const response = await openworkClient.listAuthorizedFolders(openworkWorkspaceId);
         if (cancelled) return;
         setServerWorkspaceRoot(response.workspaceRoot.trim());
+        setLoaded({ client: openworkClient, workspaceId: openworkWorkspaceId, attempt: loadAttempt, success: true });
         dispatchFolderState({
           type: "loadSuccess",
           folders: response.folders,
@@ -185,8 +190,8 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         });
       } catch (error) {
         if (cancelled) return;
-        const message = error instanceof Error ? error.message : safeStringify(error);
-        dispatchFolderState({ type: "loadError", message });
+        dispatchFolderState({ type: "loadError", message: t("sandbox.folders_error") });
+        setLoaded({ client: openworkClient, workspaceId: openworkWorkspaceId, attempt: loadAttempt, success: false });
       } finally {
         if (!cancelled) dispatchFolderState({ type: "loadDone" });
       }
@@ -195,7 +200,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     return () => {
       cancelled = true;
     };
-  }, [canReadConfig, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canReadConfig, loadAttempt, props.openworkServerClient, props.runtimeWorkspaceId]);
 
   const persistAuthorizedFolders = useCallback(async (nextFolders: string[]) => {
     const openworkClient = props.openworkServerClient;
@@ -267,7 +272,20 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     }
   }, [authorizedFolders, canUseNativeFilePicker, persistAuthorizedFolders, workspaceRootFolder]);
 
+  const loadedCurrent = loaded?.client === props.openworkServerClient
+    && loaded.workspaceId === props.runtimeWorkspaceId && loaded.attempt === loadAttempt;
+  const loading = props.connecting || (canReadConfig && (!loadedCurrent || authorizedFoldersLoading));
+  const loadFailed = loadedCurrent && !loaded.success;
+  const ready = !loading && !loadFailed;
+  const marked = useRef(false);
+  const markReady = useCallback((element: HTMLElement | null) => {
+    if (!element || !ready || marked.current) return;
+    marked.current = true;
+    performance.mark("openwork:permissions:folders-ready");
+  }, [ready]);
+
   return (
+    <section ref={markReady} data-testid="authorized-folders-panel" data-ready={ready ? "true" : undefined}>
     <LayoutSectionItem className="gap-6">
       <LayoutSectionItemHeader>
         <LayoutSectionItemTitle>
@@ -280,7 +298,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
           <LayoutSectionItemHeaderActions>
             <Button
               onClick={() => void pickAuthorizedFolder()}
-              disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+              disabled={loading || loadFailed || authorizedFoldersSaving || !canPickAuthorizedFolder}
             >
               <Plus className="size-4" />
               Add folder
@@ -289,7 +307,11 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         ) : null}
       </LayoutSectionItemHeader>
 
-      {!canReadConfig ? (
+      {loading ? <Skeleton className="h-12 w-full" /> : loadFailed ? (
+        <SettingsNotice tone="error">
+          {t("sandbox.folders_error")} <Button variant="link" size="sm" className="h-auto px-1" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t("common.retry")}</Button>
+        </SettingsNotice>
+      ) : !canReadConfig ? (
         <SettingsNotice>
           {authorizedFoldersHint ?? t("context_panel.authorized_folders_no_access")}
         </SettingsNotice>
@@ -329,7 +351,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
               <EmptyContent>
                 <Button
                   onClick={() => void pickAuthorizedFolder()}
-                  disabled={authorizedFoldersLoading || authorizedFoldersSaving || !canPickAuthorizedFolder}
+                  disabled={loading || loadFailed || authorizedFoldersSaving || !canPickAuthorizedFolder}
                 >
                   <Plus className="size-4" />
                   Add folder
@@ -349,5 +371,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         </>
       )}
     </LayoutSectionItem>
+    </section>
   );
 }

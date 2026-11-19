@@ -26,6 +26,7 @@ import { noteActivationConnectionStatuses, noteActivationRunStarted } from "../d
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
+import { proxyFailure, sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { sendWithModelUnavailableRetry } from "@/react-app/domains/session/sync/model-unavailable-retry";
 import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
@@ -344,19 +345,7 @@ function serializeSDKError(error: unknown): string {
 
 function describeTaskCreateError(error: unknown) {
   const message = describeRouteError(error);
-  let serializedCode: unknown = null;
-  try {
-    const payload: unknown = JSON.parse(message);
-    serializedCode = typeof payload === "object" && payload !== null
-      ? Reflect.get(payload, "code")
-      : null;
-  } catch {
-    // The normal error path is plain text, not a wire payload.
-  }
-  const directCode = typeof error === "object" && error !== null
-    ? Reflect.get(error, "code")
-    : null;
-  const code = typeof directCode === "string" ? directCode : serializedCode;
+  const { code } = proxyFailure(error);
   if (code === "opencode_unconfigured") {
     return "Choose a model for this workspace, then try again.";
   }
@@ -2810,6 +2799,15 @@ export function SessionRoute() {
       }
       return session.id;
     } catch (error) {
+      let transition = sandboxTransitionNote(error);
+      if (!transition && proxyFailure(error).code === "engine_v2_preview_not_running") {
+        const settings = await endpoint.client.getSandboxSettings(endpoint.workspaceId).catch(() => null);
+        transition = sandboxTransitionNote(error, Boolean(settings?.pending || settings?.forceSandbox || settings?.effectiveForceSandbox));
+      }
+      if (transition) {
+        toast.info(transition, { id: toastId });
+        return null;
+      }
       const message = describeTaskCreateError(error);
       setRouteError(message);
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: message }));

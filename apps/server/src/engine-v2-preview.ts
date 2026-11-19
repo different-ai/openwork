@@ -1,6 +1,7 @@
 import { startupPhase } from "./startup-phase.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { assertSandboxEngineIdle } from "./sandbox-engine-transition.js";
+import { localSandboxRuntime } from "./local-sandbox-runtime.js";
 import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
@@ -985,23 +986,41 @@ export function createEngineV2Preview(options: {
   let isolationTimer: ReturnType<typeof setInterval> | undefined;
   async function localSandboxSettingsPending(): Promise<boolean> {
     const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
-    return desired.allowHostExecution !== applied.allowHostExecution;
+    return desired.forceSandbox !== applied.forceSandbox;
   }
   async function projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }> {
     const policy = managedDesktopPolicy(config);
-    const required = await policy.requiresSandbox();
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    const required = await policy.requiresSandbox(desired.forceSandbox);
     return {
-      pending: isolationRefreshing || await localSandboxSettingsPending()
+      pending: isolationRefreshing || desired.forceSandbox !== applied.forceSandbox
         || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
-      effectiveAllowHostExecution: sidecar ? !sidecar.projectConfigDisabled : !required,
+      effectiveAllowHostExecution: sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox,
     };
   }
-  function deferBusyIsolation(error: unknown): void {
-    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) return;
+  function sandboxPolicyPending() {
+    return new ApiError(409, "sandbox_engine_policy_pending", "Your sandbox setting is saved and applies when current tasks finish. Send this again then.");
+  }
+  function handleIsolationError(error: unknown, deferBusy = false): void {
+    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) {
+      if (deferBusy) return;
+      throw sandboxPolicyPending();
+    }
     throw error;
   }
+  async function waitForIsolation(refresh: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([refresh, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ApiError(503, "sandbox_engine_refresh_failed", "OpenWork is still applying your sandbox setting. Try again in a moment.")), 30_000);
+        timer.unref();
+      })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
   async function ensureProjectIsolation(change: { deferBusy?: boolean } = {}): Promise<void> {
-    if (isolationInFlight) return change.deferBusy ? isolationInFlight.catch(deferBusyIsolation) : isolationInFlight;
+    if (isolationInFlight) return waitForIsolation(isolationInFlight).catch(error => handleIsolationError(error, change.deferBusy));
     const pending = (async () => {
       if (startPromise) await startPromise;
       // Do not override the embedding host's deferred startup/history handoff.
@@ -1012,11 +1031,11 @@ export function createEngineV2Preview(options: {
       if (!await needsChange()) return;
       await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
         const active = sidecar;
-        if (!active) throw new ApiError(503, "sandbox_unavailable", "The engine stopped before the permission could be applied. Retry; nothing ran on the host.");
+        if (!active) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped before it could apply your sandbox setting. Try again. Nothing ran.");
         // Never restart into project-enabled mode on unknown authority. A fresh
         // denial may update the desired mode and eliminate the transition.
         if (!await policy.requiresSandbox()) {
-          try { await policy.assertHostExecution(true); }
+          try { await policy.assertHostExecution(false); }
           catch (error) { if (!await policy.requiresSandbox()) throw error; }
         }
         if (!await needsChange()) return;
@@ -1027,29 +1046,31 @@ export function createEngineV2Preview(options: {
         await applySandboxSettings(config);
         const resume = allowRunning;
         await stopRuntime();
-        if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "The engine was stopped while applying permissions. Start it and retry.");
+        if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped while applying your sandbox setting. Start it and try again.");
         allowRunning = true;
         try { await start(); }
         catch (error) {
           recordStartError(error);
-          throw new ApiError(503, "sandbox_engine_refresh_failed", "The permission is saved, but the engine could not refresh. Retry this setting or message; host fallback is disabled.");
+          throw new ApiError(503, "sandbox_engine_refresh_failed", "Your sandbox setting is saved, but OpenWork couldn’t apply it. Try again. Nothing ran.");
         }
         if (!sidecar || sidecar.projectConfigDisabled !== await policy.requiresSandbox()) {
-          throw new ApiError(503, "sandbox_engine_permission_changed", "Permissions changed while the engine refreshed. Retry; no task was admitted.");
+          throw new ApiError(503, "sandbox_engine_permission_changed", "Your sandbox permissions changed while OpenWork was applying them. Send your message again.");
         }
       } });
     })();
-    isolationInFlight = pending;
     const settled = pending.finally(() => {
-      if (isolationInFlight === pending) { isolationInFlight = undefined; isolationRefreshing = false; }
+      if (isolationInFlight === settled) { isolationInFlight = undefined; isolationRefreshing = false; }
     });
-    return change.deferBusy ? settled.catch(deferBusyIsolation) : settled;
+    isolationInFlight = settled;
+    return waitForIsolation(settled).catch(error => handleIsolationError(error, change.deferBusy));
   }
 
   async function assertProjectConfigReady(): Promise<void> {
-    if ((await projectIsolationStatus()).pending) {
-      throw new ApiError(409, "sandbox_engine_policy_pending", "Saved. Applies when current tasks finish. No new task was started.");
-    }
+    const status = await projectIsolationStatus();
+    const refresh = isolationRefreshing ? isolationInFlight : undefined;
+    if (refresh) await waitForIsolation(refresh);
+    // A refresh may also have finished during the snapshot's local reads.
+    if ((refresh || status.pending) && (await projectIsolationStatus()).pending) throw sandboxPolicyPending();
   }
 
   async function assertSandboxReady(directory: string): Promise<void> {
@@ -1058,9 +1079,9 @@ export function createEngineV2Preview(options: {
     await ensureProjectIsolation();
     if (!await policy.requiresSandbox()) return;
     const active = sidecar;
-    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement is not ready. No task was admitted.");
-    if (!active.projectConfigDisabled) throw new ApiError(503, "sandbox_engine_restart_required", "Restart the engine to use sandbox-only mode without project configuration or workspace plugins. No task was admitted.");
-    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "Sandbox-only mode requires the supported OpenCode engine. No task was admitted.");
+    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "The sandbox is not ready. Wait a moment and send your message again.");
+    if (!active.projectConfigDisabled) throw new ApiError(503, "sandbox_engine_restart_required", "Restart OpenWork to apply your sandbox setting, then send your message again.");
+    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "This version of OpenWork can’t enforce your sandbox setting. Update OpenWork and try again.");
     const plugins = await active.fetchJson("/api/plugin", { directory, timeoutMs: 10_000 });
     const instance = engineInstanceId();
     const expected = join(rootDir, ...(instance ? ["instances", instance] : []), "sandbox-plugin");
@@ -1068,7 +1089,7 @@ export function createEngineV2Preview(options: {
     const installed = data.filter(isRecord).some(plugin => plugin.id === "openwork.sandbox"
       && isRecord(plugin.state) && plugin.state.status === "active"
       && isRecord(plugin.source) && plugin.source.type === "local" && plugin.source.path === expected);
-    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "Sandbox-only enforcement could not be verified in this engine. No task was admitted.");
+    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "OpenWork couldn’t verify that the sandbox is ready. Restart OpenWork and try again.");
   }
 
   function checkMcpHealth(): void {
@@ -1417,7 +1438,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
-    await managedDesktopPolicy(config).assertHostExecution((await readSandboxSettings(config)).allowHostExecution);
+    await managedDesktopPolicy(config).assertHostExecution((await readSandboxSettings(config)).forceSandbox);
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1481,6 +1502,7 @@ export function createEngineV2Preview(options: {
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
     await assertProjectConfigReady();
+    void localSandboxRuntime(config).prepare(directory, "workspace-ready");
     // Read local inventory first so mixed local/Gateway startup keeps local
     // readiness. This is not the provider push or catalog confirmation join.
     if (ownsGateway() && providerDiscovery) await providerDiscovery;

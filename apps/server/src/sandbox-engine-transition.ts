@@ -14,9 +14,9 @@ export async function assertSandboxEngineIdle(active: Pick<ManagedOpencodeV2Serv
   if (sessions?.status !== 200 || !isRecord(sessions.json) || !isRecord(sessions.json.data)
     || jobs?.status !== 200 || !isRecord(jobs.json) || !Array.isArray(jobs.json.data)
     || jobs.json.data.some(job => !isRecord(job) || typeof job.status !== "string")) {
-    throw new ApiError(409, "sandbox_engine_activity_unavailable", "OpenWork could not verify that tasks are idle. Retry when your tasks have finished; nothing was restarted.");
+    throw new ApiError(409, "sandbox_engine_activity_unavailable", "OpenWork couldn’t check whether tasks have finished. Try again once they’re done.");
   }
   if (Object.keys(sessions.json.data).length || jobs.json.data.some(job => isRecord(job) && job.status === "running")) {
-    throw new ApiError(409, "sandbox_engine_busy", "Wait for running tasks and background jobs to finish, then retry this setting or message. Nothing was restarted.");
+    throw new ApiError(409, "sandbox_engine_busy", "Wait for current tasks to finish, then try again.");
   }
 }

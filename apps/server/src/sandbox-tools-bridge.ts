@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { serve } from "./serve-node.js";
-import { createLocalSandboxRuntime, type LocalSandboxRuntimeDeps } from "./local-sandbox-runtime.js";
+import { localSandboxRuntime, type createLocalSandboxRuntime } from "./local-sandbox-runtime.js";
 import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
@@ -12,9 +12,8 @@ const requestSchema = z.object({
 }).strict();
 
 /** Engine-only API. Its credential authorizes guest operations, never host filesystem/shell APIs. */
-export async function createSandboxToolsBridge(config: ServerConfig, deps: LocalSandboxRuntimeDeps = {}) {
+export async function createSandboxToolsBridge(config: ServerConfig, runtime: ReturnType<typeof createLocalSandboxRuntime> = localSandboxRuntime(config)) {
   const token = randomBytes(32).toString("base64url");
-  const runtime = createLocalSandboxRuntime(config, deps);
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const supplied = Buffer.from(request.headers.get("authorization") ?? "");
     const expected = Buffer.from(`Bearer ${token}`);
@@ -25,7 +24,12 @@ export async function createSandboxToolsBridge(config: ServerConfig, deps: Local
       const text = await request.text();
       if (Buffer.byteLength(text) > 256_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
-      if (call.operation === "status") return Response.json(await runtime.status(call.directory));
+      if (call.operation === "status") {
+        const result = await runtime.status(call.directory);
+        if (result.mode !== "off") void runtime.prepare(call.directory, "prompt");
+        else runtime.noteOff(call.directory);
+        return Response.json(result);
+      }
       if (call.operation === "host") {
         await managedDesktopPolicy(config).assertHostExecution();
         return Response.json({ allowed: true });
@@ -36,8 +40,8 @@ export async function createSandboxToolsBridge(config: ServerConfig, deps: Local
       });
       return Response.json(result, { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
-      return Response.json({ error: error instanceof Error ? error.message : "Sandbox operation failed; never fall back to the host." }, { status: 503 });
+      return Response.json({ error: error instanceof Error ? error.message : "The sandbox couldn't complete this operation." }, { status: 503 });
     }
   } });
-  return { url: `http://127.0.0.1:${server.port}/sandbox`, token, close: async () => { await server.stop(); await runtime.close(); } };
+  return { url: `http://127.0.0.1:${server.port}/sandbox`, token, close: () => server.stop() };
 }
