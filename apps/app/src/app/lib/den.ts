@@ -3018,6 +3018,7 @@ async function requestJsonRaw<T>(
   }
   if (path === "/v1/me/desktop-config") {
     headers["X-OpenWork-Sandbox-Only"] = "1";
+    headers["X-OpenWork-Sandbox-Modes"] = "1";
   }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;

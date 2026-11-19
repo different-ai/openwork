@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 export const GUEST_TOOLS = ["edit", "glob", "grep", "read", "shell", "write"];
 export const profiles = {
   fable: { model: "claude-fable-5-2", name: "Fable 5.2", provider: "packaged_anthropic", npm: "@ai-sdk/anthropic", upstream: "https://api.anthropic.com", keyEnv: "ANTHROPIC_API_KEY" },
-  sol: { model: "gpt-6.1-sol", name: "GPT 6.1 Sol", provider: "packaged_openai", npm: "@ai-sdk/openai", upstream: "https://api.openai.com", keyEnv: "OPENAI_API_KEY" },
+  sol: { model: "gpt-6.2-sol", name: "GPT 6.2 Sol fast", provider: "packaged_openai", npm: "@ai-sdk/openai", upstream: "https://api.openai.com", keyEnv: "OPENAI_API_KEY" },
 };
 export type ModelKey = keyof typeof profiles;
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,14 +115,14 @@ async function close(server: Server) {
 }
 
 /** This is explicitly a disposable signed-out Den contract fixture, not production flag evidence. */
-export async function sandboxDenFixture() {
+export async function sandboxDenFixture(enabled = true) {
   const reads: string[] = [];
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://fixture").pathname.replace(/^\/api\/den/, "");
     const headers = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "content-type": "application/json" };
     if (request.method === "OPTIONS") { response.writeHead(204, headers).end(); return; }
     reads.push(path);
-    const body = path === "/v1/features" ? { features: { sandboxTools: true } }
+    const body = path === "/v1/features" ? { features: { sandboxTools: enabled } }
       : path === "/v1/app-version" ? { minAppVersion: "0.0.0", latestAppVersion: "0.0.0", publishedDesktopVersions: [] }
       : null;
     response.writeHead(body ? 200 : 404, headers).end(JSON.stringify(body ?? { error: "fixture_not_found" }));
@@ -133,6 +133,7 @@ export async function sandboxDenFixture() {
 export type InferenceRecord = {
   phase: string; path: string; requestedModel: string; offeredTools: string[];
   codeModeTools: string[]; responseModel: string | null; status: number;
+  receivedAt?: number; responseServiceTier?: string | null; upstreamAttempts?: { model: string; status: number }[];
   completed: boolean; requestContainedHostSecret: boolean; responseError?: string; tuning?: string;
 };
 export function offeredToolNames(body: Record<string, unknown>) {
@@ -142,14 +143,14 @@ export function offeredToolNames(body: Record<string, unknown>) {
 export function hasOnlyDirectGuestTools(entries: readonly InferenceRecord[]) {
   return entries.length > 0 && entries.every(entry => JSON.stringify(entry.offeredTools) === JSON.stringify(GUEST_TOOLS) && entry.codeModeTools.length === 0);
 }
-function responseModels(text: string) {
+function responseField(text: string, field: "model" | "service_tier") {
   const models: string[] = [];
   for (const line of text.split(/\r?\n/)) {
     const raw = line.startsWith("data:") ? line.slice(5).trim() : line;
     try {
       const value: unknown = JSON.parse(raw);
       if (!isRecord(value)) continue;
-      for (const candidate of [value, value.message, value.response]) if (isRecord(candidate) && typeof candidate.model === "string") models.push(candidate.model);
+      for (const candidate of [value, value.message, value.response]) if (isRecord(candidate) && typeof candidate[field] === "string") models.push(candidate[field]);
     } catch { /* SSE framing is not a JSON response. */ }
   }
   return models.at(-1) ?? null;
@@ -171,12 +172,13 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
     try { body = JSON.parse(raw); } catch { response.writeHead(400).end(); return; }
     if (!isRecord(body) || typeof body.model !== "string") { response.writeHead(400).end(); return; }
     const path = (request.url ?? "/").replace(/^\/(?!v1\/)/, "/v1/");
-    const entry: InferenceRecord = { phase: state.phase, path, requestedModel: body.model, offeredTools: offeredToolNames(body),
+    const entry: InferenceRecord = { receivedAt: Date.now(), phase: state.phase, path, requestedModel: body.model, offeredTools: offeredToolNames(body),
       codeModeTools: [...raw.replaceAll("\\n", "\n").matchAll(/^\s*- tools\.([A-Za-z0-9_.]+)\(/gm)].map(match => match[1] ?? ""),
       status: 0, responseModel: null, completed: false, requestContainedHostSecret: raw.includes(state.hostSecret) };
     records.push(entry); // Visible immediately, allowing an active-turn Settings interaction.
     if (model === "sol") {
-      body.reasoning = { ...(isRecord(body.reasoning) ? body.reasoning : {}), effort: "low" };
+      if (path.endsWith("/chat/completions")) body.reasoning_effort = "low";
+      else body.reasoning = { ...(isRecord(body.reasoning) ? body.reasoning : {}), effort: "low" };
       body.service_tier = "priority";
       entry.tuning = "reasoning.effort=low; service_tier=priority";
     } else {
@@ -191,7 +193,16 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
       }
       if (model === "fable") headers["x-api-key"] = realKey;
       else headers.authorization = `Bearer ${realKey}`;
-      const upstream = await fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: JSON.stringify(body), signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
+      const requestModel = (payload: Record<string, unknown>) => fetch(`${profile.upstream}${path}`, { method: "POST", headers, body: JSON.stringify(payload), signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(600_000)]) });
+      let upstream = await requestModel(body);
+      entry.upstreamAttempts = [{ model: entry.requestedModel, status: upstream.status }];
+      // The checked-in gateway model metadata lists a fast alias; do not try a prior generation.
+      if (model === "sol" && [400, 403, 404, 422].includes(upstream.status)) {
+        const rejection = await upstream.text();
+        entry.responseError = redact(rejection.slice(0, 2000), [realKey, token]);
+        upstream = await requestModel({ ...body, model: "gpt-6.2-sol-fast" });
+        entry.upstreamAttempts.push({ model: "gpt-6.2-sol-fast", status: upstream.status });
+      }
       entry.status = upstream.status;
       response.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
       let text = "";
@@ -208,7 +219,8 @@ export async function inferenceFixture(model: ModelKey, realKey: string, state: 
         } finally { reader.releaseLock(); }
       }
       text += decoder.decode();
-      entry.responseModel = responseModels(text);
+      entry.responseModel = responseField(text, "model");
+      entry.responseServiceTier = responseField(text, "service_tier");
       if (!upstream.ok) entry.responseError = redact(text.slice(0, 2000), [realKey, token]);
       entry.completed = true;
       response.end();

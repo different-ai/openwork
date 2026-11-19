@@ -71,7 +71,7 @@ export interface MicrosandboxDriver {
    * off, and a sandbox that failed to start is removed, so a failed create
    * leaves nothing behind under that name.
    */
-  create(config: GuestConfig, timeoutMs: number): Promise<GuestInfo>
+  create(config: GuestConfig, timeoutMs: number, onProgress?: (event: import("microsandbox").CreationProgress) => void): Promise<GuestInfo>
   /** `null` when no sandbox has this name. */
   get(name: string): Promise<GuestInfo | null>
   list(labels: Readonly<Record<string, string>>): Promise<GuestInfo[]>

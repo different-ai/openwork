@@ -50,6 +50,7 @@ export interface OpencodeV2ProviderSpec {
 }
 
 export interface ManagedOpencodeV2ServerOptions {
+  isolateProjectConfig?: () => Promise<boolean>;
   bin: string;
   rootDir: string;
   /** A history path already selected by the owning host. */
@@ -471,7 +472,7 @@ async function createManagedOpencodeV2ServerInner(
   // before any tool hook. The private bridge, not an environment rollout flag,
   // decides host authority. An unverifiable authority is restrictive.
   const sandboxBridge = options.contextTools?.sandbox;
-  const projectConfigDisabled = sandboxBridge ? await (async () => {
+  const projectConfigDisabled = options.isolateProjectConfig ? await options.isolateProjectConfig() : sandboxBridge ? await (async () => {
     try {
       const response = await loopbackFetch(sandboxBridge.url, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(10_000),

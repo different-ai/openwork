@@ -230,7 +230,12 @@ export function createMicrosandboxProvider(options: MicrosandboxProviderOptions,
         try {
           return handle(await bounded(async () => {
             try {
-              return await driver.create(config, opts.timeoutMs)
+              return await driver.create(config, opts.timeoutMs, opts.onProgress && (event => {
+                switch (event.kind) {
+                  case "resolving": case "resolved": case "layerDownloadProgress": case "layerDownloadComplete":
+                  case "complete": case "startup": opts.onProgress?.(event)
+                }
+              }))
             } catch (error) {
               portTaken = isPortInUse(error)
               throw error

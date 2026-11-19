@@ -34,7 +34,8 @@ test("invalid inputs and missing provider blocks never acquire compute or fall b
   assert.equal(fixture.acquisitions(), 0);
   const provider = { ...fixture.provider, blocks: {} };
   const host = createSandboxToolHost({ provider, cwd: "/", acquire: async () => { throw new Error("must not acquire"); } });
-  for (const name of ["read", "shell"]) await assert.rejects(host.execute(name, name === "read" ? { path: "/a" } : { command: "pwd" }), /host fallback is disabled/);
+  await assert.rejects(host.execute("read", { path: "/a" }), /The sandbox can't open files right now\. Nothing ran on this computer\./);
+  await assert.rejects(host.execute("shell", { command: "pwd" }), /The sandbox can't run commands right now\. Nothing ran on this computer\./);
   assert.equal(fixture.provider.fake.count("exec"), 0);
 });
 
@@ -105,6 +106,7 @@ test("wrong-provider, stopped and aborted handles never execute guest effects", 
 async function pluginFixture(initial: SandboxToolMode, projectConfigDisabled?: boolean) {
   let mode = initial;
   let prompt: (() => Promise<void>) | undefined;
+  const inference = new Map<string, (event: { tools: Record<string, unknown>; system: { text: string }[] }) => Promise<void>>();
   let transform: Parameters<SandboxPluginContext["tool"]["transform"]>[0] | undefined;
   let reloads = 0;
   let executions = 0;
@@ -124,14 +126,14 @@ async function pluginFixture(initial: SandboxToolMode, projectConfigDisabled?: b
     options: {},
     tool: { async transform(callback) { transform = callback; render(); return { async dispose() { disposed += 1; tools.clear(); } }; }, async reload() { reloads += 1; render(); }, async hook() { return { async dispose() {} }; } },
     mcp: { async transform() { return { async dispose() {} }; }, async reload() {} },
-    session: { async hook(name, callback) { if (name === "prompt") prompt = callback; return { async dispose() { disposed += 1; if (name === "prompt") prompt = undefined; } }; } },
+    session: { async hook(name, callback) { if (name === "prompt") prompt = callback; else inference.set(name, callback); return { async dispose() { disposed += 1; if (name === "prompt") prompt = undefined; else inference.delete(name); } }; } },
   };
   const stop = await setupSandboxTools(context, {
     projectConfigDisabled,
     async status() { if (statusFailed) throw new Error("status unavailable"); return mode; },
     async execute() { executions += 1; return { content: [{ type: "text", text: "sandbox only" }] }; },
   });
-  return { tools, builtins, stop, context, failStatus() { statusFailed = true; }, setMode(value: SandboxToolMode) { mode = value; }, async prompt() { await prompt?.(); }, reloads: () => reloads, executions: () => executions, disposed: () => disposed };
+  return { tools, builtins, stop, context, inference, failStatus() { statusFailed = true; }, setMode(value: SandboxToolMode) { mode = value; }, async prompt() { await prompt?.(); }, reloads: () => reloads, executions: () => executions, disposed: () => disposed };
 }
 
 test("normal mode adds six provider-safe sandbox IDs without replacing host tools", async () => {
@@ -147,8 +149,8 @@ test("normal mode adds six provider-safe sandbox IDs without replacing host tool
     await tool.execute({ command: "pwd" }, call());
     assert.equal(fixture.executions(), 1);
     fixture.setMode("off");
-    await assert.rejects(tool.execute({ command: "pwd" }, call()), /mode changed/);
-    assert.equal(fixture.executions(), 1);
+    await tool.execute({ command: "pwd" }, call());
+    assert.equal(fixture.executions(), 2);
     await fixture.prompt();
     assert.equal(fixture.reloads(), 1);
     assert.equal(fixture.tools.size, 0);
@@ -167,7 +169,8 @@ test("only mode replaces six primitive IDs and default-denies all other host too
     const tool = fixture.tools.get("shell"); assert.ok(tool);
     await tool.execute({ command: "pwd" }, call());
     fixture.setMode("tools");
-    await assert.rejects(tool.execute({ command: "pwd" }, call()), /mode changed/);
+    await tool.execute({ command: "pwd" }, call());
+    assert.equal(fixture.executions(), 2);
     await fixture.prompt();
     assert.ok(fixture.tools.has("sandbox_shell"));
     assert.ok(fixture.builtins.has("shell"));
@@ -179,9 +182,9 @@ test("required mode refuses an engine started with writable project-plugin disco
     const fixture = await pluginFixture(initial, false);
     try {
       fixture.setMode("only");
-      await assert.rejects(fixture.prompt(), /restarting the engine with project configuration disabled/);
+      await assert.rejects(fixture.prompt(), /Restart OpenWork to apply your sandbox setting/);
       const shell = fixture.tools.get(initial === "only" ? "shell" : "sandbox_shell"); assert.ok(shell);
-      await assert.rejects(shell.execute({ command: "touch /host-plugin-sentinel" }, call()), /project configuration disabled/);
+      await assert.rejects(shell.execute({ command: "touch /host-plugin-sentinel" }, call()), /Restart OpenWork to apply your sandbox setting/);
       assert.equal(fixture.executions(), 0);
     } finally { await fixture.stop(); }
   }
@@ -207,6 +210,21 @@ test("status outages withhold additive tools without breaking prompts, and never
         assert.equal(fixture.builtins.has("shell"), false);
         const shell = fixture.tools.get("shell"); assert.ok(shell);
         await assert.rejects(shell.execute({ command: "pwd" }, call()), /status unavailable/);
+      }
+    } finally { await fixture.stop(); }
+  }
+});
+
+test("a status error mid-turn keeps the last known inference catalog", async () => {
+  for (const mode of ["off", "tools", "only"] satisfies SandboxToolMode[]) {
+    const fixture = await pluginFixture(mode);
+    try {
+      fixture.failStatus();
+      assert.equal(fixture.inference.size, 3);
+      for (const hook of fixture.inference.values()) {
+        const event = { tools: { execute: {} }, system: [] };
+        await hook(event);
+        assert.deepEqual(Object.keys(event.tools), mode === "only" ? [...SANDBOX_TOOL_NAMES] : ["execute"]);
       }
     } finally { await fixture.stop(); }
   }
@@ -242,10 +260,10 @@ test("default bridge uses trusted envelopes, checks status per call and never fa
     ]);
     assert.ok(authorizations.every(value => value === "Bearer test-token"));
     failing = true;
-    await assert.rejects(tool.execute({ command: "pwd" }, call()), /503.*host fallback is disabled/);
+    await assert.rejects(tool.execute({ command: "pwd" }, call()), /The sandbox request failed/);
     assert.equal(bodies.length, 4, "failed status must not send an execute request");
     failing = false; mode = "off";
-    await assert.rejects(tool.execute({ command: "pwd" }, call()), /mode changed/);
+    await tool.execute({ command: "pwd" }, call());
   } finally {
     await stop?.(); await fixture.stop();
     server.close(); await once(server, "close");
@@ -255,6 +273,6 @@ test("default bridge uses trusted envelopes, checks status per call and never fa
 test("default bridge plugin rejects non-loopback endpoints before network access", async () => {
   const fixture = await pluginFixture("off");
   try {
-    await assert.rejects(sandboxPlugin.setup({ ...fixture.context, options: { url: "https://example.com/bridge", token: "secret" }, location: { directory: "/trusted" } }), /local HTTP/);
+    await assert.rejects(sandboxPlugin.setup({ ...fixture.context, options: { url: "https://example.com/bridge", token: "secret" }, location: { directory: "/trusted" } }), /couldn’t connect to the sandbox on this computer/);
   } finally { await fixture.stop(); }
 });

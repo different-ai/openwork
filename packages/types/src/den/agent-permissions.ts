@@ -31,7 +31,7 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload, file_send and host_execution are enforced by the OpenWork
+ * browser_upload, file_send, host_execution and sandbox_opt_out are enforced by the OpenWork
  * host and must never enter the engine grammar.
  *
  * host_execution is the sandbox-only switch: blocking it means the agent's
@@ -44,13 +44,20 @@ export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out"] as const;
 
-export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution"] as const;
-export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution"] as const;
+export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution", "sandboxOptOut"] as const;
+export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution", "sandbox_opt_out"] as const;
 
 /** Desktops that enforce host_execution say so; Den keeps it from the ones that do not. */
 export const AGENT_SANDBOX_ONLY_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Only";
+/**
+ * Desktops that know both sandbox modes (Use and Force) say so. Without it Den
+ * keeps sandbox_opt_out from the desktop: published desktops reject an action
+ * they do not know, and the ones that sent only the sandbox-only header already
+ * offer the sandbox next to the usual tools whenever its rollout is on.
+ */
+export const AGENT_SANDBOX_MODES_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Modes";
 
 /** What blocking computer use blocks too: everything else the agent does in apps. */
 export const AGENT_COMPUTER_USE_DEPENDENT_ACTIONS = ["computer_files", "computer_clipboard", "script"] as const;
@@ -76,8 +83,10 @@ type AgentPermissionDefinitionEntry = {
   /** One sentence, shown as the row's tooltip. */
   description: string;
   action: AgentPermissionAction;
-  /** `choice` is a picklist of decisions; `toggle` is on (allow) or off (deny). */
+  /** `choice` is a picklist of decisions; `toggle` is a switch. */
   control: "choice" | "toggle";
+  /** By default a toggle allows when on; a requirement denies when on. */
+  toggleMeans?: "allows" | "requires";
   /** The patterns its lists hold, or null when it has no lists. */
   patterns: AgentPermissionPatternKind | null;
   /** What one pattern names, for "Always block a command". */
@@ -96,12 +105,24 @@ export const agentPermissionDefinitions = [
     patternNoun: "command",
   },
   {
+    key: "sandboxOptOut",
+    section: "commands",
+    label: "Use OpenWork Sandbox",
+    description: "Members' agents get a separate, safe space on their computer for risky work. Their usual tools keep working.",
+    action: "sandbox_opt_out",
+    control: "toggle",
+    toggleMeans: "requires",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
     key: "hostExecution",
     section: "commands",
-    label: "Run tools on this computer",
-    description: "When off, the agent's commands and files run only in a local sandbox on the member's computer, with the workspace and authorized folders mounted. Using apps, the built-in browser and local MCP servers are blocked, and desktop apps that cannot run the sandbox refuse to run agents.",
+    label: "Force OpenWork Sandbox",
+    description: "Everything members' agents run stays inside the sandbox. It can only reach the project and authorized folders.",
     action: "host_execution",
     control: "toggle",
+    toggleMeans: "requires",
     patterns: null,
     patternNoun: null,
   },
@@ -553,6 +574,13 @@ export function withoutHostExecutionPermissions(settings: AgentPermissionSetting
   return visible;
 }
 
+/** Hide the Use requirement from editors that do not know it. */
+export function withoutSandboxOptOutPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.sandboxOptOut;
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -640,6 +668,36 @@ export function withoutHostExecutionRules(rules: readonly AgentPermissionRule[])
   return rules.filter((rule) => rule.action !== "host_execution");
 }
 
+/** sandbox_opt_out rules must not reach clients that cannot read them. */
+export function withoutSandboxOptOutRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "sandbox_opt_out");
+}
+
+/**
+ * What the organization requires of the OpenWork Sandbox for this member.
+ * Force (host_execution blocked) implies Use. A member's own setting can only
+ * be stricter.
+ */
+export function resolveSandboxRequirement(rules: readonly AgentPermissionRule[] | undefined): {
+  use: boolean;
+  force: boolean;
+  /** Who requires Use ("Everyone" or a team's name), or null. */
+  useSource: string | null;
+  forceSource: string | null;
+} {
+  const forceRule = matchingAgentPermissionRule(rules, "host_execution", "*");
+  const useRule = matchingAgentPermissionRule(rules, "sandbox_opt_out", "*");
+  // Both are switches: anything but Allow from the organization requires the mode.
+  const force = forceRule !== null && forceRule.effect !== "allow";
+  const ownUse = useRule !== null && useRule.effect !== "allow";
+  return {
+    use: force || ownUse,
+    force,
+    useSource: ownUse ? useRule.source : force ? forceRule.source : null,
+    forceSource: force ? forceRule.source : null,
+  };
+}
+
 /** Whether the organization requires sandbox-only for this member. */
 export function agentPermissionRulesRequireSandbox(rules: readonly AgentPermissionRule[] | undefined): boolean {
   return matchingAgentPermissionRule(rules, "host_execution", "*")?.effect === "deny";
@@ -664,9 +722,11 @@ const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_director
  */
 export function agentPermissionRulesForClient(
   rules: readonly AgentPermissionRule[],
-  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean },
+  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean },
 ): AgentPermissionRule[] {
   let delivered: AgentPermissionRule[] = [...rules];
+  // Requiring Use restricts nothing a desktop could do: one that cannot read it keeps working as before.
+  if (!supports.sandboxModes) delivered = withoutSandboxOptOutRules(delivered);
   if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
   if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
   if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
@@ -685,7 +745,7 @@ export function agentPermissionRulesForClient(
 }
 
 /**
- * The member's own "Run tools on this computer" setting merged with the
+ * The member's legacy execution setting merged with the
  * organization's: the stricter wins. A member's Allow cannot undo the
  * organization's Block, and a member's Block stands when the organization allows.
  */
@@ -882,6 +942,7 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
   file_send: () => "sending files to connected accounts",
   host_execution: () => "running tools on this computer outside the sandbox",
+  sandbox_opt_out: () => "working without the OpenWork Sandbox",
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,

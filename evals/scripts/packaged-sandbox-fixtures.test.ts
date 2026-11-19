@@ -117,16 +117,35 @@ describe("packaged sandbox proof prerequisites", () => {
     vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
       if (!String(url).startsWith("https://api.openai.com/")) throw new Error("Unexpected upstream in fixture");
       bodies.push(JSON.parse(String(init?.body)));
-      return Response.json({ model: "gpt-6.1-sol", service_tier: "fast", output: [] });
+      return Response.json({ model: "gpt-6.2-sol", service_tier: "fast", output: [] });
     });
     const proxy = await inferenceFixture("sol", "fixture-key", { phase: "title", hostSecret: "host-witness" });
     try {
       const response = await original(`${proxy.url}/responses`, { method: "POST", headers: { authorization: `Bearer ${proxy.token}`, "content-type": "application/json" },
-        body: JSON.stringify({ model: "gpt-6.1-sol", reasoning: { effort: "none" }, input: "Synthetic title", tools: [] }) });
+        body: JSON.stringify({ model: "gpt-6.2-sol", reasoning: { effort: "none" }, input: "Synthetic title", tools: [] }) });
       expect(response.status).toBe(200);
       await response.text();
-      expect(bodies).toEqual([{ model: "gpt-6.1-sol", reasoning: { effort: "low" }, service_tier: "priority", input: "Synthetic title", tools: [] }]);
-      expect(proxy.records[0]).toMatchObject({ status: 200, completed: true, tuning: "reasoning.effort=low; service_tier=priority" });
+      expect(bodies).toEqual([{ model: "gpt-6.2-sol", reasoning: { effort: "low" }, service_tier: "priority", input: "Synthetic title", tools: [] }]);
+      expect(proxy.records[0]).toMatchObject({ status: 200, completed: true, responseServiceTier: "fast", tuning: "reasoning.effort=low; service_tier=priority" });
+    } finally { await proxy.close(); vi.unstubAllGlobals(); }
+  });
+  it("tries the documented fast alias on a provider model rejection and reads SSE response facts", async () => {
+    const original = globalThis.fetch;
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).startsWith("https://api.openai.com/")) throw new Error("Unexpected upstream in fixture");
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1) return Response.json({ error: "model_not_found" }, { status: 404 });
+      return new Response('event: response.completed\ndata: {"type":"response.completed","response":{"model":"gpt-6.2-sol-fast","service_tier":"fast"}}\n\n', { headers: { "content-type": "text/event-stream" } });
+    });
+    const proxy = await inferenceFixture("sol", "fixture-key", { phase: "chat", hostSecret: "host-witness" });
+    try {
+      const response = await original(`${proxy.url}/responses`, { method: "POST", headers: { authorization: `Bearer ${proxy.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: "gpt-6.2-sol", tools: [] }) });
+      expect(response.status).toBe(200);
+      await response.text();
+      expect(bodies).toMatchObject([{ model: "gpt-6.2-sol", service_tier: "priority" }, { model: "gpt-6.2-sol-fast", service_tier: "priority" }]);
+      expect(proxy.records[0]).toMatchObject({ responseModel: "gpt-6.2-sol-fast", responseServiceTier: "fast", upstreamAttempts: [{ model: "gpt-6.2-sol", status: 404 }, { model: "gpt-6.2-sol-fast", status: 200 }] });
     } finally { await proxy.close(); vi.unstubAllGlobals(); }
   });
   it("redacts upstream and loopback credentials from exported evidence", () => {

@@ -12,7 +12,7 @@ const test = spec.world(packagedSandboxRegression, { timeout: 900_000,
   needs: { placement: "local", platform: "darwin", env: ["OPENWORK_EVAL_ELECTRON_BINARY"], optIn: ["MICROSANDBOX_LIVE"] },
 });
 
-test("a member of a packaged install disables host tools and edits a live authorized folder in Linux", async ({ world, user, agent, probe, step, evidence }) => {
+test("a packaged desktop member can add Linux tools and then confine all tools to the sandbox", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: the member opens the packaged app with ordinary host tools allowed", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
@@ -20,19 +20,49 @@ test("a member of a packaged install disables host tools and edits a live author
       until: result => result.status === 200 && JSON.stringify(result.body).includes('"featureEnabled":true'),
     });
     evidence.recordAssertionEvidence("The real packaged app starts with the verified rollout", `${world.artifact.embeddedServer}; packaged: ${world.isPackaged}; settings: ${JSON.stringify(settings.body)}`, world.isPackaged && settings.status === 200);
-    expect(settings.body).toMatchObject({ effectiveAllowHostExecution: true, featureEnabled: true });
+    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, featureEnabled: true });
     await user.screenshot();
   });
-  await step("when the member disables Run tools on this computer and authorizes one folder", async () => {
+  await step("when: the member adds a sandbox alongside the computer’s tools", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see({ testId: "host-execution-switch" });
-    await user.click({ testId: "host-execution-switch" });
-    await user.see({ testId: "host-execution-saved" });
-    const settings = await probe.desktopApi(world.settingsPath);
+    await user.see({ testId: "sandbox-use-switch" });
+    await user.click({ testId: "sandbox-use-switch" });
+    await user.see({ testId: "sandbox-ready" }, { timeoutMs: 90_000 });
+    await user.screenshot();
+    await user.click("Back to app");
+    await agent.run("session.open", { sessionId: world.session.sessionId });
+    const sandboxCommand = "uname -s; printf 'USE_GUEST_WITNESS\\n'";
+    const hostCommand = "uname -s; printf 'USE_HOST_WITNESS\\n'";
+    const prompt = await runToolTurn({ user }, world, "Compare the sandbox and this computer in the same turn.", [
+      { tool: "sandbox_shell", arguments: { command: sandboxCommand } },
+      { tool: "shell", arguments: { command: hostCommand } },
+    ]);
+    await user.see("Run task", { timeoutMs: 180_000 });
+    const sandbox = await world.toolCall("sandbox_shell", input => input.command === sandboxCommand);
+    const host = await world.toolCall("shell", input => input.command === hostCommand);
+    const catalogs = (await world.offeredCatalogs(prompt)).filter(names => names.length > 0);
+    const expected = ["edit", "glob", "grep", "read", "shell", "write"];
+    const both = catalogs.length > 0 && catalogs.every(names => expected.every(tool => names.includes(tool) && names.includes(`sandbox_${tool}`)));
+    const distinct = sandbox?.status === "completed" && host?.status === "completed" && /\bLinux\b/.test(sandbox.output) && /\bDarwin\b/.test(host.output);
+    evidence.recordAssertionEvidence("Use adds six tools while preserving the computer tools", `${JSON.stringify(catalogs)}; sandbox ${sandbox?.output}; computer ${host?.output}`, distinct && both);
+    expect(distinct).toBe(true);
+    expect(both).toBe(true);
+    await user.click({ role: "button", label: /^Worked for/ });
+    await user.see({ testId: "sandbox-tag" });
+    await user.screenshot();
+  });
+  await step("when: the member enables Force and authorizes one folder", async () => {
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-force-switch" });
+    await user.click({ testId: "sandbox-force-switch" });
+    const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
+      within: 90_000, label: "Force applies after the previous turn", until: result => result.status === 200 && JSON.stringify(result.body).includes('"effectiveForceSandbox":true'),
+    });
     const folders = await agent.desktopApi(world.foldersPath, { method: "PUT", body: { folders: [world.authorizedPath] } });
     evidence.recordAssertionEvidence("The packaged server requires sandbox-only and mounts the chosen absolute path", `${JSON.stringify(settings.body)}; authorized: ${world.authorizedPath}; HTTP ${folders.status}`, settings.status === 200 && folders.status === 200);
-    expect(settings.body).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false });
+    expect(settings.body).toMatchObject({ useSandbox: true, forceSandbox: true, effectiveForceSandbox: true });
     expect(folders.status).toBe(200);
+    await user.see({ testId: "sandbox-ready" }, { timeoutMs: 90_000 });
     await user.screenshot();
   });
   await step("after: the same shell tool runs in Linux with no host tool in the actual model catalog", async () => {
