@@ -548,7 +548,7 @@ export default {
   "den.copy_signin_link": "Anmeldelink kopieren",
   "den.create_account": "Konto erstellen",
   "den.credentials_ready_badge": "Zugangsdaten bereit",
-  "den.error_base_url": "Gib eine gültige http:// oder https://-Cloud-Control-Plane-URL ein.",
+  "den.error_base_url": "Gib eine gültige Cloud-Control-Plane-URL mit http:// oder https:// ein.",
   "den.error_browser_open_failed": "Dein Browser konnte nicht automatisch geöffnet werden.",
   "den.error_load_orgs": "Organisationen konnten nicht geladen werden.",
   "den.error_no_session": "Keine aktive Cloud-Session gefunden.",
