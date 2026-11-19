@@ -100,6 +100,8 @@ class ManagedDesktopPolicy {
   onChange: (() => void) | undefined;
   /** Live rollout state, independent of persisted model and permission changes. */
   onV2OnlyChange: ((enabled: boolean) => void) | undefined;
+  /** The window delivered a sign-in, or signed out. */
+  onIdentityDelivered: (() => void) | undefined;
   constructor(private readonly config: ServerConfig, private readonly sandboxFreshnessMs: number) {}
   authenticatesEvaluation(request: Request): boolean {
     const supplied = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
@@ -127,6 +129,7 @@ class ManagedDesktopPolicy {
       if (!this.sandboxOrgVerified) this.sandboxOrgForce = required;
     }
     this.session = session;
+    this.onIdentityDelivered?.();
     if (current && sessionKey(current) !== sessionKey(session)) {
       // Another sign-in, even in the same organization, never keeps the
       // previous one's policy: not while Den is unreachable, nor in the engine.
@@ -145,6 +148,7 @@ class ManagedDesktopPolicy {
     this.installed = undefined;
     this.lastKnown = undefined;
     this.onV2OnlyChange?.(false);
+    this.onIdentityDelivered?.();
     const cleared = await clearManagedDesktopPolicy(this.config);
     if (cleared.changed) this.onChange?.();
   }
@@ -558,18 +562,11 @@ class ManagedDesktopPolicy {
         featureEnabled = features.sandboxTools === true;
         scope = sessionKey(session);
       } else {
-        const origin = this.config.trustedDenOrigin ?? await readActivatedEnterpriseDenOrigin() ?? "https://api.openworklabs.com";
-        const url = new URL(origin);
-        if (url.username || url.password || url.search || url.hash || url.pathname !== "/"
-          || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Untrusted Den origin");
         rolloutSentAt = performance.now();
-        const response = await externalFetch(new URL("/v1/features", url).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
-        if (!response.ok) throw new Error("Feature verification failed");
-        const payload: unknown = await response.json();
+        const signedOut = await this.readSignedOutFeatures(() => { rolloutSentAt = performance.now(); });
         this.identityChanged(generation);
-        const features = isRecord(payload) && isRecord(payload.features) ? payload.features : payload;
-        featureEnabled = isRecord(features) && features.sandboxTools === true;
-        scope = `signed-out:${url.origin}`;
+        featureEnabled = signedOut.features.sandboxTools === true;
+        scope = `signed-out:${signedOut.origin}`;
       }
       const access = { ...this.sandboxAuthority(), featureEnabled, enabled: featureEnabled && !this.sandboxRulesRestrictive, scope };
       this.lastSandboxFeatureEnabled = featureEnabled;
@@ -586,6 +583,19 @@ class ManagedDesktopPolicy {
       this.sandboxRetryAt = performance.now() + this.sandboxRetryDelayMs;
       return { ...this.sandboxAuthority(), enabled: false, featureEnabled: this.lastSandboxFeatureEnabled, scope: "unverified" };
     }
+  }
+  /** What the deployment turns on for someone with no organization. */
+  private async readSignedOutFeatures(onSend?: () => void): Promise<{ origin: string; features: Record<string, unknown> }> {
+    const origin = this.config.trustedDenOrigin ?? await readActivatedEnterpriseDenOrigin() ?? "https://api.openworklabs.com";
+    const url = new URL(origin);
+    if (url.username || url.password || url.search || url.hash || url.pathname !== "/"
+      || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Untrusted Den origin");
+    onSend?.();
+    const response = await externalFetch(new URL("/v1/features", url).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
+    if (!response.ok) throw new Error("Feature verification failed");
+    const payload: unknown = await response.json();
+    const features = isRecord(payload) && isRecord(payload.features) ? payload.features : payload;
+    return { origin: url.origin, features: isRecord(features) ? features : {} };
   }
   private desktopFresh(): boolean {
     return performance.now() - this.sandboxDesktopSentAt < this.sandboxFreshnessMs;
@@ -628,6 +638,29 @@ class ManagedDesktopPolicy {
     await this.verifySandboxHostAuthority();
     if (this.isolationTransition || (await readAppliedSandboxSettings(this.config)).forceSandbox || this.isolationTransition || this.sandboxOrgForce) throw this.sandboxOnly();
     this.identityChanged(generation);
+  }
+
+  /**
+   * Whether the agent engine follows the computer's proxy settings: the
+   * signed-in organization's rollout, or the deployment's when signed out.
+   * Undefined when it could not be read, which is not a "no".
+   */
+  async systemProxyEnabled(): Promise<boolean | undefined> {
+    const session = this.session;
+    const generation = this.generation;
+    try {
+      let features: Record<string, unknown>;
+      if (session) {
+        const payload = await this.readDenJson(session, "/v1/org", generation);
+        features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
+      } else {
+        features = (await this.readSignedOutFeatures()).features;
+      }
+      this.identityChanged(generation);
+      return features.desktopSystemProxy === true;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Remote computers require the signed-in organization's verified rollout. */

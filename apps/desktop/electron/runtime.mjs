@@ -1448,6 +1448,7 @@ export function createRuntimeManager({
   desktopRoot,
   listLocalWorkspacePaths,
   trustedDenOrigin = noConfiguredDenOrigin,
+  engineSystemProxyEnv = undefined,
   localManagedMcpVaultKey,
   driveFileApproval = undefined,
   anonymousInference = undefined,
@@ -2011,6 +2012,7 @@ export function createRuntimeManager({
       freshInstallEngine,
       engineAutoUpgrade: resolveDesktopEngineAutoUpgrade(),
       trustedDenOrigin: await trustedDenOrigin(),
+      engineSystemProxyEnv,
     });
     inProcessServer = handle;
     openworkServerState.managedOpencodeExecution = handle.managedOpencodeExecution ?? null;

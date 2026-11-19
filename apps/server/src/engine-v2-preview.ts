@@ -4,6 +4,7 @@ import { assertSandboxEngineIdle, sandboxPolicyPending } from "./sandbox-engine-
 import { localSandboxRuntime } from "./local-sandbox-runtime.js";
 import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
+import { createEngineSystemProxy } from "./engine-system-proxy.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
@@ -191,6 +192,8 @@ export interface EngineV2Preview {
    * once v1 is idle. Upstream owns in-place migration on startup. Turning it off changes no engine selection.
    */
   setV2Only(enabled: boolean): Promise<EngineV2PreviewStatus>;
+  /** Re-reads whether the engine follows the computer's proxy settings and replaces an idle engine started the other way. */
+  syncSystemProxy(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -798,6 +801,10 @@ export function createEngineV2Preview(options: {
     ...(autoUpgradeRetry ? { autoUpgradeRetry } : {}),
   });
   let allowRunning = true;
+  const systemProxy = createEngineSystemProxy(config);
+  /** What the running engine was started with. */
+  let sidecarSystemProxy = false;
+  let systemProxySync: Promise<void> = Promise.resolve();
   let running = false;
   let version: string | undefined;
   let pid: number | undefined;
@@ -1298,6 +1305,8 @@ export function createEngineV2Preview(options: {
     const globalSkills = globalSkillDirectories();
     const historyDatabase = await selectHistoryDatabase();
     const policy = managedDesktopPolicy(config);
+    const startedWithSystemProxy = systemProxy.wanted();
+    const systemProxyEnv = startedWithSystemProxy ? await systemProxy.env() : {};
     const managed = await createManagedOpencodeV2Server({
       ...(policy.projectIsolationTransition() && contextBridge?.sandbox ? {
         isolateProjectConfig: async () => {
@@ -1311,7 +1320,7 @@ export function createEngineV2Preview(options: {
       bin: resolved.bin,
       rootDir,
       instanceId: engineInstanceId(),
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: { ...systemProxyEnv, OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
         return executionRules(runtime.managedPolicy?.execution);
@@ -1329,6 +1338,7 @@ export function createEngineV2Preview(options: {
       onExit: (error) => engineExited(managed, error),
     });
     sidecar = managed;
+    sidecarSystemProxy = startedWithSystemProxy;
     if (!enabled || !allowRunning) {
       await closeSidecar();
       return;
@@ -1432,6 +1442,35 @@ export function createEngineV2Preview(options: {
     reportEngineFailure("exit", error);
     void closeSidecar().then(scheduleRestart);
   }
+
+  // An engine reads its proxy once, at start. When the checked answer differs
+  // from what the running engine was started with, replace an idle engine. A
+  // busy one keeps working; the answer is remembered for its next start.
+  async function applySystemProxy(): Promise<void> {
+    if (!systemProxy.available || stopping) return;
+    await systemProxy.record(await managedDesktopPolicy(config).systemProxyEnabled());
+    if (startPromise) await startPromise.catch(() => undefined);
+    const mismatched = () => sidecar !== undefined && sidecarSystemProxy !== systemProxy.wanted();
+    if (!mismatched() || stopping) return;
+    await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+      const active = sidecar;
+      if (!active || !mismatched() || stopping || !enabled || !allowRunning) return;
+      await assertSandboxEngineIdle(active);
+      await stopRuntime();
+      if (stopping || !enabled) return;
+      allowRunning = true;
+      await start().catch(recordStartError);
+    } });
+  }
+  function syncSystemProxy(): Promise<void> {
+    systemProxySync = systemProxySync.then(applySystemProxy).catch(() => undefined);
+    return systemProxySync;
+  }
+
+  // Nothing announces "nobody is signed in" at startup, so a signed-out
+  // install checks once the window has had time to deliver a sign-in.
+  const signedOutSystemProxyCheck = systemProxy.available ? setTimeout(() => { void syncSystemProxy(); }, 30_000) : undefined;
+  signedOutSystemProxyCheck?.unref?.();
 
   async function stopRuntime(): Promise<void> {
     allowRunning = false;
@@ -1630,6 +1669,7 @@ export function createEngineV2Preview(options: {
 
   async function stop(): Promise<void> {
     stopping = true;
+    clearTimeout(signedOutSystemProxyCheck);
     autoUpgradeAbort.abort(new Error("Automatic upgrade paused while OpenWork closes."));
     await autoUpgradeJob;
     await v2OnlyJob;
@@ -1651,7 +1691,7 @@ export function createEngineV2Preview(options: {
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
+  return { start: startWhenReady, syncSystemProxy, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
     refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
     syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }
