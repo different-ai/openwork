@@ -46,9 +46,15 @@ describe("which selections offer a side chat", () => {
     expect(replySelection(select("one", "two"), pane)?.text).toContain("Second paragraph");
   });
 
-  test("not the person's own message, a selection spanning two replies, another pane, or nothing", () => {
+  test("text running across several replies", () => {
+    const picked = replySelection(select("two", "other"), pane)?.text;
+    expect(picked).toContain("Second paragraph");
+    expect(picked).toContain("Another reply");
+  });
+
+  test("not the person's own message, a selection starting in it, another pane, or nothing", () => {
     expect(replySelection(select("mine", "mine"), pane)).toBeNull();
-    expect(replySelection(select("two", "other"), pane)).toBeNull();
+    expect(replySelection(select("mine", "one"), pane)).toBeNull();
     expect(replySelection(select("outside", "outside"), pane)).toBeNull();
     document.getSelection()!.removeAllRanges();
     expect(replySelection(document.getSelection(), pane)).toBeNull();
