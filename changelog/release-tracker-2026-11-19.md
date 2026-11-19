@@ -59,3 +59,33 @@ Chat, browser and file work recover more reliably, while deployments and admin t
 
 #### Lines of code changed since previous release
 135310 lines changed since `v0.18.68` (134044 insertions, 1266 deletions).
+
+## v0.18.71
+
+#### Commit
+`5d25d774`
+
+#### Released at
+`2026-11-19T19:49:15Z`
+
+#### Title
+Get the newest OpenWork alpha as soon as it’s published
+
+#### One-line summary
+Alpha installs can get the latest build without waiting for stable, Cloud skills keep their supporting files, and Permissions opens faster.
+
+#### Pull requests
+| PR | Audience | Decision | Reason |
+|---|---|---|---|
+| #7557 | desktop users | Included | Alpha installs can take the newest build without waiting for a matching stable release |
+| #7530 | MCP clients | Included | GitHub-imported Cloud skills retain supporting files that Skills clients can read |
+| #7554 | desktop users | Included | Settings → Permissions opens right away instead of waiting on a loading screen |
+| #7553 | admins | Included | The AWS managed installer guide explains optional sign-in and deployment progress |
+
+#### Behavior changes and removals
+- Alpha installs can now take the newest published alpha even when it is ahead of stable; organization settings can still block alpha updates or limit allowed versions.
+- Settings → Permissions opens right away. When sandbox controls are enabled, a message stays in the composer instead of producing a raw error while a setting change is pending; a stopped sandbox recovers on the next command, and collapsed steps show where they ran.
+- Cloud skills imported from GitHub now keep their supporting text files, which MCP clients that support the Skills extension can list and read.
+
+#### Lines of code changed since previous release
+10772 lines changed since `v0.18.70` (9352 insertions, 1420 deletions).
