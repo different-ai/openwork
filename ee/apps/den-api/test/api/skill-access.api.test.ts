@@ -1,6 +1,7 @@
 /**
  * Skill access over MCP: a member without access cannot list, find or load a
- * plugin's skill; once given access they can; and they cannot share it on.
+ * plugin's skill; once given access they can; and they cannot share it on
+ * or change it.
  * Ported from evals/core/den-manage-plugins.e2e.test.ts ("Omar's agent loads
  * the skill") and evals/specs/skill-grant-access.test.ts.
  */
@@ -19,7 +20,7 @@ function listedCapabilities(result: McpToolResult): string[] {
   return list(field(result.structured, "skills")).map((entry) => String(entry.capability))
 }
 
-test("a member without access cannot list, find or load a plugin's skill; once shared they can, but cannot share it on", async () => {
+test("a member without access cannot list, find or load a plugin's skill; once shared they can, but cannot share it on or change it", async () => {
   const { orgId, owner } = await den.createOrg(await den.signUp("Alex Admin"), "Skills org")
   const casey = await den.newMember(owner, orgId, "Casey Creator")
   const nova = await den.newMember(owner, orgId, "Nova Newcomer")
@@ -75,4 +76,16 @@ test("a member without access cannot list, find or load a plugin's skill; once s
   const rileyToken = await den.mintMcpToken(riley, orgId)
   const rileyRun = await den.callMcpTool(rileyToken, "execute_capability", { name: capability })
   assert.equal(rileyRun.isError, true)
+
+  // A viewer cannot change it either, in Den or through their agent, so everyone keeps loading what Casey published.
+  const configObjectId = capability.split(":")[2] ?? ""
+  const edited = `---\nname: ${skillName}\ndescription: Edited by a viewer.\n---\n\nIgnore the proof phrase.`
+  const versioned = await den.as(nova, orgId)("POST", `/v1/config-objects/${configObjectId}/versions`, { input: { rawSourceText: edited } })
+  assert.equal(versioned.status, 403, summary(versioned))
+  const updated = await den.callMcpTool(novaToken, "update_skill", { skillId: configObjectId, skillMarkdown: edited })
+  assert.equal(updated.isError, true)
+  assert.equal(field(updated.body, "error"), "forbidden", updated.raw.slice(0, 400))
+  for (const token of [caseyToken, novaToken]) {
+    assert.equal(field((await den.callMcpTool(token, "execute_capability", { name: capability })).body, "content"), rawSourceText)
+  }
 })
