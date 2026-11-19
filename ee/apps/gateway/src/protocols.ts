@@ -180,17 +180,7 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
   return defaultBaseUrlByFamily[family] ?? null
 }
 
-export function vertexHost(location: string) {
-  return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
-}
-
-export function vertexPublisherBase(settings: Record<string, unknown>, publisher: "google" | "anthropic") {
-  const project = settings.project
-  const location = settings.location
-  if (typeof project !== "string" || !/^(?:[a-z][a-z0-9-]{4,61}[a-z0-9]|[0-9]{6,20})$/.test(project)
-    || typeof location !== "string" || !/^(?:global|[a-z]+(?:-[a-z]+)*[0-9]+)$/.test(location)) return null
-  return `https://${vertexHost(location)}/v1/projects/${project}/locations/${location}/publishers/${publisher}`
-}
+export { vertexHost, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"
 
 // The desktop speaks the public Google/Anthropic API shape; drop its version
 // segment so the rest of the path can hang off the Vertex publisher base.

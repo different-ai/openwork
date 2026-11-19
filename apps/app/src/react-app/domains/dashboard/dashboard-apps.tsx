@@ -53,7 +53,7 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTar
   const create = async () => {
     if (!canManage) return;
     setCreating(true); setError(null);
-    try { await onCreateApp("Create one live app for my dashboard in one shot. Use my request to build and save one app that fetches fresh data with each viewer’s own connections whenever opened or refreshed. Handle the underlying workflow internally; do not ask me workflow questions. My app should "); setChooser(null); }
+    try { await onCreateApp("Create and save one live artifact for my dashboard that fetches fresh data with each viewer’s own connections whenever opened or refreshed. Handle the underlying workflow internally; do not ask me workflow questions. My artifact should "); setChooser(null); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not start a conversation. Try again."); }
     finally { setCreating(false); }
   };
@@ -86,10 +86,10 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTar
       <Button className="mt-6 rounded-lg" onClick={openAdd}><Plus className="size-4" />Add an artifact</Button>
     </section>) : available ? <p className="mb-8 text-xs text-muted-foreground">This dashboard has no artifacts yet.</p> : null}
     <Dialog open={(canManage || built.ready) && chooser !== null} onOpenChange={(open) => { if (!open && !creating && !placement.isPending) setChooser(null); }}>
-      <DialogContent className={chooser === "existing" && built.ready ? "gap-0 overflow-hidden p-0 lg:top-[12vh] lg:max-w-xl lg:translate-y-0 lg:rounded-xl" : undefined}>
+      <DialogContent className={chooser === "existing" && built.ready ? "flex flex-col gap-0 overflow-hidden p-0 lg:top-[12vh] lg:max-h-[76vh] lg:max-w-xl lg:translate-y-0 lg:rounded-xl" : undefined}>
         <DialogHeader className={chooser === "existing" && built.ready ? "sr-only" : undefined}><DialogTitle>{chooser === "existing" || chooser === "saved" ? "Choose an existing artifact" : "Add to your dashboard"}</DialogTitle>
           {chooser === "add" ? <DialogDescription>Create something useful or choose an artifact already available to you.</DialogDescription> : null}</DialogHeader>
-        {chooser === "existing" && built.ready ? <div><BuiltAppPicker key={JSON.stringify(scope)} built={built} onAdded={() => setChooser(null)} />{canManage && available ? <div className="flex gap-2 border-t p-2"><Button variant="ghost" size="sm" onClick={() => setChooser("add")}><Sparkles className="size-4" />Create with OpenWork</Button>{apps.length ? <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setChooser("saved"); }}>Other saved artifacts</Button> : null}</div> : null}</div> : chooser === "existing" || chooser === "saved" ? <div className="space-y-4">
+        {chooser === "existing" && built.ready ? <div className="flex min-h-0 flex-1 flex-col"><BuiltAppPicker key={JSON.stringify(scope)} built={built} onAdded={() => setChooser(null)} />{canManage && available ? <div className="flex gap-2 border-t p-2"><Button variant="ghost" size="sm" onClick={() => setChooser("add")}><Sparkles className="size-4" />Create with OpenWork</Button>{apps.length ? <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setChooser("saved"); }}>Other saved artifacts</Button> : null}</div> : null}</div> : chooser === "existing" || chooser === "saved" ? <div className="space-y-4">
           <Button size="sm" variant="ghost" onClick={() => setChooser(built.ready ? "existing" : "add")}><ArrowLeft className="size-4" />Back</Button>
           <Input aria-label="Search artifacts" placeholder="Search artifacts" value={search} onChange={(event) => setSearch(event.target.value)} />
           <div className="max-h-80 space-y-2 overflow-auto">{matching.map((app) => <div key={app.view.id} className="flex items-center gap-3 rounded-lg border p-3">
@@ -111,7 +111,7 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTar
   </>;
 }
 
-function SavedDashboardApp({ app, onRemove, removing, onCreateApp, fallbackEndpoints }: { fallbackEndpoints?: DashboardLaunchEndpoint[]; app: SavedAppSummary; onRemove: (geometry?: GeneratedAppPreviewGeometry) => void; removing: boolean; onCreateApp: CreateDashboardApp }) {
+export function SavedDashboardApp({ app, onRemove, removing, onCreateApp, fallbackEndpoints }: { fallbackEndpoints?: DashboardLaunchEndpoint[]; app: SavedAppSummary; onRemove: (geometry?: GeneratedAppPreviewGeometry) => void; removing: boolean; onCreateApp: CreateDashboardApp }) {
   const navigate = useNavigate();
   const { client, orgId, scope, canManage } = useAppsClient();
   const { workspaceId } = useWorkspace();

@@ -20,6 +20,7 @@ import {
   callFunctionOnSurface,
   CdpPageError,
   addInitScript,
+  attachFiles,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickTarget,
   dumpScreenState,
@@ -43,6 +44,7 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
   requireWorldResource,
@@ -62,7 +64,7 @@ import type {
   TraceEntry,
   TraceEntryInput,
 } from "@openwork/test-evidence";
-import { eventually } from "../eventually.ts";
+import { eventually } from "@openwork/env";
 import { denLink as startDenLink } from "../link.ts";
 import { readConnectState } from "../state.ts";
 import type {
@@ -856,8 +858,23 @@ export class UserChannel implements User {
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else await clickTarget(surface, target);
       if (options.sensitive) {
-        const masked = await callFunctionOnSurface(surface, () => document.activeElement instanceof HTMLInputElement && document.activeElement.type === 'password', []);
-        if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
+        // A password input, or a multi-line secret field (pasted key files) masked with text-security.
+        const maskedFocus = () => callFunctionOnSurface(surface, () => {
+          const active = document.activeElement;
+          if (active instanceof HTMLInputElement) return active.type === 'password' ? 'masked' : `input:${active.type}`;
+          if (!(active instanceof HTMLTextAreaElement)) return active ? active.tagName.toLowerCase() : 'nothing';
+          const style = getComputedStyle(active);
+          const security = style.getPropertyValue('-webkit-text-security') || style.getPropertyValue('text-security');
+          return security && security !== 'none' ? 'masked' : `textarea:${security || 'unmasked'}`;
+        }, []);
+        let masked = await maskedFocus();
+        if (masked !== 'masked' && masked !== null && typeof masked === 'string' && !masked.startsWith('input:') && !masked.startsWith('textarea:')) {
+          // Focus moved (the page re-rendered under the click); click the target once more.
+          if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
+          else await clickTarget(surface, target);
+          masked = await maskedFocus();
+        }
+        if (masked !== 'masked') throw new Error(`Sensitive typing requires a masked password input (focused: ${String(masked)})`);
       }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
@@ -882,6 +899,12 @@ export class UserChannel implements User {
         throw new Error("Typed field did not retain the expected value");
       }
     });
+  }
+
+  attachFiles(selector: string, files: string[]): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "attachFiles", `attachFiles(${selector}, ${files.length} files)`, surface,
+      () => attachFiles(surface, selector, files));
   }
 
   press(key: string): Promise<void> {
@@ -990,6 +1013,12 @@ export class AgentChannel implements Agent {
 
   on(surface: Surface): Agent {
     return new AgentChannel(this.#runtime, surface);
+  }
+
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "computerProgram", `computerProgram(${input.surface}, session=${input.sessionId})`, surface,
+      () => requestComputerProgram(surface, input));
   }
 
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
@@ -1228,6 +1257,36 @@ export class ProbeChannel implements Probe {
     return pick ? pick(value) : value;
   }
 
+  /** The page address, as shown in the browser's address bar. */
+  url(): Promise<string> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "url", "url", surface, async () => {
+      const value = await evaluateOnSurface(surface, () => window.location.href);
+      if (typeof value !== "string") throw new Error("location.href was not a string.");
+      return value;
+    });
+  }
+
+  /**
+   * What a person can read or copy from visible links and read-only fields
+   * matching `selector`: each link's destination and each field's shown text.
+   * Password and editable fields are never read.
+   */
+  linkTargets(selector: string): Promise<string[]> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "linkTargets", `linkTargets(${JSON.stringify(redacted(selector))})`, surface, async () => {
+      const values = await callFunctionOnSurface(surface, (input: string) => Array.from(document.querySelectorAll(input)).flatMap((element) => {
+        const box = element.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0) return [];
+        if (element instanceof HTMLAnchorElement) return [element.href];
+        if (element instanceof HTMLInputElement && element.readOnly && element.type !== "password") return [element.value];
+        return [];
+      }), [selector]);
+      if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("linkTargets returned an invalid list.");
+      return values;
+    });
+  }
+
   hash(): Promise<string> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "hash", "hash", surface, async () => {
@@ -1309,7 +1368,7 @@ export class ProbeChannel implements Probe {
     return this.#runtime.call("probe", "toolCalls", `toolCalls(${options.name ?? "any"})`, null, () => mock.toolCalls(options));
   }
 
-  eventually<T>(fn: () => Promise<T> | T, options: import("../eventually.ts").EventuallyOptions<T>): Promise<T> {
+  eventually<T>(fn: () => Promise<T> | T, options: import("@openwork/env").EventuallyOptions<T>): Promise<T> {
     return this.#runtime.call("probe", "eventually", `eventually(${options.label ?? "condition"})`, null, () => eventually(fn, options));
   }
 }

@@ -12,9 +12,11 @@ export type ExternalMcpOAuthStateIdentitySource = {
   authType: ExternalMcpAuthType
   credentialMode: ExternalMcpCredentialMode
   apiKeyAuthScheme?: "bearer" | "token"
+  oauthConfiguration?: { manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } } | null
 }
 
 type NonSecretExternalMcpOAuthStateIdentity =
+  | readonly [url: string, authType: "oauth", credentialMode: ExternalMcpCredentialMode, authorizationEndpoint: string, tokenEndpoint: string]
   | readonly [url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
   | readonly [url: string, authType: "apikey", credentialMode: ExternalMcpCredentialMode, apiKeyAuthScheme: "bearer" | "token"]
   | readonly [nativeProviderId: string, url: string, authType: ExternalMcpAuthType, credentialMode: ExternalMcpCredentialMode]
@@ -30,7 +32,7 @@ export function normalizeExternalMcpIdentityUrl(value: string): string {
   }
 }
 
-function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
+function legacyConnectionIdentityFields(source: Omit<ExternalMcpOAuthStateIdentitySource, "oauthConfiguration">): NonSecretExternalMcpOAuthStateIdentity {
   const url = normalizeExternalMcpIdentityUrl(source.url)
   const authType: ExternalMcpAuthType = source.authType === "oauth"
     ? "oauth"
@@ -43,6 +45,14 @@ function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): 
   }
   if (authType === "apikey") return [url, authType, credentialMode, source.apiKeyAuthScheme === "token" ? "token" : "bearer"]
   return [url, authType, credentialMode]
+}
+
+function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): NonSecretExternalMcpOAuthStateIdentity {
+  const manual = source.oauthConfiguration?.manualOAuthEndpoints
+  if (source.kind === "external_mcp" && source.authType === "oauth" && manual) {
+    return [new URL(source.url).href, "oauth", source.credentialMode, manual.authorizationEndpoint, manual.tokenEndpoint]
+  }
+  return legacyConnectionIdentityFields(source)
 }
 
 /**
@@ -68,7 +78,17 @@ export function matchesLegacyExternalMcpOAuthStateIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   signedStateBinding: string,
 ): boolean {
-  const serializedIdentity = JSON.stringify(connectionIdentityFields(source))
+  // Manual endpoint tuples did not exist in either legacy binding format.
+  // They must use the keyed v2 binding, never the unkeyed compatibility hash.
+  if (source.oauthConfiguration?.manualOAuthEndpoints) return false
+  const serializedIdentity = JSON.stringify(legacyConnectionIdentityFields({
+    id: source.id,
+    kind: source.kind,
+    url: source.url,
+    authType: source.authType,
+    credentialMode: source.credentialMode,
+    apiKeyAuthScheme: source.apiKeyAuthScheme,
+  }))
   const previousDigest = createHash("sha256").update(serializedIdentity).digest("base64url")
   if (signedStateBinding === previousDigest) return true
 

@@ -1,3 +1,5 @@
+export { IssuerMismatchError } from "@modelcontextprotocol/client"
+export * from "./manual-oauth.js"
 export * from "./contracts.js"
 export * from "./oauth-resource-alias.js"
 export * from "./authorization-response.js"

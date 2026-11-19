@@ -26,7 +26,7 @@ export const LP_PRODUCTS: LpProduct[] = [
   {
     key: "ai-gateway",
     name: "AI Gateway",
-    href: "/docs/ai-gateway/overview",
+    href: "/ai-gateway",
     fact: "50+ providers",
     line: "Every model, one set of keys and limits.",
     icon: Route
@@ -34,7 +34,7 @@ export const LP_PRODUCTS: LpProduct[] = [
   {
     key: "desktop-app",
     name: "Desktop App",
-    href: "/download",
+    href: "/desktop",
     fact: "Free, open source",
     line: "The full app on Mac, Windows and Linux. Free.",
     icon: Monitor

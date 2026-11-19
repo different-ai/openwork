@@ -4,8 +4,8 @@ import { DenApiError, createDenClient, readDenSettings } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { FieldGroup } from "@/components/ui/field";
+import { SecretField, type SecretFieldHandle } from "@/components/secret-field";
 
 type Request = { generation: number; connectionId: string; connectionName: string; replacing: boolean; finish: (connected: boolean) => void };
 let requestGeneration = 0;
@@ -31,7 +31,7 @@ function errorMessage(error: unknown): string {
 }
 
 function Prompt({ target, close }: { target: Request; close: (connected: boolean) => void }) {
-  const field = useRef<HTMLInputElement>(null);
+  const field = useRef<SecretFieldHandle>(null);
   const generation = useRef(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +44,7 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
       const next = readDenSettings();
       if (initial.baseUrl !== next.baseUrl || initial.apiBaseUrl !== next.apiBaseUrl
         || initial.activeOrgId !== next.activeOrgId || initial.authToken !== next.authToken) {
-        if (field.current) field.current.value = "";
+        field.current?.clear();
         close(false);
       }
     };
@@ -52,16 +52,13 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
     return () => {
       generation.current++;
       window.removeEventListener(denSettingsChangedEvent, changed);
-      if (field.current) field.current.value = "";
     };
   }, [close]);
 
   const submit = async () => {
     if (pending || !field.current) return;
     const run = generation.current;
-    let apiKey = field.current.value;
-    field.current.value = "";
-    setHasValue(false);
+    let apiKey = field.current.take();
     if (!/^[\x21-\x7e]{1,8192}$/.test(apiKey)) { apiKey = ""; setError("Enter only the raw key, without a prefix or spaces."); return; }
     const settings = readDenSettings();
     const organizationId = settings.activeOrgId?.trim() ?? "";
@@ -90,16 +87,9 @@ function Prompt({ target, close }: { target: Request; close: (connected: boolean
         <DialogDescription className="sr-only">Saved for your requests only.</DialogDescription>
       </DialogHeader>
       <FieldGroup>
-        <Field data-disabled={pending}>
-          <FieldLabel htmlFor="member-api-key-input">Personal access token or API key</FieldLabel>
-          <Input ref={field} id="member-api-key-input" data-testid="member-api-key-input" type="password"
-            autoComplete="off" spellCheck={false} maxLength={8192} disabled={pending}
-            data-ph-no-capture="true" data-private="true" autoFocus
-            aria-invalid={error ? true : undefined}
-            onChange={(event) => setHasValue(event.currentTarget.value.length > 0)}
-            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submit(); } }} />
-          {error ? <FieldError>{error}</FieldError> : null}
-        </Field>
+        <SecretField id="member-api-key-input" testId="member-api-key-input" label="Personal access token or API key"
+          handleRef={field} disabled={pending} error={error} autoFocus
+          onValueChange={setHasValue} onSubmit={() => void submit()} />
       </FieldGroup>
       <DialogFooter>
         <Button variant="outline" disabled={pending} onClick={() => close(false)}>Cancel</Button>

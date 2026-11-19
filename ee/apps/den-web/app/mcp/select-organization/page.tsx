@@ -30,6 +30,7 @@ import { McpStoryTiles, mcpStoryCopy } from "../mcp-story";
 import { useLocationQuery } from "../use-location-query";
 import { FIRST_PARTY_APP_CLIENT_IDS } from "../client-trust-constants";
 import { useMcpClient } from "../use-mcp-client";
+import { isWorkbotSignIn } from "../workbot-sign-in";
 
 type Organization = {
   id: string;
@@ -39,12 +40,20 @@ type Organization = {
   isActive?: boolean;
 };
 
+type Invitation = {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  role: string | null;
+};
+
 type FlowState =
   | "loading"
   | "ready"
   | "empty"
   | "expired"
   | "signed_out"
+  | "error"
   | "cancelled"
   | "submitting"
   | "redirecting";
@@ -119,6 +128,23 @@ function parseOrgs(payload: unknown): Organization[] {
   return result;
 }
 
+function parseInvitations(payload: unknown): Invitation[] {
+  if (!isRecord(payload) || !Array.isArray(payload.invitations)) return [];
+  const result: Invitation[] = [];
+  for (const entry of payload.invitations) {
+    if (!isRecord(entry) || typeof entry.id !== "string" || !isRecord(entry.organization)) continue;
+    const { id: organizationId, name } = entry.organization;
+    if (typeof organizationId !== "string") continue;
+    result.push({
+      id: entry.id,
+      organizationId,
+      organizationName: typeof name === "string" && name ? name : organizationId,
+      role: typeof entry.role === "string" ? entry.role : null,
+    });
+  }
+  return result;
+}
+
 function parseEmail(payload: unknown) {
   if (!isRecord(payload) || !isRecord(payload.user)) return null;
   return typeof payload.user.email === "string" ? payload.user.email : null;
@@ -126,6 +152,10 @@ function parseEmail(payload: unknown) {
 
 export default function McpSelectOrganizationPage() {
   const [orgs, setOrgs] = useState<Organization[]>([]);
+  // Invitations sent to this person's email that they haven't joined yet. A person invited before they ever
+  // signed up lands here with no workspace, and should join their team rather than create a new one.
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [createInstead, setCreateInstead] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -138,6 +168,7 @@ export default function McpSelectOrganizationPage() {
   const params = useMemo(() => new URLSearchParams(oauthQuery), [oauthQuery]);
   const requestedScope = params.get("scope") ?? "openid profile email mcp:read";
   const client = useMcpClient(oauthQuery);
+  const workbot = isWorkbotSignIn(oauthQuery);
   // OpenWork's own apps (Workbot): choosing a workspace is all there is to it.
   const firstParty = client.clientId !== null && FIRST_PARTY_APP_CLIENT_IDS.has(client.clientId);
   const redirect = useMcpRedirect(oauthQuery);
@@ -145,8 +176,9 @@ export default function McpSelectOrganizationPage() {
   const actor = client.name ?? "This app";
   const story = mcpStoryCopy(client);
   const selectedOrg = useMemo(() => orgs.find((org) => org.id === selectedOrgId) ?? null, [orgs, selectedOrgId]);
+  const selectedInvitation = useMemo(() => invitations.find((invitation) => invitation.id === selectedOrgId) ?? null, [invitations, selectedOrgId]);
   const isBusy = flowState === "submitting" || flowState === "redirecting";
-  const creating = orgs.length === 0 && (flowState === "empty" || isBusy);
+  const creating = orgs.length === 0 && (invitations.length === 0 || createInstead) && (flowState === "empty" || flowState === "ready" || isBusy);
   const orgWindow = useOrgListWindow(orgs, ORG_PAGE_SIZE);
 
   useEffect(() => {
@@ -157,28 +189,53 @@ export default function McpSelectOrganizationPage() {
       return;
     }
     void (async () => {
-      const [me, directory] = await Promise.all([
+      const [me, directory, invited] = await Promise.all([
         requestJson("/v1/me", { method: "GET" }),
         requestJson("/v1/me/orgs", { method: "GET" }),
+        requestJson("/v1/me/invitations", { method: "GET" }).catch(() => null),
       ]);
       if (cancelled) return;
       setEmail(me.response.ok ? parseEmail(me.payload) : null);
       if (!directory.response.ok) {
-        setFlowState("signed_out");
+        setFlowState(directory.response.status === 401 ? "signed_out" : "error");
         return;
       }
       const list = parseOrgs(directory.payload);
+      const pending = invited?.response.ok ? parseInvitations(invited.payload) : [];
       setOrgs(list);
-      setSelectedOrgId(list.find((org) => org.isActive)?.id ?? list[0]?.id ?? "");
-      setFlowState(list.length ? "ready" : "empty");
-    })();
+      setInvitations(pending);
+      setSelectedOrgId(list.find((org) => org.isActive)?.id ?? pending[0]?.id ?? list[0]?.id ?? "");
+      setFlowState(list.length || pending.length ? "ready" : "empty");
+    })().catch(() => {
+      if (!cancelled) setFlowState("error");
+    });
     return () => {
       cancelled = true;
     };
   }, [locationQuery, oauthQuery]);
 
+  async function joinInvitationAndContinue(invitation: Invitation) {
+    setFlowState("submitting");
+    setErrorMessage(null);
+    const accepted = await requestJson("/v1/orgs/invitations/accept", { method: "POST", body: JSON.stringify({ id: invitation.id }) });
+    if (!accepted.response.ok) {
+      setFlowState("ready");
+      setErrorMessage(getErrorMessage(accepted.payload, `Could not join ${invitation.organizationName}. Try again.`));
+      return;
+    }
+    const slug = isRecord(accepted.payload) && typeof accepted.payload.organizationSlug === "string" ? accepted.payload.organizationSlug : null;
+    const org: Organization = { id: invitation.organizationId, slug, name: invitation.organizationName, role: invitation.role, isActive: true };
+    setOrgs((current) => [...current, org]);
+    setInvitations((current) => current.filter((entry) => entry.id !== invitation.id));
+    setSelectedOrgId(org.id);
+    await continueFlow(org);
+  }
+
   async function continueFlow(org: Organization | null = selectedOrg) {
-    if (!org) return;
+    if (!org) {
+      if (selectedInvitation) await joinInvitationAndContinue(selectedInvitation);
+      return;
+    }
     setFlowState("submitting");
     setErrorMessage(null);
 
@@ -226,7 +283,7 @@ export default function McpSelectOrganizationPage() {
     const created = await requestJson("/v1/org", { method: "POST", body: JSON.stringify({ name }) });
     const org = created.response.ok ? parseCreatedOrg(created.payload) : null;
     if (!org) {
-      setFlowState("empty");
+      setFlowState(invitations.length ? "ready" : "empty");
       setCreateError("Could not create the workspace. Try again.");
       return;
     }
@@ -252,10 +309,11 @@ export default function McpSelectOrganizationPage() {
     setFlowState("cancelled");
   }
 
-  const storyWorkspace = selectedOrg ? orgDisplayName(selectedOrg) : workspaceName.trim() || null;
+  const storyWorkspace = selectedOrg ? orgDisplayName(selectedOrg) : selectedInvitation?.organizationName ?? (workspaceName.trim() || null);
 
   const frame = (children: ReactNode) => (
     <SetupFrame
+      workbot={workbot}
       title={story.title}
       description={story.description}
       aside={<McpStoryTiles client={client} workspaceName={storyWorkspace} appHost={redirect?.host ?? null} />}
@@ -270,7 +328,7 @@ export default function McpSelectOrganizationPage() {
       <SetupPanelBody gap="md">
         <SetupPanelTitle>This sign-in link expired</SetupPanelTitle>
         <div className="flex flex-col gap-1.5">
-          <SetupLine>Start sign-in again from your agent.</SetupLine>
+          <SetupLine>{workbot ? "Start sign-in again from Workbot." : "Start sign-in again from your agent."}</SetupLine>
           <SetupLine muted>Nothing was authorized.</SetupLine>
         </div>
       </SetupPanelBody>,
@@ -281,12 +339,21 @@ export default function McpSelectOrganizationPage() {
     return frame(<SetupStatus icon={<X className="size-5" strokeWidth={1.5} />} title="Nothing was authorized" line="You can close this tab." />);
   }
 
+  if (flowState === "error") {
+    return frame(
+      <SetupPanelBody gap="md">
+        <SetupPanelTitle>Couldn’t reach your workspaces</SetupPanelTitle>
+        <SetupQuietButton onClick={() => window.location.reload()}>Try again</SetupQuietButton>
+      </SetupPanelBody>,
+    );
+  }
+
   if (flowState === "signed_out") {
     return frame(
       <SetupPanelBody gap="md">
         <SetupPanelTitle>Sign in to continue</SetupPanelTitle>
-        <SetupLine>Sign in to OpenWork, then {appName} can finish connecting.</SetupLine>
-        <a className="den-button-primary w-full" href={`/?${oauthQuery}`}>Sign in to OpenWork</a>
+        {workbot ? null : <SetupLine>Sign in to OpenWork, then {appName} can finish connecting.</SetupLine>}
+        <a className="den-button-primary w-full" href={`/?${oauthQuery}`}>{workbot ? "Sign in to Workbot" : "Sign in to OpenWork"}</a>
       </SetupPanelBody>,
     );
   }
@@ -305,7 +372,7 @@ export default function McpSelectOrganizationPage() {
       {flowState === "loading" ? <SetupSkeletonRows /> : null}
 
       {creating ? (
-        <form id="mcp-create-workspace" className="flex flex-col gap-2" onSubmit={(event) => void createWorkspaceAndContinue(event)}>
+        <form id="mcp-create-workspace" className="flex flex-col gap-2" onSubmit={(event) => void createWorkspaceAndContinue(event).catch(() => setFlowState("error"))}>
           <label htmlFor="mcp-workspace-name" className="den-label">Workspace name</label>
           <input
             id="mcp-workspace-name"
@@ -322,15 +389,46 @@ export default function McpSelectOrganizationPage() {
             disabled={isBusy}
           />
           {createError ? <SetupErrorLine>{createError}</SetupErrorLine> : null}
+          {invitations.length > 0 ? (
+            <SetupQuietButton className="self-start text-[var(--setup-ink-soft)]" onClick={() => setCreateInstead(false)} disabled={isBusy}>
+              Join {invitations.length === 1 ? invitations[0]?.organizationName : "an invited workspace"} instead
+            </SetupQuietButton>
+          ) : null}
         </form>
       ) : null}
 
-      {!creating && orgs.length > 0 ? (
+      {!creating && orgs.length + invitations.length > 0 ? (
         <div className="flex flex-col gap-3">
           {orgWindow.showSearch ? (
             <FilterInput size="md" value={orgWindow.query} onChange={orgWindow.setQuery} placeholder="Filter by name" />
           ) : null}
           <div role="radiogroup" aria-label="Workspace" className="flex flex-col border-t border-[var(--setup-hairline)]">
+            {invitations.map((invitation) => {
+              const isSelected = selectedOrgId === invitation.id;
+              return (
+                <label
+                  key={invitation.id}
+                  className={`flex min-h-13 cursor-pointer items-center gap-3 border-b border-[var(--setup-hairline)] py-2 ${isBusy ? "pointer-events-none opacity-70" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="mcp-organization"
+                    checked={isSelected}
+                    onChange={() => setSelectedOrgId(invitation.id)}
+                    className="sr-only"
+                    disabled={isBusy}
+                  />
+                  <SetupLetterTile name={invitation.organizationName} />
+                  <span className="flex min-w-0 grow flex-col">
+                    <span className="truncate text-sm font-medium leading-5 text-[var(--dls-text-primary)]">{invitation.organizationName}</span>
+                    <span className="text-[13px] leading-[18px] text-[var(--dls-text-secondary)]">Invited · {formatRole(invitation.role)}</span>
+                  </span>
+                  <span className="flex w-24 shrink-0 items-center justify-end gap-2.5 text-[13px] text-[var(--dls-text-secondary)]">
+                    {isSelected ? <Check aria-hidden="true" className="size-4 text-[var(--dls-text-primary)]" strokeWidth={1.5} /> : null}
+                  </span>
+                </label>
+              );
+            })}
             {orgWindow.visible.map((org) => {
               const display = orgDisplayName(org);
               const isSelected = selectedOrgId === org.id;
@@ -361,6 +459,11 @@ export default function McpSelectOrganizationPage() {
             })}
           </div>
           {orgWindow.filteredCount === 0 && orgWindow.query ? <SetupLine muted>No workspaces match.</SetupLine> : null}
+          {orgs.length === 0 ? (
+            <SetupQuietButton className="self-start text-[var(--setup-ink-soft)]" onClick={() => setCreateInstead(true)} disabled={isBusy}>
+              Create a new workspace instead
+            </SetupQuietButton>
+          ) : null}
           {orgWindow.hasMore ? (
             <SetupQuietButton className="self-start text-[var(--setup-ink-soft)]" onClick={orgWindow.showAll}>
               Show {orgWindow.hiddenCount} more
@@ -369,7 +472,7 @@ export default function McpSelectOrganizationPage() {
         </div>
       ) : null}
 
-      <SetupFacts rows={facts} />
+      <SetupFacts rows={workbot ? [{ label: "Account", value: <span className="min-w-0 truncate" title={email ?? undefined}>{email ?? "…"}</span>, testId: "mcp-account-email" }] : facts} />
 
       {firstParty ? null : <McpConsentPermissions scope={requestedScope} actor={actor} />}
 
@@ -384,13 +487,13 @@ export default function McpSelectOrganizationPage() {
             className="den-button-primary w-full"
             disabled={isBusy || workspaceName.trim().length < 2}
           >
-            {isBusy ? (firstParty ? "Opening…" : "Authorizing…") : firstParty ? "Create workspace and continue" : "Create workspace and authorize"}
+            {isBusy ? (firstParty ? "Opening…" : "Authorizing…") : workbot ? "Create workspace and open Workbot" : firstParty ? "Create workspace and continue" : "Create workspace and authorize"}
           </button>
         ) : (
           <button
             type="button"
             className="den-button-primary w-full"
-            onClick={() => void continueFlow()}
+            onClick={() => void continueFlow().catch(() => setFlowState("error"))}
             disabled={isBusy || flowState === "loading" || !selectedOrgId}
           >
             {isBusy ? (firstParty ? "Opening…" : "Authorizing…") : firstParty ? `Continue to ${client.name ?? "OpenWork"}` : client.name ? `Authorize ${client.name}` : "Authorize this app"}
@@ -398,7 +501,7 @@ export default function McpSelectOrganizationPage() {
         )}
         <div className="flex items-start justify-between gap-4">
           <McpTechnicalDetails scope={requestedScope} clientId={client.clientId} redirect={redirect} />
-          <SetupQuietButton onClick={() => void cancelFlow()} disabled={isBusy || flowState === "loading"}>
+          <SetupQuietButton onClick={() => void cancelFlow().catch(() => setFlowState("error"))} disabled={isBusy || flowState === "loading"}>
             Cancel
           </SetupQuietButton>
         </div>

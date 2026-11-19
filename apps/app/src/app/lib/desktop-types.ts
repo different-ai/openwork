@@ -23,6 +23,7 @@ export type {
   DesktopBinaryDownloadResult,
   DesktopFetchInit,
   DesktopFetchResult,
+  DesktopStartupTimings,
   EngineDoctorResult,
   EngineInfo,
   EvalRelaunchResult,

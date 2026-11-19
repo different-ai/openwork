@@ -3,15 +3,18 @@ import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename } from "node:path"
 import {
+  pendingPermission,
   SessionRunnerError,
   sessionIdForCommand,
   type HarnessAdapter,
   type InventoryWorkspace,
   type Model,
+  type Pending,
   type Progress,
   type Receipt,
   type SessionError,
   type TranscriptMessage,
+  type TranscriptPart,
   type TranscriptToolCall,
 } from "../../remote-sessions/src/index.ts"
 import { isRecord } from "./den.ts"
@@ -81,6 +84,8 @@ export function createNativeOpenCodeAdapter(input: {
 }): HarnessAdapter {
   const { ctx, directory, workspaceId } = input
   const now = input.now ?? Date.now
+  const reply = ctx.permission.reply
+  const answers = typeof reply === "function"
   const markerKey = (sessionId: string) => `${input.storagePrefix}/native/${digest(sessionId)}`
   const load = async (receipt: Receipt) => admission(await ctx.storage.get(markerKey(receipt.sessionId)))
   const save = (receipt: Receipt, value: Admission) => ctx.storage.set(markerKey(receipt.sessionId), { ...value })
@@ -122,6 +127,11 @@ export function createNativeOpenCodeAdapter(input: {
     const assistant = assistantIndex > turnBoundary ? messages[assistantIndex] : undefined
     const nativeError = assistant?.type === "assistant" ? errorOf(assistant.error) : null
     const status = waitingFor ? "waiting" : running ? "running" : info.outcome === "failed" ? "error" : "idle"
+    // Only a permission can be answered from here: the 2.0.26 plugin host has no question (form) reply.
+    const first = permissions[0]
+    const waitingOn: Pending | null = waitingFor === "permission" && first && answers
+      ? pendingPermission({ requestId: first.id, action: first.action ?? "permission", resources: first.resources ?? [], metadata: first.metadata })
+      : null
     const finalText = !running && !waitingFor && assistant?.type === "assistant"
       ? clipped(assistant.content.filter(part => part.type === "text").map(part => part.text).join("\n"), 20_000) : ""
     const progress: Progress = {
@@ -130,6 +140,7 @@ export function createNativeOpenCodeAdapter(input: {
       // Count native context entries, including durable idle markers: a failed/interrupted turn
       // can settle without an assistant. This is not a promised count of historical user/assistant messages.
       messageCount: messages.length,
+      ...(answers ? { pending: waitingOn } : {}),
       observedAt: now(),
     }
     return { info, messages, latestUser, progress }
@@ -217,10 +228,27 @@ export function createNativeOpenCodeAdapter(input: {
         historyScope: "context",
         messageCount: transcript.length, from: page.from, messages: selected,
         nextCursor: more && anchor ? `oc2:${page.from}:${epoch}:${digest(anchor.id)}` : null,
+        ...(progress.pending === undefined ? {} : { pending: progress.pending }),
       }
     },
   }
-  return adapter
+  if (!reply) return adapter
+  return {
+    ...adapter,
+    async answer(receipt, answer, signal) {
+      if (answer.kind !== "permission") {
+        throw new SessionRunnerError("answer_unsupported", "OpenCode can't take answers to its questions from here yet. Answer it on that computer.")
+      }
+      await owned(receipt, signal)
+      const permissions = await ctx.permission.list({ sessionID: receipt.sessionId }, { signal })
+      signal.throwIfAborted()
+      // Reply only to a request that is still pending for this very session.
+      if (!permissions.some(permission => permission.id === answer.requestId && permission.sessionID === receipt.sessionId)) {
+        throw new SessionRunnerError("stale_request", "That permission is no longer pending. Read the task again.")
+      }
+      await reply.call(ctx.permission, { sessionID: receipt.sessionId, requestID: answer.requestId, decision: answer.decision }, { signal })
+    },
+  }
 }
 
 function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): TranscriptToolCall {
@@ -233,13 +261,35 @@ function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): Tran
     error: rawError === undefined ? null : clipped(rawError, 2000),
     truncated: rawInput.length > 2000 || (rawOutput?.length ?? 0) > 2000 || (rawError?.length ?? 0) > 2000 }
 }
+/** The assistant's text, reasoning and tool steps in native order; text and reasoning share one character budget. */
+function transcriptParts(content: readonly NativeAssistantContent[]): TranscriptPart[] {
+  let chars = 20_000
+  const prose = (text: string, cap: number) => {
+    const kept = text.slice(0, Math.min(cap, chars))
+    chars -= kept.length
+    return kept
+  }
+  return content.filter(part => part.type === "tool" || part.text.trim()).slice(0, 200).map((part): TranscriptPart => {
+    if (part.type === "text") return { type: "text", text: prose(part.text, 20_000) }
+    if (part.type === "reasoning") return { type: "reasoning", text: prose(part.text, 4_000) }
+    const { id, name, status, input, output, error, truncated } = toolCall(part)
+    // The chat shows a tool's text output as text, not as its JSON content blocks.
+    const text = "content" in part.state && part.state.content
+      ? part.state.content.flatMap(item => isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []).join("\n")
+      : ""
+    return { type: "tool", id, name, status, input, output: text ? clipped(text, 2000) : output, error,
+      truncated: truncated || text.length > 2000 }
+  })
+}
 function transcriptMessage(message: NativeMessage): TranscriptMessage {
   const text = message.type === "user" ? message.text : message.type === "assistant"
     ? message.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
   const tools = message.type === "assistant" ? message.content.filter(part => part.type === "tool").map(toolCall) : []
   return { id: clipped(message.id, 240), role: message.type === "user" ? "user" : "assistant",
     createdAt: message.time.created, text: clipped(text, 20_000), truncated: text.length > 20_000 || tools.length > 200,
-    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null }
+    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null,
+    ...(message.type === "assistant" ? { parts: transcriptParts(message.content) } : {}),
+    ...(message.type === "assistant" && message.time.completed !== undefined ? { completedAt: message.time.completed } : {}) }
 }
 /** Keep whole pages below the wire byte cap, including multibyte text and tool summaries. */
 function boundTranscript(messages: TranscriptMessage[]): void {
@@ -248,11 +298,15 @@ function boundTranscript(messages: TranscriptMessage[]): void {
     for (const message of messages) {
       if (message.text.length > 256) { message.text = message.text.slice(0, Math.floor(message.text.length / 2)); message.truncated = true; reduced = true }
       if (message.toolCalls.length > 4) { message.toolCalls = message.toolCalls.slice(0, Math.ceil(message.toolCalls.length / 2)); message.truncated = true; reduced = true }
-      for (const tool of message.toolCalls) {
+      for (const tool of [...message.toolCalls, ...(message.parts ?? []).flatMap(part => part.type === "tool" ? [part] : [])]) {
         for (const key of ["input", "output", "error"] satisfies Array<"input" | "output" | "error">) {
           const value = tool[key]
           if (value && value.length > 256) { tool[key] = value.slice(0, Math.floor(value.length / 2)); tool.truncated = true; reduced = true }
         }
+      }
+      if (message.parts && message.parts.length > 4) { message.parts = message.parts.slice(0, Math.ceil(message.parts.length / 2)); message.truncated = true; reduced = true }
+      for (const part of message.parts ?? []) {
+        if (part.type !== "tool" && part.text.length > 256) { part.text = part.text.slice(0, Math.floor(part.text.length / 2)); message.truncated = true; reduced = true }
       }
     }
     if (!reduced) throw new SessionRunnerError("transcript_too_large", "The bounded recent context page is still too large. Request fewer messages.")

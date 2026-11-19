@@ -671,48 +671,54 @@ export async function judgeTestRun(testRunDir: string, opts: JudgeTestRunOptions
   if (!record) throw new Error(`Invalid test run: ${testRunPath}`);
   let touched = false;
   let judgedValidations = 0;
-  const errors: string[] = [];
+  const errors = new Map<TestArtifact, string>();
 
-  for (const artifact of record.artifacts) {
-    if (artifact.kind === "json") continue;
-    if (!artifact.fileName) continue;
-    const targetIndexes = artifact.judgments.flatMap((judgment, index) => (
-      opts.force || judgment.state === "pending" ? [index] : []
-    ));
-    if (targetIndexes.length === 0) continue;
-    touched = true;
-    const expectations = targetIndexes.map((index) => artifact.judgments[index].expectation);
-    try {
-      const png = await readFile(join(testRunDir, artifact.fileName));
-      const visualEvidence = await judgeVision({
-        png,
-        hash: artifact.hash,
-        route: artifact.route,
-        visibleText: "",
-        at: artifact.at,
-      }, expectations, { ask: opts.ask, bypassCache: opts.force });
-      for (const [resultIndex, result] of visualEvidence.results.entries()) {
-        const judgmentIndex = targetIndexes[resultIndex];
-        artifact.judgments[judgmentIndex] = {
-          expectation: result.expectation,
-          state: result.passed ? "passed" : "failed",
-          reasoning: result.evidence,
-        };
+  // Share one iterator so at most two screenshots are judged at once. Each
+  // judgeVision still awaits its description before requesting the verdict.
+  // judge-journeys runs at most two records: four provider requests overall.
+  const artifacts = record.artifacts.values();
+  await Promise.all(Array.from({ length: 2 }, async () => {
+    for (const artifact of artifacts) {
+      if (artifact.kind === "json") continue;
+      if (!artifact.fileName) continue;
+      const targetIndexes = artifact.judgments.flatMap((judgment, index) => (
+        opts.force || judgment.state === "pending" ? [index] : []
+      ));
+      if (targetIndexes.length === 0) continue;
+      touched = true;
+      const expectations = targetIndexes.map((index) => artifact.judgments[index].expectation);
+      try {
+        const png = await readFile(join(testRunDir, artifact.fileName));
+        const visualEvidence = await judgeVision({
+          png,
+          hash: artifact.hash,
+          route: artifact.route,
+          visibleText: "",
+          at: artifact.at,
+        }, expectations, { ask: opts.ask, bypassCache: opts.force });
+        for (const [resultIndex, result] of visualEvidence.results.entries()) {
+          const judgmentIndex = targetIndexes[resultIndex];
+          artifact.judgments[judgmentIndex] = {
+            expectation: result.expectation,
+            state: result.passed ? "passed" : "failed",
+            reasoning: result.evidence,
+          };
+        }
+        artifact.description = visualEvidence.description;
+        artifact.model = visualEvidence.model;
+        judgedValidations += targetIndexes.length;
+      } catch (error) {
+        const message = errorMessage(error);
+        errors.set(artifact, `${artifact.caption}: ${message}`);
+        for (const index of targetIndexes) {
+          const judgment = artifact.judgments[index];
+          artifact.judgments[index] = { ...judgment, state: "pending", reasoning: `Provider error: ${message}` };
+        }
       }
-      artifact.description = visualEvidence.description;
-      artifact.model = visualEvidence.model;
-      judgedValidations += targetIndexes.length;
-    } catch (error) {
-      const message = errorMessage(error);
-      errors.push(`${artifact.caption}: ${message}`);
-      for (const index of targetIndexes) {
-        const judgment = artifact.judgments[index];
-        artifact.judgments[index] = { ...judgment, state: "pending", reasoning: `Provider error: ${message}` };
-      }
+      artifact.results = artifact.judgments.flatMap(resultForJudgment);
+      artifact.ok = artifactOk(artifact.judgments);
     }
-    artifact.results = artifact.judgments.flatMap(resultForJudgment);
-    artifact.ok = artifactOk(artifact.judgments);
-  }
+  }));
 
   const testArtifacts = record.artifacts.filter((artifact): artifact is TestArtifact => artifact.kind !== "json");
   record.summary = summarize(testArtifacts);
@@ -723,7 +729,8 @@ export async function judgeTestRun(testRunDir: string, opts: JudgeTestRunOptions
     judgedValidations,
     failedValidations: visualJudgments.filter((judgment) => judgment.state === "failed").length,
     pendingValidations: visualJudgments.filter((judgment) => judgment.state === "pending").length,
-    errors,
+    // Completion order must not change the reviewer's capture-order report.
+    errors: testArtifacts.flatMap((artifact) => errors.get(artifact) ?? []),
   };
 }
 

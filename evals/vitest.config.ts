@@ -37,9 +37,9 @@ export default defineConfig({
           ...common,
           name: "pr",
           // Live specs are attached-system incident signals: exclude them unless explicitly named.
-          // Unit tests live next to the module or package they test (the spec boundary
-          // ratchet keeps evals/specs for journeys that cross a product boundary).
-          include: ["specs/**/*.test.ts", "../scenarios/**/*.test.ts", "packages/*/src/**/*.test.ts", "../apps/server/test/**/*.vitest.test.ts"],
+          // Eval-framework unit tests only. Journeys live in specs/, core/ and proofs/
+          // and run in the e2e project; spec-lint rejects anything else there.
+          include: ["../scenarios/**/*.test.ts", "packages/*/src/**/*.test.ts", "scripts/**/*.test.ts", "../apps/server/test/**/*.vitest.test.ts"],
           // Custom excludes replace Vitest's defaults, so keep dependencies out explicitly.
           // "**" does not match "../", so ../scenarios needs its own patterns.
           exclude: ["**/node_modules/**", "**/*.e2e.test.ts", "**/e2e.test.ts", "../**/node_modules/**", "../**/*.e2e.test.ts", "../**/e2e.test.ts",
@@ -56,7 +56,7 @@ export default defineConfig({
           testTimeout: 600_000,
           hookTimeout: 600_000,
           globalSetup: ["./runner/prepare-stack.ts"],
-          include: ["specs/**/*.e2e.test.ts", "../scenarios/**/e2e.test.ts"],
+          include: ["core/**/*.e2e.test.ts", "proofs/**/*.proof.test.ts", "../scenarios/**/e2e.test.ts"],
         },
       },
     ],

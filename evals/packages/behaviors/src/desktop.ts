@@ -51,7 +51,14 @@ export async function quitDesktop(app: Surface): Promise<void> {
   while (Date.now() < deadline) {
     const stopped = await fetch(`${app.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
       signal: AbortSignal.timeout(1_000),
-    }).then(() => false, () => true);
+    }).then((response) => {
+      if (response.ok) return false;
+      // Daytona's proxy stays reachable after the native CDP listener exits.
+      // Do not mistake its missing-backend response for a still-running app,
+      // or unrelated proxy/auth failures for a successful quit.
+      if (app.handle.hostKind === "daytona" && response.status === 502) return true;
+      throw new Error(`Could not verify desktop quit: CDP endpoint returned HTTP ${response.status}.`);
+    }, () => true);
     if (stopped) return;
     await sleep(POLL_INTERVAL_MS);
   }

@@ -7,7 +7,10 @@ export type ManualAuthInput = {
 
 /** Accept a raw handoff grant or an OpenWork desktop-auth deep link. */
 export function parseManualAuthInput(value: string): ManualAuthInput | null {
-  const trimmed = value.trim();
+  // A sign-in code pasted next to text already in the field (for example after
+  // the workspace address) still counts: use the embedded deep link.
+  const embedded = /openwork(?:-dev)?:\/\/den-auth[^\s"'<>]*/i.exec(value)?.[0];
+  const trimmed = (embedded ?? value).trim();
   if (!trimmed) return null;
 
   try {

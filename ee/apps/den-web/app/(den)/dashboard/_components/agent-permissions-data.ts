@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AGENT_SANDBOX_ONLY_CAPABILITY_HEADER,
   normalizeAgentPermissionSettings,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions";
@@ -71,7 +72,7 @@ export function useAgentPermissions(orgId: string, enabled = true) {
     queryFn: async ({ signal }): Promise<AgentPermissionPolicies> => {
       const { response, payload } = await requestJson(
         AGENT_PERMISSIONS_PATH,
-        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal },
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" }, cache: "no-store", signal },
         15000,
       );
       if (!response.ok) {
@@ -108,7 +109,7 @@ export function useSaveAgentPermissions(orgId: string) {
             scopePath(change.scopeId),
             {
               method: "PUT",
-              headers: { [ORG_SCOPE_HEADER]: orgId, "content-type": "application/json" },
+              headers: { [ORG_SCOPE_HEADER]: orgId, "content-type": "application/json", "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" },
               body: JSON.stringify({ settings: change.settings }),
             },
             15000,
@@ -132,7 +133,7 @@ export function useRemoveTeamAgentPermissions(orgId: string, teamId: string) {
       await runReauthableAction("remove-team-agent-permissions", async () => {
         const { response, payload } = await requestJson(
           scopePath(teamId),
-          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId } },
+          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" } },
           15000,
         );
         if (!response.ok) throw getRequestError(payload, response, `Couldn't remove these agent permissions (${response.status}).`);
@@ -147,10 +148,10 @@ export function hasTeamRecord(policy: AgentPermissionPolicy): boolean {
   return policy.scopeId !== EVERYONE_SCOPE && policy.updatedAt !== null;
 }
 
-/** A team's own agent permissions, counted for lists: "1 override", or null while it follows Everyone. */
+/** A team's own agent permissions, counted for lists: "1 change", or null while it follows Everyone. */
 export function teamOverrideSummary(policy: AgentPermissionPolicy | undefined): string | null {
   if (!policy || !hasTeamRecord(policy)) return null;
   const count = Object.keys(normalizeAgentPermissionSettings(policy.settings)).length;
   if (count === 0) return null;
-  return `${count} ${count === 1 ? "override" : "overrides"}`;
+  return `${count} ${count === 1 ? "change" : "changes"}`;
 }

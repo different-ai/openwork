@@ -1,0 +1,135 @@
+---
+title: "Users and teams"
+description: "See who can use which AI Gateway models, their spend limit and what they spent, and change access for everyone, a team or one person."
+keywords: ["users and teams", "who can use which models", "access grants", "model groups", "credential sets", "team access", "per person", "AI Gateway access"]
+---
+
+The **Users & Teams** tab answers one question: who can use which models, how
+much they can spend, and how much they've spent. You change access on each
+provider; this tab shows the result for every person and team in one place.
+
+## Where to find it
+
+In OpenWork Cloud, open **AI Gateway** and select the **Users & Teams** tab.
+
+Seeing it needs three permissions: **View Gateway providers**, **View Gateway
+usage**, and **View usage limits**. Organization owners and admins have them by
+default.
+
+## What the tab shows
+
+At the top, a row for **Everyone in** your organization shows what every member
+gets, including people who join later.
+
+Below it, switch between **People** and **Teams**, or use **Filter by name**.
+Each row shows:
+
+| Column | What it means |
+| --- | --- |
+| **Can use** | The providers whose models this person or team can use. **Nothing yet** means none. |
+| **Limit** | Their spend limit and where it comes from, or **No limit**. |
+| **Last 31 days** | Their estimated spend. |
+
+Spend is an estimate from public model prices, not your provider's bill. See
+[Token costs](/ai-gateway/token-costs).
+
+### Open a team
+
+Click a team to see only its members. A strip at the top shows the team's
+providers, limit, and spend, with **Set a team limit** or **Edit team limit**.
+
+No teams yet? Click **Create a team**. Teams are managed in **Members**.
+
+### Open a person
+
+Click a person to see:
+
+- **Last 31 days**: their total estimated spend.
+- **What they can use**: each provider they can use. Click **Change in AI
+  Providers** to change it.
+- **Spend limit**: whether they're **Within the limit**, **Over the limit**, or
+  **Paused**, with **Set a limit** or **Edit**.
+- **Models they use**: spend per model.
+
+## Give people models
+
+Access is set on each provider, not on the person. To give someone models:
+
+<Steps>
+  <Step title="Open the provider">
+    Go to **AI Gateway › AI Providers** and click the provider. To add a new one,
+    click **Add a provider**.
+  </Step>
+  <Step title="Choose who can use it">
+    Under **Who can use it**, turn on **Everyone in the organization**, or turn
+    it off and click **Add person** or **Add team**.
+  </Step>
+  <Step title="Choose which models">
+    Under **Models**, pick **All** models (for example **All Anthropic models**), or **Only the ones I
+    pick** and select them.
+  </Step>
+  <Step title="Save">
+    Click **Save changes**. Members' apps pick up the new models on their next
+    sync.
+  </Step>
+</Steps>
+
+A person can use a provider's models if any route gives them access: everyone,
+one of their teams, or them directly.
+
+[OpenWork Models](/ai-gateway/openwork-models) is different: when it's on,
+everyone in the organization can use it.
+
+## Shared key or each person's own account
+
+Each provider has a **Key** setting:
+
+- **Shared API key**: you paste one key, and everyone with access uses it. The
+  key stays on OpenWork's servers; members never see it.
+- **Each member signs in**: each person connects their own account, such as
+  Google sign-in for [Vertex AI](/ai-gateway/google-agent-platform), AWS IAM
+  Identity Center for [Amazon Bedrock](/ai-gateway/amazon-bedrock), Microsoft
+  Entra ID for [Microsoft Foundry](/ai-gateway/microsoft-foundry), or a personal
+  key for [LiteLLM](/ai-gateway/litellm). Only some providers support this.
+
+## Stop members from adding their own keys
+
+On **AI Gateway › AI Providers**, the **Who can use models** row shows your
+organization's policy. Click **Change**:
+
+- **Only models you provide**: members see only what you set up in AI Gateway
+  and OpenWork Models, and can't add their own provider keys. You can still
+  allow **Admins may still add their own keys on their device**.
+- **Any model**: members can also add their own provider keys on their device.
+  Your AI Gateway models still show up.
+
+The same dialog has **Free starter model (Auto)**, which lets members fall back
+to OpenWork's free, rate-limited model. Changes apply to every member, on
+desktop and the web, the next time they open OpenWork.
+
+## Set limits
+
+To cap spend for everyone, a team, or a person, see [Limits](/ai-gateway/limits).
+The **Limit** column on this tab shows which limit applies to each row.
+
+## Model groups, credential sets and access grants
+
+You may see these terms in permissions, the API, or a member's **Technical
+details** in My Library. They're the pieces behind the screens above:
+
+- A **model group** is a set of models from one provider: all of them, or only
+  the ones you picked.
+- A **credential set** is how those models are paid for: the shared API key, or
+  each member's own sign-in.
+- An **access grant** gives a model group to everyone in the organization, a
+  team, or one person.
+
+The **Who can use it**, **Models** and **Key** sections on a provider set all
+three for you.
+
+## Related
+
+- [AI Gateway overview](/ai-gateway/overview)
+- [Overview tab: spend and usage](/ai-gateway/usage-dashboard)
+- [Limits](/ai-gateway/limits)
+- [Managing members and RBAC](/cloud/members-and-rbac)

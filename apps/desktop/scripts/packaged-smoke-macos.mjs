@@ -6,12 +6,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The macOS half of the packaged gate. Linux boots an unpacked directory that
-// can neither write a crash report nor install an update; this lane builds real
-// enterprise .app bundles so both can be asserted:
-//
-// - desktop-quit-path reads ~/Library/Logs/DiagnosticReports after each quit.
-// - packaged-update-install lets an activated install download a newer build
-//   from a loopback feed, lets Squirrel.Mac apply it on quit, and relaunches.
+// cannot install an update; this lane builds real enterprise .app bundles so
+// packaged-update-install can let an activated install download a newer build
+// from a loopback feed, let Squirrel.Mac apply it on quit, and relaunch.
 //
 // Squirrel.Mac installs only a bundle that satisfies the running app's
 // designated requirement, so both builds are signed with one throwaway
@@ -24,8 +21,9 @@ import { fileURLToPath } from "node:url";
 // on a machine whose own OpenWork has no update waiting.
 //
 // Local rerun: `--prepared` skips electron-build.mjs, `--build-only` stops
-// before the journeys, `--artifact-only` reuses the bundles and feed already in
-// OPENWORK_PACKAGED_SMOKE_DIR, and `--journey <name>` selects one journey.
+// before the journey, and `--artifact-only` reuses the bundles and feed already
+// in OPENWORK_PACKAGED_SMOKE_DIR. `--journey packaged-update-install` is
+// accepted so PR proof can name the journey it runs.
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const desktop = join(repo, "apps/desktop");
@@ -44,10 +42,8 @@ const MANIFEST = "enterprise-mac.yml";
 const ENTITLEMENTS = join(desktop, "build/entitlements.mac.plist");
 const SIGNING_NAME = "OpenWork Eval Update Signing";
 
-const journeys = new Set(process.argv.flatMap((arg, index, all) => arg === "--journey" && all[index + 1] ? [all[index + 1]] : []));
-const selected = (journey) => journeys.size === 0 || journeys.has(journey);
-const known = new Set(["desktop-quit-path", "packaged-update-install"]);
-const unknown = [...journeys].filter((journey) => !known.has(journey));
+const JOURNEY = "packaged-update-install";
+const unknown = process.argv.flatMap((arg, index, all) => arg === "--journey" && all[index + 1] && all[index + 1] !== JOURNEY ? [all[index + 1]] : []);
 if (unknown.length) throw new Error(`No macOS packaged check runs journey ${unknown.join(", ")}.`);
 
 function run(name, command, args, { timeout = 600_000, env = {}, cwd = repo } = {}) {
@@ -181,14 +177,14 @@ function writeFeed(app, version, feed) {
   ].join("\n"));
 }
 
-function journey(name, binary, extraEnv = {}) {
-  run(`journey-${name}`, "pnpm", ["evals:e2e", name, "--local"], {
+function journey(binary, extraEnv) {
+  run(`journey-${JOURNEY}`, "pnpm", ["evals:e2e", JOURNEY, "--local"], {
     timeout: 900_000,
     env: {
       OPENWORK_EVAL_ELECTRON_BINARY: binary,
       OPENWORK_EVAL_ELECTRON_RESOURCES_PREPARED: "1",
       OPENWORK_EVAL_ENGINE: "v1",
-      OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", name),
+      OPENWORK_EVAL_SURFACES_DIR: join(output, "profiles", JOURNEY),
       ELECTRON_RUN_AS_NODE: "",
       NODE_PATH: "", NODE_OPTIONS: "",
       ...extraEnv,
@@ -199,7 +195,6 @@ function journey(name, binary, extraEnv = {}) {
 const baseDir = join(output, "enterprise-base");
 const updateDir = join(output, "enterprise-update");
 const feedDir = join(output, "feed");
-const failures = [];
 
 try {
   if (!process.argv.includes("--artifact-only")) {
@@ -208,32 +203,20 @@ try {
         ...(process.argv.includes("--server-built") ? ["--server-built"] : [])], { timeout: 900_000 });
     }
     const base = packageEnterprise(BASE_VERSION, baseDir);
-    const update = selected("packaged-update-install") ? packageEnterprise(UPDATE_VERSION, updateDir) : null;
+    const update = packageEnterprise(UPDATE_VERSION, updateDir);
     const identity = createSigningIdentity(join(output, "signing"));
     try {
       sign(base, identity.hash);
-      if (update) sign(update, identity.hash);
+      sign(update, identity.hash);
     } finally {
       identity.release();
     }
-    if (update) writeFeed(update, UPDATE_VERSION, feedDir);
+    writeFeed(update, UPDATE_VERSION, feedDir);
   }
   const app = findApp(baseDir);
   if (bundleVersion(app) !== BASE_VERSION) throw new Error(`${app} is ${bundleVersion(app)}, expected ${BASE_VERSION}`);
   const binary = join(app, "Contents/MacOS", PRODUCT_NAME);
-  // Each journey records its own evidence; one failing must not hide the other.
-  for (const [name, env] of [
-    ["desktop-quit-path", {}],
-    ["packaged-update-install", { OPENWORK_EVAL_UPDATE_FEED_DIR: feedDir }],
-  ]) {
-    if (!selected(name) || process.argv.includes("--build-only")) continue;
-    try {
-      journey(name, binary, env);
-    } catch (error) {
-      failures.push(error);
-    }
-  }
-  if (failures.length) throw new AggregateError(failures, `${failures.length} macOS packaged journey(s) failed`);
+  if (!process.argv.includes("--build-only")) journey(binary, { OPENWORK_EVAL_UPDATE_FEED_DIR: feedDir });
   report.passed = true;
 } finally {
   report.totalMilliseconds = Math.round(performance.now() - started);

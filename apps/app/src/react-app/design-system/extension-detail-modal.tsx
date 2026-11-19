@@ -31,6 +31,7 @@ import {
 } from "../domains/settings/extension-taxonomy";
 import { MarkdownBlock } from "../domains/session/surface/markdown";
 import { resolveExtensionIconUrl } from "./extension-icon-src";
+import { LibraryBreadcrumbs, type LibraryBreadcrumb } from "./library-breadcrumbs";
 
 export type ExtensionDetailModalProps = {
   open: boolean;
@@ -117,6 +118,8 @@ export type ExtensionDetailModalProps = {
   presentation?: "dialog" | "page";
   /** Back-link label when presentation is "page". */
   backLabel?: string;
+  /** Ancestors of this detail page; the current item is appended automatically. */
+  breadcrumbs?: LibraryBreadcrumb[];
 };
 
 const taxonomyDesc: Record<ExtensionTaxonomy, string> = {
@@ -257,6 +260,7 @@ export function ExtensionDetailModal({
   size = "default",
   presentation = "dialog",
   backLabel = "Library",
+  breadcrumbs,
 }: ExtensionDetailModalProps) {
   "use memo";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url });
@@ -719,15 +723,19 @@ export function ExtensionDetailModal({
   if (presentation === "page") {
     return (
       <div data-extension-detail-page className="mx-auto flex w-full max-w-3xl flex-col gap-6 animate-in fade-in duration-300">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="-ml-2 w-fit gap-1 px-2 text-muted-foreground"
-          onClick={onClose}
-        >
-          <ChevronLeft size={16} />
-          {backLabel}
-        </Button>
+        {breadcrumbs ? (
+          <LibraryBreadcrumbs items={[...breadcrumbs, { label: name }]} />
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 w-fit gap-1 px-2 text-muted-foreground"
+            onClick={onClose}
+          >
+            <ChevronLeft size={16} />
+            {backLabel}
+          </Button>
+        )}
         {header}
         <div className="min-h-0 flex-1">
           {body}

@@ -95,6 +95,8 @@ export type CodemodeConnectionNamespaceContext = {
 type CodemodeMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
+  /** A Workbot turn: connections an admin set to "Not allowed" for Workbot (workbot-turn-limits.ts). */
+  withheldConnectionIds?: ReadonlySet<string>
 }
 
 export async function resolveCodemodeConnectionNamespaceContext(input: {
@@ -122,6 +124,7 @@ export async function resolveCodemodeConnectionNamespaceContext(input: {
       organizationId,
       orgMembershipId: input.member.orgMembershipId,
       teamIds: input.member.teamIds,
+      withheldConnectionIds: input.member.withheldConnectionIds,
     }),
   ])
   const codemodeNativeProviderEntries = nativeProviderEntries.filter((entry) => entry.connectedForMe === true)

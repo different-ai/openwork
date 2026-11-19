@@ -78,6 +78,7 @@ import {
   writeActiveWorkspaceId,
   writeWorkspaceOrderIds,
 } from "./session-memory";
+import { remoteThreadKeyFromRouteId } from "@/lib/remote-session-route";
 import {
   legacySessionRoute,
   mergeWorkspaceRouteSession,
@@ -85,7 +86,6 @@ import {
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
   automationsRoute,
-  calendarRoute,
   dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
@@ -95,7 +95,7 @@ export type UseWorkspaceRouteStateInput = {
   /** A local first-send owner must survive workspace preparation until it has a real session. */
   preservePendingConversationRoute?: boolean;
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "calendar" | "dashboard" | "apps" | "activity";
+  workspaceRoute?: "session" | "automations" | "dashboard" | "apps" | "activity";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -119,6 +119,20 @@ type ModernRouteSessionResolution =
  * which the session pane renders as an indefinite loading state. */
 const ROUTE_REFRESH_STEP_TIMEOUT_MS = 15_000;
 const ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS = 750;
+
+/**
+ * The timestamps a runtime session update carries. v2 archive events send only
+ * the ones that changed, so updates merge into the session's existing times.
+ */
+function runtimeSessionTimes(value: unknown): { created?: number; updated?: number; archived?: number } {
+  if (!value || typeof value !== "object") return {};
+  const times: { created?: number; updated?: number; archived?: number } = {};
+  for (const key of ["created", "updated", "archived"] as const) {
+    const time: unknown = Reflect.get(value, key);
+    if (typeof time === "number") times[key] = time;
+  }
+  return times;
+}
 
 function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -147,7 +161,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const denAuth = useDenAuth();
   const params = useParams<{ workspaceId?: string; sessionId?: string }>();
   const routeWorkspaceId = params.workspaceId?.trim() || "";
-  const selectedSessionId = params.sessionId?.trim() || null;
+  // A task on another computer has its own route (`remote:<threadKey>`); it is
+  // not a local session, so nothing below loads or validates it as one.
+  const routeSessionId = params.sessionId?.trim() || null;
+  const remoteThreadKey = remoteThreadKeyFromRouteId(routeSessionId);
+  const selectedSessionId = remoteThreadKey ? null : routeSessionId;
   const extensionsRouteActive = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
   const extensionsRoutePath = extensionsRouteActive
     ? location.pathname
@@ -182,11 +200,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "automations") {
       if (/^\/automations(?:\/|$)/.test(location.pathname)) return;
       navigate(automationsRoute(), options);
-      return;
-    }
-    if (workspaceRoute === "calendar") {
-      if (/^\/calendar(?:\/|$)/.test(location.pathname)) return;
-      navigate(calendarRoute(), options);
       return;
     }
     if (workspaceRoute === "apps") {
@@ -421,6 +434,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     const loaded = sessionReferenceLoadsRef.current.get(workspace.id);
     return {
       workspaceId: workspace.id,
+      workspaceTitle: workspace.displayNameResolved,
       available,
       sessions: available
         ? (sessionsByWorkspaceId[workspace.id] ?? []).filter((session) => loaded?.sessionIds.has(session.id))
@@ -511,6 +525,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
                 return;
               }
               invalidateSessionInventory(workspace.id);
+              // OpenCode refuses this folder until its config is fixed; show
+              // the file and field rather than an empty chat list.
+              if (error instanceof Error && "code" in error && error.code === "opencode_config_invalid") {
+                setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: error.message }));
+              }
               setRetryingWorkspaceIds((current) =>
                 current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
               );
@@ -914,7 +933,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const previousChange = changes?.get(update.sessionId);
         changes?.set(update.sessionId, (session) => {
           const current = previousChange ? previousChange(session) : session;
-          return current ? { ...current, ...info, id: update.sessionId } : undefined;
+          return current ? { ...current, ...info, time: { ...current.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId } : undefined;
         });
         if (!isCurrent()) return;
         const loaded = sessionReferenceLoadsRef.current.get(workspaceId);
@@ -922,7 +941,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         const list = sessionsByWorkspaceIdRef.current[workspaceId] ?? [];
         const session = list.find((item) => item.id === update.sessionId);
         if (!session) return;
-        const nextSession = { ...session, ...info, id: update.sessionId };
+        const nextSession = { ...session, ...info, time: { ...session.time, ...runtimeSessionTimes(info.time) }, id: update.sessionId };
         if (JSON.stringify(session) === JSON.stringify(nextSession)) return;
         publish(mergeWorkspaceRouteSession(list, nextSession));
       },
@@ -1411,6 +1430,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
+    remoteThreadKey,
     loading,
     effectiveLoading,
     connectionPending,

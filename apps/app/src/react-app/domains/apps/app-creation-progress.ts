@@ -10,6 +10,7 @@ import {
 
 export type AppCreationRun = {
   id: string;
+  startedAt?: number;
   preparation?: DynamicToolUIPart;
   discoveries?: DynamicToolUIPart[];
   executions?: DynamicToolUIPart[];
@@ -17,12 +18,12 @@ export type AppCreationRun = {
   /** Earlier attempts at this App that were rejected before a retry succeeded. */
   attempts?: DynamicToolUIPart[];
   /**
-   * Live only: the agent read the build-an-app guide (create) or an App
+   * The agent read the build-an-app guide (create) or an App
    * (edit) and is still writing, before any builder call exists.
    */
   intent?: { kind: "create" | "edit"; part: DynamicToolUIPart };
   /**
-   * Live only: a Code Mode script the model is still writing that will
+   * A Code Mode script the model is still writing that will
    * prepare, create or update an App. It is replaced by the script's own App
    * calls once it runs.
    */
@@ -73,12 +74,14 @@ export function appStepUnrecorded(part: DynamicToolUIPart | undefined): boolean 
   return field(field(result, "structuredContent"), "unrecorded") === true;
 }
 
-const BUILD_AN_APP_SKILL = /(?:^|[/:])build-an-app$/;
+// get_skill names it build-an-app or skill:build-an-app; the native skill tool
+// loads the organization skill as openwork-cloud-build-an-app.
+const BUILD_AN_APP_SKILL = /(?:^|[/:]|^openwork-cloud-)build-an-app$/;
 
 /** Reading the build-an-app guide, directly or as the only work of a Code Mode script. */
 function isAppGuideCall(tool: string, input: unknown): boolean {
   if (!/(?:^|[_.])(?:get_skill|skill)$/.test(tool)) return false;
-  const name = field(input, "name") ?? field(input, "capability");
+  const name = field(input, "name") ?? field(input, "capability") ?? field(input, "id");
   return typeof name === "string" && BUILD_AN_APP_SKILL.test(name);
 }
 
@@ -109,7 +112,9 @@ function codeOf(part: DynamicToolUIPart): string {
 /** The App call a Code Mode script being written will make, read from its streamed code. */
 export function appScriptKind(part: DynamicToolUIPart): AppScriptKind | null {
   if (!part.callProviderMetadata?.openwork?.codeMode) return null;
-  if (part.state !== "input-streaming" && part.state !== "input-available") return null;
+  // A script result can arrive before its nested App calls. Keep the same
+  // step through that handoff instead of briefly reverting to ordinary tools.
+
   const code = codeOf(part);
   if (/\bupdate_app\s*\(/.test(code)) return "update";
   if (/\bcreate_app\s*\(/.test(code)) return "create";
@@ -165,113 +170,99 @@ export function appRead(part: DynamicToolUIPart | undefined): { appId: string; t
 
 /**
  * App steps start only where the agent itself starts one: prepare_app, or a
- * create_app or update_app without a preparation. The lookups just before it
- * in the same turn join that step. Builds correlate by the server-issued
- * preparation id, keeping separate Apps and retries separate.
+ * create_app or update_app without a preparation. A guide starts the same
+ * run early. Preparations and retries join the unfinished App by title, and
+ * builds resolve its server-issued preparation ids to that stable run.
  *
  * While the turn is `live`, reading the build-an-app guide or an App starts
  * the step early, because writing the App's source can take a minute before
- * any builder call appears. Like the lookups, it ends at other work or with
- * the turn if no builder call follows.
+ * any builder call appears. Intervening tools do not end the run; a guide
+ * without a builder is omitted from finished history.
  */
 export function appCreationRuns(messages: UIMessage[], live = false): AppCreationRun[] {
   const runs: AppCreationRun[] = [];
   const byPreparation = new Map<string, AppCreationRun>();
   const parts = new Map<string, DynamicToolUIPart>();
+  const starts = new Map<string, number>();
   for (const message of messages) {
     if (message.role !== "assistant") continue;
     for (const part of message.parts) {
-      if (part.type === "dynamic-tool") parts.set(part.toolCallId, part);
+      if (part.type === "dynamic-tool") {
+        parts.set(part.toolCallId, part);
+        const created = field(field(message.metadata, "opencode"), "created");
+        if (typeof created === "number" && Number.isFinite(created)) starts.set(part.toolCallId, created);
+      }
     }
   }
   let leadIn: DynamicToolUIPart[] = [];
   const join = (run: AppCreationRun) => {
-    if (leadIn.length > 0) run.discoveries = [...(run.discoveries ?? []), ...leadIn];
+    if (leadIn.length) run.discoveries = [...(run.discoveries ?? []), ...leadIn];
     leadIn = [];
   };
-  const runsInner = (part: DynamicToolUIPart) => [...parts.keys()].some((id) => id.startsWith(`${part.toolCallId}:app:`));
+  const unfinished = (run: AppCreationRun | undefined) => run
+    && !run.builds.some(build => builtAppSummary(build) || appStepUnrecorded(build));
+  // Preparations and Code Mode executions are attempts at the user's App,
+  // not identities for the App. Preserve the first run through every retry.
+  const continuing = (part: DynamicToolUIPart) => {
+    const latest = runs.at(-1);
+    if (!unfinished(latest) || !latest) return undefined;
+    const title = appTitleInCall(part);
+    const previousTitle = appCreationProgress(latest, false).title;
+    return title && previousTitle && title !== previousTitle ? undefined : latest;
+  };
+  const start = (part: DynamicToolUIPart) => {
+    const id = leadIn[0]?.toolCallId ?? stepId(part);
+    const run: AppCreationRun = { id, startedAt: starts.get(id) ?? starts.get(part.toolCallId), builds: [] };
+    join(run);
+    runs.push(run);
+    return run;
+  };
+  const runsInner = (part: DynamicToolUIPart) => [...parts.keys()].some(id => id.startsWith(`${part.toolCallId}:app:`));
   for (const part of parts.values()) {
-    const scriptKind = live ? appScriptKind(part) : null;
+    const scriptKind = appScriptKind(part);
     if (scriptKind && !runsInner(part)) {
-      // A script that will build is the App step from its first streamed line.
-      const latest = runs.at(-1);
-      const prepared = scriptKind !== "prepare" && leadIn.length === 0 && latest?.preparation
-        && appPreparation(latest.preparation) && latest.builds.length === 0 && !latest.script;
-      if (prepared) {
-        latest.script = { kind: scriptKind, part };
-      } else {
-        const started: AppCreationRun = { id: leadIn[0]?.toolCallId ?? part.toolCallId, builds: [], script: { kind: scriptKind, part } };
-        const intent = leadIn.findLast((lead) => isAppGuidePart(lead) || isAppReadPart(lead));
-        if (intent) started.intent = { kind: isAppReadPart(intent) ? "edit" : "create", part: intent };
-        join(started);
-        runs.push(started);
-      }
-    } else if (isAppLeadInPart(part)) {
-      leadIn.push(part);
-    } else if (isAppPreparationPart(part)) {
-      const run: AppCreationRun = { id: leadIn[0]?.toolCallId ?? stepId(part), preparation: part, builds: [] };
+      const run = continuing(part) ?? start(part);
+      run.script = { kind: scriptKind, part };
       join(run);
-      runs.push(run);
+    } else if (isAppLeadInPart(part)) {
+      const latest = runs.at(-1);
+      if (unfinished(latest) && latest) {
+        latest.discoveries = [...(latest.discoveries ?? []), part];
+      } else if (isAppGuidePart(part) || isAppReadPart(part)) {
+        const run = start(part);
+        run.intent = { kind: isAppReadPart(part) ? "edit" : "create", part };
+        run.discoveries = [...(run.discoveries ?? []), part];
+      } else leadIn.push(part);
+    } else if (isAppPreparationPart(part)) {
+      const run = continuing(part) ?? start(part);
+      if (run.preparation) run.attempts = [...(run.attempts ?? []), run.preparation];
+      if (run.builds.length) {
+        run.attempts = [...(run.attempts ?? []), ...run.builds];
+        run.builds = [];
+      }
+      run.preparation = part;
+      run.script = undefined;
+      join(run);
       const preparation = appPreparation(part);
       if (preparation) byPreparation.set(preparation.preparationId, run);
     } else if (isAppBuilderPart(part)) {
       const id = field(part.input, "preparationId");
-      let run = typeof id === "string" ? byPreparation.get(id) : undefined;
-      // While arguments stream, the correlation id may not have arrived yet.
-      if (
-        (!id || (typeof id === "string" && id.length < 36)) &&
-        part.state === "input-streaming" &&
-        /(?:^|_)create_app$/.test(part.toolName)
-      ) {
-        const latest = runs.at(-1);
-        if (
-          latest?.preparation &&
-          appPreparation(latest.preparation) &&
-          latest.builds.length === 0
-        )
-          run = latest;
-      }
-      // Without a usable id (unrecorded results), a build belongs to the
-      // latest App still being made, not to a new card.
-      if (!run && (typeof id !== "string" || !byPreparation.has(id))) {
-        const latest = runs.at(-1);
-        // Only when the latest preparation's id is unknown (not recorded);
-        // a known, different id is a different App.
-        if (latest?.preparation && !appPreparation(latest.preparation) && appStepUnrecorded(latest.preparation)
-          && !latest.builds.some((build) => builtAppSummary(build) || appStepUnrecorded(build))) run = latest;
-      }
-      if (run) {
-        run.builds.push(part);
-        join(run);
-      } else {
-        const started: AppCreationRun = { id: leadIn[0]?.toolCallId ?? stepId(part), builds: [part] };
-        join(started);
-        runs.push(started);
-      }
-    } else if (!part.callProviderMetadata?.openwork?.codeMode) {
-      // Other work in between: the lookups before it were for something else.
+      const run = (typeof id === "string" ? byPreparation.get(id) : undefined)
+        ?? continuing(part) ?? start(part);
+      run.builds.push(part);
+      run.script = undefined;
+      join(run);
+    } else if (!unfinished(runs.at(-1)) && !part.callProviderMetadata?.openwork?.codeMode) {
       leadIn = [];
     }
   }
-  const intent = live ? leadIn.findLast((part) => isAppGuidePart(part) || isAppReadPart(part)) : undefined;
-  // Keyed like the run the builder call will open, so the step stays in place.
-  if (intent) {
-    runs.push({
-      id: leadIn[0]!.toolCallId,
-      discoveries: leadIn,
-      builds: [],
-      intent: { kind: isAppReadPart(intent) ? "edit" : "create", part: intent },
-    });
-  }
-  // A preparation Den rejected, followed by another preparation, is the same
-  // App being retried: fold it into the next run instead of a card of its own.
-  for (let index = runs.length - 2; index >= 0; index -= 1) {
-    const run = runs[index]!;
-    const next = runs[index + 1]!;
-    const rejected = run.preparation && run.builds.length === 0 && appBuilderResultFailed(run.preparation);
-    if (!rejected || !next.preparation || !run.preparation) continue;
-    next.attempts = [...(run.discoveries ?? []), run.preparation, ...(run.attempts ?? []), ...(next.attempts ?? [])];
-    runs.splice(index, 1);
+  // A guide alone is useful during a live turn, but is not a completed App.
+  // Actual attempts remain reconstructible after completion and on reload.
+  if (!live) {
+    for (let index = runs.length - 1; index >= 0; index--) {
+      const run = runs[index]!;
+      if (!run.preparation && !run.builds.length && !run.script) runs.splice(index, 1);
+    }
   }
   for (const run of runs) {
     const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...(run.attempts ?? []), ...run.builds];
@@ -288,7 +279,8 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
   const app = build ? builtAppSummary(build) : null;
   const failed = Boolean(
     (build && appBuilderResultFailed(build)) ||
-      (!build && run.preparation && appBuilderResultFailed(run.preparation)),
+      (!build && run.preparation && appBuilderResultFailed(run.preparation)) ||
+      (run.script && appBuilderResultFailed(run.script.part)),
   );
   const checking = build?.state === "input-available";
   // Built, but the launch was not recorded: done, just not previewable here.
@@ -332,13 +324,13 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
   };
 }
 
-/** Whether the latest turn is building an App that is not yet built or failed. */
+/** Keep the App's home through retries; only readiness ends the live panel. */
 export function appBuildInProgress(messages: UIMessage[]): boolean {
   const turn = messages.slice(Math.max(0, messages.findLastIndex((message) => message.role === "user")));
-  const run = appCreationRuns(turn, true).at(-1);
-  if (!run) return false;
-  const progress = appCreationProgress(run, true);
-  return !progress.app && !progress.builtUnrecorded && !progress.failed && !progress.unavailable;
+  return appCreationRuns(turn, true).some(run => {
+    const progress = appCreationProgress(run, true);
+    return !progress.app && !progress.builtUnrecorded;
+  });
 }
 
 function lastLine(text: string): string | null {
@@ -351,17 +343,17 @@ function lastLine(text: string): string | null {
  * What the agent is doing right now while it builds an App, in one line: its
  * latest thought, or the latest call that is not part of the App step.
  */
-export function appBuildActivity(messages: UIMessage[], appParts: ReadonlySet<string>): string | null {
+export function appBuildActivity(messages: UIMessage[], appParts: ReadonlySet<string>, showThinking = false): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]!;
     if (message.role === "user") return null;
     if (message.role !== "assistant") continue;
     for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = message.parts[partIndex]!;
-      if (part.type === "reasoning") {
+      if (part.type === "reasoning" && showThinking) {
         const line = lastLine(part.text);
         if (line) return line;
-      } else if (part.type === "dynamic-tool" && !appParts.has(part.toolCallId)) {
+      } else if (part.type === "dynamic-tool" && (!appParts.has(part.toolCallId) || isToolPartInFlight(part))) {
         const sentence = getCapabilityCallSentence(part);
         return isToolPartInFlight(part) ? sentence.present : sentence.past;
       }

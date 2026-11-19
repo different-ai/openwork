@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -30,6 +31,7 @@ import type {
 } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
 
+import { readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -46,13 +48,16 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
-import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
+import { CloudSignInEmptyState } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { AutomationShareButton } from "./automation-share-button"
+import { SharedAutomationsSection } from "./shared-automations-section"
 import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
@@ -63,9 +68,10 @@ import {
   useAutomationListQuery,
   useAutomationRunsQuery,
   useAutomationsDenContext,
+  useAutomationSharingEnabled,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
-import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
+import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { describeAutomationModel } from "./automation-model-options"
 
@@ -175,6 +181,7 @@ export function AutomationsPage(props: {
   onSignIn?: () => void
 } = {}) {
   const denAuth = useDenAuth()
+  const platform = usePlatform()
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const [searchParams, setSearchParams] = useSearchParams()
@@ -184,6 +191,7 @@ export function AutomationsPage(props: {
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   const denContext = useAutomationsDenContext()
+  const sharingEnabled = useAutomationSharingEnabled(denContext)
   const { client, organizationId, ready, queryRoot } = denContext
   const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
@@ -250,21 +258,15 @@ export function AutomationsPage(props: {
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
     // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
-    // and the page leads with the same sign-in banner as Library.
+    // and the page is one empty state whose action is signing in.
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
-        <CloudSignInBanner
-          testId="automations-sign-in-banner"
-          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
-          message={t("automations.sign_in_banner")}
+      <div className="h-full w-full" data-automations-signed-out>
+        <CloudSignInEmptyState
+          testId="automations-sign-in"
+          icon={<Clock3 />}
+          title={t("automations.signed_out_title")}
           onSignIn={props.onSignIn}
         />
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>No Automations yet</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
       </div>
     )
   }
@@ -294,9 +296,9 @@ export function AutomationsPage(props: {
   }
 
   if (creating) {
-    // Only a Workflow the person can run may be pinned; Den enforces the same
-    // bar on create, this just keeps a viewer from reaching a form that fails.
-    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canRun ? workflowQuery.data : undefined
+    // Manual run access includes viewers; scheduling retains the existing
+    // editor/manager gate enforced by Den.
+    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canSchedule ? workflowQuery.data : undefined
     const workflowVersion = workflow
       ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
       : undefined
@@ -321,8 +323,8 @@ export function AutomationsPage(props: {
         </div>
         {placement === "cloud" && workflowId && workflowQuery.error ? (
           <Alert variant="warning"><AlertCircle /><AlertTitle>Workflow unavailable</AlertTitle><AlertDescription>{describeError(workflowQuery.error)}</AlertDescription></Alert>
-        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canRun ? (
-          <Alert variant="warning"><AlertCircle /><AlertTitle>You can read this Workflow but not run it</AlertTitle><AlertDescription>Ask a Workflow manager for run access to schedule it. You can still create an ordinary Automation below.</AlertDescription></Alert>
+        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canSchedule ? (
+          <Alert variant="warning"><AlertCircle /><AlertTitle>You can run this Workflow manually, but not schedule it</AlertTitle><AlertDescription>Ask a Workflow manager for scheduling access. You can still create an ordinary Automation below.</AlertDescription></Alert>
         ) : null}
         <AutomationEditor
           key={workflowVersion?.id ?? "agent"}
@@ -366,6 +368,7 @@ export function AutomationsPage(props: {
                     ...input,
                     ...(workspaceId ? { workspaceId } : {}),
                   })
+              featureAnalytics.automationCreated(chosenPlacement)
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")
@@ -398,6 +401,7 @@ export function AutomationsPage(props: {
     const runs = runsQuery.data?.items ?? []
     const selectedReceipt = receiptQuery.data?.run.id === selectedRunId ? receiptQuery.data : undefined
     const runNotice = selectedReceipt ? automationRunNotice(selectedReceipt.run) : null
+    const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
     const localSessionRoute = selectedReceipt?.run.executionThread
@@ -477,6 +481,9 @@ export function AutomationsPage(props: {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {sharingEnabled && task.state !== "archived" ? (
+              <AutomationShareButton key={`${organizationId}:${task.id}`} context={denContext} automation={task} refresh={refresh} />
+            ) : null}
             {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
@@ -692,7 +699,19 @@ export function AutomationsPage(props: {
                     <Alert variant={runNotice.variant} data-automation-run-notice={selectedReceipt.run.id} data-variant={runNotice.variant}>
                       <AlertCircle />
                       <AlertTitle>{runNotice.title}</AlertTitle>
-                      <AlertDescription>{runNotice.message}</AlertDescription>
+                      <AlertDescription>
+                        <p>{runNotice.message}</p>
+                        {connectionFix ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2"
+                            data-automation-connection-fix={selectedReceipt.run.id}
+                            onClick={() => platform.openLink(connectionFix.url)}
+                          >{connectionFix.label}</Button>
+                        ) : null}
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                   {selectedReceipt.run.resultSummary ? (
@@ -801,6 +820,9 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
+      {sharingEnabled ? (
+        <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
+      ) : null}
     </div>
   )
 }

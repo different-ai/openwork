@@ -1,4 +1,4 @@
-import { EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "./external-mcp-presets.js"
+import { ALL_EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "./external-mcp-presets.js"
 
 export type PluginMcpAuthType = "apikey" | "none" | "oauth"
 
@@ -14,7 +14,7 @@ function normalizedRemoteMcpUrl(value: string) {
 
 export function matchExternalMcpPresetForUrl(
   url: string,
-  presets: readonly ExternalMcpPreset[] = EXTERNAL_MCP_PRESETS,
+  presets: readonly ExternalMcpPreset[] = ALL_EXTERNAL_MCP_PRESETS,
 ): ExternalMcpPreset | null {
   const normalizedUrl = normalizedRemoteMcpUrl(url)
   if (normalizedUrl === null) return null

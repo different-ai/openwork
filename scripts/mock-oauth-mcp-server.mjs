@@ -84,6 +84,7 @@ const pendingRefreshResponses = new Map();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let privateSentinels = [];
 let agentRequiredHeader = null;
 const agentReplyGates = new Map();
 const AGENT_REPLY_GATE_TIMEOUT_MS = 60_000;
@@ -259,7 +260,7 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-starter", "app-read"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-starter", "app-read", "browser-page"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
@@ -280,9 +281,11 @@ function validateAgentWorkloads(value) {
     const serverErrorAttempts = workload.serverErrorAttempts ?? 0;
     if (!Number.isInteger(serverErrorAttempts) || serverErrorAttempts < 0 || serverErrorAttempts > 3)
       throw new Error("serverErrorAttempts must be between 0 and 3");
+    if (workload.terminalErrorMessage !== undefined && (typeof workload.terminalErrorMessage !== "string" || !workload.terminalErrorMessage.trim()))
+      throw new Error(`agent workload ${promptMarker} terminalErrorMessage must be a non-empty string`);
     return { promptMarker, matchAll: workload.matchAll === true, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyChunks,
       finalReplyInitiallyReleasedChunks, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps,
-      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts, serverErrorAttempts };
+      latestUserTurn: workload.latestUserTurn === true, rateLimitAttempts, serverErrorAttempts, terminalErrorMessage: workload.terminalErrorMessage };
   });
 }
 
@@ -553,6 +556,51 @@ function appReadStepArguments(messages, argumentsValue) {
   return { ...argumentsValue, expectedRevisionId: app.revisionId };
 }
 
+// Browser handoff: fixture steps name page controls; each call uses the tab,
+// observation and refs the shipped browser tools actually returned this turn.
+function browserPageArguments(messages, argumentsValue) {
+  let tabId = null, observationId = null;
+  const refs = new Map();
+  const siteTools = new Map();
+  for (const message of messages) {
+    if (message?.role !== "tool") continue;
+    let payload;
+    try {
+      payload = JSON.parse(agentContentText(message));
+      if (Array.isArray(payload?.content)) payload = JSON.parse(agentContentText(payload));
+    } catch { continue; }
+    if (!payload || typeof payload !== "object") continue;
+    if (typeof payload.tabId === "string") tabId = payload.tabId;
+    for (const tool of Array.isArray(payload.tools) ? payload.tools : []) {
+      if (typeof tool?.name === "string" && typeof tool.toolId === "string") siteTools.set(tool.name, tool.toolId);
+    }
+    for (const observation of [payload, payload.observation]) {
+      if (typeof observation?.observationId !== "string") continue;
+      observationId = observation.observationId;
+      for (const element of Array.isArray(observation.elements) ? observation.elements : []) {
+        if (typeof element?.name === "string" && typeof element.ref === "string") refs.set(element.name, element.ref);
+      }
+    }
+  }
+  const resolve = (action) => {
+    if (typeof action?.name !== "string") return action;
+    const { name, ...rest } = action;
+    if (!refs.has(name)) throw new Error(`the browser returned no control named ${name}`);
+    return { ...rest, ref: refs.get(name) };
+  };
+  const value = structuredClone(argumentsValue);
+  if (value.tabId === "__TAB__") value.tabId = tabId ?? (() => { throw new Error("the browser returned no tab"); })();
+  if (value.observationId === "__OBSERVATION__") value.observationId = observationId ?? (() => { throw new Error("the browser returned no observation"); })();
+  if (typeof value.toolName === "string") {
+    if (!siteTools.has(value.toolName)) throw new Error(`the browser listed no website tool named ${value.toolName}`);
+    value.toolId = siteTools.get(value.toolName);
+    delete value.toolName;
+  }
+  if (value.action) value.action = resolve(value.action);
+  if (Array.isArray(value.actions)) value.actions = value.actions.map(resolve);
+  return value;
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -637,7 +685,9 @@ async function handleAgentCompletion(req, res, entry) {
       hasDraftResult: value.includes("Draft ready for Test recipient"),
     };
   });
-  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, matchedMarkers, completedTools, advertisedToolNames, toolResultCodes };
+  const bodyText = privateSentinels.length ? JSON.stringify(body) : "";
+  const privateSentinelSeen = privateSentinels.some((value) => bodyText.includes(value));
+  const baseRequest = { model, reasoningEffort: body.reasoning_effort ?? null, matchedMarkers, completedTools, advertisedToolNames, toolResultCodes, privateSentinelSeen };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -654,6 +704,11 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   if (!workload) throw new Error("matched agent workload disappeared");
+  if (workload.terminalErrorMessage) {
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    json(res, 400, { error: { message: workload.terminalErrorMessage, type: "invalid_request_error", code: "terminal_rejection" } });
+    return;
+  }
   if (workload.serverErrorAttempts > 0) {
     workload.serverErrorAttempts -= 1;
     entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
@@ -714,7 +769,8 @@ async function handleAgentCompletion(req, res, entry) {
     : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
     : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments)
     : step.argumentsFrom === "app-starter" ? appStarterStepArguments(scopedMessages, step.arguments)
-    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments) : step.arguments;
+    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "browser-page" ? browserPageArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),
@@ -1105,9 +1161,24 @@ function tokenFingerprint(req) {
   return createHash("sha256").update(token).digest("hex").slice(0, 12);
 }
 
+/** Deep subset match: every key the tool declares in whenArguments must equal the call's. */
+function argumentsMatch(expected, actual) {
+  if (expected === undefined) return true;
+  if (expected === null || typeof expected !== "object") return Object.is(expected, actual);
+  if (!actual || typeof actual !== "object") return false;
+  return Object.entries(expected).every(([key, value]) => argumentsMatch(value, actual[key]));
+}
+
+/** The configured variant for this call: the first with that name whose whenArguments match. */
+function configuredToolFor(name, args) {
+  return configuredTools.find((candidate) => candidate.name === name && argumentsMatch(candidate.whenArguments, args ?? {}));
+}
+
 function mcpResult(message) {
   if (toolsConfigured && message.method === "tools/list") {
-    return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
+    const seen = new Set();
+    return { tools: configuredTools.filter((tool) => !seen.has(tool.name) && seen.add(tool.name))
+      .map(({ result, delayMs, appHtml, validateRequiredArguments, whenArguments, ...tool }) => tool) };
   }
   if (message.method === "resources/read") {
     const tool = configuredTools.find((candidate) => candidate._meta?.ui?.resourceUri === message.params?.uri);
@@ -1116,7 +1187,7 @@ function mcpResult(message) {
     }
   }
   if (message.method === "tools/call") {
-    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    const tool = configuredToolFor(message.params?.name, message.params?.arguments);
     if (tool) return tool.result;
   }
   switch (message.method) {
@@ -1356,8 +1427,7 @@ async function handleMcp(req, res, entry) {
       args: message.params.arguments ?? message.params.args ?? {},
       tokenId: entry.tokenId,
     }));
-  const responseDelay = Math.max(0, ...entry.toolNames.map((name) =>
-    configuredTools.find((tool) => tool.name === name)?.delayMs ?? 0));
+  const responseDelay = Math.max(0, ...entry.toolCalls.map((call) => configuredToolFor(call.name, call.args)?.delayMs ?? 0));
   if (responseDelay > 0) await new Promise((resolve) => setTimeout(resolve, responseDelay));
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];
@@ -1428,6 +1498,20 @@ const server = http.createServer(async (req, res) => {
       agentRepliesHeld = body.held;
       if (!agentRepliesHeld) for (const send of [...heldAgentReplies]) send();
       json(res, 200, { held: agentRepliesHeld, pending: heldAgentReplies.size });
+      return;
+    }
+
+    // Test hook: synthetic values the model must never receive. Each later
+    // completion records only whether any appeared, never the values.
+    if (url.pathname === "/admin/private-sentinels" && req.method === "POST") {
+      const body = await readJson(req);
+      const values = Array.isArray(body?.values) ? body.values : null;
+      if (!values || !values.every((value) => typeof value === "string" && value.length >= 12)) {
+        json(res, 400, { error: "values must be strings of at least 12 characters" });
+        return;
+      }
+      privateSentinels = values;
+      json(res, 200, { count: values.length });
       return;
     }
 

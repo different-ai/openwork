@@ -54,34 +54,32 @@ export async function startProviderWitnessProxy(upstreamUrl: string) {
 
 /** Explicit selection, not model-initiated discovery. No Den or Electron. */
 export function selectedSkillsWeb(seed: Seed) {
-  return selectedSkillsIn(seed, "workspace");
+  return selectedSkills(seed, "allow");
 }
 
-/** The same contract with the skill only in the person's global OpenCode skills folder. */
-export function selectedGlobalSkillsWeb(seed: Seed) {
-  return selectedSkillsIn(seed, "global");
+/** The same world with a real workspace rule denying every skill. */
+export function deniedSelectedSkillsWeb(seed: Seed) {
+  return selectedSkills(seed, "deny");
 }
 
-async function selectedSkillsIn(seed: Seed, folder: "workspace" | "global") {
+async function selectedSkills(seed: Seed, permission: "allow" | "deny") {
   const engine = resolveEvalEngine();
   const skillName = "selected-briefing";
   const skillBody = "When preparing a briefing, include the exact phrase AMBER_BODY_ONLY_7391. Keep the briefing concise.";
-  const copyBody = "When preparing a briefing, include the exact phrase COPY_BODY_ONLY_5120. Keep the briefing long.";
   const prompt = "Prepare a short briefing.";
   const reply = "The briefing is ready.";
   const workspacePath = seed.tmpPath("selected-skills");
-  // A global skill lives in OpenCode's own folder under a home this world owns.
-  const home = folder === "global" ? seed.tmpPath("selected-skills-home") : null;
-  const skillDirectory = home
-    ? join(home, ".config", "opencode", "skills", skillName)
-    : join(workspacePath, ".opencode", "skills", skillName);
+  const skillDirectory = join(workspacePath, ".opencode", "skills", skillName);
   await mkdir(skillDirectory, { recursive: true });
+  // The config PATCH endpoint does not persist `permission.skill`; the rule
+  // must live in the workspace file the native engine reads.
+  await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({ permission: { skill: permission } })}\n`);
   await writeFile(join(skillDirectory, "SKILL.md"), `---\nname: ${skillName}\ndescription: Prepare a concise briefing.\n---\n${skillBody}\n`);
   const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [{
     promptMarker: prompt, latestUserTurn: true, finalReply: reply,
     steps: engine === "v1" ? [{ tool: "skill", arguments: { name: skillName } }] : [],
   }] });
-  const app = await seed.appWeb({ name: "selected-skills", workspacePath, mocks: { agent: mock }, ...(home ? { env: { HOME: home } } : {}) });
+  const app = await seed.appWeb({ name: "selected-skills", workspacePath, mocks: { agent: mock } });
   const witness = app.mocks.agent;
   if (!witness) throw new Error("Missing selected-skills provider witness");
   const { port, providerRequests, dispose } = await startProviderWitnessProxy(witness.url);
@@ -93,7 +91,16 @@ async function selectedSkillsIn(seed: Seed, folder: "workspace" | "global") {
         const request = new Request(input instanceof Request ? input.clone() : input, init);
         const pathname = new URL(request.url).pathname;
         if (request.method === "POST" && /\/(?:prompt|prompt_async|permission)$/.test(pathname)) {
-          window.__selectedSkillPrompts?.push({ kind: pathname.endsWith("/permission") ? "permission" : "prompt", body: await request.clone().json() });
+          const entry: { kind: string; body: unknown; status?: number; response?: unknown } = {
+            kind: pathname.endsWith("/permission") ? "permission" : "prompt", body: await request.clone().json(),
+          };
+          window.__selectedSkillPrompts?.push(entry);
+          const response = await original(input, init);
+          if (entry.kind === "permission") {
+            entry.status = response.status;
+            entry.response = await response.clone().json().catch(() => undefined);
+          }
+          return response;
         }
         return original(input, init);
       };
@@ -102,7 +109,6 @@ async function selectedSkillsIn(seed: Seed, folder: "workspace" | "global") {
     const providerId = "selected-skill-witness";
     const modelId = "briefing-model";
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      permission: { skill: "allow" },
       provider: { [providerId]: {
         npm: "@ai-sdk/openai-compatible", name: "Selected skill witness",
         options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "synthetic-skill-key" },
@@ -122,20 +128,13 @@ async function selectedSkillsIn(seed: Seed, folder: "workspace" | "global") {
     if (!ready) throw new Error("Selected-skill composer did not hydrate the fixture model");
     const session = await seed.session(app, { title: "Selected skill contract" });
     return {
-      app, workspace, session, engine, skillName, skillBody, prompt, reply, modelId, workspacePath, skillDirectory,
+      app, workspace, session, engine, skillName, skillBody, prompt, reply, modelId,
       removeSkill: () => rm(skillDirectory, { recursive: true }),
-      copyBody,
-      /** A renamed copy of the skill folder keeps its frontmatter name, as copying a skill does. */
-      addRenamedCopy: async () => {
-        const directory = join(workspacePath, ".claude", "skills", `${skillName}-copy`);
-        await mkdir(directory, { recursive: true });
-        await writeFile(join(directory, "SKILL.md"), `---\nname: ${skillName}\ndescription: An older copy of the briefing skill.\n---\n${copyBody}\n`);
-      },
       /** Native-boundary requests the app made, in order: permission asks and prompt submissions. */
       nativeRequests: async () => {
         const entries = await seed.evalIn(app, () => window.__selectedSkillPrompts ?? []);
         return entries.flatMap((entry) => isRecord(entry) && (entry.kind === "permission" || entry.kind === "prompt")
-          ? [{ kind: entry.kind, body: entry.body }] : []);
+          ? [{ kind: entry.kind, body: entry.body, status: entry.status, response: entry.response }] : []);
       },
       providerRequests: () => providerRequests,
       modelRequests: () => witness.agentRequests({ promptMarker: prompt }),

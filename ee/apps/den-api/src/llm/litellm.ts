@@ -8,9 +8,15 @@
  * Only public model facts are read: /model_group/info carries no deployment
  * secrets, unlike /model/info's litellm_params. Every call is egress-guarded,
  * time-boxed and never follows redirects. Errors never echo keys.
+ *
+ * The client needs a LiteLLM key. A provider in member Microsoft Entra sign-in
+ * mode has none, so nothing here is called for it: its models are the list an
+ * admin entered (liteLlmStaticModels).
  */
 import { createHash } from "node:crypto"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import type { ModelsDevProvider } from "./models-dev.js"
+import { matchTrueFoundryModel as matchCatalogModel } from "./truefoundry-models.js"
 
 type JsonRecord = Record<string, unknown>
 export type LiteLlmFetch = typeof fetch
@@ -121,11 +127,14 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
   async function listModels(key: string): Promise<string[]> {
     const body = await request("/v1/models", key)
     if (!isRecord(body) || !Array.isArray(body.data)) throw new LiteLlmError("bad_response", "LiteLLM /v1/models returned an unexpected shape.")
-    return [...new Set(body.data.flatMap((entry) => {
+    const ids = [...new Set(body.data.flatMap((entry) => {
       const id = isRecord(entry) ? readString(entry.id) : null
       // Wildcard routes (openai/*) are not callable model ids.
       return id && !id.includes("*") ? [id] : []
     }))].sort()
+    const { modelIds, dropped } = dedupeLiteLlmModelIds(ids)
+    if (dropped.length) console.warn("litellm_case_duplicate_models_dropped", { dropped })
+    return modelIds
   }
 
   /** Public per-model facts. Best-effort: older proxies or locked-down keys may refuse it. */
@@ -287,6 +296,23 @@ export function liteLlmModelConfig(id: string, info: JsonRecord | undefined): Js
   return config
 }
 
+/**
+ * gateway_provider_models.model_id compares case-insensitively (MySQL default
+ * collation), so IDs differing only by case cannot both be stored. Keeps the
+ * first ID per case-insensitive key and reports the rest.
+ */
+export function dedupeLiteLlmModelIds(ids: readonly string[]): { modelIds: string[]; dropped: string[] } {
+  const seen = new Set<string>()
+  const modelIds: string[] = []
+  const dropped: string[] = []
+  for (const id of ids) {
+    const key = id.toLowerCase()
+    if (seen.has(key)) dropped.push(id)
+    else { seen.add(key); modelIds.push(id) }
+  }
+  return { modelIds, dropped }
+}
+
 /** Chat-capable models with their configs. Embedding, image and audio models are left out. */
 export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonRecord>): LiteLlmModel[] {
   return modelIds.flatMap((id) => {
@@ -294,6 +320,26 @@ export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonR
     const mode = facts ? readString(facts.mode) : null
     if (mode && NON_CHAT_MODES.has(mode)) return []
     return [{ id, name: id, config: liteLlmModelConfig(id, facts) }]
+  })
+}
+
+/** Catalog facts copied onto a hand-entered model. Prices are left out: LiteLLM budgets these people, not OpenWork. */
+const STATIC_MODEL_FACTS = ["attachment", "reasoning", "reasoning_options", "tool_call", "structured_output", "temperature", "modalities", "limit"] as const
+
+/**
+ * A model list an admin entered by hand. A proxy that only accepts sign-in
+ * tokens (member Microsoft Entra sign-in) gives OpenWork no key to read its
+ * own list with, so the admin names the models. A name the public models.dev
+ * catalog knows (`gpt-4o-mini`, `azure/gpt-4o`) takes that model's limits and
+ * capabilities, so OpenWork never asks for more output than the model allows.
+ * Any other name keeps only its name: unknown facts are omitted, never guessed.
+ */
+export function liteLlmStaticModels(modelIds: readonly string[], catalog: readonly ModelsDevProvider[] = []): LiteLlmModel[] {
+  const ids = modelIds.map((id) => id.trim()).filter((id) => id && !id.includes("*"))
+  return dedupeLiteLlmModelIds(ids).modelIds.map((id) => {
+    const match = catalog.length ? matchCatalogModel(id, catalog) : null
+    const facts = match ? Object.fromEntries(STATIC_MODEL_FACTS.flatMap((key) => match.model.config[key] === undefined ? [] : [[key, match.model.config[key]]])) : {}
+    return { id, name: id, config: { ...facts, ...liteLlmModelConfig(id, undefined) } }
   })
 }
 

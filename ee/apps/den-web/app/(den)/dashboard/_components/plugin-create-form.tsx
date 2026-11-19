@@ -4,7 +4,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Check, FileText, Plus, SquareTerminal, Trash2, Plug } from "lucide-react";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
-import { DenButton } from "../../_components/ui/button";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { AUTOMATION_CARD_CLASS, COMPACT_INPUT_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
@@ -43,9 +44,20 @@ export function pluginComponentBody(component: PluginDraftComponent): Record<str
   };
 }
 
+/**
+ * The plugin's name. A plugin holding one skill or command may leave it blank
+ * and take that item's name, so "Create a skill" needs only the skill's name.
+ */
+export function pluginDraftName(name: string, components: readonly PluginDraftComponent[]): string {
+  const typed = name.trim();
+  if (typed) return typed;
+  const only = components.length === 1 ? components[0] : undefined;
+  if (!only || only.kind === "mcp") return "";
+  return only.name.trim().replace(/^\//, "").trim();
+}
+
 /** The first problem with a draft, in words a person can act on. */
 export function pluginDraftProblem(name: string, components: readonly PluginDraftComponent[]): string | null {
-  if (!name.trim()) return "Give your plugin a name.";
   if (components.length === 0) return "Add a skill, a command or a connector.";
   for (const component of components) {
     if (component.kind === "mcp") {
@@ -53,9 +65,10 @@ export function pluginDraftProblem(name: string, components: readonly PluginDraf
       continue;
     }
     const noun = component.kind === "skill" ? "skill" : "command";
-    if (!component.name.trim()) return `Give the ${noun} a name.`;
+    if (!component.name.trim()) return `Give the ${noun} a name in the top line of its box.`;
     if (!component.content.trim()) return `Write what the ${noun} should do.`;
   }
+  if (!pluginDraftName(name, components)) return "Give your plugin a name in the Plugin name box at the top.";
   return null;
 }
 
@@ -67,7 +80,7 @@ function ComponentShell({ icon, header, children, onRemove, removeLabel }: {
   removeLabel: string;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 rounded-2xl border border-gray-100 bg-white p-4" data-testid="plugin-component">
+    <div className={`flex flex-col gap-2.5 ${AUTOMATION_CARD_CLASS} p-4`} data-testid="plugin-component">
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-gray-500">{icon}</span>
         <div className="min-w-0 flex-1">{header}</div>
@@ -165,7 +178,7 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
         const { response, payload } = await requestJson("/v1/plugins", {
           method: "POST",
           body: JSON.stringify({
-            name: name.trim(),
+            name: pluginDraftName(name, components),
             description: description.trim() || null,
             components: components.map(pluginComponentBody),
             orgWide: false,
@@ -187,6 +200,12 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
     }
   }
 
+  // With one skill or command, a blank plugin name takes that item's name.
+  const onlyItem = components.length === 1 && components[0].kind !== "mcp" ? components[0] : null;
+  const namePlaceholder = onlyItem
+    ? pluginDraftName("", components) || `Optional, uses the ${onlyItem.kind}'s name`
+    : "Sales call prep";
+
   const kinds: { kind: PluginComponentKind; label: string }[] = [
     { kind: "skill", label: "Skill" },
     { kind: "command", label: "Command" },
@@ -204,18 +223,24 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
     >
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium text-gray-900">Plugin name</span>
-          <DenInput value={name} onChange={(event) => setName(event.target.value)} placeholder="Sales call prep" disabled={saving} />
+          <span className="text-[13px] font-medium text-[var(--dls-text-primary)]">Plugin name</span>
+          <DenInput
+            className={COMPACT_INPUT_CLASS}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder={namePlaceholder}
+            disabled={saving}
+          />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-[13px] font-medium text-gray-900">Description</span>
-          <DenInput value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What it helps people do" disabled={saving} />
+          <span className="text-[13px] font-medium text-[var(--dls-text-primary)]">Description</span>
+          <DenInput className={COMPACT_INPUT_CLASS} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What it helps people do" disabled={saving} />
         </label>
       </div>
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[15px] font-semibold leading-5 text-gray-900">What&apos;s inside</h2>
+          <h2 className={SECTION_TITLE_CLASS}>What&apos;s inside</h2>
           <div className="flex items-center gap-1.5">
             {kinds.map((entry) => (
               <button
@@ -223,7 +248,7 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
                 type="button"
                 disabled={saving}
                 onClick={() => add(entry.kind)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-gray-100 bg-white px-3 text-[12px] font-medium text-gray-700 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                className={buttonVariants({ variant: "secondary", size: "sm" })}
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden />
                 {entry.label}
@@ -233,7 +258,7 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
         </div>
 
         {components.length === 0 ? (
-          <p className="rounded-2xl border border-dashed border-gray-200 px-5 py-8 text-center text-[13px] text-gray-500">
+          <p className="border-t border-[var(--den-list-line)] pt-4 text-[13px] text-[var(--dls-text-secondary)]">
             Add a skill, a command or a connector.
           </p>
         ) : null}
@@ -281,6 +306,7 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
             >
               <div className="flex flex-col gap-2">
                 <DenInput
+                  className={COMPACT_INPUT_CLASS}
                   value={component.description}
                   onChange={(event) => update(component.key, { description: event.target.value })}
                   placeholder={isSkill ? "When should the AI use it?" : "What it does, in a few words"}
@@ -303,11 +329,11 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
 
       {error ? <p className="text-[13px] text-red-600" role="alert">{error}</p> : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-gray-100 pt-5">
-        <p className="text-[12px] leading-4 text-gray-500">{footnote}</p>
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[var(--den-list-line)] pt-4">
+        <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{footnote}</p>
         <div className="flex items-center gap-2">
-          <LinkButton href={cancelHref}>Cancel</LinkButton>
-          <DenButton type="submit" loading={saving}>Create plugin</DenButton>
+          <LinkButton size="sm" href={cancelHref}>Cancel</LinkButton>
+          <DenButton size="sm" type="submit" loading={saving}>Create plugin</DenButton>
         </div>
       </div>
     </form>

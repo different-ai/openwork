@@ -28,16 +28,12 @@ export function resolveMemberReturnTo(value: string | null | undefined, hasHighe
 
 export function resolveMemberAuthGuardDecision(input: {
   route: MemberRoute;
-  hasInstallToken: boolean;
   setupStatus: SetupBootstrapStatus;
   authCheckStatus: MemberAuthCheckStatus;
   signedIn: boolean;
   singleOrgSsoConfigured: boolean;
   singleOrgSlug: string;
 }): MemberAuthGuardDecision {
-  if (input.route === "/install" && input.hasInstallToken) {
-    return "render";
-  }
   if (input.route === "/setup" && input.setupStatus !== "complete") {
     return "render";
   }

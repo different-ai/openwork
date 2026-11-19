@@ -30,12 +30,20 @@ const nextConfig = {
   // Alias domains serve the same build; send them to the canonical host so
   // search and answer engines don't split citations across duplicate URLs.
   async redirects() {
-    return ALIAS_HOSTS.map((host) => ({
-      source: "/:path*",
-      has: [{ type: "host", value: host }],
-      destination: "https://openworklabs.com/:path*",
-      permanent: true,
-    }));
+    return [
+      ...ALIAS_HOSTS.map((host) => ({
+        source: "/:path*",
+        has: [{ type: "host", value: host }],
+        destination: "https://openworklabs.com/:path*",
+        permanent: true,
+      })),
+      // Security details moved to the hosted Trust Center.
+      {
+        source: "/trust",
+        destination: "https://trust.openworklabs.com/",
+        permanent: true,
+      },
+    ];
   },
   async rewrites() {
     return [

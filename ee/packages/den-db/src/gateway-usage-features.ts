@@ -1,29 +1,9 @@
-import { parseFeatureEnvironment, resolveFeature, type FeatureEnvironment } from "@openwork/features"
-import {
-  readFeatureRollouts,
-  readOrganizationFeatureOverrides,
-  type FeatureDatabase,
-} from "./organization-features"
+import type { FeatureDatabase } from "./organization-features"
 
-let environment: FeatureEnvironment | undefined
-
-/**
- * Whether usage limits per provider (`gatewayProviderUsageLimits`) are on for
- * one organization, read from the feature registry's stored state. The
- * Gateway shares Den's configmap, so DEN_DEPLOYMENT and DEN_FEATURE_* locks
- * resolve the same way they do in den-api.
- */
+/** Compatibility for gateway callers: provider usage limits are generally available on every deployment. */
 export async function gatewayProviderUsageLimitsEnabled(
-  database: FeatureDatabase,
-  organizationId: string,
+  _database: FeatureDatabase,
+  _organizationId: string,
 ): Promise<boolean> {
-  environment ??= parseFeatureEnvironment(process.env)
-  const rollouts = await readFeatureRollouts(database)
-  const overrides = await readOrganizationFeatureOverrides(database, organizationId)
-  return resolveFeature("gatewayProviderUsageLimits", {
-    deployment: environment.deployment,
-    locks: environment.locks,
-    rollouts,
-    overrides,
-  }).enabled
+  return true
 }

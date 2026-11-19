@@ -90,22 +90,6 @@ export async function appSmokeWorld(seed: Seed) {
   };
 }
 
-export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
-  const app = await seed.desktop({ name: "first-run", signIn: false });
-  const url = new URL(await evalIn(app, () => location.href));
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("The non-desktop welcome journey requires the source app's HTTP surface.");
-  }
-  url.hash = "/welcome";
-  const web = await chrome({ name: "first-run-welcome", host: place.host(), startUrl: url.href, headless: true });
-  return {
-    app,
-    web,
-    async openedUrls() { return (await listTargets(web.handle.cdpUrl)).map((target) => target.url); },
-    async [Symbol.asyncDispose]() { await web[Symbol.asyncDispose](); },
-  };
-}
-
 export async function localFirstRunWorld(seed: Seed) {
   const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
   const reply = "Your workspace is ready. You can draft a document next.";
@@ -583,28 +567,21 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   };
 }
 
-export async function compatibleReleaseWorld(_seed: Seed, { place }: { place: Place }) {
-  const app = await desktop({
-    name: "compatible-release-picker",
-    host: place.host(),
-    timeoutMs: 30_000,
-    env: {
-      OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE",
-      OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public",
-      OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify([
-        { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg" } },
-        { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg" } },
-        { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
-        { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
-        { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
-      ]),
-    },
-  });
-  const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });
-  return { app, snapshot, async [Symbol.asyncDispose]() { await app.stop(); } };
-}
+const compatibleRecoveryCatalog = [
+  { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg" } },
+  { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg" } },
+  { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
+  { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
+  { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
+];
 
-export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }) {
+/**
+ * A desktop whose bootstrap fails fatally on a seeded profile. By default the
+ * recovery list holds one verified and one unverified candidate; with
+ * `catalog: true` it is a release catalog mixing compatible, wrong-platform,
+ * wrong-flavor and prerelease builds for darwin-arm64-public.
+ */
+export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }, options: { catalog?: boolean } = {}) {
   const profileDir = `/tmp/openwork-reliable-recovery-${process.pid}-${Date.now()}`;
   const provisioned = place.kind === "daytona"
     ? await provisionDesktopSandbox({
@@ -628,10 +605,12 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
     timeoutMs: 30_000,
     env: {
       OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: dlopen(/private/tmp/runtime.node): invalid code signature",
-      OPENWORK_EVAL_RECOVERY_CANDIDATES: JSON.stringify([
-        { version: "1.8.2", verified: true, artifactUrl: "https://releases.openwork.test/v1.8.2/OpenWork-darwin-arm64.dmg" },
-        { version: "1.8.1", verified: false, artifactUrl: "https://tampered.invalid/OpenWork.dmg" },
-      ]),
+      ...(options.catalog
+        ? { OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public", OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify(compatibleRecoveryCatalog) }
+        : { OPENWORK_EVAL_RECOVERY_CANDIDATES: JSON.stringify([
+          { version: "1.8.2", verified: true, artifactUrl: "https://releases.openwork.test/v1.8.2/OpenWork-darwin-arm64.dmg" },
+          { version: "1.8.1", verified: false, artifactUrl: "https://tampered.invalid/OpenWork.dmg" },
+        ]) }),
     },
   });
   const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });

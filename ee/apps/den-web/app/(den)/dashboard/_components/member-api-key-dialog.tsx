@@ -99,7 +99,7 @@ function MemberApiKeyForm({ target, onClose, onSaved }: {
               data-ph-no-capture
               maxLength={MEMBER_API_KEY_MAX_LENGTH}
               value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
+              onChange={setApiKey}
               disabled={save.isPending}
               autoFocus
             />

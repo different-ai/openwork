@@ -1023,6 +1023,419 @@
       "when": 1792003878606,
       "tag": "0146_gateway_provider_usage_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "5",
+      "when": 1792104699960,
+      "tag": "0147_free_auto_behavior",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "5",
+      "when": 1792192418476,
+      "tag": "0148_headless_resume_grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "5",
+      "when": 1792434268632,
+      "tag": "0149_headless_resume_revocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "5",
+      "when": 1792451113327,
+      "tag": "0150_headless_session_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "5",
+      "when": 1792527537815,
+      "tag": "0151_desktop_startup_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "5",
+      "when": 1792532635388,
+      "tag": "0152_organization_benefit_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "5",
+      "when": 1792603569109,
+      "tag": "0153_member_feature_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "5",
+      "when": 1792620716958,
+      "tag": "0154_account_follow_up",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "5",
+      "when": 1792693523832,
+      "tag": "0155_enterprise_plan_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "5",
+      "when": 1792711073793,
+      "tag": "0156_org_prompts",
+      "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "5",
+      "when": 1792782314399,
+      "tag": "0157_sandbox_organizations",
+      "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "5",
+      "when": 1793040523131,
+      "tag": "0158_feature_change",
+      "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "5",
+      "when": 1793058495003,
+      "tag": "0159_agent_instance",
+      "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "5",
+      "when": 1793077527383,
+      "tag": "0160_automation_interval_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "5",
+      "when": 1793079251966,
+      "tag": "0161_automation_calendar_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "5",
+      "when": 1793113145625,
+      "tag": "0162_agent_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 163,
+      "version": "5",
+      "when": 1793118453819,
+      "tag": "0163_auto_router",
+      "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "5",
+      "when": 1793132906444,
+      "tag": "0164_agent_member_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 165,
+      "version": "5",
+      "when": 1793152029098,
+      "tag": "0165_feature_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "5",
+      "when": 1793162803488,
+      "tag": "0166_mcp_registration_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "5",
+      "when": 1793202414862,
+      "tag": "0167_agent_member_check_sources",
+      "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "5",
+      "when": 1793206007503,
+      "tag": "0168_headless_resume_grant_scopes",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "5",
+      "when": 1793211225894,
+      "tag": "0169_admin_metric_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "5",
+      "when": 1793214410124,
+      "tag": "0170_better_auth_1_7_7_oauth_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 171,
+      "version": "5",
+      "when": 1793228807541,
+      "tag": "0171_external_mcp_request_headers",
+      "breakpoints": true
+    },
+    {
+      "idx": 172,
+      "version": "5",
+      "when": 1793240505767,
+      "tag": "0172_sandbox_model_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 173,
+      "version": "5",
+      "when": 1793323933516,
+      "tag": "0173_remote_session_latest_step",
+      "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "5",
+      "when": 1793335732273,
+      "tag": "0174_remote_session_answers",
+      "breakpoints": true
+    },
+    {
+      "idx": 175,
+      "version": "5",
+      "when": 1793386506558,
+      "tag": "0175_smart_routers",
+      "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "5",
+      "when": 1793658345999,
+      "tag": "0176_audit_operation_usage_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 177,
+      "version": "5",
+      "when": 1793806084389,
+      "tag": "0177_session_sso_authentication",
+      "breakpoints": true
+    },
+    {
+      "idx": 178,
+      "version": "5",
+      "when": 1793822622848,
+      "tag": "0178_device_sso_approval",
+      "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "5",
+      "when": 1793829706172,
+      "tag": "0179_session_sso_proof",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "5",
+      "when": 1793829712727,
+      "tag": "0180_keep_sso_required_on_rollout",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "5",
+      "when": 1793836042492,
+      "tag": "0181_feature_intro_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "5",
+      "when": 1793915251109,
+      "tag": "0182_member_openwork_web",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "5",
+      "when": 1793923522173,
+      "tag": "0183_multiple_sso_connections",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "5",
+      "when": 1793998552033,
+      "tag": "0184_super_admin_permission_set",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "5",
+      "when": 1794003256221,
+      "tag": "0185_connector_target_reconcile",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "5",
+      "when": 1794267959453,
+      "tag": "0186_public_mcp_app_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "5",
+      "when": 1794269738592,
+      "tag": "0187_workbot_team_setting",
+      "breakpoints": true
+    },
+    {
+      "idx": 188,
+      "version": "5",
+      "when": 1794272898643,
+      "tag": "0188_config_blobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "5",
+      "when": 1794274271920,
+      "tag": "0189_gateway_api_keys",
+      "breakpoints": true
+    },
+    {
+      "idx": 190,
+      "version": "5",
+      "when": 1794346605377,
+      "tag": "0190_unified_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "5",
+      "when": 1794352331660,
+      "tag": "0191_workbot_usage_day",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "5",
+      "when": 1794364751118,
+      "tag": "0192_remote_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "5",
+      "when": 1794376055148,
+      "tag": "0193_remote_session_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "5",
+      "when": 1794417781063,
+      "tag": "0194_computer_disconnect",
+      "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "5",
+      "when": 1794515541119,
+      "tag": "0195_control_center_catalog_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "5",
+      "when": 1794521633161,
+      "tag": "0196_gateway_truefoundry_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 197,
+      "version": "5",
+      "when": 1794524250690,
+      "tag": "0197_mcp_thread_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "5",
+      "when": 1794525593338,
+      "tag": "0198_mcp_event_resume_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 199,
+      "version": "5",
+      "when": 1794527207554,
+      "tag": "0199_mcp_event_control_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 200,
+      "version": "5",
+      "when": 1794528647377,
+      "tag": "0200_native_mcp_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 201,
+      "version": "5",
+      "when": 1794771929581,
+      "tag": "0201_plugin_skill_external_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 202,
+      "version": "5",
+      "when": 1794962802413,
+      "tag": "0202_narrow_scarecrow",
+      "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "5",
+      "when": 1794984625784,
+      "tag": "0203_managed_deployment_aws_sign_in",
+      "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "5",
+      "when": 1794986184329,
+      "tag": "0204_managed_deployment_configuration",
+      "breakpoints": true
+    },
+    {
+      "idx": 205,
+      "version": "5",
+      "when": 1795029329721,
+      "tag": "0205_automation_share",
+      "breakpoints": true
     }
   ]
 }

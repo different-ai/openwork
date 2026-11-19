@@ -9,156 +9,142 @@ import {
   getOrgAccessFlags,
   getPermissionKeysRoute,
   getPermissionSetRoute,
-  getTeamRoute,
-  orgFeatureEnabled,
+  isSuperAdminRole,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { permissionCountLabel, roleHeldByLabel, roleList, type BuiltInRoleId } from "../../_lib/role-catalog";
+import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IconTile } from "./access-rows";
-import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection, LinkButton } from "./item-list";
-import { usePermissionSets, useSharedRolesOn } from "./permissions-data";
-import { ADMIN_ROLE_SUMMARY } from "./team-roles";
-
-
-function peopleLabel(count: number): string {
-  return `${count} ${count === 1 ? "person" : "people"}`;
-}
+import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
+import { usePermissionSets } from "./permissions-data";
 
 /**
- * Members › Roles (teamRoles). The built-in roles, and each team's custom
- * role, read from what Den already stores: member roles, Admin teams, and team
- * permission sets. Creating a role makes a team and its permission set.
+ * Built-in roles and custom roles, each with who holds it. The rows come from
+ * the organization's one role list (`roleList`), the same list the role
+ * pickers show.
+ * `showIntro` (Members › Roles) lets the custom roles intro take the empty list's place.
  */
-export function RolesTab({ action }: { action?: ReactNode }) {
+export function RolesTab({ action, showIntro = false, headerOwnsAction = false }: { action?: ReactNode; showIntro?: boolean; /** The page header holds Create role. */ headerOwnsAction?: boolean }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
-  const permissionsFeature = orgFeatureEnabled(orgContext, "permissions");
-  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} permissionsFeature={permissionsFeature} canViewSets={permissionsFeature && access.canViewPermissions} action={action} />;
+
+  return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} headerOwnsAction={headerOwnsAction} />;
 }
 
 /** Whether the signed-in person can create a role (a team and its permission set). */
-export function canCreateRole(input: { permissionsFeature: boolean; canManageTeams: boolean; canManagePermissions: boolean }): boolean {
-  return input.permissionsFeature && input.canManageTeams && input.canManagePermissions;
+export function canCreateRole(input: { canManageTeams: boolean; canManagePermissions: boolean }): boolean {
+  return input.canManageTeams && input.canManagePermissions;
 }
 
-function RolesTabContent({ orgId, orgSlug, permissionsFeature, canViewSets, action }: {
+function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, headerOwnsAction }: {
   orgId: string | null;
   orgSlug: string | null;
-  permissionsFeature: boolean;
   canViewSets: boolean;
   action?: ReactNode;
+  showIntro: boolean;
+  headerOwnsAction: boolean;
 }) {
   const { orgContext } = useOrgDashboard();
   const setsQuery = usePermissionSets(orgId, canViewSets);
-  // sharedRoles: a custom role has its own name and can be on several teams.
-  const sharedRoles = useSharedRolesOn();
   const [filter, setFilter] = useState("");
   if (!orgContext) return null;
-  const listToolbars = orgFeatureEnabled(orgContext, "memberListToolbars");
-  const matches = (name: string) => !listToolbars || name.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase());
+
+  const matches = (name: string) => name.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase());
   const sets = setsQuery.data ?? [];
-  const memberSet = sets.find((set) => set.kind === "member_default");
-  const adminSet = sets.find((set) => set.kind === "admin_default");
-  const teamSets = sets.filter((set) => set.kind === "team" && (set.team || set.teams.length > 0 || sharedRoles) && matches(set.name));
+  const roles = roleList({ sets });
+  const builtInRoles = roles.flatMap((role) => role.kind === "built_in" && matches(role.label) ? [role] : []);
+  const customRoles = roles.flatMap((role) => role.kind === "custom" && matches(role.label) ? [role] : []);
+  // Known, unfiltered count of custom roles for the intro; null while loading, filtering or not allowed.
+  const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? roles.filter((role) => role.kind === "custom").length : null;
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
-  const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin);
-  const adminWho = [directAdmins > 0 ? peopleLabel(directAdmins) : null, ...adminTeams.map((team) => team.name)].filter(Boolean).join(", ") || "Nobody yet";
-
-  const byPermission = canViewSets ? <LinkButton href={getPermissionKeysRoute(orgSlug)} variant="secondary" data-testid="roles-by-permission">By permission</LinkButton> : null;
+  const superAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && isSuperAdminRole(member.role)).length;
+  // Only teams and people still in the organization count.
+  const teamNames = (teams: readonly { id: string }[]) => teams.flatMap((entry) => orgContext.teams.find((team) => team.id === entry.id)?.name ?? []);
+  const peopleCount = (memberIds: readonly string[]) => memberIds.filter((id) => orgContext.members.some((member) => member.id === id)).length;
+  const linked = (id: BuiltInRoleId) => roles.find((role) => role.kind === "built_in" && role.id === id);
+  // A team that holds Super admin is an Admin team too; it is listed once, under Super admin.
+  const superAdminTeamIds = new Set((linked("super-admin")?.teams ?? []).map((team) => team.id));
+  const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin && !superAdminTeamIds.has(team.id));
+  /** Who holds each built-in role. A new built-in role doesn't compile until it says who. */
+  const heldBy: Record<BuiltInRoleId, string | undefined> = {
+    member: "Everyone",
+    admin: roleHeldByLabel(directAdmins, adminTeams.map((team) => team.name)),
+    "billing-manager": canViewSets ? roleHeldByLabel(peopleCount(linked("billing-manager")?.directMemberIds ?? []), teamNames(linked("billing-manager")?.teams ?? [])) : undefined,
+    "super-admin": roleHeldByLabel(superAdmins, teamNames(linked("super-admin")?.teams ?? [])),
+    owner: owner ? (owner.user.name || owner.user.email) : undefined,
+  };
 
   return (
     <div data-testid="roles-tab">
-      {listToolbars ? <MemberListToolbar collection="roles" value={filter} onChange={setFilter}
-        action={action ?? <DenButton size="sm" icon={LockKeyhole} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>}
+      <MemberListToolbar collection="roles" value={filter} onChange={setFilter}
+        action={headerOwnsAction ? undefined : action ?? <DenButton size="sm" icon={LockKeyhole} disabled title={permissionLockReason("permissions.manage")}>Create role</DenButton>}
         secondary={canViewSets ? <ItemMenu label="Role list actions" entries={[{ label: "By permission", href: getPermissionKeysRoute(orgSlug) }]} /> : undefined}
-      /> : action || byPermission ? <div className="mb-6 flex justify-end gap-2">{byPermission}{action}</div> : null}
+      />
       <div className="flex flex-col gap-6">
       <ItemSection title="Built-in roles" testId="roles-built-in">
         <ItemPanel>
-          {!["Member", "Admin", "Owner"].some(matches) ? <p className="px-5 py-6 text-[13px] text-gray-500">No built-in roles match your filter.</p> : null}
-          {matches("Member") ? (
-          <ItemRow
-            logo={<IconTile icon={ShieldCheck} />}
-            title="Member"
-            description="What everyone can do"
-            status="Everyone"
-            href={memberSet ? getPermissionSetRoute(orgSlug, memberSet.id) : undefined}
-            testId="role-row-member"
-          />
-          ) : null}
-          {matches("Admin") ? (
-          <ItemRow
-            logo={<IconTile icon={ShieldCheck} />}
-            title="Admin"
-            description={ADMIN_ROLE_SUMMARY}
-            status={adminWho}
-            href={adminSet ? getPermissionSetRoute(orgSlug, adminSet.id) : undefined}
-            testId="role-row-admin"
-          />
-          ) : null}
-          {matches("Owner") ? (
-          <ItemRow
-            logo={<IconTile icon={ShieldCheck} />}
-            title="Owner"
-            description="Can do everything"
-            status={owner ? (owner.user.name || owner.user.email) : undefined}
-            testId="role-row-owner"
-          />
-          ) : null}
+          {builtInRoles.length === 0 ? <p className="py-4 text-[13px] text-[var(--dls-text-secondary)]">No built-in roles match your filter.</p> : null}
+          {builtInRoles.map((role) => (
+            <ItemRow
+              key={role.id}
+              logo={<IconTile icon={ShieldCheck} />}
+              title={role.label}
+              description={role.summary}
+              status={heldBy[role.id]}
+              href={role.setId ? getPermissionSetRoute(orgSlug, role.setId) : undefined}
+              testId={`role-row-${role.id}`}
+            />
+          ))}
         </ItemPanel>
       </ItemSection>
 
+      {/* With feature intros on and no custom roles yet, the intro replaces "No custom roles yet" (DESIGN.md I1). */}
+      <RolesIntroGate enabled={showIntro} customRoles={customRoleCount}>
       <ItemSection title="Custom roles" testId="roles-custom">
-        {!permissionsFeature ? (
-          <DenNotice tone="neutral" icon={LockKeyhole} message="Custom roles need Permissions, an Enterprise feature." />
-        ) : !canViewSets ? (
+        {!canViewSets ? (
           <DenNotice tone="neutral" icon={LockKeyhole} message={permissionLockReason("permissions.view")} />
         ) : setsQuery.isPending ? (
           <ItemPanel><ItemRowsSkeleton label="Loading custom roles" rows={2} /></ItemPanel>
         ) : setsQuery.isError ? (
           <DenNotice tone="error" message={setsQuery.error instanceof Error ? setsQuery.error.message : "Couldn't load custom roles."} />
-        ) : teamSets.length === 0 ? (
+        ) : customRoles.length === 0 ? (
           <ItemPanel>
-            <div className="px-5 py-6 text-[13px] text-gray-500" data-testid="roles-custom-empty">{listToolbars && filter.trim() ? "No custom roles match your filter." : "No custom roles yet."}</div>
+            <div className="border-b border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="roles-custom-empty">{filter.trim() ? "No custom roles match your filter." : "No custom roles yet."}</div>
           </ItemPanel>
         ) : (
           <ItemPanel>
-            {teamSets.map((set) => {
-              if (sharedRoles) {
-                const teams = (set.teams.length > 0 ? set.teams : set.team ? [set.team] : []).filter((entry) => orgContext.teams.some((team) => team.id === entry.id));
-                return (
-                  <ItemRow
-                    key={set.id}
-                    logo={<IconTile icon={Users} />}
-                    title={set.name}
-                    description={`${set.allowedCount} ${set.allowedCount === 1 ? "permission" : "permissions"}`}
-                    status={teams.length > 0 ? teams.map((entry) => entry.name).join(", ") : "No teams yet"}
-                    href={getPermissionSetRoute(orgSlug, set.id)}
-                    testId="role-row-custom"
-                  />
-                );
-              }
-              const team = orgContext.teams.find((entry) => entry.id === set.team?.id);
-              const memberCount = team?.memberIds.length ?? (set.appliesTo.kind === "team" ? set.appliesTo.memberCount : 0);
-              return (
-                <ItemRow
-                  key={set.id}
-                  logo={<IconTile icon={Users} />}
-                  title={team?.name ?? set.team?.name ?? set.name}
-                  description={`${set.allowedCount} ${set.allowedCount === 1 ? "permission" : "permissions"}`}
-                  status={peopleLabel(memberCount)}
-                  href={team ? getTeamRoute(orgSlug, team.id) : getPermissionSetRoute(orgSlug, set.id)}
-                  testId="role-row-custom"
-                />
-              );
-            })}
+            {customRoles.map((role) => (
+              <ItemRow
+                key={role.setId}
+                logo={<IconTile icon={Users} />}
+                title={role.label}
+                description={permissionCountLabel(role.allowedCount)}
+                status={roleHeldByLabel(peopleCount(role.directMemberIds), teamNames(role.teams))}
+                href={getPermissionSetRoute(orgSlug, role.setId)}
+                testId="role-row-custom"
+              />
+            ))}
           </ItemPanel>
         )}
       </ItemSection>
+      </RolesIntroGate>
       </div>
     </div>
   );
+}
+
+function RolesIntroGate({ enabled, customRoles, children }: { enabled: boolean; customRoles: number | null; children: ReactNode }) {
+  if (!enabled) return <>{children}</>;
+  return <RolesIntro customRoles={customRoles}>{children}</RolesIntro>;
+}
+
+/** The box sits in the section list's gap, so it drops its own top margin. */
+function RolesIntro({ customRoles, children }: { customRoles: number | null; children: ReactNode }) {
+  const intro = useFeatureIntro("members.roles", customRoles === null ? null : { customRoles });
+  if (intro.size === "box") return <div className="-mt-6">{intro.element}</div>;
+  return <>{children}</>;
 }

@@ -169,7 +169,6 @@
     "db:migrate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs migrate --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts && node --conditions=development --import tsx scripts/reconcile-permissions.ts",
     "db:push": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs push --config drizzle.config.ts && node --conditions=development --import tsx scripts/ensure-schema-repairs.ts && node --conditions=development --import tsx scripts/reconcile-permissions.ts",
     "db:reconcile-permissions": "node --conditions=development --import tsx scripts/reconcile-permissions.ts",
-    "db:verify-memory": "pnpm run build && node --import tsx scripts/verify-memory-schema.ts",
     "benchmark:admin-scale:mysql": "node --import tsx scripts/admin-scale-benchmark.ts"
   },
   "dependencies": {

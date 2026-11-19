@@ -1,7 +1,4 @@
-import { installConfigSchema, installExperienceConfigSchema } from "@openwork/install-config"
-import { connectLinkClaimsSchema } from "@openwork/connect-link"
-import { and, eq, gt, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { InstallLinkTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { installConfigSchema } from "@openwork/install-config"
 import { createReadStream } from "node:fs"
 import type { Context, Env, Input } from "hono"
 import type { MiddlewareHandler } from "hono"
@@ -11,21 +8,10 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { resolvePublicOrigin } from "../../capability-sources/generic-oauth.js"
-import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
-import { db } from "../../db.js"
-import { mintDesktopConnectLink } from "../../desktop-connect-link.js"
 import { resolveInstallerReleaseTag } from "../../desktop-releases.js"
-import {
-  consumeDesktopConnectGrant,
-  inspectDesktopConnectGrant,
-  mintDesktopConnectGrant,
-  previewDesktopConnectGrant,
-} from "../../desktop-connect-grants.js"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { hashInstallLinkToken, mintOrganizationInstallLink, revokeOrganizationInstallLinks, stableInstallPageUrl } from "../../install-links.js"
-import { jsonValidator, orgMemberRoute, publicRoute, queryValidator } from "../../middleware/index.js"
-import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
+import { jsonValidator, orgMemberRoute, publicRoute } from "../../middleware/index.js"
+import { denTypeIdSchema, emptyResponse, invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import {
   cloudDesktopReleaseAssetName,
@@ -33,50 +19,21 @@ import {
   installerReleaseAssetUrl,
   resolveConfiguredInstallerArtifact,
 } from "../../utils/installer-artifacts.js"
-import { checkRateLimit, enforceRateLimit } from "../../utils/rate-limit.js"
+import { enforceRateLimit } from "../../utils/rate-limit.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 
-const INSTALL_LINK_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
-const INSTALL_LINK_MINT_RATE_LIMIT_MAX = 30
+const INSTALL_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const INSTALL_CONFIG_RATE_LIMIT_MAX = 60
 const INSTALL_ARTIFACT_RATE_LIMIT_MAX = 20
-const INSTALL_CONNECT_STATUS_RATE_LIMIT_MAX = 300
-const INSTALL_LINK_TOKEN_PATTERN = /^[A-Za-z0-9_-]{8,}$/
-const CONNECT_GRANT_CODE_PATTERN = /^[A-Za-z0-9_-]{24,128}$/
 
+// Kept so older clients that still send it get a 200 rather than a 400.
 const createInstallLinkBodySchema = z.object({
-  rotate: z.boolean().optional().default(false),
+  rotate: z.boolean().optional().describe("Ignored. Install pages carry no token, so there is nothing to rotate."),
 }).meta({ ref: "CreateInstallLinkRequest" })
 
 const createInstallLinkResponseSchema = z.object({
-  token: z.string().optional().describe("Absent when the organization shares the normal install page instead of one-off links."),
-  installPageUrl: z.string().url().describe("Share this page: it downloads the OpenWork desktop app for this organization. People who open the normal install page sign in first."),
-  connectUrl: z.string().optional().describe("Open on a computer that already has OpenWork installed to point the desktop app at this organization. Short-lived; mint a new link when it expires. Absent with the normal install page: the desktop app signs in instead."),
-  connectExpiresAt: z.string().datetime().optional(),
+  installPageUrl: z.string().url().describe("Share this page: people sign in and download the OpenWork desktop app for their organization."),
 }).meta({ ref: "CreateInstallLinkResponse" })
-
-const installLinkQuerySchema = z.object({
-  token: z.string().trim().regex(INSTALL_LINK_TOKEN_PATTERN).max(255),
-})
-
-const connectGrantBodySchema = z.object({
-  code: z.string().trim().regex(CONNECT_GRANT_CODE_PATTERN),
-})
-
-const connectGrantResponseSchema = z.object({
-  claims: connectLinkClaimsSchema,
-}).meta({ ref: "DesktopConnectGrantResponse" })
-
-const connectGrantStatusResponseSchema = z.object({
-  status: z.enum(["pending", "connected"]),
-  claims: connectLinkClaimsSchema,
-  expiresAt: z.string().datetime(),
-}).meta({ ref: "DesktopConnectGrantStatusResponse" })
-
-const connectGrantFailureSchema = z.object({
-  error: z.enum(["connect_grant_invalid", "connect_grant_expired", "connect_grant_replayed"]),
-}).meta({ ref: "DesktopConnectGrantFailure" })
 
 const installPlatformSchema = z.enum(["mac-arm64", "mac-x64", "win-x64", "linux-x64", "linux-arm64"])
 
@@ -88,10 +45,6 @@ const authenticatedInstallConfigSchema = installConfigSchema.extend({
   desktopVersion: z.string().trim().min(1),
   distribution: z.enum(["cloud", "enterprise"]),
 }).meta({ ref: "AuthenticatedInstallConfig" })
-
-const installLinkNotFoundSchema = z.object({
-  error: z.literal("install_link_not_found"),
-}).meta({ ref: "InstallLinkNotFoundError" })
 
 const rateLimitedSchema = z.object({
   error: z.literal("rate_limited"),
@@ -109,10 +62,6 @@ export type InstallExperienceDependencies = {
   resolveConfiguredArtifact: typeof resolveConfiguredInstallerArtifact
   resolveDirectUrl: (platform: InstallPlatform, releaseTag: string) => string
   resolveCloudDirectUrl: (platform: InstallPlatform, releaseTag: string) => string
-  mintConnectGrant: typeof mintDesktopConnectGrant
-  previewConnectGrant: typeof previewDesktopConnectGrant
-  inspectConnectGrant: typeof inspectDesktopConnectGrant
-  consumeConnectGrant: typeof consumeDesktopConnectGrant
 }
 
 const defaultInstallerDependencies: InstallExperienceDependencies = {
@@ -125,10 +74,6 @@ const defaultInstallerDependencies: InstallExperienceDependencies = {
     const fileName = cloudDesktopReleaseAssetName(platform, releaseTag)
     return fileName ? installerReleaseAssetUrl(fileName, { releaseTag }) : OPENWORK_DOWNLOAD_URL
   },
-  mintConnectGrant: mintDesktopConnectGrant,
-  previewConnectGrant: previewDesktopConnectGrant,
-  inspectConnectGrant: inspectDesktopConnectGrant,
-  consumeConnectGrant: consumeDesktopConnectGrant,
 }
 
 function contentDisposition(filename: string) {
@@ -265,65 +210,26 @@ async function resolveInstallConfigForOrganization(input: {
   }
 }
 
-type InstallConfig = ReturnType<typeof buildInstallConfig>
-
-async function mintInstallHandoff(
-  installer: InstallExperienceDependencies,
-  input: { installLinkId: Parameters<InstallExperienceDependencies["mintConnectGrant"]>[0]["installLinkId"]; config: InstallConfig },
-) {
-  const connectInput = {
-    installLinkId: input.installLinkId,
-    organizationName: input.config.clientName,
-    appName: input.config.appName,
-    logoUrl: input.config.logoUrl,
-    iconUrl: input.config.iconUrl,
-    webUrl: input.config.webUrl,
-    apiUrl: input.config.apiUrl,
-  }
-  const exchangeHandoff = await installer.mintConnectGrant(connectInput)
-  const handoff = mintDesktopConnectLink(connectInput) ?? exchangeHandoff
-  return { handoff, exchangeHandoff }
-}
-
-async function resolveInstallConfigForToken(token: string, request: Request) {
-  const tokenHash = hashInstallLinkToken(token)
-  const now = new Date()
-  const [row] = await db
-    .select({ installLink: InstallLinkTable, organization: OrganizationTable })
-    .from(InstallLinkTable)
-    .innerJoin(OrganizationTable, eq(InstallLinkTable.organizationId, OrganizationTable.id))
-    .where(
-      and(
-        eq(InstallLinkTable.tokenHash, tokenHash),
-        isNull(InstallLinkTable.revokedAt),
-        or(isNull(InstallLinkTable.expiresAt), gt(InstallLinkTable.expiresAt, now)),
-      ),
-    )
-    .limit(1)
-
-  if (!row) {
-    return null
-  }
-
-  return {
-    ...await resolveInstallConfigForOrganization({ organization: row.organization, request }),
-    installLinkId: row.installLink.id,
-    organizationId: row.organization.id,
-    organizationSlug: row.organization.slug,
-  }
+/** The normal install page: signed-in members get their active organization's setup. */
+function installPageUrl() {
+  return new URL("/install", env.betterAuthUrl).toString()
 }
 
 /**
- * The verified install-link token (or a connect grant issued from it) names
- * the organization; actor service install_link:<installLinkId>. Never the
- * token, code or a hash of either.
+ * Public deployment setup for desktop builds that still resolve pasted
+ * `/install?token=…` links here. The token is ignored and nothing about any
+ * organization is returned (not even a single-org deployment's name, logo or
+ * version policy): only the server addresses and that sign-in is required.
+ * The desktop then signs in normally.
  */
-async function attributeInstallLink(c: Context, owner: { organizationId: string; installLinkId: string }) {
-  const audited = await attributeAuditRequest(c, {
-    organizationId: owner.organizationId,
-    ...auditServiceAttribution("install_link", owner.installLinkId),
-  })
-  return audited.ok ? null : audited.response
+async function resolvePublicInstallConfig(request: Request) {
+  return {
+    config: buildInstallConfig({
+      organization: { name: env.orgMode === "multi_org" ? "OpenWork Cloud" : "OpenWork", logo: null, metadata: null },
+      request,
+    }),
+    installerReleaseTag: await resolveInstallerReleaseTag(),
+  }
 }
 
 async function serveInstallerArtifact<
@@ -382,67 +288,19 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     "/v1/orgs/:organizationId/install-links",
     describeRoute({
       tags: ["Organizations"],
-      summary: "Create organization install link (download desktop app, install OpenWork)",
-      description: "Download the desktop app and install OpenWork pointed at this organization. Returns installPageUrl, a shareable page that downloads OpenWork for this organization, and connectUrl, a short-lived link that opens an already-installed desktop app signed in to this organization. Any member can mint one. Older active links remain valid unless an owner or admin explicitly requests rotation. When the organization uses plain install links, returns only installPageUrl, the normal install page where people sign in, and creates no link.",
+      summary: "Get organization install page (download desktop app, install OpenWork)",
+      description: "Download the desktop app and install OpenWork for this organization. Returns installPageUrl, the normal install page: people sign in there and download the desktop app approved for their organization. Creates nothing and carries no token, so the address can be shared freely.",
       responses: {
-        200: jsonResponse("Install link created successfully.", createInstallLinkResponseSchema),
+        200: jsonResponse("Install page resolved successfully.", createInstallLinkResponseSchema),
         400: jsonResponse("The install-link request was invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to create install links.", unauthorizedSchema),
-        403: jsonResponse("Rotating existing links needs the Rotate install links permission.", forbiddenSchema),
+        401: jsonResponse("The caller must be signed in to get the install page.", unauthorizedSchema),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
-        429: jsonResponse("The member has created too many install links.", rateLimitedSchema),
       },
     }),
     setActiveOrganizationFromParam,
     orgMemberRoute(),
     jsonValidator(createInstallLinkBodySchema),
-    async (c) => {
-      const input = c.req.valid("json")
-      const payload = c.get("organizationContext")
-
-      if (input.rotate) {
-        const permission = await requirePermission(c, "install_links.update")
-        if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
-        }
-      }
-
-      if (await organizationFeatureEnabled(payload.organization.id, "stableInstallLinks")) {
-        if (input.rotate) {
-          await revokeOrganizationInstallLinks(payload.organization.id)
-        }
-        return c.json({ installPageUrl: stableInstallPageUrl() })
-      }
-
-      const retryAfter = await checkRateLimit(
-        `install:mint:user:${payload.currentMember.userId}`,
-        INSTALL_LINK_MINT_RATE_LIMIT_MAX,
-        INSTALL_LINK_RATE_LIMIT_WINDOW_MS,
-        Date.now(),
-      )
-      if (retryAfter !== null) {
-        c.header("Retry-After", String(retryAfter))
-        return c.json({ error: "rate_limited", message: "Too many install links created. Try again later." }, 429)
-      }
-
-      const installLink = await mintOrganizationInstallLink({
-        organizationId: payload.organization.id,
-        createdByUserId: payload.currentMember.userId,
-        rotate: input.rotate,
-      })
-
-      const { handoff } = await mintInstallHandoff(installer, {
-        installLinkId: installLink.installLinkId,
-        config: buildInstallConfig({ organization: payload.organization, request: c.req.raw }),
-      })
-
-      return c.json({
-        token: installLink.token,
-        installPageUrl: installLink.installPageUrl,
-        connectUrl: handoff.connectUrl,
-        connectExpiresAt: handoff.connectExpiresAt,
-      })
-    },
+    (c) => c.json({ installPageUrl: installPageUrl() }),
   )
 
   app.get(
@@ -494,7 +352,7 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "invalid_request", details: platformResult.error.issues }, 400)
       }
 
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX, INSTALL_RATE_LIMIT_WINDOW_MS)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
         return c.json({ error: "rate_limited", message: "Too many installer download attempts. Try again later." }, 429)
@@ -515,180 +373,42 @@ export function registerOrgInstallLinkRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Organizations"],
       security: [],
-      summary: "Resolve install-link configuration",
-      description: "Returns organization setup details and a fresh desktop connection handoff for a valid install link token.",
+      summary: "Get public install configuration",
+      description: "Returns this deployment's public desktop setup: server addresses, sign-in requirement, and the default desktop version. Identifies no organization. Older desktop builds call it with the token from a pasted install link; the token is ignored.",
       responses: {
-        200: jsonResponse("Install configuration resolved successfully.", installExperienceConfigSchema),
-        400: jsonResponse("The install-link token was invalid.", invalidRequestSchema),
-        404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
-        429: jsonResponse("Too many install-link attempts.", rateLimitedSchema),
+        200: jsonResponse("Install configuration resolved successfully.", authenticatedInstallConfigSchema),
+        429: jsonResponse("Too many install configuration requests.", rateLimitedSchema),
       },
     }),
     publicRoute,
-    queryValidator(installLinkQuerySchema),
     async (c) => {
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:config", INSTALL_CONFIG_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
+      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:config", INSTALL_CONFIG_RATE_LIMIT_MAX, INSTALL_RATE_LIMIT_WINDOW_MS)
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
-        return c.json({ error: "rate_limited", message: "Too many install-link attempts. Try again later." }, 429)
+        return c.json({ error: "rate_limited", message: "Too many install configuration requests. Try again later." }, 429)
       }
 
-      const input = c.req.valid("query")
-      const resolved = await resolveInstallConfigForToken(input.token, c.req.raw)
-      if (!resolved) {
-        return c.json({ error: "install_link_not_found" }, 404)
-      }
-      const auditBlocked = await attributeInstallLink(c, resolved)
-      if (auditBlocked) return auditBlocked
-
-      const { handoff, exchangeHandoff } = await mintInstallHandoff(installer, {
-        installLinkId: resolved.installLinkId,
-        config: resolved.config,
-      })
-
+      const resolved = await resolvePublicInstallConfig(c.req.raw)
       return c.json({
         ...resolved.config,
-        connectUrl: handoff.connectUrl,
-        connectExpiresAt: handoff.connectExpiresAt,
-        activationUrl: exchangeHandoff.activationUrl,
-        activationExpiresAt: exchangeHandoff.connectExpiresAt,
         desktopVersion: resolved.installerReleaseTag.replace(/^v/i, ""),
         distribution: managedDesktopDistribution(),
       })
     },
   )
 
-  app.post(
-    "/v1/install-connect/status",
-    describeRoute({
-      tags: ["Organizations"],
-      security: [],
-      summary: "Inspect desktop connection status",
-      description: "Reports whether a short-lived organization connection code is still pending or has been accepted by a desktop.",
-      responses: {
-        200: jsonResponse("Desktop connection status resolved successfully.", connectGrantStatusResponseSchema),
-        400: jsonResponse("The connection code body was invalid.", invalidRequestSchema),
-        404: jsonResponse("The connection code was not found.", connectGrantFailureSchema),
-        410: jsonResponse("The connection code expired.", connectGrantFailureSchema),
-        429: jsonResponse("Too many connection attempts.", rateLimitedSchema),
-      },
-    }),
-    publicRoute,
-    jsonValidator(connectGrantBodySchema),
-    async (c) => {
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:connect-status", INSTALL_CONNECT_STATUS_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
-      if (retryAfter !== null) {
-        c.header("Retry-After", String(retryAfter))
-        return c.json({ error: "rate_limited", message: "Too many connection attempts. Try again later." }, 429)
-      }
-
-      const result = await installer.inspectConnectGrant(c.req.valid("json").code)
-      if (result.ok) {
-        const auditBlocked = await attributeInstallLink(c, result)
-        if (auditBlocked) return auditBlocked
-        return c.json({
-          status: result.status,
-          claims: result.claims,
-          expiresAt: result.expiresAt.toISOString(),
-        })
-      }
-      if (result.code === "expired") {
-        return c.json({ error: "connect_grant_expired" }, 410)
-      }
-      return c.json({ error: "connect_grant_invalid" }, 404)
-    },
-  )
-
-  const connectGrantModes: Array<"preview" | "exchange"> = ["preview", "exchange"]
-  for (const mode of connectGrantModes) {
-    app.post(
-      `/v1/install-connect/${mode}`,
-      describeRoute({
-        tags: ["Organizations"],
-        security: [],
-        summary: mode === "preview" ? "Preview desktop connection" : "Accept desktop connection",
-        description: mode === "preview"
-          ? "Resolves a short-lived organization connection code without consuming it."
-          : "Consumes a short-lived organization connection code exactly once.",
-        responses: {
-          200: jsonResponse("Desktop connection resolved successfully.", connectGrantResponseSchema),
-          400: jsonResponse("The connection code body was invalid.", invalidRequestSchema),
-          404: jsonResponse("The connection code was not found.", connectGrantFailureSchema),
-          409: jsonResponse("The connection code was already consumed.", connectGrantFailureSchema),
-          410: jsonResponse("The connection code expired.", connectGrantFailureSchema),
-          429: jsonResponse("Too many connection attempts.", rateLimitedSchema),
-        },
-      }),
-      publicRoute,
-      jsonValidator(connectGrantBodySchema),
-      async (c) => {
-        const retryAfter = await enforceRateLimit(c.req.raw.headers, `install:connect-${mode}`, INSTALL_CONFIG_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
-        if (retryAfter !== null) {
-          c.header("Retry-After", String(retryAfter))
-          return c.json({ error: "rate_limited", message: "Too many connection attempts. Try again later." }, 429)
-        }
-
-        const input = c.req.valid("json")
-        // Resolve the grant's organization without consuming it, attribute,
-        // then perform the (possibly one-time) exchange.
-        const preview = await installer.previewConnectGrant(input.code)
-        if (preview.ok) {
-          const auditBlocked = await attributeInstallLink(c, preview)
-          if (auditBlocked) return auditBlocked
-        }
-        const result = mode === "preview" ? preview : await installer.consumeConnectGrant(input.code)
-        if (result.ok) {
-          return c.json({ claims: result.claims })
-        }
-        if (result.code === "replayed") {
-          return c.json({ error: "connect_grant_replayed" }, 409)
-        }
-        if (result.code === "expired") {
-          return c.json({ error: "connect_grant_expired" }, 410)
-        }
-        return c.json({ error: "connect_grant_invalid" }, 404)
-      },
-    )
-  }
-
   app.get(
     "/v1/install/:platform",
     describeRoute({
       tags: ["Organizations"],
       security: [],
-      summary: "Download managed OpenWork desktop",
-      description: "Redirects hosted Cloud deployments to the sign-in-required Cloud app and private single-org deployments to the activation-required Enterprise app.",
+      summary: "Open the install page",
+      description: "Older install pages linked downloads here with a token. Redirects to the normal install page, where people sign in and download the desktop app approved for their organization.",
       responses: {
-        200: textResponse("Mounted desktop artifact returned successfully."),
-        302: emptyResponse("Den redirected the browser to the signed desktop asset for this deployment."),
-        400: jsonResponse("The install-link token or platform was invalid.", invalidRequestSchema),
-        404: jsonResponse("The install link was missing, expired, or revoked.", installLinkNotFoundSchema),
-        429: jsonResponse("Too many installer download attempts.", rateLimitedSchema),
+        302: emptyResponse("Den redirected the browser to the install page."),
       },
     }),
     publicRoute,
-    queryValidator(installLinkQuerySchema),
-    async (c) => {
-      const platformResult = installPlatformParamSchema.safeParse({ platform: c.req.param("platform") })
-      if (!platformResult.success) {
-        return c.json({ error: "invalid_request", details: platformResult.error.issues }, 400)
-      }
-
-      const retryAfter = await enforceRateLimit(c.req.raw.headers, "install:artifact", INSTALL_ARTIFACT_RATE_LIMIT_MAX, INSTALL_LINK_RATE_LIMIT_WINDOW_MS)
-      if (retryAfter !== null) {
-        c.header("Retry-After", String(retryAfter))
-        return c.json({ error: "rate_limited", message: "Too many installer download attempts. Try again later." }, 429)
-      }
-
-      const input = c.req.valid("query")
-      const resolved = await resolveInstallConfigForToken(input.token, c.req.raw)
-      if (!resolved) {
-        return c.json({ error: "install_link_not_found" }, 404)
-      }
-      const auditBlocked = await attributeInstallLink(c, resolved)
-      if (auditBlocked) return auditBlocked
-
-      return serveInstallerArtifact(c, installer, platformResult.data.platform, resolved.installerReleaseTag)
-    },
+    (c) => c.redirect(installPageUrl(), 302),
   )
 }

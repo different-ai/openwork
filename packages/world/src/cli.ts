@@ -870,7 +870,9 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         sources.desktop = { kind: "sha", sha };
       }
       if (PINNED_WEB_WORLDS.has(script.name) && place === "daytona") {
-        if (command.args.length > 0) throw new Error(`Daytona ${script.name} uses --source to select a ref; script arguments after -- are not supported.`);
+        const computerPreview = script.name === "preview-workbot" && command.args.length === 2
+          && command.args[0] === "--computer-snapshot" && /^[a-z0-9][a-z0-9.-]{0,62}$/.test(command.args[1]);
+        if (command.args.length > 0 && !computerPreview) throw new Error(`Daytona ${script.name} uses --source to select a ref; preview-workbot also accepts -- --computer-snapshot <published-name>.`);
         const webSource = sources["*"] ?? sources.den;
         if (webSource?.kind !== "sha") throw new Error(`Daytona ${script.name} requires a pinned commit SHA.`);
         env.OPENWORK_EVAL_REF = webSource.sha;

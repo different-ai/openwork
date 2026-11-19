@@ -15,6 +15,8 @@ import type { NativePluginContext } from "./opencode.ts"
 import { acquireRunnerOwnership, type RunnerOwnership } from "./runner-ownership.ts"
 
 const CAPABILITIES = ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1"]
+/** Answers pending permissions from the person; older Den versions reject the unknown capability, so step down. */
+const ANSWER_CAPABILITIES = [...CAPABILITIES, "remote_session_answer_v1"]
 const RENEW_MS = 30 * 60_000
 const INVENTORY_MS = 60_000
 const POLL_MS = 3000
@@ -198,9 +200,15 @@ export function createRemoteRunnerController(input: {
   }
 
   async function register(state: Active, signal: AbortSignal): Promise<void> {
-    const response = await hostRead(() => denRequest(fetcher, state.account.session, "/v1/session-runners/token", { method: "POST", signal,
+    const mint = (capabilities: string[]) => hostRead(() => denRequest(fetcher, state.account.session, "/v1/session-runners/token", { method: "POST", signal,
       body: { runnerId: state.runnerId, protocolVersion: 1, supportedExecutionTargets: ["desktop"],
-        capabilities: CAPABILITIES, platform: platform(), appVersion: ctx.app.version, concurrency: 1 } }), signal)
+        capabilities, platform: platform(), appVersion: ctx.app.version, concurrency: 1 } }), signal)
+    let response: unknown
+    try { response = await mint(ANSWER_CAPABILITIES) }
+    catch (error) {
+      if (!(error instanceof DenRequestError) || error.status !== 400) throw error
+      response = await mint(CAPABILITIES)
+    }
     signal.throwIfAborted()
     if (!isRecord(response) || typeof response.token !== "string" || response.token.length < 32
       || response.token.length > 512 || /[\r\n]/.test(response.token)

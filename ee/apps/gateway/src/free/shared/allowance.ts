@@ -3,6 +3,7 @@ import {
   DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
+  freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
 } from "@openwork-ee/den-db"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_PROOF_CLOCK_SKEW_MS, type DesktopFreeAccessStatus } from "@openwork/free-auto"
@@ -10,7 +11,7 @@ import { rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { freeIdentityHash, freePrincipalHash, memberFreePrincipalAllowed, type FreePrincipal } from "./principal.js"
 import type { AutoConfig } from "./config.js"
 import { db, freeAutoDatabase } from "../../db.js"
-import { createFreeCapacity, type FreeCapacity } from "./capacity.js"
+import { createFreeCapacity, FreeAutoBusyError, type FreeCapacity } from "./capacity.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 export type FreeAllowanceFamily = "anonymous" | "member"
@@ -42,6 +43,25 @@ let sharedCapacity: FreeCapacity | undefined
 function processCapacity(config: AutoConfig) {
   sharedCapacity ??= createFreeCapacity({ maxActive: config.maxConcurrent, maxQueued: config.maxQueued })
   return sharedCapacity
+}
+
+/**
+ * Limit analytics never use a free Auto capacity slot: they run after it is released, in their own small queue,
+ * and are dropped when that queue is full. A response waits at most OBSERVATION_WAIT_MS for a first-time
+ * observation, and not at all for one this process already knows about.
+ */
+const observationCapacity = createFreeCapacity({ maxActive: 4, maxQueued: 32 })
+const OBSERVATION_MEMORY = 20_000
+/** The longest a free Auto response waits for a first-time observation before answering without it. */
+const OBSERVATION_WAIT_MS = 1_000
+/** Observations this process already knows are stored (or capped for the day); repeats skip the database. */
+const settledObservations = new Set<string>()
+function rememberObservation(key: string) {
+  settledObservations.add(key)
+  if (settledObservations.size > OBSERVATION_MEMORY) {
+    const oldest = settledObservations.values().next().value
+    if (oldest !== undefined) settledObservations.delete(oldest)
+  }
 }
 
 /**
@@ -113,13 +133,41 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     const all = windows(principal, now, await identityActivity(tx, principal, now))
     let allowance: DesktopFreeAccessStatus["allowance"] = null
     let code: string | null = null
+    let personalLimit: FreeWindow | null = null
     for (const window of all) {
       const total = await used(tx, window)
       if (window.scope !== "global") allowance = { limitUsd: window.limit / INFERENCE_USAGE_CONVERSION_FACTOR, usedUsd: total / INFERENCE_USAGE_CONVERSION_FACTOR,
         remainingUsd: Math.max(0, window.limit - total) / INFERENCE_USAGE_CONVERSION_FACTOR, resetsAt: window.end.toISOString() }
       if (!code && total >= window.limit) code = window.scope === "global" ? "anonymous_capacity_exceeded" : "anonymous_limit_exceeded"
+      if (!personalLimit && window.scope !== "global" && window.limit > 0 && total >= window.limit) personalLimit = window
     }
-    return { windows: all, allowance, code }
+    return { windows: all, allowance, code, personalLimit, now }
+  }
+
+  /** Called after the capacity slot is released. Analytics failures and overflow never change the response. */
+  async function observeLimit(principal: FreePrincipal, result: Awaited<ReturnType<typeof check>>) {
+    const window = result.personalLimit
+    if (!window) return
+    const subjectHash = principal.kind === "member" ? freePrincipalHash(principal) : principal.journeyHash ?? (!principal.deviceless ? freePrincipalHash(principal) : null)
+    if (!subjectHash) return
+    const audience = principal.kind === "member" ? "member" : "guest"
+    const observationRateHash = principal.kind === "installation" ? principal.observationRateHash : undefined
+    if (audience === "guest" && !observationRateHash) return
+    const id = freeAutoLimitId({ audience, subjectHash, windowStart: window.start })
+    const rateKey = observationRateHash ? `rate:${freeAutoObservationRateId(observationRateHash, result.now)}` : null
+    if (settledObservations.has(id) || (rateKey && settledObservations.has(rateKey))) return
+    const work = observationCapacity.run(() => recordFreeAutoLimit(database, { audience, subjectHash,
+      ...(principal.kind === "member" ? { userId: principal.id, organizationId: principal.organizationId } : {}),
+      observationRateHash, windowStart: window.start, now: result.now })).then((outcome) => {
+      if (outcome === "recorded" || outcome === "exists") rememberObservation(id)
+      else if (outcome === "capped" && rateKey) rememberObservation(rateKey)
+    }, (error: unknown) => {
+      if (!(error instanceof FreeAutoBusyError)) console.warn("[free-auto] limit behavior could not be recorded")
+    })
+    // Usually the write finishes first. If storage is slow or locked, answer anyway and let the write finish later.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([work, new Promise<void>((resolve) => { timer = setTimeout(resolve, OBSERVATION_WAIT_MS); timer.unref?.() })])
+    clearTimeout(timer)
   }
 
   return {
@@ -153,22 +201,27 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     },
     async read(principal: FreePrincipal): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-      return capacity.run(() => database.transaction(async (tx) => {
-        if (!await memberFreePrincipalAllowed(principal, tx)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
-        const { allowance, code } = await check(tx, principal, new Date())
-        if (code === "anonymous_limit_exceeded") return { state: "exhausted", code, allowance }
-        if (code) return { state: "unavailable", code, allowance }
-        return { state: "ready", code: null, allowance }
+      const result = await capacity.run(() => database.transaction(async (tx) => {
+        if (!await memberFreePrincipalAllowed(principal, tx)) return null
+        return check(tx, principal, new Date())
       }))
+      if (!result) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
+      await observeLimit(principal, result)
+      const { allowance, code } = result
+      if (code === "anonymous_limit_exceeded") return { state: "exhausted", code, allowance }
+      if (code) return { state: "unavailable", code, allowance }
+      return { state: "ready", code: null, allowance }
     },
     /** Before a request: the same "used is below the limit" check as paid Models' ensureUsableBuckets. */
     async admit(principal: FreePrincipal): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      return capacity.run(() => database.transaction(async (tx) => {
-        if (!await memberFreePrincipalAllowed(principal, tx)) return { ok: false, code: "free_principal_rejected" }
-        const result = await check(tx, principal, new Date())
-        return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
+      const result = await capacity.run(() => database.transaction(async (tx) => {
+        if (!await memberFreePrincipalAllowed(principal, tx)) return null
+        return check(tx, principal, new Date())
       }))
+      if (!result) return { ok: false, code: "free_principal_rejected" }
+      await observeLimit(principal, result)
+      return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
     },
     /**
      * After a request: record its cost once and add it to each window it was admitted under. Without a usage

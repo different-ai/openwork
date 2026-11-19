@@ -78,7 +78,7 @@ export async function configureProvider(
   engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
-  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson, engine) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -111,8 +111,11 @@ export async function configureProvider(
       body: JSON.stringify({ opencode }),
     });
     if (patched !== "ok") return patched;
-    const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
-    if (reloaded !== "ok") return reloaded;
+    // V2 observes runtime config writes itself; this route reloads only the legacy engine.
+    if (engine !== "v2") {
+      const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+      if (reloaded !== "ok") return reloaded;
+    }
     const raw = localStorage.getItem("openwork.preferences");
     let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
@@ -126,7 +129,7 @@ export async function configureProvider(
     localStorage.setItem("openwork.defaultModel", defaultModel);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode), engine]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   // Wait for navigation before starting the model-readiness evaluation;
   // scheduling location.reload() can run that evaluation in the old document.
@@ -268,7 +271,7 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
-async function splitPaneQuestions(
+export async function splitPaneQuestions(
   seed: Seed,
   name: string,
   agentWorkloads: MockAgentWorkload[],
@@ -329,6 +332,7 @@ async function splitPaneQuestions(
   }, [workspace.workspaceId, JSON.stringify(policy)]), { awaitPromise: true });
   if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...policy,
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -417,14 +421,36 @@ export async function abandonedQuestion(seed: Seed) {
 }
 
 /** Real provider errors and automatic recovery, without synthetic UI events. */
-export async function sessionProviderErrorRecovery(seed: Seed) {
+export async function sessionProviderErrorRecovery(seed: Seed, options: { terminalRejection?: boolean; retiredSavedModel?: boolean } = {}) {
   const prompt = "Prepare a short reliability summary.";
   const reply = "The reliability summary is ready.";
+  // Opt-in: a prompt the provider always refuses with a non-retryable 400 before any text.
+  const rejected = { prompt: "Summarize the rejected reliability report.", message: "The provider rejected this request before writing an answer." };
   const base = await splitPaneQuestions(seed, "session-provider-error-recovery", [{
     promptMarker: prompt, latestUserTurn: true, serverErrorAttempts: 2, finalReply: reply, steps: [],
-  }]);
+  }, ...(options.terminalRejection ? [{
+    promptMarker: rejected.prompt, latestUserTurn: true, terminalErrorMessage: rejected.message, finalReply: "Never served.", steps: [],
+  }] : [])]);
   const session = await seedSessionRetry(seed, base.app, { title: "Response recovery" });
-  return { ...base, session, prompt, reply };
+  // Opt-in: the person chose a model earlier that this provider has since dropped.
+  const models = { kept: { providerID: "split-send-mock", modelID: "split-send-model", name: "Split send model" }, retired: { providerID: "split-send-mock", modelID: "retired-model" } };
+  if (options.retiredSavedModel) {
+    const ref = `${models.retired.providerID}/${models.retired.modelID}`;
+    const saved = await seed.evalIn(base.app, browserScript((workspaceId, ref) => {
+      const raw = localStorage.getItem("openwork.preferences");
+      let preferences: Record<string, unknown> = {};
+      try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+      const [providerID, modelID] = ref.split("/");
+      localStorage.setItem("openwork.preferences", JSON.stringify({ ...preferences, defaultModel: { providerID, modelID }, modelVariant: null }));
+      localStorage.setItem("openwork.defaultModel", ref);
+      localStorage.setItem("openwork.modelChoice.explicit", "1");
+      localStorage.removeItem("openwork.sessionModels." + workspaceId);
+      return localStorage.getItem("openwork.defaultModel");
+    }, [base.workspace.workspaceId, ref]));
+    if (saved !== ref) throw new Error(`Saving the retired default failed: ${String(saved)}`);
+    await reload(base.app);
+  }
+  return { ...base, session, prompt, reply, rejected, models };
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */
@@ -694,6 +720,63 @@ export function modelPicker(seed: Seed) {
 
 export function modelPickerWithOpenWorkModels(seed: Seed) {
   return seedModelPicker(seed, { openWorkModels: true });
+}
+
+/**
+ * A signed-out member offered free Auto and a BYOK model, where the free-access
+ * check that runs before an Auto send can be held, so the member can change
+ * model before the message leaves.
+ */
+export async function autoSendModelChange(seed: Seed) {
+  const workspacePath = seed.tmpPath("auto-send-model-change");
+  const app = await seed.appWeb({
+    name: "auto-send-model-change",
+    workspacePath,
+    mocks: { agent: seed.mock({ isolatedProcessEnv: true }) },
+  });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing Auto send model witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
+  const byok = { providerID: "auto-send-byok", modelID: "byok-model" };
+  const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-auto-send-key" };
+  // No OpenWork Models provider: with one, members pick it instead of free Auto.
+  await configureProvider(seed, app, workspace.workspaceId, byok.providerID, byok.modelID, {
+    enabled_providers: [auto.providerID, byok.providerID],
+    provider: {
+      [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-6 Luna" } } },
+      [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
+        models: { [byok.modelID]: { name: "BYOK witness" } } },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Send with Auto" });
+  return {
+    app, workspace, session, auto, byok,
+    requests: () => witness.agentRequests(),
+    async holdAutoCheck() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 60_000);
+          release = () => { clearTimeout(timer); resolve(); };
+        });
+        const fault = { attempts: 0, release: () => { release(); window.fetch = originalFetch; } };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (/\/anonymous-inference\/preflight(\?|$)/.test(url)) {
+            fault.attempts++;
+            await gate;
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    autoCheckAttempts: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0),
+    releaseAutoCheck: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.release()),
+  };
 }
 
 /** The picker world plus the chord that opens the command palette on this platform. */
@@ -1037,8 +1120,8 @@ export async function attachmentUpload(seed: Seed) {
           window.fetch = async (input, init) => {
             const url = input instanceof Request ? input.url : String(input);
             const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-            // The client posts multipart to /workspace/<id>/inbox with the target
-            // path as a form field, not a query parameter.
+            // The client posts the file to /workspace/<id>/inbox with the target
+            // path as a query parameter; a multipart retry carries it as a form field.
             const formPath = init?.body instanceof FormData ? String(init.body.get("path") ?? "") : "";
             if (method === "POST" && /\/inbox(\?|$)/.test(url) && `${url} ${formPath}`.includes("chat-attachments")) {
               fault.attempts++;
@@ -1371,6 +1454,7 @@ export async function sessionErrorCard(seed: Seed) {
   return {
     app, workspace, session,
     seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+    failSnapshot: () => failSessionSnapshot(seed, app),
   };
 }
 
@@ -1495,6 +1579,12 @@ export async function snapshotFailure(seed: Seed) {
   const workspace = await seed.workspace(app, workspacePath);
   const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
   await arrangeControl(seed, app, "eval.chat_transcript.seed");
+  await failSessionSnapshot(seed, app);
+  return { app, workspace, session };
+}
+
+/** Put the open session's snapshot query into error, as a failed history read does. */
+async function failSessionSnapshot(seed: Seed, app: Surface) {
   const failureJson = await seed.evalIn(app, browserScript(async () => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
@@ -1511,7 +1601,6 @@ export async function snapshotFailure(seed: Seed) {
   if (!isRecord(failure) || failure.isError !== true) {
     throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
   }
-  return { app, workspace, session };
 }
 
 /** More stored messages than OpenCode's `limit`-paged transcript read used to fetch. */
@@ -2076,11 +2165,27 @@ async function stoppingFeedbackFault(
   };
 }
 
-export async function unfinishedToolsWeb(seed: Seed) {
+export async function unfinishedToolsWeb(seed: Seed, options: { editRunning?: boolean } = {}) {
   const engine = resolveEvalEngine();
   const prompt = "Hold the native tool open for Stop feedback proof.";
   const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
+  // Opt-in turns whose answers stream one chunk and then hold, so a person can
+  // edit or queue behind a turn that is still running.
+  const editRunning = {
+    original: "Review the initial draft EDIT-RUNNING", partial: "Review in progress.", neverReleased: "Unfinished answer that must never show.",
+    edited: "Review the corrected draft EDIT-RUNNING", answer: "Corrected review is ready.",
+    held: "Keep this turn running EDIT-RUNNING", heldPartial: "Still working on it.", followup: "A later follow-up EDIT-RUNNING",
+  };
+  const held = (promptMarker: string, partial: string): MockAgentWorkload => ({
+    promptMarker, latestUserTurn: true, steps: [], finalReply: `${partial} ${editRunning.neverReleased}`,
+    finalReplyChunks: [`${partial} `, editRunning.neverReleased], finalReplyInitiallyReleasedChunks: 1,
+  });
   const base = await splitPaneQuestions(seed, "unfinished-tool-lifecycle", [
+    ...(options.editRunning ? [
+      held(editRunning.original, editRunning.partial),
+      { promptMarker: editRunning.edited, latestUserTurn: true, finalReply: editRunning.answer, steps: [] },
+      held(editRunning.held, editRunning.heldPartial),
+    ] : []),
     { promptMarker: warmup.prompt, latestUserTurn: true, finalReply: warmup.reply, steps: [] },
     {
       promptMarker: prompt,
@@ -2102,6 +2207,7 @@ export async function unfinishedToolsWeb(seed: Seed) {
     session,
     prompt,
     warmup,
+    editRunning,
     engine,
     startStopFault: () => stoppingFeedbackFault(seed, base.app, base.workspace.workspaceId, session.sessionId),
     nativeStatus: () => seed.evalIn(base.app, browserScript(async (statusPath, sessionId) => {

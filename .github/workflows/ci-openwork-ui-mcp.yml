@@ -28,7 +28,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
 
       - name: Setup pnpm
@@ -50,6 +50,10 @@ jobs:
     needs: check
     if: startsWith(github.ref, 'refs/tags/openwork-ui-mcp-v')
     runs-on: ubuntu-latest
+    # The npm token belongs to this environment; no deployment is recorded.
+    environment:
+      name: npm-publish
+      deployment: false
 
     permissions:
       contents: read
@@ -62,7 +66,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.22.1
           registry-url: https://registry.npmjs.org
 
       - name: Setup pnpm

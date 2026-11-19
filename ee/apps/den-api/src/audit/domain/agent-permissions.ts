@@ -1,6 +1,7 @@
 import {
   AGENT_PERMISSION_EVERYONE,
   agentPermissionDefinitions,
+  agentPermissionDefaultDecision,
   type AgentPermissionDefinition,
   type AgentPermissionSetting,
   type AgentPermissionSettings,
@@ -51,8 +52,8 @@ function serializePolicy(scope: AgentPermissionAuditScope, state: AgentPermissio
 }
 
 /** The decision a scope ends up with: an unset permission allows for Everyone and inherits for a team. */
-function decisionLabel(scope: AgentPermissionAuditScope, setting: AgentPermissionSetting | undefined): string {
-  return setting?.decision ?? (scope.kind === "everyone" ? "allow" : "inherit")
+function decisionLabel(scope: AgentPermissionAuditScope, definition: AgentPermissionDefinition, setting: AgentPermissionSetting | undefined): string {
+  return setting?.decision ?? (scope.kind === "everyone" ? agentPermissionDefaultDecision(definition.key) : "inherit")
 }
 
 /** The stored patterns in `after` that `before` lacks, in audit form. */
@@ -64,7 +65,7 @@ function permissionChanges(scope: AgentPermissionAuditScope, before: AgentPermis
   return agentPermissionDefinitions.flatMap((definition): AuditSnapshot[] => {
     const from = before[definition.key]
     const to = after[definition.key]
-    const decision = { before: decisionLabel(scope, from), after: decisionLabel(scope, to) }
+    const decision = { before: decisionLabel(scope, definition, from), after: decisionLabel(scope, definition, to) }
     if (!definition.patterns) return decision.before !== decision.after ? [{ key: definition.key, label: definition.label, decision }] : []
     const change = {
       key: definition.key,

@@ -5,7 +5,7 @@ description: Drive the running OpenWork app over CDP from the shell, headless by
 
 # Drive the app over CDP
 
-For verdicts, write or run an `evals/specs` test (`write-a-spec`, `run-tests`). This skill is for checking changes by hand and reproducing states quickly.
+For verdicts, write or run an `evals/core` journey or `evals/proofs` proof (`write-a-spec`, `run-tests`). This skill is for checking changes by hand and reproducing states quickly.
 
 ## Find the app
 

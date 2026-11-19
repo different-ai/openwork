@@ -32,7 +32,8 @@ export interface MockAgentToolStep {
   /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
   allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list";
+  /** browser-page replaces __TAB__, __OBSERVATION__, action names and a website tool's toolName with what the browser tools returned. */
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search" | "skill-list" | "browser-page";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -42,6 +43,8 @@ export interface MockAgentWorkload {
   rateLimitAttempts?: number;
   /** Chat Completions: return this many HTTP 500s before serving the workload. */
   serverErrorAttempts?: number;
+  /** Chat Completions: always reject this workload with a non-retryable HTTP 400 carrying this message. */
+  terminalErrorMessage?: string;
   /** Chat Completions: match the latest user message and count only its tool rounds. */
   latestUserTurn?: boolean;
   promptMarker: string;
@@ -68,6 +71,8 @@ export interface MockAgentRequest {
   model: string;
   advertisedToolNames?: string[];
   toolResultCodes?: unknown;
+  /** Whether any value registered with /admin/private-sentinels appeared anywhere in this model request. */
+  privateSentinelSeen?: boolean;
   reasoningEffort?: string | null;
   promptMarker: string | null;
   matchedMarkers: string[];
@@ -143,6 +148,8 @@ export interface MockMcpTool {
   validateRequiredArguments?: boolean;
   /** Hold the response while the real engine exposes its running tool state. */
   delayMs?: number;
+  /** Serve this variant only when the call's arguments contain these values (deep subset); list a tool name once per variant. */
+  whenArguments?: Record<string, unknown>;
   /** Served verbatim as the tools/call result, so structured content and result metadata reach the host unchanged. */
   result: { content: { type: "text"; text: string }[]; isError?: boolean; structuredContent?: Record<string, unknown>; _meta?: Record<string, unknown> };
 }
@@ -548,6 +555,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       completions.push({
         model: completion.model,
         toolResultCodes: completion.toolResultCodes,
+        privateSentinelSeen: completion.privateSentinelSeen === true,
         advertisedToolNames: Array.isArray(completion.advertisedToolNames)
           ? completion.advertisedToolNames.filter((value): value is string => typeof value === "string") : undefined,
         reasoningEffort: typeof completion.reasoningEffort === "string" ? completion.reasoningEffort : null,

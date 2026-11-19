@@ -91,6 +91,8 @@ export function WorkflowOverviewTab({
     : detail.currentVersion;
   const graphSummary = replayVersion.graph ? summarizeGraph(replayVersion.graph) : null;
   const flowInput = workflowDiagramInput(latestReplay, replayVersion.exampleInput);
+  // A workflow saved without inputs (a brief, a report) just runs; there is nothing to review.
+  const takesNoInput = !hasInputForm && !detail.currentVersion.inputSchema && ["", "{}", "null"].includes(fields.input.replace(/\s/g, ""));
 
   return (
     <div className="grid gap-6" data-tab="overview" data-testid="workflow-overview" role="tabpanel" aria-label="Overview">
@@ -116,10 +118,12 @@ export function WorkflowOverviewTab({
                     onChange={(next) => onInputChange(JSON.stringify(next, null, 2))}
                   />
                 )
+              ) : takesNoInput ? (
+                <p className="text-[13px] text-gray-500">No details needed. This workflow is ready to run.</p>
               ) : (
                 <p className="text-[13px] text-gray-500">This workflow uses structured input. Review its saved values under Advanced input before running.</p>
               )}
-              <div className="text-[12px] text-gray-500">
+              {takesNoInput && !technical ? null : <div className="text-[12px] text-gray-500">
                 <DenButton type="button" variant="ghost" size="xs" aria-expanded={showJsonInput} onClick={() => onShowJsonInputChange(!showJsonInput)}>
                   Advanced input
                 </DenButton>
@@ -132,7 +136,7 @@ export function WorkflowOverviewTab({
                     onChange={(event) => onInputChange(event.currentTarget.value)}
                   />
                 </label> : null}
-              </div>
+              </div>}
               <div className="border-t border-gray-100 pt-4">
                 <DenButton type="submit" icon={RefreshCw} loading={pending} className="w-full sm:w-auto">
                   {pending ? "Running…" : "Run workflow"}

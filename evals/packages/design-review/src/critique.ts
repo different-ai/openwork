@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LayoutSnapshot } from "./layout.ts";
@@ -128,6 +128,14 @@ export async function critiqueScreenshot(
   const raw = await options.ask({ prompt, png: input.png, model: options.model });
   const notes = parseCritique(raw);
   await mkdir(CACHE_DIR, { recursive: true });
-  await writeFile(cachePath, `${JSON.stringify({ findings: notes.map((note) => ({ ...note, evidence: note.detail, where: note.region ?? null })) })}\n`, "utf8");
+  // Publish only complete JSON, even when separate review workers share a key.
+  const temporaryPath = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify({ findings: notes.map((note) => ({ ...note, evidence: note.detail, where: note.region ?? null })) })}\n`, { encoding: "utf8", flag: "wx" });
+    await rename(temporaryPath, cachePath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
+  }
   return notes;
 }

@@ -24,6 +24,8 @@ export type CatalogEntry = {
   /** Where the row goes when this is already set up. */
   openHref?: string;
   addLabel?: "Add another";
+  /** A quiet note when people can't sign in with one click today. */
+  signInNote?: string;
 };
 
 export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[]): CatalogEntry[] {
@@ -32,6 +34,9 @@ export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[])
     name: preset.displayName,
     description: shortDescription(preset.description),
     url: preset.url,
+    ...(preset.registrationStatus === "dynamic_refused" ? { signInNote: "Approved apps only" }
+      : preset.registrationStatus === "requires_client" && !preset.requiresOAuthClient && !preset.defaultOAuthClientId ? { signInNote: "Needs an OAuth app" }
+        : {}),
   }));
 }
 
@@ -179,6 +184,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref, mode, c
             logo={<ConnectorLogo name={entry.name} url={entry.url} />}
             title={entry.name}
             description={entry.description}
+            status={entry.signInNote}
             action={entry.openHref ? (
               <LinkButton size="xs" href={entry.openHref} aria-label={`Open ${entry.name}`}>Open</LinkButton>
             ) : (

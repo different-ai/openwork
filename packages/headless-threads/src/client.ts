@@ -27,8 +27,21 @@ import type {
   HeadlessThreadTurnInput,
   HeadlessThreadWaitInput,
   HeadlessThreadWaitResult,
+  HeadlessThreadWaitingFor,
+  HeadlessThreadAnswer,
+  HeadlessThreadPending,
   HeadlessTurnAcceptance,
 } from "./types.js";
+import {
+  answerRefusal,
+  HEADLESS_THREAD_PENDING_ITEMS_MAX,
+  permissionPending,
+  PLAIN_FORM,
+  v1QuestionPending,
+  v2FormAnswer,
+  v2FormPending,
+  type PendingForm,
+} from "./pending.js";
 import {
   abortResultSchema,
   isRunning,
@@ -74,6 +87,21 @@ const effectiveProvidersSchema = z.object({
     models: z.record(z.string(), z.object({}).passthrough()),
   })),
 });
+
+/** v1 lists every session's pending requests; v2 lists one session's, sometimes wrapped in `data`. */
+const pendingRequestRowSchema = z.object({ sessionID: z.string().optional() }).passthrough();
+const pendingRequestListSchema = z.union([
+  z.array(pendingRequestRowSchema),
+  z.object({ data: z.array(pendingRequestRowSchema) }).passthrough(),
+]).transform((value) => Array.isArray(value) ? value : value.data);
+type PendingRequestRow = z.infer<typeof pendingRequestRowSchema>;
+
+/** A helper is a session a thread's agent started; its requests hold the thread too. */
+const helperSessionSchema = z.object({ id: z.string(), parentID: z.string().nullish() }).passthrough();
+const helperSessionListSchema = z.object({ data: z.array(helperSessionSchema) }).passthrough();
+/** How far below a thread a helper is looked for, and how many are read at once. */
+const HELPER_DEPTH_MAX = 3;
+const HELPERS_MAX = 8;
 
 const v2ModelEntrySchema = z.object({ providerID: z.string(), id: z.string() }).passthrough();
 const v2ModelCatalogSchema = z.union([
@@ -349,6 +377,40 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     snapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot>;
     abort(threadId: string, signal?: AbortSignal): Promise<boolean>;
     sessionModel(threadId: string, signal?: AbortSignal): Promise<HeadlessThreadModel | null>;
+    /**
+     * Pending permission and question requests of this thread and of the helpers
+     * it started, the thread's own first, as two lists of raw rows.
+     */
+    requests(threadId: string, signal?: AbortSignal): Promise<{ permissions: PendingRequestRow[]; questions: PendingRequestRow[] }>;
+    /** The first pending question, mapped, with what a v2 form needs for its reply. */
+    question(rows: unknown[]): PendingForm & { pending: HeadlessThreadPending } | null;
+    replyQuestion(threadId: string, requestId: string, answer: Extract<HeadlessThreadAnswer, { kind: "question" }>, form: PendingForm, signal?: AbortSignal): Promise<void>;
+    /** Closes a question without answering it, as dismissing it in the app does. */
+    rejectQuestion(threadId: string, requestId: string, signal?: AbortSignal): Promise<void>;
+    replyPermission(threadId: string, requestId: string, decision: "once" | "reject", signal?: AbortSignal): Promise<void>;
+  }
+
+  // A session's parent never changes, so each is read once per client.
+  const v1Parents = new Map<string, string | null>();
+
+  /** Whether a v1 session was started, directly or through another helper, by this thread. */
+  async function v1StartedBy(threadId: string, sessionId: string, signal?: AbortSignal): Promise<boolean> {
+    let current = sessionId;
+    for (let depth = 0; depth < HELPER_DEPTH_MAX; depth += 1) {
+      let parent = v1Parents.get(current);
+      if (parent === undefined) {
+        // An unreadable session is not known to be a helper; its request stays where it was asked.
+        const result = await send("GET", `${opencodePath}/session/${encodeURIComponent(current)}`, { signal }).catch(() => null);
+        const session = result?.response.ok ? helperSessionSchema.safeParse(result.payload) : null;
+        if (!session?.success) return false;
+        parent = session.data.parentID ?? null;
+        v1Parents.set(current, parent);
+      }
+      if (parent === null) return false;
+      if (parent === threadId) return true;
+      current = parent;
+    }
+    return false;
   }
 
   const v1: Transport = {
@@ -369,7 +431,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         parts: [{ type: "text", text: prompt }],
         ...(messageId === undefined ? {} : { messageID: messageId }),
         ...(model === null ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
-        ...(model?.variant === undefined ? {} : { variant: model.variant }),
+        ...(model?.variant ? { variant: model.variant } : {}),
       }, { signal: requestSignal(signal) });
       sdkSuccess(result, "POST", path);
     },
@@ -418,6 +480,46 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     async sessionModel() {
       return null;
     },
+    // v1 lists pending requests for every session in the workspace: keep the
+    // thread's own and those of the helpers it started.
+    async requests(threadId, signal) {
+      const [permissions, questions] = await Promise.all([
+        json(pendingRequestListSchema, "GET", `${opencodePath}/permission`, { signal }),
+        json(pendingRequestListSchema, "GET", `${opencodePath}/question`, { signal }),
+      ]);
+      const others = [...new Set([...permissions, ...questions].flatMap((row) => (
+        row.sessionID !== undefined && row.sessionID !== threadId ? [row.sessionID] : []
+      )))].slice(0, HELPERS_MAX);
+      const helpers = new Set<string>();
+      for (const id of others) if (await v1StartedBy(threadId, id, signal)) helpers.add(id);
+      const mine = (rows: PendingRequestRow[]) => [
+        ...rows.filter((row) => row.sessionID === threadId),
+        ...rows.filter((row) => row.sessionID !== undefined && helpers.has(row.sessionID)),
+      ];
+      return { permissions: mine(permissions), questions: mine(questions) };
+    },
+    question(rows) {
+      for (const row of rows) {
+        const pending = v1QuestionPending(row);
+        if (pending) return { ...PLAIN_FORM, pending };
+      }
+      return null;
+    },
+    async replyQuestion(_threadId, requestId, answer, _form, signal) {
+      const path = `${opencodePath}/question/${encodeURIComponent(requestId)}/reply`;
+      const result = await send("POST", path, { body: { answers: answer.answers }, signal });
+      if (!result.response.ok) throw failure("POST", path, result);
+    },
+    async rejectQuestion(_threadId, requestId, signal) {
+      const path = `${opencodePath}/question/${encodeURIComponent(requestId)}/reject`;
+      const result = await send("POST", path, { signal });
+      if (!result.response.ok) throw failure("POST", path, result);
+    },
+    async replyPermission(_threadId, requestId, decision, signal) {
+      const path = `${opencodePath}/permission/${encodeURIComponent(requestId)}/reply`;
+      const result = await send("POST", path, { body: { reply: decision }, signal });
+      if (!result.response.ok) throw failure("POST", path, result);
+    },
   };
 
   const v2Path = `${workspacePath}/opencode2/api`;
@@ -449,6 +551,45 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       cursor = next;
     }
     return fromV2Messages(rows.reverse());
+  }
+
+  async function v2Requests(sessionId: string, signal?: AbortSignal) {
+    const [permissions, forms] = await Promise.all([
+      json(pendingRequestListSchema, "GET", `${v2SessionPath(sessionId)}/permission`, { signal }),
+      json(pendingRequestListSchema, "GET", `${v2SessionPath(sessionId)}/form`, { signal }),
+    ]);
+    // A reply goes to the session that asked.
+    const owned = (rows: PendingRequestRow[]) => rows.map((row) => ({ ...row, sessionID: row.sessionID ?? sessionId }));
+    return { permissions: owned(permissions), questions: owned(forms) };
+  }
+
+  /**
+   * The helpers a thread started that still run, nearest first. One small read
+   * for a thread without helpers; an unreadable list means none are known.
+   */
+  async function v2RunningHelpers(threadId: string, signal?: AbortSignal): Promise<string[]> {
+    const helpers: string[] = [];
+    let active: z.infer<typeof v2ActiveSchema>["data"] | null = null;
+    let parents = [threadId];
+    try {
+      for (let depth = 0; depth < HELPER_DEPTH_MAX && parents.length > 0 && helpers.length < HELPERS_MAX; depth += 1) {
+        const started: string[] = [];
+        for (const parent of parents) {
+          const query = new URLSearchParams({ parentID: parent, limit: "100" });
+          const listed = await json(helperSessionListSchema, "GET", `${v2Path}/session?${query.toString()}`, { signal });
+          // Filter here too: an engine that ignores `parentID` returns every session.
+          started.push(...listed.data.flatMap((session) => session.parentID === parent ? [session.id] : []));
+        }
+        if (started.length === 0) break;
+        active ??= (await json(v2ActiveSchema, "GET", `${v2Path}/session/active`, { signal })).data;
+        const running = active;
+        parents = started.filter((id) => running[id]?.type === "running");
+        helpers.push(...parents);
+      }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+    return helpers.slice(0, HELPERS_MAX);
   }
 
   const v2: Transport = {
@@ -484,7 +625,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       if (model !== null) {
         const modelPath = `${v2SessionPath(threadId)}/model`;
         const result = await send("POST", modelPath, {
-          body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant === undefined ? {} : { variant: model.variant }) } },
+          body: { model: { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) } },
           signal,
         });
         if (!result.response.ok) throw failure("POST", modelPath, result);
@@ -517,6 +658,46 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     },
     async sessionModel(threadId, signal) {
       return v2SessionModel(await v2Session(threadId, signal));
+    },
+    // v2 scopes both lists to the session; questions are forms. A thread with
+    // nothing pending of its own may be held by a helper it started.
+    async requests(threadId, signal) {
+      const own = await v2Requests(threadId, signal);
+      if (own.permissions.length > 0 || own.questions.length > 0) return own;
+      for (const helper of await v2RunningHelpers(threadId, signal)) {
+        // A helper that just ended has no lists to read; a cancelled read still fails.
+        const rows = await v2Requests(helper, signal).catch((error: unknown) => {
+          if (signal?.aborted) throw error;
+          return null;
+        });
+        if (rows && (rows.permissions.length > 0 || rows.questions.length > 0)) return rows;
+      }
+      return own;
+    },
+    question(rows) {
+      for (const row of rows) {
+        const read = v2FormPending(row);
+        if (read?.pending) return { ...read, pending: read.pending };
+      }
+      return null;
+    },
+    async replyQuestion(threadId, requestId, answer, form, signal) {
+      const path = `${v2SessionPath(threadId)}/form/${encodeURIComponent(requestId)}/reply`;
+      const values = v2FormAnswer(form, answer);
+      if (typeof values === "string") refused("invalid_answer", values);
+      const result = await send("POST", path, { body: { answer: values }, signal });
+      if (!result.response.ok) throw failure("POST", path, result);
+    },
+    async rejectQuestion(threadId, requestId, signal) {
+      const path = `${v2SessionPath(threadId)}/form/${encodeURIComponent(requestId)}`;
+      const result = await send("DELETE", path, { signal });
+      if (!result.response.ok) throw failure("DELETE", path, result);
+    },
+    async replyPermission(threadId, requestId, decision, signal) {
+      const path = `${v2SessionPath(threadId)}/permission/${encodeURIComponent(requestId)}/reply`;
+      // OpenCode v2 2.0.26 reads `decision`; earlier v2 builds read `reply`.
+      const result = await send("POST", path, { body: { decision, reply: decision }, signal });
+      if (!result.response.ok) throw failure("POST", path, result);
     },
   };
 
@@ -697,6 +878,71 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     }
   }
 
+  async function getThreadWaitingFor(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadWaitingFor> {
+    const pending = await (await transport(input?.signal)).requests(threadId, input?.signal);
+    // A permission blocks the run outright, so it is the one to surface.
+    return pending.permissions.length > 0 ? "permission" : pending.questions.length > 0 ? "question" : null;
+  }
+
+  /**
+   * Every open request of a thread: permissions first, since one blocks the
+   * run outright, then questions, each list in the engine's order.
+   */
+  async function readOpenRequests(threadId: string, signal?: AbortSignal) {
+    const engine = await transport(signal);
+    const rows = await engine.requests(threadId, signal);
+    const items: Array<{ pending: HeadlessThreadPending; form: PendingForm; sessionId: string }> = [];
+    // The session that asked, the thread or one of its helpers, takes the reply.
+    for (const row of rows.permissions) {
+      const pending = permissionPending(row);
+      if (pending) items.push({ pending, form: PLAIN_FORM, sessionId: row.sessionID ?? threadId });
+    }
+    for (const row of rows.questions) {
+      const question = engine.question([row]);
+      if (question) items.push({ pending: question.pending, form: question, sessionId: row.sessionID ?? threadId });
+    }
+    return { engine, items };
+  }
+
+  async function getThreadPendingItems(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending[]> {
+    const { items } = await readOpenRequests(threadId, input?.signal);
+    return items.slice(0, HEADLESS_THREAD_PENDING_ITEMS_MAX).map((item) => item.pending);
+  }
+
+  async function getThreadPending(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending | null> {
+    return (await readOpenRequests(threadId, input?.signal)).items[0]?.pending ?? null;
+  }
+
+  function refused(code: "stale_request" | "invalid_answer", message: string): never {
+    throw new HeadlessThreadError({ code, message, method: "POST", path: `${workspacePath}/answer`, status: 409, body: { code, message }, retryable: false });
+  }
+
+  async function answerThread(threadId: string, answer: HeadlessThreadAnswer, input?: { signal?: AbortSignal }): Promise<void> {
+    const { engine, items } = await readOpenRequests(threadId, input?.signal);
+    // Reply only to a request the person saw that is still open, whichever of them it is: anything else is stale.
+    const named = items.filter((item) => item.pending.requestId === answer.requestId);
+    const kind = answer.kind === "permission" ? "permission" : "question";
+    const open = named.find((item) => item.pending.kind === kind);
+    if (!open) {
+      if (answer.kind === "dismiss" && named.length > 0) refused("invalid_answer", "A permission can't be dismissed. Allow it once or reject it.");
+      return refused("stale_request", "That question or permission is no longer pending. Read the task again.");
+    }
+    if (answer.kind === "permission") {
+      await engine.replyPermission(open.sessionId, answer.requestId, answer.decision, input?.signal);
+      return;
+    }
+    if (answer.kind === "dismiss") {
+      // Also the only way from here to clear a step that takes no answer, such as one that opens a link.
+      await engine.rejectQuestion(open.sessionId, answer.requestId, input?.signal);
+      return;
+    }
+    if (open.pending.kind !== "question") return refused("stale_request", "That question is no longer pending.");
+    if (!open.form.answerable) refused("invalid_answer", "This step can't be answered from here.");
+    const refusal = answerRefusal(open.pending, answer.answers);
+    if (refusal) refused("invalid_answer", refusal);
+    await engine.replyQuestion(open.sessionId, answer.requestId, answer, open.form, input?.signal);
+  }
+
   async function abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult> {
     const accepted = await (await transport(input?.signal)).abort(threadId, input?.signal);
     return { threadId, accepted };
@@ -706,5 +952,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     return toTranscript(await getThreadSnapshot(threadId, input));
   }
 
-  return { createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, abortThread, exportTranscript };
+  return {
+    createThread, sendTurn, waitForThread, waitUntilIdle, getThreadSnapshot, getThreadWaitingFor, getThreadPending, getThreadPendingItems,
+    answerThread, abortThread, exportTranscript,
+  };
 }

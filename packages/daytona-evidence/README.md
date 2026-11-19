@@ -165,7 +165,7 @@ export OPENWORK_DAYTONA_EVIDENCE_REGION=us-west-3
 export OPENWORK_EVIDENCE_SOURCE_SHA="$(git rev-parse HEAD)"
 # Optional comparison pin: export OPENWORK_EVIDENCE_IMAGE_SHA=<full-dev-SHA>
 node scripts/prepare-evidence-web.ts && \
-  node evals/bin/evals.mjs specs/core-chat.e2e.test.ts --local --engine v1 --surface web --checkpoints
+  node evals/bin/evals.mjs core/core-chat.e2e.test.ts --local --engine v1 --surface web --checkpoints
 ```
 
 Do not proceed after failed preparation. `--local` places the test tools on the

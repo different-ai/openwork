@@ -11,7 +11,11 @@ import type { TelemetryDimensionInput } from "@openwork-ee/telemetry-contracts"
 
 export const ANALYTICS_TREND_WEEKS = 12
 
-const WEEK_SECONDS = 7 * 24 * 60 * 60
+/** Days in the daily trend, today included. */
+export const ANALYTICS_TREND_DAYS = 30
+
+const DAY_SECONDS = 24 * 60 * 60
+const WEEK_SECONDS = 7 * DAY_SECONDS
 
 type Db = ReturnType<typeof createDenDb>["db"]
 
@@ -102,6 +106,7 @@ export type WindowMetricsRow = {
   avgTaskDurationMs: number | null
 }
 export type WeeklyActivityRow = { week: number; activeMembers: number; sessions: number; tasksCompleted: number; tasksFailed: number }
+export type DailyActivityRow = { day: number; activeMembers: number; sessions: number; tasksCompleted: number; tasksFailed: number }
 export type WeeklyActiveMembersRow = { week: number; count: number }
 export type ModelDimensionUsageRow = {
   type: (typeof TelemetrySessionDimensionTable.$inferSelect)["dimension_type"]
@@ -140,10 +145,39 @@ export function weekIndexExpression(
   start: Date,
   eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp = TelemetryEventTable.event_timestamp,
 ): SQL<number> {
+  return bucketIndexExpression(start, WEEK_SECONDS, ANALYTICS_TREND_WEEKS, eventTimestamp)
+}
+
+/**
+ * SQL expression bucketing an event timestamp into a 0-based day index from
+ * `start`, which should be a UTC midnight so each bucket is one UTC calendar
+ * day. The last bucket is today so far; events stamped after now by a skewed
+ * client clock count today.
+ */
+export function dayIndexExpression(
+  start: Date,
+  eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp = TelemetryEventTable.event_timestamp,
+): SQL<number> {
+  return bucketIndexExpression(start, DAY_SECONDS, ANALYTICS_TREND_DAYS, eventTimestamp)
+}
+
+/** Start of the daily trend: UTC midnight `ANALYTICS_TREND_DAYS - 1` days before `now`. */
+export function dailyTrendStart(now: number): Date {
+  const today = new Date(now)
+  today.setUTCHours(0, 0, 0, 0)
+  return new Date(today.getTime() - (ANALYTICS_TREND_DAYS - 1) * DAY_SECONDS * 1000)
+}
+
+function bucketIndexExpression(
+  start: Date,
+  bucketSeconds: number,
+  bucketCount: number,
+  eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp,
+): SQL<number> {
   // Bind `start` exactly as the window's `event_timestamp >= ?` condition does.
   const startParam = sql.param(start, TelemetryEventTable.event_timestamp)
   const elapsedSeconds = sql`TIMESTAMPDIFF(SECOND, ${startParam}, ${eventTimestamp})`
-  return sql<number>`LEAST(FLOOR(${elapsedSeconds} / ${sql.raw(String(WEEK_SECONDS))}), ${sql.raw(String(ANALYTICS_TREND_WEEKS - 1))})`
+  return sql<number>`LEAST(FLOOR(${elapsedSeconds} / ${sql.raw(String(bucketSeconds))}), ${sql.raw(String(bucketCount - 1))})`
 }
 
 /** Org activity metrics since `since`, optionally narrowed to one session dimension. */
@@ -170,7 +204,31 @@ export function selectWindowMetrics(db: Db, orgId: TelemetryOrgId, since: Date, 
  * against every event in the window — about 9x slower for one project.
  */
 export function selectWeeklyActivity(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null): PromiseLike<WeeklyActivityRow[]> {
-  const windowEvents = db
+  const windowEvents = selectWindowEvents(db, orgId, start, filter)
+  const week = weekIndexExpression(start, windowEvents.eventTimestamp)
+  return db
+    .select({ week, ...bucketActivitySelection(windowEvents) })
+    .from(windowEvents)
+    .groupBy(week)
+    .orderBy(week)
+}
+
+/**
+ * Per-UTC-day active members, sessions and task outcomes since `start` (see
+ * `dayIndexExpression` and `dailyTrendStart`). Same plan as `selectWeeklyActivity`.
+ */
+export function selectDailyActivity(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null): PromiseLike<DailyActivityRow[]> {
+  const windowEvents = selectWindowEvents(db, orgId, start, filter)
+  const day = dayIndexExpression(start, windowEvents.eventTimestamp)
+  return db
+    .select({ day, ...bucketActivitySelection(windowEvents) })
+    .from(windowEvents)
+    .groupBy(day)
+    .orderBy(day)
+}
+
+function selectWindowEvents(db: Db, orgId: TelemetryOrgId, start: Date, filter: DimensionFilter | null) {
+  return db
     .select({
       eventTimestamp: sql<Date>`${TelemetryEventTable.event_timestamp}`.as("window_event_timestamp"),
       memberId: sql<string>`${TelemetryEventTable.member_id}`.as("window_member_id"),
@@ -181,19 +239,15 @@ export function selectWeeklyActivity(db: Db, orgId: TelemetryOrgId, start: Date,
     .where(and(...telemetryWindowConditions(orgId, start, filter)))
     .limit(Number.MAX_SAFE_INTEGER)
     .as("window_events")
+}
 
-  const week = weekIndexExpression(start, windowEvents.eventTimestamp)
-  return db
-    .select({
-      week,
-      activeMembers: sql<number>`count(distinct ${windowEvents.memberId})`,
-      sessions: sql<number>`count(distinct ${windowEvents.sessionId})`,
-      tasksCompleted: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.completed'), 0)`,
-      tasksFailed: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.failed'), 0)`,
-    })
-    .from(windowEvents)
-    .groupBy(week)
-    .orderBy(week)
+function bucketActivitySelection(windowEvents: ReturnType<typeof selectWindowEvents>) {
+  return {
+    activeMembers: sql<number>`count(distinct ${windowEvents.memberId})`,
+    sessions: sql<number>`count(distinct ${windowEvents.sessionId})`,
+    tasksCompleted: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.completed'), 0)`,
+    tasksFailed: sql<number>`coalesce(sum(${windowEvents.eventType} = 'task.failed'), 0)`,
+  }
 }
 
 /** Per-week active members since `start` (see `weekIndexExpression`). */

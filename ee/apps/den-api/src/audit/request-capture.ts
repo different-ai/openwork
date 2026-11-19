@@ -75,6 +75,14 @@ type AuditRequestState = {
 
 const logger = appLogger.child({ component: "audit_request" })
 const requestStore = new AsyncLocalStorage<AuditRequestState>()
+/**
+ * Change capture of a background job operation (jobRunId binding), for job
+ * code that runs domain services or route handlers outside any request (the
+ * config-blob apply: src/config-blobs/service.ts). Read by auditChangeCapture
+ * for a context with no request state and by currentAuditChangeCapture when
+ * there is no enclosing request; a real request's own capture always wins.
+ */
+const jobChangeCaptureStore = new AsyncLocalStorage<{ capture: AuditChangeCapture | null }>()
 // Keyed by the Hono Context object: route middleware, handlers and the global
 // middleware of one request share it, while a nested app.fetch gets its own.
 const states = new WeakMap<object, AuditRequestState>()
@@ -253,11 +261,29 @@ export function currentAuditRequestId(): string | null {
  */
 export function currentAuditChangeCapture(organizationId?: string): AuditChangeCapture | null {
   const state = requestStore.getStore()
-  const capture = state ? changeCaptureOf(state) : null
+  const capture = state ? changeCaptureOf(state) : jobChangeCapture()
   if (!capture || organizationId === undefined) return capture
   return safeOrganizationId(organizationId) === capture.context.organizationId ? capture : null
 }
 
+
+/**
+ * Runs background job work with `capture` as its change capture: every domain
+ * change the services it calls append (appendAuditChanges / appendDomainChanges)
+ * joins the job's operation instead of being lost or written as a legacy row.
+ * `capture` must carry `jobRunId` and requestId null; pass null when capture
+ * (or its change category) is off, so emitters fall back to legacy rows exactly
+ * as they do for an uncaptured request.
+ */
+export function runWithAuditJobChangeCapture<T>(capture: AuditChangeCapture | null, fn: () => Promise<T>): Promise<T> {
+  if (capture && (!capture.context.jobRunId || capture.context.requestId !== null)) throw new AuditLogError("audit_invalid_input")
+  return jobChangeCaptureStore.run({ capture }, fn)
+}
+
+function jobChangeCapture(): AuditChangeCapture | null {
+  const capture = jobChangeCaptureStore.getStore()?.capture ?? null
+  return capture && capture.policy.categories.includes("change") ? { context: { ...capture.context }, policy: capture.policy } : null
+}
 
 function changeCaptureOf(state: AuditRequestState): AuditChangeCapture | null {
   const capture = state.capture
@@ -550,7 +576,9 @@ export function currentAuditRequestKey(): object | null {
 /** Domain change evidence for the current request, or null when capture/change category is off. */
 export function auditChangeCapture(c: Context): AuditChangeCapture | null {
   const state = stateFor(c)
-  return state ? changeCaptureOf(state) : null
+  // A context built outside a request (a job running route handlers) has no
+  // request state: the job's operation capture, when one is active.
+  return state ? changeCaptureOf(state) : jobChangeCapture()
 }
 
 export type AuditChangeEventInput = Omit<AuditEventInput, "category" | "outcome"> & Partial<Pick<AuditEventInput, "category" | "outcome">>

@@ -3,9 +3,13 @@ import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { runnerEnginePolicySchema } from "@openwork/types/automations"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
+import { cloudRuntimeAvailable, getCloudRuntime } from "../../workers/cloud-runtime.js"
+import { appLogger } from "../../observability/logger.js"
+import { workerHasOpenOfficeSession } from "../../documents-office-store.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -24,6 +28,7 @@ const workerHeartbeatResponseSchema = z.object({
   openSessionCount: z.number().int().nullable(),
   lastHeartbeatAt: z.string().datetime(),
   lastActiveAt: z.string().datetime().nullable(),
+  enginePolicy: runnerEnginePolicySchema,
 }).meta({ ref: "WorkerHeartbeatResponse" })
 
 export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteVariables }>(app: Hono<T>) {
@@ -114,8 +119,22 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
       })
       .where(eq(WorkerTable.id, workerId))
 
+    const now = Date.now()
+    const recentWork = Boolean(body.isActiveRecently && activityAt && now - activityAt.getTime() <= 120_000 && activityAt.getTime() <= now + 30_000)
+    // Office editing reaches the worker through the preview proxy, which does
+    // not reset the VM's own auto-pause timer; an open editor counts as work.
+    if (cloudRuntimeAvailable() && (recentWork || await workerHasOpenOfficeSession(workerId).catch(() => false))) {
+      await getCloudRuntime().recordActivity(workerId).catch(() => {
+        appLogger.warn("Could not refresh active computer idle timer", { worker_id: workerId })
+      })
+    }
+
+    // Older worker binaries still read this field; migration is no longer a rollout.
+    const enginePolicy = { upgrade: true }
+    c.header("Cache-Control", "no-store")
     return c.json({
       ok: true,
+      enginePolicy,
       workerId,
       isActiveRecently: body.isActiveRecently,
       openSessionCount: body.openSessionCount ?? null,

@@ -11,7 +11,7 @@ import {
   officeKindFromMimeOrFilename,
   type OfficeKind,
 } from "@openwork/workbook";
-import { openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
+import { openWorkspaceFileForReading, openWorkspaceFileForWriting } from "../workspace-file-identity.js";
 
 const MATERIALIZED_DIR = join(".opencode", "openwork", "inbox", "chat-attachments");
 

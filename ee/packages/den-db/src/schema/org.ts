@@ -20,6 +20,8 @@ export const DesktopHandoffGrantTable = mysqlTable(
   ],
 )
 
+// Unused since install pages stopped carrying tokens. Kept until a follow-up
+// migration drops it, so this release can still be rolled back.
 export const DesktopConnectGrantTable = mysqlTable(
   "desktop_connect_grant",
   {
@@ -96,6 +98,12 @@ export const MemberTable = mysqlTable(
      * removed when the workspace is claimed or expires.
      */
     isSetupAgent: boolean("is_setup_agent").notNull().default(false),
+    /**
+     * Whether this person (or pending invitation) has OpenWork Web. Web is
+     * billed per member with it on, and only they can use a Web computer.
+     * On by default, so every member keeps Web until an admin turns it off.
+     */
+    openworkWeb: boolean("openwork_web").notNull().default(true),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (table) => [
@@ -130,6 +138,8 @@ export const InvitationTable = mysqlTable(
     index("invitation_team_id").on(table.teamId),
     index("invitation_inviter_id").on(table.inviterId),
     index("invitation_org_member_id").on(table.orgMemberId),
+    // Time window for the admin Control Center's invitation counts.
+    index("invitation_created_at").on(table.createdAt),
     uniqueIndex("invitation_invite_token").on(table.inviteToken),
   ],
 )
@@ -215,6 +225,8 @@ export const WorkspaceClaimCodeTable = mysqlTable(
   ],
 )
 
+// Unused since install pages stopped carrying tokens. Kept until a follow-up
+// migration drops it, so this release can still be rolled back.
 export const InstallLinkTable = mysqlTable(
   "install_link",
   {

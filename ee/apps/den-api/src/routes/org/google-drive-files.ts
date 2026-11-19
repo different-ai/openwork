@@ -1,10 +1,16 @@
 import { Hono, type Context } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { GOOGLE_DRIVE_EXPORT_FORMATS, GOOGLE_DRIVE_PULL_CHUNK_BYTES, GOOGLE_DRIVE_PULL_MAX_BYTES } from "@openwork/types/google-drive-upload"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
+import { resolvePublicApiBaseUrl } from "../../capability-sources/generic-oauth.js"
+import { signLink, verifyLink } from "../../capability-sources/signed-links.js"
 import { env } from "../../env.js"
-import { cloudTransportReadRoute, paramValidator, queryValidator } from "../../middleware/index.js"
+import { cloudTransportReadRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { getOrganizationContextForUser } from "../../orgs.js"
+import { readInternalCapabilityConnectorId } from "../../session.js"
 import { readGoogleActionJson, requestGoogleAction, type GoogleWorkspaceActionDependencies } from "./google-workspace-actions.js"
 import type { OrgRouteVariables } from "./shared.js"
 
@@ -17,6 +23,9 @@ const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const DRIVE_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
 // Streams are relayed at the client's pace, so they outlive the 30 s Google API budget; a client disconnect still stops them.
 const DRIVE_STREAM_TIMEOUT_MS = 10 * 60 * 1000
+// Short-lived like other agents' file download URLs (OpenAI's last about five minutes); a download in progress continues.
+const DOWNLOAD_LINK_TTL_SECONDS = 5 * 60
+const DOWNLOAD_LINK_DOMAIN = "openwork.google-drive.download-link.v1"
 const FILE_FIELDS = "id,name,mimeType,size,md5Checksum,headRevisionId,version,modifiedTime,webViewLink,parents,trashed,shortcutDetails(targetId)"
 
 const driveIdSchema = z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/)
@@ -63,6 +72,14 @@ export const driveDownloadSchema = z.object({
 
 const downloadInfoSchema = z.object({ ok: z.literal(true), file: driveDownloadFileSchema, download: driveDownloadSchema })
   .meta({ ref: "GoogleDriveDownloadInfo" })
+const downloadLinkSchema = downloadInfoSchema.extend({
+  downloadUrl: z.string().url().describe("Secret bearer URL for this one file, valid for five minutes. Do not print, share, log or persist it."),
+  expiresAt: z.string().datetime(),
+  resourceLink: z.object({
+    type: z.literal("resource_link"), uri: z.string().url(), name: z.string(), mimeType: z.string(), size: z.number().int().optional(),
+  }).describe("The same download as an MCP resource link."),
+  instructions: z.string(),
+}).meta({ ref: "GoogleDriveDownloadLink" })
 const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 type DriveContext = Pick<Context<{ Variables: OrgRouteVariables }>, "get" | "json" | "req" | "header" | "body">
@@ -91,7 +108,7 @@ function streaming(dependencies: GoogleWorkspaceActionDependencies): GoogleWorks
   }
 }
 
-function selected(dependencies: GoogleWorkspaceActionDependencies, connectionId: string | undefined): GoogleWorkspaceActionDependencies {
+function selected(dependencies: GoogleWorkspaceActionDependencies, connectionId: string | null | undefined): GoogleWorkspaceActionDependencies {
   return connectionId === undefined ? dependencies : {
     ...dependencies,
     token: (identity) => dependencies.token({ ...identity, connectionId }),
@@ -204,7 +221,20 @@ async function streamDriveContent(
   return c.body(capped(upstream.body, range ? GOOGLE_DRIVE_PULL_CHUNK_BYTES : GOOGLE_DRIVE_PULL_MAX_BYTES), upstream.status === 206 ? 206 : 200, headers)
 }
 
-/** Drive file downloads for host file transport; bytes never enter tool results. */
+const downloadLinkPayloadSchema = z.object({
+  v: z.literal(1), o: z.string(), u: z.string(), m: z.string(), c: z.string().nullable(),
+  f: driveIdSchema, x: z.string().nullable(), e: z.number().int(),
+})
+
+function signDownloadLink(payload: z.infer<typeof downloadLinkPayloadSchema>) {
+  return signLink(DOWNLOAD_LINK_DOMAIN, payload)
+}
+
+function verifyDownloadLink(token: string) {
+  return verifyLink(DOWNLOAD_LINK_DOMAIN, token, downloadLinkPayloadSchema)
+}
+
+/** Drive file downloads for host file transport and shell clients; bytes never enter tool results. */
 export function registerGoogleDriveFileRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, dependencies: GoogleWorkspaceActionDependencies) {
   const app = new Hono<{ Variables: OrgRouteVariables }>()
   const fileParams = z.object({ fileId: driveIdSchema })
@@ -245,6 +275,62 @@ export function registerGoogleDriveFileRoutes<T extends { Variables: OrgRouteVar
     const { fileId } = c.req.valid("param")
     const { format, connectionId } = c.req.valid("query")
     return streamDriveContent(c, selected(dependencies, connectionId), fileId, format, c.req.header("range"))
+  })
+
+  app.post("/v1/capabilities/google-workspace/drive-download-links", describeRoute({
+    operationId: "createGoogleDriveDownloadLink", tags: ["Capability Sources"],
+    summary: "Create a five-minute download link for one Google Drive file, for clients with a shell",
+    description: "For clients without OpenWork host file transport but with a shell, such as a Workbot computer or a coding agent. Download with curl into a file instead of reading the file into context; Docs, Sheets and Slides export to Office formats by default. To save edits back, prepare createGoogleDriveUploadSession with fileId and this revision as baseRevision. Uses the selected connection.",
+    responses: { 200: jsonResponse("Short-lived bearer download URL, as JSON and as an MCP resource link, with the file's revision; no file content.", downloadLinkSchema), ...commonErrors },
+  }), orgMemberRoute(), jsonValidator(z.object({ fileId: driveIdSchema, format: formatSchema }).strict()), async (c) => {
+    const context = c.get("organizationContext")
+    if (!context) return c.json({ error: "unauthorized", message: "Sign in to an organization first." }, 401)
+    const { fileId, format } = c.req.valid("json")
+    const connectionId = readInternalCapabilityConnectorId(c.req.raw.headers)
+    const described = await describeDriveDownload(c, selected(dependencies, connectionId ?? undefined), fileId, format)
+    if (!described.ok) return described.reply
+    const expires = Math.floor(Date.now() / 1000) + DOWNLOAD_LINK_TTL_SECONDS
+    const token = signDownloadLink({
+      v: 1, o: context.organization.id, u: context.currentMember.userId, m: context.currentMember.id,
+      c: connectionId, f: described.file.id, x: described.download.format, e: expires,
+    })
+    // In the query, which request traces strip, rather than the path they keep.
+    const downloadUrl = `${resolvePublicApiBaseUrl(c.req.raw, env.apiPublicUrl)}/v1/direct-downloads/google-workspace/drive-link?token=${token}`
+    const name = `${described.file.name}${described.download.extension && !described.file.name.toLowerCase().endsWith(described.download.extension) ? described.download.extension : ""}`
+    c.header("cache-control", "no-store")
+    return c.json({
+      ok: true, file: described.file, download: described.download, downloadUrl, expiresAt: new Date(expires * 1000).toISOString(),
+      resourceLink: { type: "resource_link", uri: downloadUrl, name, mimeType: described.download.mimeType, ...(described.download.size === null ? {} : { size: described.download.size }) },
+      instructions: `Save it straight to a file, for example: curl -fsSL -o 'drive-download' '<downloadUrl>'. Choose a local output path you control; treat the Drive filename as data, never as shell code. Check the size${described.file.md5Checksum ? " and md5" : ""} against this result. Work on the file with shell tools, then save edits back with createGoogleDriveUploadSession (fileId, baseRevision: "${described.file.revision ?? ""}").`,
+    })
+  })
+
+  app.get("/v1/direct-downloads/google-workspace/drive-link", describeRoute({
+    operationId: "downloadGoogleDriveFileByLink", tags: ["Direct uploads"], security: [],
+    summary: "Download one Google Drive file with a short-lived link",
+    description: "The signed link names one member, connection, file and format and expires after five minutes. The member's current organization access and Google connection are checked again on every download.",
+    responses: {
+      200: { description: "File bytes.", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+      404: jsonResponse("Unknown or expired link.", errorSchema),
+      ...commonErrors,
+    },
+  }), tokenRoute, queryValidator(z.object({ token: z.string().min(1).max(2048) }).strict()), async (c) => {
+    const payload = verifyDownloadLink(c.req.valid("query").token)
+    if (!payload) return c.json({ error: "not_found", message: "This download link is unknown or expired. Create a new one." }, 404)
+    const context = await getOrganizationContextForUser({
+      userId: normalizeDenTypeId("user", payload.u),
+      organizationId: normalizeDenTypeId("organization", payload.o),
+    })
+    if (!context || context.currentMember.id !== payload.m) {
+      return c.json({ error: "not_found", message: "This download link is unknown or expired. Create a new one." }, 404)
+    }
+    const attribution = auditSessionUserAttribution(payload.u, payload.m)
+    if (attribution) {
+      const audited = await attributeAuditRequest(c, { organizationId: payload.o, ...attribution, origin: "mcp" })
+      if (!audited.ok) return audited.response
+    }
+    c.set("organizationContext", context)
+    return streamDriveContent(c, selected(dependencies, payload.c), payload.f, payload.x ?? undefined, c.req.header("range"))
   })
 
   routeApp.route("/", app)

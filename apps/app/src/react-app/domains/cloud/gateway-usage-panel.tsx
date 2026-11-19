@@ -18,7 +18,12 @@ import {
   gatewayPeriodPossessives,
 } from "./gateway-usage-state";
 import { useGatewayUsage } from "./use-gateway-usage";
+import { GatewayMemberUsageSections, UsageSettingsSection } from "./gateway-member-usage-section";
 import { gatewayApprovalKey, useGatewayApprovalDismissals } from "./gateway-usage-approval-store";
+import { UsageLimitCard, UsageLimitLocked, useUsageLimitViewer } from "./usage-limit-card";
+import { denDashboardUrl } from "@/app/lib/den-dashboard-links";
+import { openAlternativeModelPicker } from "@/app/lib/inference-access";
+import { usePlatform } from "@/react-app/kernel/platform";
 
 export const GATEWAY_USAGE_SETTINGS_PATH = "/settings/usage";
 
@@ -40,7 +45,8 @@ function longestBlock(buckets: GatewayUsageBucket[]) {
   return [...buckets].sort((a, b) => Date.parse(b.resetAt) - Date.parse(a.resetAt))[0];
 }
 
-function UsageCard({ icon, title, detail, actions, children, testId }: {
+/** The notice card above the composer: what is true, one line of detail, its actions, and an optional inline form. */
+export function ComposerNoticeCard({ icon, title, detail, actions, children, testId }: {
   icon: ReactNode; title: ReactNode; detail?: ReactNode; actions?: ReactNode; children?: ReactNode; testId?: string;
 }) {
   return (
@@ -82,16 +88,22 @@ export function GatewayIncreaseForm({ pending, error, onSubmit, onCancel }: {
   );
 }
 
-export function GatewayUsageNotice({ state, status, stale, providerName = null, canSwitchProvider = false }: {
+export function GatewayUsageNotice({ state, status, stale, providerName = null, canSwitchProvider = false, sessionId, messageSaved = false }: {
   state: "blocked" | "over_limit"; status: GatewayUsageStatus; stale: boolean;
   /** Set when the selected model's provider has its own limit. */
   providerName?: string | null;
   /** Another provider the member has still has room. */
   canSwitchProvider?: boolean;
+  /** The conversation whose model picker "Use another model" opens. */
+  sessionId?: string;
+  /** A refused message is kept in the conversation. */
+  messageSaved?: boolean;
 }) {
   const navigate = useNavigate();
+  const platform = usePlatform();
   const usage = useGatewayUsage(true);
   const [asking, setAsking] = useState(false);
+  const viewer = useUsageLimitViewer();
   const buckets = status.buckets.filter((bucket) => exhausted(bucket) && (state !== "blocked" || bucket.hardLimit));
   const bucket = longestBlock(buckets);
   if (!bucket) return null;
@@ -102,7 +114,7 @@ export function GatewayUsageNotice({ state, status, stale, providerName = null, 
 
   if (state === "over_limit") {
     return (
-      <UsageCard testId="gateway-usage-notice" icon={<Gauge />}
+      <ComposerNoticeCard testId="gateway-usage-notice" icon={<Gauge />}
         title={`${formatGatewayMoney(bucket.usedMicroUsd - bucket.allowanceMicroUsd)} over ${gatewayPeriodPossessives[bucket.timeframe]} ${formatGatewayMoney(bucket.allowanceMicroUsd)}${forProvider}`}
         detail={staleNote ?? <>You can keep working. <GatewayResetTime value={bucket.resetAt} /></>}
         actions={seeUsage} />
@@ -112,7 +124,7 @@ export function GatewayUsageNotice({ state, status, stale, providerName = null, 
   const pendingBucket = buckets.find((item) => item.resetRequestStatus === "pending");
   if (pendingBucket) {
     return (
-      <UsageCard testId="gateway-usage-notice" icon={<Clock />}
+      <ComposerNoticeCard testId="gateway-usage-notice" icon={<Clock />}
         title={`Asked for ${formatGatewayMoney(gatewayIncreaseMicroUsd(pendingBucket))} more ${gatewayPeriodLabels[pendingBucket.timeframe].toLowerCase()}${forProvider}`}
         detail={staleNote ?? <>Waiting for an admin{switchNote ? "." : null}{switchNote}</>}
         actions={seeUsage} />
@@ -123,7 +135,7 @@ export function GatewayUsageNotice({ state, status, stale, providerName = null, 
   const amount = askable ? formatGatewayMoney(gatewayIncreaseMicroUsd(askable)) : null;
   if (asking && askable && amount) {
     return (
-      <UsageCard testId="gateway-usage-notice" icon={<LockKeyhole />}
+      <ComposerNoticeCard testId="gateway-usage-notice" icon={<LockKeyhole />}
         title={`Ask for ${amount} more ${gatewayPeriodLabels[askable.timeframe].toLowerCase()}${forProvider}`}
         detail="An admin reviews it">
         <div className="ps-7">
@@ -131,17 +143,21 @@ export function GatewayUsageNotice({ state, status, stale, providerName = null, 
             onCancel={() => { usage.reset.reset(); setAsking(false); }}
             onSubmit={(reason) => usage.reset.mutate({ bucketId: askable.id, reason }, { onSuccess: () => setAsking(false) })} />
         </div>
-      </UsageCard>
+      </ComposerNoticeCard>
     );
   }
 
+  // The shared usage-limit card: admins raise the budget, members ask for more, everyone can switch models.
   return (
-    <UsageCard testId="gateway-usage-notice" icon={<LockKeyhole />}
+    <UsageLimitCard testId="gateway-usage-notice" kind="gateway_budget" saved={messageSaved}
       title={`You’ve used ${gatewayPeriodPossessives[bucket.timeframe]} ${formatGatewayMoney(bucket.allowanceMicroUsd)}${forProvider}`}
-      detail={staleNote ?? <><GatewayResetTime value={bucket.resetAt} />{askable ? (switchNote ? "." : null) : ". An admin can raise it."}{switchNote}</>}
+      reset={staleNote ?? <><GatewayResetTime value={bucket.resetAt} />{switchNote}</>}
       actions={<>
+        {viewer.canBuy ? <Button size="sm" onClick={() => platform.openLink(denDashboardUrl(viewer.denBaseUrl, "gatewayLimits"))}>Raise budget</Button>
+          : askable && amount ? <Button size="sm" disabled={stale} onClick={() => { usage.reset.reset(); setAsking(true); }}>Ask for {amount} more</Button>
+            : <UsageLimitLocked label="Ask an admin for more" reason="An admin can raise your budget" />}
+        {sessionId ? <Button size="sm" variant="ghost" onClick={() => openAlternativeModelPicker(sessionId)}>Use another model</Button> : null}
         {seeUsage}
-        {askable && amount ? <Button size="sm" disabled={stale} onClick={() => { usage.reset.reset(); setAsking(true); }}>Ask for {amount} more</Button> : null}
       </>} />
   );
 }
@@ -162,7 +178,7 @@ export function GatewayUsageApprovalNotice() {
   const [first] = approved;
   return (
     <div role="status">
-      <UsageCard testId="gateway-usage-approved-notice" icon={<CheckCircle2 className="text-green-11" />}
+      <ComposerNoticeCard testId="gateway-usage-approved-notice" icon={<CheckCircle2 className="text-green-11" />}
         title={`You got ${formatGatewayMoney(first.extensionMicroUsd)} more ${gatewayPeriodLabels[first.timeframe].toLowerCase()}`}
         detail={<>{formatGatewayMoney(first.allowanceMicroUsd)} for {gatewayPeriodLabels[first.timeframe].toLowerCase()}, <GatewayResetTime value={first.resetAt} midSentence /></>}
         actions={<Button size="sm" variant="ghost" className="text-muted-foreground" aria-label="Dismiss usage increase approval" onClick={() => dismiss(approved.map((bucket) => gatewayApprovalKey(JSON.stringify([scopeKey, bucket.extensionMicroUsd]), bucket)))}>Dismiss</Button>} />
@@ -198,18 +214,6 @@ export function GatewayUsageMenuItem() {
         </span>
       ))}
     </DropdownMenuItem>
-  );
-}
-
-function SettingsSection({ title, detail, children, testId }: { title: string; detail?: string; children: ReactNode; testId?: string }) {
-  return (
-    <section aria-label={title} data-testid={testId} className="flex flex-col gap-2.5">
-      <div className="flex flex-col gap-0.5">
-        <h2 className="text-[13px] font-semibold text-foreground">{title}</h2>
-        {detail ? <p className="text-xs text-muted-foreground">{detail}</p> : null}
-      </div>
-      <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-background">{children}</div>
-    </section>
   );
 }
 
@@ -314,19 +318,19 @@ export function GatewayUsageSettingsView({ onOpenAccount }: { onOpenAccount: () 
         </p>
       ) : null}
       {!groups.length ? (
-        <SettingsSection title="Your limits">
+        <UsageSettingsSection title="Your limits">
           <div className="flex items-center justify-between px-3.5 py-3 text-[13px]"><span className="text-foreground">No limit</span></div>
-        </SettingsSection>
+        </UsageSettingsSection>
       ) : groups.map((group) => (
-        <SettingsSection key={group.key}
+        <UsageSettingsSection key={group.key}
           testId={group.providerName === null ? "gateway-usage-default-limit" : "gateway-usage-provider-limit"}
           title={!labelled ? "Your limits" : group.providerName ?? "Default"}
           detail={!labelled ? "Set by your organization" : group.providerName === null ? "For providers without their own limit" : `Only ${group.providerName} models count here`}>
           {group.buckets.map((bucket) => <LimitRow key={bucket.id} bucket={bucket} />)}
-        </SettingsSection>
+        </UsageSettingsSection>
       ))}
       {requestable.length ? (
-        <SettingsSection title="More usage" detail="Each approval adds 25% of your base allowance">
+        <UsageSettingsSection title="More usage" detail="Each approval adds 25% of your base allowance">
           {requestable.map(({ bucket, providerName }) => (
             <RequestRow key={bucket.id} bucket={bucket} providerName={providerName} asking={askingId === bucket.id}
               pending={usage.reset.isPending} error={usage.reset.isError} disabled={usage.query.isError || usage.reset.isPending}
@@ -334,10 +338,15 @@ export function GatewayUsageSettingsView({ onOpenAccount }: { onOpenAccount: () 
               onCancel={() => { usage.reset.reset(); setAskingId(null); }}
               onSubmit={(reason) => usage.reset.mutate({ bucketId: bucket.id, reason }, { onSuccess: () => setAskingId(null) })} />
           ))}
-        </SettingsSection>
+        </UsageSettingsSection>
       ) : null}
       <TechnicalDetails status={status} />
     </>
   );
-  return <div data-testid="gateway-usage-settings" className="flex w-full max-w-3xl flex-col gap-8">{content}</div>;
+  return (
+    <div data-testid="gateway-usage-settings" className="flex w-full max-w-3xl flex-col gap-8">
+      {content}
+      {usage.authorized ? <GatewayMemberUsageSections /> : null}
+    </div>
+  );
 }

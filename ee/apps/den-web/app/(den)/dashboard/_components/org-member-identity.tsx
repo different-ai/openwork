@@ -1,4 +1,5 @@
 import { getOrgAccessFlags, type DenOrgMember } from "../../_lib/den-org";
+import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
 
 function getInitials(name: string) {
   return name
@@ -20,9 +21,11 @@ export function OrgMemberIdentity({
 }) {
   const access = getOrgAccessFlags(member.role, member.isOwner);
   const roleBadge = access.isOwner
-    ? "Owner"
-    : access.canonicalRole === "admin"
-      ? "Admin"
+    ? BUILT_IN_ROLES.owner.label
+    : access.isSuperAdmin
+      ? BUILT_IN_ROLES["super-admin"].label
+      : access.canonicalRole === "admin"
+      ? BUILT_IN_ROLES.admin.label
       : null;
   const isInvited = !member.joinedAt;
   const name = compact && (isInvited || !member.user.name || member.user.name === member.user.email)

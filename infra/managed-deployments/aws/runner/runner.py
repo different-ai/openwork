@@ -7,9 +7,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 import time
 import urllib.request
+from urllib.parse import urlsplit
 import zipfile
 
 # No third-party Python packages: AWS calls go through the AWS CLI that ships
@@ -31,7 +34,7 @@ STEPS = [(3, "account_verified", "runner_failed"), (4, "infrastructure_applied",
 PROTECTED_TYPES = {
     "aws_db_instance", "aws_db_subnet_group", "aws_secretsmanager_secret", "aws_secretsmanager_secret_version",
     "aws_elasticache_replication_group", "aws_efs_file_system", "aws_s3_bucket", "aws_kms_key", "aws_vpc",
-    "random_password",
+    "random_password", "aws_backup_vault", "aws_backup_plan", "aws_backup_selection",
 }
 
 
@@ -78,8 +81,121 @@ def terraform_inputs():
         "control_plane_origin": os.environ["CONTROL_PLANE_ORIGIN"], "size": os.environ.get("SIZE", "small"),
         "region": os.environ["AWS_REGION"], "account_id": os.environ["EXPECTED_ACCOUNT_ID"],
         "route53_zone_id": os.environ["ROUTE53_ZONE_ID"],
+        "managed_runtime_profile": managed_runtime_profile(),
         **network_inputs(),
+        **assistant_inputs(),
     }
+
+
+def boolean_input(name):
+    value = os.environ.get(name, "false")
+    if value not in ("true", "false"):
+        raise ValueError("invalid installer boolean: " + name)
+    return value == "true"
+
+
+def customer_secret_arn(name, required=False):
+    """Accept a reference only. Neither Terraform nor this process reads its value."""
+    value = os.environ.get(name, "")
+    prefix = f'arn:aws:secretsmanager:{os.environ["AWS_REGION"]}:{os.environ["EXPECTED_ACCOUNT_ID"]}:secret:'
+    if (required and not value) or (value and (
+            not value.startswith(prefix) or not re.fullmatch(r"[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}", value[len(prefix):]))):
+        raise ValueError("a same-account, same-region Secrets Manager ARN is required: " + name)
+    return value
+
+
+def managed_runtime_profile():
+    profile = os.environ.get("MANAGED_RUNTIME_PROFILE", "legacy")
+    if profile not in ("legacy", "gateway"):
+        raise ValueError("unsupported managed runtime profile")
+    return profile
+
+
+def assistant_inputs():
+    gateway = managed_runtime_profile() == "gateway"
+    enabled = gateway or boolean_input("HEADLESS_RUNNER_ENABLED")
+    workbot = gateway or boolean_input("WORKBOT_ENABLED")
+    slack = gateway or boolean_input("SLACK_ASSISTANT_ENABLED")
+    provider = os.environ.get("HEADLESS_COMPUTER_PROVIDER", "off")
+    if provider not in ("off", "daytona", "freestyle"):
+        raise ValueError("unsupported managed computer provider")
+    if not enabled:
+        if workbot or slack or provider != "off":
+            raise ValueError("Workbot, Slack and computers require the managed runner")
+        return {}
+    computer_secret = customer_secret_arn("HEADLESS_COMPUTER_SECRET_ARN", required=provider != "off") if provider != "off" or not gateway else ""
+    values = {
+        "headless_runner": {"enabled": True},
+        "workbot": {"enabled": workbot},
+        "slack_assistant_enabled": slack,
+        "headless_computer": {"provider": provider},
+        "headless_computer_secret_arn": computer_secret,
+    }
+    if gateway:
+        # Providers and member model access are configured in the customer's Den.
+        # Legacy upstream fields never cross into Gateway-profile Terraform inputs.
+        values["managed_runtime_profile"] = "gateway"
+    else:
+        protocol = os.environ.get("HEADLESS_MODEL_PROTOCOL", "anthropic")
+        if protocol not in ("anthropic", "openai", "openai-responses"):
+            raise ValueError("unsupported direct model protocol")
+        base_url = os.environ.get("HEADLESS_MODEL_BASE_URL", "")
+        parsed = urlsplit(base_url)
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.query or parsed.fragment):
+            raise ValueError("the direct model endpoint must be an HTTPS URL without credentials or a query")
+        model = os.environ.get("HEADLESS_MODEL", "")
+        if not model or len(model) > 200 or any(ord(c) < 32 for c in model):
+            raise ValueError("a direct model id is required")
+        values["headless_runner"].update({"model_protocol": protocol, "model_base_url": base_url, "model": model})
+        values["headless_model_secret_arn"] = customer_secret_arn("HEADLESS_MODEL_SECRET_ARN", required=True)
+    if provider == "daytona":
+        snapshot = os.environ.get("HEADLESS_COMPUTER_SNAPSHOT", "")
+        if not snapshot or len(snapshot) > 512 or any(ord(c) < 32 for c in snapshot):
+            raise ValueError("Daytona computers require a snapshot")
+        api_url = os.environ.get("DAYTONA_API_URL", "https://app.daytona.io/api")
+        parsed_api = urlsplit(api_url)
+        if (parsed_api.scheme != "https" or not parsed_api.hostname or parsed_api.username is not None
+                or parsed_api.password is not None or parsed_api.query or parsed_api.fragment):
+            raise ValueError("the Daytona API endpoint must use HTTPS without credentials or a query")
+        target = os.environ.get("DAYTONA_TARGET", "us")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", target):
+            raise ValueError("invalid Daytona target")
+        values["headless_computer"]["snapshot"] = snapshot
+        values["daytona"] = {"api_url": api_url, "target": target}
+    return values
+
+
+AWS_IMAGE_REPOSITORIES = {
+    "den_api": "ghcr.io/different-ai/openwork-den-api",
+    "den_web": "ghcr.io/different-ai/openwork-den-web",
+    "headless_runner": "ghcr.io/different-ai/openwork-headless-runner",
+    "workbot": "ghcr.io/different-ai/openwork-workbot",
+    "ai_gateway": "ghcr.io/different-ai/openwork-inference",
+}
+
+
+def release_images(release, assistants_enabled=False, runtime_profile="legacy"):
+    """Retain legacy inventories; Gateway requires the complete five pinned images."""
+    if isinstance(assistants_enabled, str):
+        runtime_profile = assistants_enabled
+        assistants_enabled = runtime_profile == "gateway"
+    if runtime_profile not in ("legacy", "gateway") or not isinstance(assistants_enabled, bool):
+        raise ValueError("invalid AWS release runtime profile")
+    images = release.get("images", {})
+    core = {"den_api", "den_web"}
+    legacy_assistants = core | {"headless_runner", "workbot"}
+    complete = set(AWS_IMAGE_REPOSITORIES)
+    if not isinstance(images, dict) or (images and set(images) not in (core, legacy_assistants, complete)):
+        raise ValueError("invalid AWS release image inventory")
+    if runtime_profile == "gateway" and set(images) != complete:
+        raise ValueError("the Gateway runtime profile requires all five pinned images")
+    if assistants_enabled and set(images) not in (legacy_assistants, complete):
+        raise ValueError("this release does not pin the runner and Workbot images")
+    for kind, image in images.items():
+        if not isinstance(image, str) or not re.fullmatch(re.escape(AWS_IMAGE_REPOSITORIES[kind]) + r"@sha256:[a-f0-9]{64}", image):
+            raise ValueError("invalid AWS release image pin: " + kind)
+    return {kind + "_image": image for kind, image in images.items()}
 
 
 def id_list(name):
@@ -162,6 +278,10 @@ def verify_network():
         clusters = aws("ecs", "describe-clusters", "--clusters", inputs["ecs_cluster_arn"]).get("clusters", [])
         cluster = clusters[0] if clusters else None
     problems = network_problems(vpcs[0] if vpcs else None, dns, subnets, tables, cluster, inputs)
+    if managed_runtime_profile() == "gateway" or boolean_input("HEADLESS_RUNNER_ENABLED"):
+        service_zones = [subnet.get("AvailabilityZone") for subnet in subnets if subnet.get("SubnetId") in inputs["service_subnet_ids"]]
+        if len(set(service_zones)) != len(inputs["service_subnet_ids"]):
+            problems.append("the runner needs exactly one private service subnet per availability zone for EFS mount targets")
     if problems:
         print("The existing network cannot host OpenWork: " + "; ".join(problems) + ".")
         raise StepFailure("network_check_failed")
@@ -204,20 +324,160 @@ def certificate_states(binary, tf_root):
     return found
 
 
+def tls_only_secret_upgrade(resource):
+    """Allow only the known app-secret version's accept-to-strict promotion.
+
+    Compare plan values only in memory. Never print secret JSON or URLs.
+    Unknown values, key rotation, other labels and other resources fail closed.
+    """
+    change = resource.get("change", {})
+    if (resource.get("address") != "module.platform.aws_secretsmanager_secret_version.app"
+            or resource.get("type") != "aws_secretsmanager_secret_version"
+            or change.get("actions") != ["delete", "create"]):
+        return False
+    return tls_secret_values_preserved(change)
+
+
+def tls_secret_values_preserved(change):
+    """Compare known existing/current values with a TLS-only target version."""
+    before, after = change.get("before"), change.get("after")
+    unknown = change.get("after_unknown", {})
+    if not isinstance(before, dict) or not isinstance(after, dict) or not isinstance(unknown, dict):
+        return False
+    if (unknown.get("secret_id", False) is not False or unknown.get("secret_string", False) is not False
+            or unknown.get("secret_binary", False) is not False
+            or not isinstance(before.get("secret_id"), str) or not before["secret_id"]
+            or before["secret_id"] != after.get("secret_id")
+            or before.get("version_stages") != ["AWSCURRENT"]
+            or after.get("version_stages") not in (None, ["AWSCURRENT"])
+            or before.get("secret_binary") not in (None, "") or after.get("secret_binary") not in (None, "")
+            or before.get("has_secret_string_wo") or after.get("has_secret_string_wo")):
+        return False
+    try:
+        old, new = json.loads(before["secret_string"]), json.loads(after["secret_string"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    required = {"DATABASE_URL", "BETTER_AUTH_SECRET", "DEN_DB_ENCRYPTION_KEY", "DEN_INITIAL_ADMIN_BOOTSTRAP_CODE"}
+    if not isinstance(old, dict) or not isinstance(new, dict) or not required <= old.keys():
+        return False
+    url = old["DATABASE_URL"]
+    if not isinstance(url, str) or not url.startswith("mysql://") or not url.endswith("?sslaccept=accept"):
+        return False
+    expected = {**old, "DATABASE_URL": url.removesuffix("sslaccept=accept") + "sslaccept=strict"}
+    return new == expected
+
+
 def unsafe_changes(plan):
-    """Return planned deletions/replacements of data-bearing resources."""
+    """Return data-bearing deletions/replacements, except the exact TLS upgrade."""
     unsafe = []
-    for change in plan.get("resource_changes", []):
+    changes = plan.get("resource_changes", [])
+    for change in changes:
+        if (change.get("address") in ("module.platform.aws_secretsmanager_secret_version.tls", "module.platform.aws_secretsmanager_secret_version.tls[0]")
+                and change.get("change", {}).get("actions") == ["create"]):
+            seed = next((item.get("change", {}) for item in changes
+                         if item.get("address") == "module.platform.aws_secretsmanager_secret_version.app"), None)
+            parent = next((item.get("change", {}) for item in changes
+                           if item.get("address") == "module.platform.aws_secretsmanager_secret.app"), None)
+            fresh = (seed is not None and seed.get("before") is None and seed.get("actions") == ["create"]
+                     and parent is not None and parent.get("before") is None and parent.get("actions") == ["create"])
+            target = change["change"]
+            if not fresh and (seed is None or not tls_secret_values_preserved({
+                    "before": seed.get("before"), "after": target.get("after"),
+                    "after_unknown": target.get("after_unknown", {})})):
+                unsafe.append(change["address"])
         if change.get("type") in PROTECTED_TYPES and "delete" in change.get("change", {}).get("actions", []):
-            unsafe.append(change["address"])
+            if not tls_only_secret_upgrade(change):
+                unsafe.append(change["address"])
     return unsafe
+
+
+def legacy_fence(plan):
+    """Drain installed migration-capable services before Terraform can migrate.
+
+    Inspect live definitions as well as state: a failed adoption may already have
+    forgotten the old definition while the service still uses it. No credentials
+    are rotated and no unrelated service/task in a shared cluster is mutated.
+    A failed fence leaves maintenance in place; never resurrect a legacy writer.
+    """
+    def resources(module):
+        yield from module.get("resources", [])
+        for child in module.get("child_modules", []):
+            yield from resources(child)
+
+    old = list(resources(plan.get("prior_state", {}).get("values", {}).get("root_module", {})))
+    owned = [r for r in old if r.get("address") in (
+        "module.platform.aws_ecs_service.api", "module.platform.aws_ecs_service.web")]
+    if not owned:
+        return False
+    if len(owned) != 2:
+        raise ValueError("incomplete installed service state; maintenance requires inspection")
+    cluster = owned[0]["values"]["cluster"]
+    names = {r["values"]["name"] for r in owned}
+    if len(names) != 2 or any(r["values"]["cluster"] != cluster for r in owned):
+        raise ValueError("invalid installed service ownership")
+    status = aws("ecs", "describe-services", "--cluster", cluster, "--services", *sorted(names))
+    services = status.get("services", [])
+    if status.get("failures") or {s.get("serviceName") for s in services} != names:
+        raise ValueError("installed services unavailable")
+    legacy = False
+    families = set()
+    for service in services:
+        # Inspect every rollback/deployment target, not just the current primary.
+        definitions = {service["taskDefinition"]} | {d["taskDefinition"] for d in service.get("deployments", [])}
+        for arn in definitions:
+            definition = aws("ecs", "describe-task-definition", "--task-definition", arn)["taskDefinition"]
+            families.add(definition["family"])
+            for container in definition["containerDefinitions"]:
+                legacy |= container.get("name") == "migrate" or "bootstrap.js" in json.dumps(container.get("command", []))
+    if not legacy:
+        return False
+    for name in sorted(names):
+        aws("ecs", "update-service", "--cluster", cluster, "--service", name,
+            "--desired-count", "0", "--deployment-configuration",
+            json.dumps({"deploymentCircuitBreaker": {"enable": True, "rollback": False}}))
+    aws("ecs", "wait", "services-stable", "--cluster", cluster, "--services", *sorted(names))
+    deadline = time.monotonic() + 600
+    while True:
+        status = aws("ecs", "describe-services", "--cluster", cluster, "--services", *sorted(names))
+        current = status.get("services", [])
+        if status.get("failures") or {s.get("serviceName") for s in current} != names:
+            raise ValueError("maintenance services unavailable")
+        if any(s.get("desiredCount") != 0 for s in current):
+            raise ValueError("legacy service resumed during maintenance")
+        pending = any(s.get("runningCount") != 0 or s.get("pendingCount") != 0 for s in current)
+        for family in sorted(families):
+            # STOPPED desired status includes tasks still draining. RUNNING also
+            # includes pending tasks; inspect actual terminal status for both.
+            tasks = set()
+            for desired in ("RUNNING", "STOPPED"):
+                tasks.update(aws("ecs", "list-tasks", "--cluster", cluster, "--family", family,
+                                 "--desired-status", desired).get("taskArns", []))
+            ordered = sorted(tasks)
+            for offset in range(0, len(ordered), 100):
+                result = aws("ecs", "describe-tasks", "--cluster", cluster, "--tasks", *ordered[offset:offset + 100])
+                if result.get("failures") or len(result.get("tasks", [])) != len(ordered[offset:offset + 100]):
+                    raise ValueError("legacy task terminal state unknown")
+                pending |= any(t.get("lastStatus") != "STOPPED" for t in result["tasks"])
+        if not pending:
+            return True
+        if time.monotonic() >= deadline:
+            raise ValueError("legacy tasks did not stop; migration is fenced")
+        time.sleep(3)
 
 
 def apply(root, tf_root):
     binary = terraform_binary(root)
     state_key = "deployments/" + os.environ["DEPLOYMENT_ID"] + "/terraform.tfstate"
     inputs = tf_root / "managed.auto.tfvars.json"
-    inputs.write_text(json.dumps(terraform_inputs()))
+    values = terraform_inputs()
+    release = root / "release.json"
+    profile = values.get("managed_runtime_profile", "legacy")
+    assistants_enabled = profile == "gateway" or values.get("headless_runner", {}).get("enabled", False)
+    if release.exists():
+        values.update(release_images(json.loads(release.read_text()), assistants_enabled, profile))
+    elif assistants_enabled:
+        raise ValueError("the managed runner requires a pinned release inventory")
+    inputs.write_text(json.dumps(values))
     inputs.chmod(0o600)
     subprocess.run([binary, "init", "-input=false", "-lockfile=readonly",
                     "-backend-config=bucket=" + os.environ["STATE_BUCKET"],
@@ -234,6 +494,14 @@ def apply(root, tf_root):
     if unsafe:
         print("Refusing to delete or replace data-bearing resources: " + ", ".join(unsafe))
         raise ValueError("data-bearing resource replacement requires manual review")
+    if legacy_fence(planned):
+        # Scaling is deliberately outside Terraform's graph, before its native
+        # migration gate. Refresh/replan so desired counts are restored only by
+        # the API-only rollout after migration, not left at maintenance zero.
+        subprocess.run([binary, "plan", "-input=false", "-lock-timeout=120s", *replace, "-out=" + str(plan)], cwd=tf_root, check=True)
+        planned = json.loads(subprocess.check_output([binary, "show", "-json", str(plan)], cwd=tf_root))
+        if unsafe_changes(planned):
+            raise ValueError("post-fence plan requires manual review; maintenance retained")
     try:
         subprocess.run([binary, "apply", "-input=false", "-lock-timeout=120s", str(plan)], cwd=tf_root, check=True)
     except subprocess.CalledProcessError:
@@ -241,10 +509,81 @@ def apply(root, tf_root):
             raise StepFailure("certificate_failed")
         raise
     raw = subprocess.check_output([binary, "output", "-json"], cwd=tf_root)
-    return {key: value["value"] for key, value in json.loads(raw).items()}
+    outputs = {key: value["value"] for key, value in json.loads(raw).items()}
+    # TLS adoption concerns only Den API/web, never restart the single SQLite
+    # runner a second time after Terraform has already rolled it out.
+    expected = {name: outputs["task_definition_arns"][key] for key, name in outputs["service_names"].items()
+                if key in ("den_api", "den_web")}
+    tls_redeploy(cluster=outputs["cluster_name"], expected=expected)
+    return outputs
+
+
+def tls_redeploy(force=True, cluster=None, expected=None):
+    """Complete the strict phase after Terraform has settled both CA services.
+
+    Only existing ECS UpdateService/Describe permissions are used. Never
+    deregister a revision, roll back a secret, or hide a failed waiter.
+    """
+    if cluster is None:
+        cluster = os.environ["TLS_CLUSTER"]
+    if expected is None:
+        expected = json.loads(os.environ["TLS_TASK_DEFINITIONS"])
+    if (not isinstance(expected, dict) or len(expected) != 2
+            or not all(isinstance(name, str) and name and isinstance(arn, str)
+                       and arn.startswith("arn:") and ":task-definition/" in arn
+                       for name, arn in expected.items())):
+        raise ValueError("invalid managed TLS deployment targets")
+    names = list(expected)
+
+    class DeploymentPending(ValueError):
+        pass
+
+    def require_completed():
+        status = aws("ecs", "describe-services", "--cluster", cluster, "--services", *names)
+        services = status.get("services", [])
+        if status.get("failures") or len(services) != 2 or {s.get("serviceName") for s in services} != set(names):
+            raise ValueError("managed TLS services unavailable")
+        for service in services:
+            deployments = service.get("deployments", [])
+            primary = [d for d in deployments if d.get("status") == "PRIMARY"]
+            if (service.get("taskDefinition") != expected[service["serviceName"]]
+                    or len(primary) != 1
+                    or primary[0].get("taskDefinition") != expected[service["serviceName"]]
+                    or primary[0].get("rolloutState") == "FAILED"):
+                raise ValueError("managed TLS deployment left its expected CA revision")
+            if (service.get("desiredCount", 0) < 1
+                    or service.get("runningCount") != service["desiredCount"]
+                    or service.get("pendingCount") != 0
+                    or len(deployments) != 1
+                    or primary[0].get("rolloutState") != "COMPLETED"):
+                raise DeploymentPending("managed TLS deployment is not complete")
+
+    def wait_completed():
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                require_completed()
+                return
+            except DeploymentPending:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(3)
+
+    if force:
+        # Provider steady-state can precede ECS's COMPLETED rollout marker.
+        # Wait before forcing too; wrong revisions/FAILED still fail immediately.
+        wait_completed()
+        for name in names:
+            aws("ecs", "update-service", "--cluster", cluster, "--service", name, "--force-new-deployment")
+    # Failed waiters propagate. Also require the completed rollout state, not
+    # merely runningCount==desiredCount while an old rollback target survives.
+    aws("ecs", "wait", "services-stable", "--cluster", cluster, "--services", *names)
+    wait_completed()
 
 
 def verify_services(outputs):
+    if managed_runtime_profile() == "gateway" and set(outputs["service_names"]) != set(AWS_IMAGE_REPOSITORIES):
+        raise ValueError("the Gateway runtime profile requires all five services")
     services = list(outputs["service_names"].values())
     for _ in range(2):  # each CLI wait polls for up to 10 minutes
         try:
@@ -255,9 +594,23 @@ def verify_services(outputs):
     status = aws("ecs", "describe-services", "--cluster", outputs["cluster_name"], "--services", *services)
     if status.get("failures") or len(status["services"]) != len(services):
         raise ValueError("services unavailable")
+    if {service.get("serviceName") for service in status["services"]} != set(services):
+        raise ValueError("unexpected service inventory")
+    optional = {name: outputs.get("task_definition_arns", {}).get(key)
+                for key, name in outputs["service_names"].items() if key in ("headless_runner", "workbot", "ai_gateway")}
     for service in status["services"]:
         if service["runningCount"] < service["desiredCount"] or service["desiredCount"] < 1:
             raise ValueError("services not running")
+        if service["serviceName"] in optional:
+            intended = optional[service["serviceName"]]
+            deployments = service.get("deployments", [])
+            if (not intended or service.get("taskDefinition") != intended
+                    or service["runningCount"] != service["desiredCount"]
+                    or service.get("pendingCount") != 0 or len(deployments) != 1
+                    or deployments[0].get("status") != "PRIMARY"
+                    or deployments[0].get("taskDefinition") != intended
+                    or deployments[0].get("rolloutState") != "COMPLETED"):
+                raise ValueError("assistant service has not completed its intended rollout")
 
 
 def fetch_json(url):
@@ -270,6 +623,15 @@ def verify_health(outputs, attempts=20, delay=15):
     expected_api = "https://api." + os.environ["DOMAIN_NAME"]
     if outputs["web_url"] != expected_web or outputs["api_url"] != expected_api:
         raise ValueError("unexpected service origin")
+    gateway = managed_runtime_profile() == "gateway"
+    workbot_url = outputs.get("workbot_url")
+    expected_workbot = "https://chat." + os.environ["DOMAIN_NAME"]
+    if (gateway and workbot_url != expected_workbot) or (workbot_url is not None and workbot_url != expected_workbot):
+        raise ValueError("unexpected Workbot origin")
+    gateway_url = outputs.get("ai_gateway_url")
+    expected_gateway = "https://models." + os.environ["DOMAIN_NAME"]
+    if (gateway and gateway_url != expected_gateway) or (gateway_url is not None and gateway_url != expected_gateway):
+        raise ValueError("unexpected AI Gateway origin")
     # New DNS records and certificates can take a few minutes to become visible.
     for attempt in range(attempts):
         try:
@@ -277,7 +639,15 @@ def verify_health(outputs, attempts=20, delay=15):
             ready = fetch_json(expected_api + "/ready")
             with urllib.request.urlopen(expected_web + "/setup", timeout=30) as response:
                 web_ok = response.status == 200
-            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok:
+            workbot_ok = True
+            if workbot_url:
+                with urllib.request.urlopen(workbot_url + "/healthz", timeout=30) as response:
+                    workbot_ok = response.status == 200
+            gateway_ok = True
+            if gateway_url:
+                gateway_health = fetch_json(gateway_url + "/health")
+                gateway_ok = gateway_health.get("ok") is True and gateway_health.get("service") == "gateway"
+            if health.get("ok") is True and health.get("service") == "den-api" and ready.get("ok") is True and web_ok and workbot_ok and gateway_ok:
                 return
         except Exception:
             pass
@@ -320,4 +690,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["tls-redeploy"]:
+        tls_redeploy()
+    elif sys.argv[1:] == ["tls-ready"]:
+        tls_redeploy(force=False)
+    else:
+        main()

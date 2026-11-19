@@ -1,3 +1,5 @@
+import { liteLlmEntraScope } from "./litellm-catalog.js"
+
 /** Only pass env names from the trusted catalog, never request bodies or stored custom config. */
 export function inferenceCredentialEnvNames(trustedEnvNames: readonly string[]): string[] {
   const ranked = [...new Set(trustedEnvNames)].flatMap((name) => {
@@ -22,11 +24,17 @@ export function pickInferenceApiKeyFromMap(apiKeys: Record<string, string>, trus
   return apiKeys[first]
 }
 
-export function isInferenceCredentialKindSupported(kind: string, providerId: string): boolean {
+/**
+ * Whether a provider can hold a credential of this kind. `settings` is the
+ * saved provider's settings: a member's Entra ID token belongs to Microsoft
+ * Foundry, or to a LiteLLM provider in member Microsoft Entra sign-in mode.
+ */
+export function isInferenceCredentialKindSupported(kind: string, providerId: string, settings?: unknown): boolean {
   const vertex = providerId === "google-vertex" || providerId === "google-vertex-anthropic"
   const bedrock = providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle"
+  const entra = providerId === "microsoft-foundry" || liteLlmEntraScope({ provider_id: providerId, settings }) !== null
   return !(((kind === "gcp_service_account" || kind === "oauth_google") && !vertex)
     || ((kind === "aws_keys" || kind === "aws_sso") && !bedrock)
-    || (kind === "oauth_azure" && providerId !== "microsoft-foundry")
+    || (kind === "oauth_azure" && !entra)
     || (kind === "api_key_map" && vertex))
 }

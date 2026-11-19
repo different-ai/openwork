@@ -16,12 +16,13 @@ import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { reconcilePolicyDisabledProviders } from "@/react-app/domains/connections/policy-provider-reconcile";
 import {
-  refreshOrganizationModels,
   shouldWaitForCloudProviderSyncBeforePolicyReconcile,
   type OrganizationModelsRefreshReason,
 } from "./managed-models-recovery";
 import { createSessionOpenworkServer, type SessionServerEndpoint } from "./session-openwork-server";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
+import { useLiveProviderSync } from "./use-live-provider-sync";
+import { skipsLegacyProviderRefresh } from "./live-provider-sync";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -82,6 +83,12 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setDisabledProviderIds,
   } = input;
   const denAuth = useDenAuth();
+  const liveProviderSync = useLiveProviderSync(
+    selectedWorkspaceEndpoint?.client ?? engineRootServer?.client ?? null,
+    opencodeBaseUrl,
+  );
+  const liveProviderSyncRef = useRef(liveProviderSync);
+  liveProviderSyncRef.current = liveProviderSync;
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const reloadCoordinator = useReloadCoordinator();
   const { markReloadRequired } = reloadCoordinator;
@@ -125,6 +132,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const store = useMemo(
     () =>
       createProviderAuthStore({
+        nativeOpenworkClient: () => stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+        nativeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -195,17 +204,21 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       ? completedCloudProviderSync
       : null;
   const cloudProviderSyncReady = Boolean(currentCloudProviderSync);
-  const loadCloudProviderSync = useCallback((reason: OrganizationModelsRefreshReason) => (
-    refreshOrganizationModels({
-      runCloudProviderSync: store.runCloudProviderSync,
-      refreshProviders: () => store.refreshProviders({ force: true }),
-    }, reason)
-  ), [store]);
+  const loadCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
+    const result = await store.runCloudProviderSync(reason);
+    // Native provider/model events invalidate the query in live mode. Never pin a
+    // one-shot lifecycle snapshot over that event-driven query.
+    if (liveProviderSyncRef.current || result?.outcome === "handled_live") return null;
+    return store.refreshProviders({ force: true });
+  }, [store]);
   const refreshCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
+    if (skipsLegacyProviderRefresh(reason, liveProviderSyncRef.current)) return null;
     const providerList = await loadCloudProviderSync(reason);
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
+
+  useEffect(() => { store.syncFromOptions(); }, [store]);
 
   useEffect(() => {
     store.start();
@@ -332,7 +345,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     store,
     snapshot,
     cloudProviderSyncReady,
-    cloudProviderList: currentCloudProviderSync?.providerList ?? null,
+    cloudProviderList: liveProviderSync ? null : currentCloudProviderSync?.providerList ?? null,
     refreshCloudProviderSync,
+    /** The engine owns the Gateway catalog and updates it live; app-side Den lists go stale. */
+    liveProviderSync,
   };
 }

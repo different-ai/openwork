@@ -8,6 +8,7 @@ import { buildConnectorToolIdentities } from "../connections/connector-tool-iden
 import { isOrgMcpConnectionReady } from "../settings/extension-items"
 import type { AutomationConnectedAccount } from "./automation-editor"
 import type { AutomationProviderCatalog } from "./automation-model-options"
+import { useDesktopAutomationsEnabled } from "./automation-availability"
 import { automationCloudOptions, automationCloudRunAvailable, automationPlacementChoices } from "./automation-placement"
 import { useAutomationModelChoices, type AutomationsDenContext } from "./use-automations"
 
@@ -31,7 +32,8 @@ export function useAutomationEditorSetup(
     retry: false,
     refetchInterval: (queryState) => (queryState.state.data === null ? false : 60_000),
   })
-  const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime() })
+  const desktopAllowed = useDesktopAutomationsEnabled()
+  const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime(), desktopAllowed })
   const cloudRunAvailable = automationCloudRunAvailable(targetsQuery.data)
   const cloudOptions = automationCloudOptions(targetsQuery.data)
   // The accounts a cloud run can use, shown on the choice that uses only them.

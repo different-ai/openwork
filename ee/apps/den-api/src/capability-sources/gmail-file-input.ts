@@ -4,7 +4,7 @@ export const gmailFileInputPreflight = {
   ok: false,
   error: "file_input_requires_host",
   created: false,
-  message: "Workspace attachments require a supporting OpenWork host. No draft was created. Do not retry without attachments.",
+  message: "Workspace attachments require a supporting OpenWork host. No draft was created. In the OpenWork desktop app, use the openwork_gmail_draft tool instead; otherwise do not retry without attachments.",
 } as const
 
 export const gmailFileInputPreflightSchema = z.object({

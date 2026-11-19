@@ -12,7 +12,7 @@ import { MemberTable, PermissionSetTable, TeamMemberTable, TeamTable } from "@op
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError, type AgentErrorEnvelope } from "../agent-error-envelope.js"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
-import { ORGANIZATION_ADMIN_ROLE, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
+import { ORGANIZATION_ADMIN_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueIncludes } from "../organization-role-hierarchy.js"
 import { permissionDeniedResponse, type PermissionDeniedResponse } from "./check.js"
 import { permissionDeniedMessage, type MemberPermissions } from "./effective.js"
 import { resolvePermissionsForMember } from "./resolve.js"
@@ -118,7 +118,7 @@ export type TeamGrantDecision =
 
 /**
  * Safety rule 9.3 (docs/permissions/overview.md), decided inside the team's
- * write transaction `tx`: with the Permissions feature on, the actor must hold
+ * write transaction `tx`: the actor must hold
  * every key members would gain (the team's sets unless `adminDefaultsOnly`,
  * plus the Admin defaults when `grantsOrganizationAdmin`). Granting admin with
  * an empty Admin default set needs the owner or an effective admin
@@ -139,7 +139,7 @@ export async function teamGrantDecisionInTransaction(input: {
   adminDefaultsOnly?: boolean
 }): Promise<TeamGrantDecision> {
   const { actor } = input
-  if (!actor.featureEnabled || actor.isOwner) return { ok: true }
+  if (actor.isOwner) return { ok: true }
   const teamKeys = input.teamId && !input.adminDefaultsOnly
     ? await teamSetPermissionKeys(input.tx, input.organizationId, input.teamId, { lock: "share" })
     : new Set<PermissionKey>()
@@ -171,7 +171,11 @@ export function teamGrantsForbiddenResponse(key: PermissionKey, message = TEAM_G
 
 /** The role-change target built from a stored `member.role`, e.g. a row locked inside the update transaction. */
 export function roleAssignmentTargetFromRole(memberId: string, role: string): RoleAssignmentTarget {
-  return { memberId, isDirectAdmin: organizationRoleValueIncludes(role, ORGANIZATION_ADMIN_ROLE) }
+  return {
+    memberId,
+    isDirectAdmin: organizationRoleValueIncludes(role, ORGANIZATION_ADMIN_ROLE),
+    isDirectSuperAdmin: organizationRoleValueIncludes(role, ORGANIZATION_SUPER_ADMIN_ROLE),
+  }
 }
 
 /**
@@ -224,6 +228,7 @@ export async function roleAssignmentDenialInTransaction(input: {
     callerMemberId: input.callerMemberId,
     target: input.target,
     nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
+    nextIsSuperAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_SUPER_ADMIN_ROLE),
   }
   const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys(decision)
     ? await adminDefaultPermissionKeys(input.organizationId, input.tx, { lock: "share" })
@@ -248,6 +253,7 @@ export async function roleAssignmentDecider(input: {
     caller: input.caller,
     callerMemberId: input.callerMemberId,
     nextIsAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_ADMIN_ROLE),
+    nextIsSuperAdmin: organizationRoleValueIncludes(input.nextRole, ORGANIZATION_SUPER_ADMIN_ROLE),
   }
   const adminDefaultKeys = roleAssignmentNeedsAdminDefaultKeys({ ...decision, target: null })
     ? await adminDefaultPermissionKeys(input.organizationId, input.database ?? db)

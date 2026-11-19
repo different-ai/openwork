@@ -41,6 +41,8 @@ export type EngineSpawnTemplate = {
   cwd: string;
   runtimeConfigPath: string;
   env: Record<string, string | undefined>;
+  /** Private engine v1 storage for when a standalone OpenCode v2 owns the shared one. */
+  stateDir?: string;
   /** Ports a standby must avoid (the OpenWork server, and the live engine). */
   reservedPorts: () => number[];
   /** Readiness budget for a standby spawn. Defaults to the managed-engine default. */
@@ -1308,6 +1310,7 @@ export class EnginePool {
       cwd: this.template.cwd,
       excludedPorts: this.template.reservedPorts(),
       ...(this.template.spawnTimeoutMs ? { timeoutMs: this.template.spawnTimeoutMs } : {}),
+      ...(this.template.stateDir ? { stateDir: this.template.stateDir } : {}),
       env: {
         ...this.template.env,
         OPENCODE_CONFIG: this.template.runtimeConfigPath,

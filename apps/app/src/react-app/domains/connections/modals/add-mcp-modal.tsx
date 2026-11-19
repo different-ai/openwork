@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useReducer } from "react";
+import { useReducer, useRef, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 
 import {
@@ -12,6 +12,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import type { SecretFieldHandle } from "@/components/secret-field";
+import { SecretTextInput } from "../../../design-system/secret-text-input";
 import { TextInput } from "../../../design-system/text-input";
 import type { McpDirectoryInfo } from "@/app/constants";
 import { t } from "@/i18n";
@@ -32,7 +34,6 @@ type AddMcpState = {
   url: string;
   oauthExpanded: boolean;
   oauthClientId: string;
-  oauthClientSecret: string;
   oauthScope: string;
   command: string;
   error: string | null;
@@ -45,7 +46,6 @@ const initialAddMcpState: AddMcpState = {
   url: "",
   oauthExpanded: false,
   oauthClientId: "",
-  oauthClientSecret: "",
   oauthScope: "",
   command: "",
   error: null,
@@ -59,8 +59,11 @@ function addMcpReducer(state: AddMcpState, patch: Partial<AddMcpState> | "reset"
 
 export function AddMcpModal(props: AddMcpModalProps) {
   const [state, dispatch] = useReducer(addMcpReducer, initialAddMcpState);
+  const clientSecretField = useRef<SecretFieldHandle>(null);
+  const [hasClientSecret, setHasClientSecret] = useState(false);
 
   const reset = () => {
+    clientSecretField.current?.clear();
     dispatch("reset");
   };
 
@@ -89,16 +92,17 @@ export function AddMcpModal(props: AddMcpModalProps) {
     if (state.serverType === "remote") {
       const trimmedUrl = state.url.trim();
       const oauthClientId = state.oauthClientId.trim();
-      const oauthClientSecret = state.oauthClientSecret.trim();
       const oauthScope = state.oauthScope.trim();
       if (!trimmedUrl) {
         dispatch({ error: t("mcp.url_or_command_required"), submitting: false });
         return;
       }
-      if (!oauthClientId && (oauthClientSecret || oauthScope)) {
+      if (!oauthClientId && (hasClientSecret || oauthScope)) {
         dispatch({ error: t("mcp.oauth_client_id_required"), submitting: false });
         return;
       }
+      // Read once here; the field empties.
+      const oauthClientSecret = (clientSecretField.current?.take() ?? "").trim();
 
       const oauthConfig = oauthClientId
         ? {
@@ -202,7 +206,10 @@ export function AddMcpModal(props: AddMcpModalProps) {
                     ? "bg-dls-active text-dls-text"
                     : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
                 }`}
-                onClick={() => dispatch({ serverType: "local" })}
+                onClick={() => {
+                  setHasClientSecret(false);
+                  dispatch({ serverType: "local" });
+                }}
               >
                 {t("mcp.type_local_cmd")}
               </button>
@@ -224,7 +231,11 @@ export function AddMcpModal(props: AddMcpModalProps) {
                 <button
                   type="button"
                   className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-medium text-dls-text"
-                  onClick={() => dispatch({ oauthExpanded: !state.oauthExpanded })}
+                  onClick={() => {
+                    // Collapsing unmounts the secret field, which empties it.
+                    if (state.oauthExpanded) setHasClientSecret(false);
+                    dispatch({ oauthExpanded: !state.oauthExpanded });
+                  }}
                 >
                   <span>{t("mcp.oauth_advanced_title")}</span>
                   <span className="text-dls-secondary">{state.oauthExpanded ? "-" : "+"}</span>
@@ -240,12 +251,12 @@ export function AddMcpModal(props: AddMcpModalProps) {
                       value={state.oauthClientId}
                       onChange={(event) => dispatch({ oauthClientId: event.currentTarget.value })}
                     />
-                    <TextInput
+                    <SecretTextInput
+                      id="add-mcp-oauth-client-secret"
                       label={t("mcp.oauth_client_secret")}
                       placeholder={t("mcp.oauth_client_secret_placeholder")}
-                      type="password"
-                      value={state.oauthClientSecret}
-                      onChange={(event) => dispatch({ oauthClientSecret: event.currentTarget.value })}
+                      handleRef={clientSecretField}
+                      onValueChange={setHasClientSecret}
                     />
                     <TextInput
                       label={t("mcp.oauth_scope")}

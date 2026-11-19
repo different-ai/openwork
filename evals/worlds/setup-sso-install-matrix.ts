@@ -15,7 +15,7 @@ import { startMockIdpLab } from "@openwork/labs";
 
 declare global {
   interface Window {
-    __setupSsoPrivateCapture?: { installResponse?: string; installCopy?: string; desktopResponse?: string };
+    __setupSsoPrivateCapture?: { installCopy?: string; desktopResponse?: string };
   }
 }
 
@@ -553,25 +553,12 @@ async function seedEnterpriseSsoContext(input: {
       captured.installCopy = text;
       return originalWriteText(text);
     };
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = async (...args) => {
-      const response = await originalFetch(...args);
-      if (new URL(response.url).pathname.endsWith("/install-links") && response.ok) {
-        const payload: unknown = await response.clone().json();
-        if (payload && typeof payload === "object" && "installPageUrl" in payload && typeof payload.installPageUrl === "string") {
-          captured.installResponse = payload.installPageUrl;
-        }
-      }
-      return response;
-    };
   });
   await clickText(configurationBrowser, "Copy install link");
-  await waitFor(configurationBrowser, () => Boolean(window.__setupSsoPrivateCapture?.installResponse) && Boolean(window.__setupSsoPrivateCapture?.installCopy), {
+  await waitFor(configurationBrowser, () => Boolean(window.__setupSsoPrivateCapture?.installCopy), {
     timeoutMs: 30_000,
-    label: "real admin UI install-link response and copy argument",
+    label: "real admin UI install-link copy argument",
   });
-  const copyMatchesResponse = await evaluate(configurationBrowser.client, () => window.__setupSsoPrivateCapture?.installCopy === window.__setupSsoPrivateCapture?.installResponse);
-  if (!copyMatchesResponse) throw new Error("Admin UI copied a different install link than the issued response (values withheld).");
   const installPageUrl = await evaluate(configurationBrowser.client, () => {
     const url = window.__setupSsoPrivateCapture?.installCopy;
     delete window.__setupSsoPrivateCapture;
@@ -579,7 +566,7 @@ async function seedEnterpriseSsoContext(input: {
   });
   if (!installPageUrl) throw new Error("Admin UI install-link action omitted its copy argument.");
   const installUrl = new URL(installPageUrl);
-  if (installUrl.pathname !== "/install" || !installUrl.searchParams.get("token")) throw new Error("Install link did not contain a valid /install token.");
+  if (installUrl.pathname !== "/install") throw new Error("Install link did not open the /install page.");
   const enforcementOff = await jsonRequest(`${input.apiUrl}/v1/org`, {
     method: "PATCH",
     headers: adminHeaders,

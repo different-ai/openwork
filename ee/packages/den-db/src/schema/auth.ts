@@ -1,6 +1,6 @@
 import * as crypto from "node:crypto"
 import { sql } from "drizzle-orm"
-import { bigint, boolean, index, int, json, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { bigint, boolean, index, int, json, mysqlTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../columns"
 
 export const AuthUserTable = mysqlTable(
@@ -137,11 +137,13 @@ export const OAuthClientTable = mysqlTable(
     id: denTypeIdColumn("oauthClient", "id").notNull().primaryKey(),
     clientId: varchar("client_id", { length: 255 }).notNull(),
     clientSecret: text("client_secret"),
+    clientDiscoveryId: varchar("client_discovery_id", { length: 64 }),
     disabled: boolean("disabled").default(false),
     skipConsent: boolean("skip_consent"),
     enableEndSession: boolean("enable_end_session"),
     subjectType: varchar("subject_type", { length: 64 }),
     scopes: text("scopes"),
+    clientCredentialsScopes: text("client_credentials_scopes"),
     userId: denTypeIdColumn("user", "user_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
@@ -161,6 +163,7 @@ export const OAuthClientTable = mysqlTable(
     tokenEndpointAuthMethod: varchar("token_endpoint_auth_method", { length: 128 }),
     grantTypes: text("grant_types"),
     responseTypes: text("response_types"),
+    applicationType: varchar("application_type", { length: 32 }),
     public: boolean("public"),
     type: varchar("type", { length: 64 }),
     requirePKCE: boolean("require_pkce"),
@@ -317,6 +320,10 @@ export const DeviceCodeTable = mysqlTable(
   {
     id: denTypeIdColumn("deviceCode", "id").notNull().primaryKey(),
     deviceCode: varchar("device_code", { length: 128 }).notNull(),
+    // Exact SSO proof held by the approving browser, never inferred at redemption.
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }),
+    // When that proof was earned, so the device session inherits its age.
+    ssoAuthenticatedAt: timestamp("sso_authenticated_at", { fsp: 3 }),
     userCode: varchar("user_code", { length: 32 }).notNull(),
     userId: denTypeIdColumn("user", "user_id"),
     organizationId: denTypeIdColumn("organization", "organization_id"),
@@ -407,12 +414,20 @@ export const SsoProviderTable = mysqlTable(
   ],
 )
 
+/**
+ * An organization's SSO connections (it may have several),
+ * one per Better Auth `sso_provider`. `domain` holds every email domain the
+ * connection covers, lower case and comma separated without spaces (the same
+ * value as its provider's `domain`), so match it with FIND_IN_SET.
+ */
 export const SsoConnectionTable = mysqlTable(
   "sso_connection",
   {
     id: denTypeIdColumn("ssoConnection", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
+    /** What sign-in buttons and the SSO page call it ("Okta"); null shows a name derived from the issuer. */
+    name: varchar("name", { length: 120 }),
     kind: varchar("kind", { length: 16 }).notNull(),
     issuer: varchar("issuer", { length: 2048 }).notNull(),
     domain: varchar("domain", { length: 255 }).notNull(),
@@ -436,9 +451,58 @@ export const SsoConnectionTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
-    uniqueIndex("sso_connection_organization_id").on(table.organizationId),
+    index("sso_connection_organization").on(table.organizationId, table.createdAt),
     uniqueIndex("sso_connection_provider_id").on(table.providerId),
     index("sso_connection_domain").on(table.domain),
+  ],
+)
+
+/**
+ * Which organization's SSO a session was signed in through. Written when an
+ * SSO callback creates the session (or a device session approved by one), so
+ * an organization that requires SSO can tell an SSO session from a password
+ * or Google one. One row per session; removed with the session.
+ *
+ * Superseded by `session_sso_proof`. Still written (the newest proof) so
+ * den-api replicas from before it keep working during a rolling deploy; drop
+ * it in a release after the one that added `session_sso_proof`.
+ */
+export const SessionSsoAuthenticationTable = mysqlTable(
+  "session_sso_authentication",
+  {
+    sessionId: denTypeIdColumn("session", "session_id").notNull().primaryKey(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [index("session_sso_authentication_org").on(table.organizationId), index("session_sso_authentication_user").on(table.userId)],
+)
+
+/**
+ * Every organization whose SSO a session has proven, and when. Replaces
+ * `session_sso_authentication` (one row per session): a session keeps the
+ * proofs of the session it replaced when the same browser signs in through
+ * another organization's SSO, so a member of several organizations that
+ * require SSO is not sent through each of them again. `authenticated_at` is
+ * when the identity provider actually authenticated the person; copies keep
+ * it.
+ * Removed with the session, user or organization.
+ */
+export const SessionSsoProofTable = mysqlTable(
+  "session_sso_proof",
+  {
+    sessionId: denTypeIdColumn("session", "session_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    ssoProviderId: varchar("sso_provider_id", { length: 255 }).notNull(),
+    authenticatedAt: timestamp("authenticated_at", { fsp: 3 }).notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ name: "session_sso_proof_pk", columns: [table.sessionId, table.organizationId] }),
+    index("session_sso_proof_org").on(table.organizationId),
+    index("session_sso_proof_user").on(table.userId),
   ],
 )
 

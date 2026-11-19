@@ -25,6 +25,14 @@ const environment = {
   SIZE: ref("Size"), STATE_BUCKET: ref("StateBucket"),
   NETWORK_MODE: ref("NetworkMode"), VPC_ID: ref("VpcId"), SERVICE_SUBNET_IDS: ref("ServiceSubnetIds"),
   LOAD_BALANCER_SUBNET_IDS: ref("LoadBalancerSubnetIds"), ECS_CLUSTER_ARN: ref("EcsClusterArn"),
+  MANAGED_RUNTIME_PROFILE: ref("ManagedRuntimeProfile"),
+  HEADLESS_RUNNER_ENABLED: { "Fn::If": ["IsGatewayRuntime", "true", ref("HeadlessRunnerEnabled")] },
+  WORKBOT_ENABLED: { "Fn::If": ["IsGatewayRuntime", "true", ref("WorkbotEnabled")] },
+  SLACK_ASSISTANT_ENABLED: { "Fn::If": ["IsGatewayRuntime", "true", ref("SlackAssistantEnabled")] }, HEADLESS_MODEL_PROTOCOL: ref("HeadlessModelProtocol"),
+  HEADLESS_MODEL_BASE_URL: ref("HeadlessModelBaseUrl"), HEADLESS_MODEL: ref("HeadlessModel"),
+  HEADLESS_MODEL_SECRET_ARN: ref("HeadlessModelSecretArn"), HEADLESS_COMPUTER_PROVIDER: ref("HeadlessComputerProvider"),
+  HEADLESS_COMPUTER_SECRET_ARN: ref("HeadlessComputerSecretArn"), HEADLESS_COMPUTER_SNAPSHOT: ref("HeadlessComputerSnapshot"),
+  DAYTONA_API_URL: ref("DaytonaApiUrl"), DAYTONA_TARGET: ref("DaytonaTarget"),
 };
 // Pass only the names a pattern uses, keeping the template small and readable.
 const names = (text) => Object.fromEntries([["Name", tfName], ["Health", healthName]].filter(([key]) => text.includes(`\${${key}}`)));
@@ -86,24 +94,88 @@ const overrideDenies = ["codebuild:source.buildspec", "codebuild:environment.ima
 const policy = {
   Version: "2012-10-17", Statement: [
     ...statements,
-    { Sid: "DeploymentDns", Effect: "Allow", Action: ["route53:GetHostedZone", "route53:ListResourceRecordSets", "route53:ChangeResourceRecordSets", "route53:ListTagsForResource"], Resource: sub("arn:${AWS::Partition}:route53:::hostedzone/${Route53ZoneId}") },
-    { Sid: "DnsChanges", Effect: "Allow", Action: "route53:GetChange", Resource: sub("arn:${AWS::Partition}:route53:::change/*") },
-    // Cloud Map creates and reads a private hosted zone for the new VPC.
-    { Sid: "ServiceDiscoveryZone", Effect: "Allow", Action: ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName"], Resource: "*" },
-    { Sid: "ServiceRoles", Effect: "Allow", Action: ["iam:CreateRole", "iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:TagRole", "iam:UpdateAssumeRolePolicy"], Resource: [iamRole("${Name}-den-*"), iamRole("${Health}")] },
-    { Sid: "ExecutionPolicy", Effect: "Allow", Action: "iam:AttachRolePolicy", Resource: iamRole("${Name}-den-*"), Condition: { ArnEquals: { "iam:PolicyARN": sub("arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy") } } },
+    { Sid: "ServiceRoles", Effect: "Allow", Action: ["iam:CreateRole", "iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:TagRole", "iam:UpdateAssumeRolePolicy"], Resource: [iamRole("${Name}-den-*"), iamRole("${Health}"), iamRole("${Name}-migrate-*")] },
     { Sid: "PassTaskRoles", Effect: "Allow", Action: "iam:PassRole", Resource: iamRole("${Name}-den-*"), Condition: { StringEquals: { "iam:PassedToService": "ecs-tasks.amazonaws.com" } } },
     { Sid: "PassHealthRole", Effect: "Allow", Action: "iam:PassRole", Resource: iamRole("${Health}"), Condition: { StringEquals: { "iam:PassedToService": "lambda.amazonaws.com" } } },
+    { Sid: "PassMigrationRole", Effect: "Allow", Action: "iam:PassRole", Resource: iamRole("${Name}-migrate-*"), Condition: { StringEquals: { "iam:PassedToService": "lambda.amazonaws.com" } } },
+    { Sid: "MigrationFunction", Effect: "Allow", Action: ["lambda:CreateFunction", "lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:TagResource", "lambda:ListTags"], Resource: arn("lambda", "function:${Name}-migrate") },
+    // aws_lambda_invocation sends Qualifier=$LATEST; Lambda authorizes that
+    // qualified ARN separately. Lifecycle calls still use the unqualified ARN.
+    allow("MigrationInvoke", "lambda:InvokeFunction", [arn("lambda", "function:${Name}-migrate"), arn("lambda", "function:${Name}-migrate:$LATEST")]),
     { Sid: "ServiceLinkedRoles", Effect: "Allow", Action: "iam:CreateServiceLinkedRole", Resource: sub("arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*"), Condition: { StringEquals: { "iam:AWSServiceName": ["ecs.amazonaws.com", "elasticloadbalancing.amazonaws.com", "rds.amazonaws.com"] } } },
     { Sid: "HealthAgent", Effect: "Allow", Action: ["lambda:CreateFunction", "lambda:GetFunction", "lambda:GetFunctionConfiguration", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:ListVersionsByFunction", "lambda:GetFunctionCodeSigningConfig", "lambda:AddPermission", "lambda:GetPolicy", "lambda:TagResource", "lambda:ListTags", "lambda:InvokeFunction"], Resource: arn("lambda", "function:${Health}") },
     { Sid: "HealthSchedule", Effect: "Allow", Action: ["events:PutRule", "events:PutTargets", "events:TagResource"], Resource: arn("events", "rule/${Health}") },
-    { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:ListTagsLogGroup", "logs:ListTagsForResource", "logs:TagResource", "logs:TagLogGroup"], Resource: [arn("logs", "log-group:/ecs/${Name}/*"), arn("logs", "log-group:/aws/lambda/${Health}"), arn("logs", "log-group:/aws/lambda/${Health}:*"), sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*")] },
-    { Sid: "ListLogs", Effect: "Allow", Action: "logs:DescribeLogGroups", Resource: "*" },
-    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: arn("secretsmanager", "secret:${Name}-den-*") },
+    { Sid: "Logs", Effect: "Allow", Action: ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:PutRetentionPolicy", "logs:ListTagsLogGroup", "logs:ListTagsForResource", "logs:TagResource", "logs:TagLogGroup"], Resource: [arn("logs", "log-group:/ecs/${Name}/*"), arn("logs", "log-group:/aws/lambda/${Health}"), arn("logs", "log-group:/aws/lambda/${Health}:*"), arn("logs", "log-group:/aws/lambda/${Name}-migrate"), arn("logs", "log-group:/aws/lambda/${Name}-migrate:*"), sub("arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${AWS::StackName}*")] },
+    { Sid: "AppSecrets", Effect: "Allow", Action: ["secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:UpdateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue", "secretsmanager:ListSecretVersionIds", "secretsmanager:GetResourcePolicy", "secretsmanager:TagResource"], Resource: { "Fn::If": ["HasHeadlessRunner", [arn("secretsmanager", "secret:${Name}-den-*"), arn("secretsmanager", "secret:${Name}-runner-*"), arn("secretsmanager", "secret:${Name}-workbot-*")], arn("secretsmanager", "secret:${Name}-den-*")] } },
     { Sid: "NoNestedBuilds", Effect: "Deny", Action: ["codebuild:StartBuild", "codebuild:UpdateProject", "codebuild:CreateProject"], Resource: "*" },
     { Sid: "StateBucket", Effect: "Allow", Action: ["s3:ListBucket", "s3:GetBucketLocation"], Resource: get("StateBucket", "Arn") },
     // State and its S3-native lock file, for this deployment only.
     { Sid: "StateObjects", Effect: "Allow", Action: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"], Resource: join([get("StateBucket", "Arn"), "/deployments/", ref("DeploymentId"), "/*"]) },
+  ],
+};
+// IAM aggregates a role's inline policies against 10 KiB. Separate core
+// support and opt-in assistant grants, each below the 6 KiB managed-policy limit.
+const coreSupportPolicy = {
+  Version: "2012-10-17", Statement: [
+    allow("ExecutionPolicy", "iam:AttachRolePolicy", iamRole("${Name}-den-*"), {
+      ArnEquals: { "iam:PolicyARN": sub("arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy") },
+    }),
+    allow("ListLogs", "logs:DescribeLogGroups", "*"),
+    allow("DeploymentDns", ["route53:GetHostedZone", "route53:ListResourceRecordSets", "route53:ChangeResourceRecordSets", "route53:ListTagsForResource"], sub("arn:${AWS::Partition}:route53:::hostedzone/${Route53ZoneId}")),
+    allow("DnsChanges", "route53:GetChange", sub("arn:${AWS::Partition}:route53:::change/*")),
+    // Cloud Map creates and reads a private hosted zone for the new VPC.
+    allow("ServiceDiscoveryZone", ["route53:CreateHostedZone", "route53:GetHostedZone", "route53:ListHostedZonesByName"], "*"),
+  ],
+};
+const runnerStorage = arn("elasticfilesystem", "file-system/*");
+const runnerAccessPoints = arn("elasticfilesystem", "access-point/*");
+const runnerVault = arn("backup", "backup-vault:${Name}-runner");
+const runnerPlans = arn("backup", "backup-plan:*");
+const assistantPolicy = {
+  Version: "2012-10-17", Statement: [
+    allow("NewRunnerStorage", "elasticfilesystem:CreateFileSystem", "*", {
+      ...tagged("aws:RequestTag/Deployment"), Bool: { "elasticfilesystem:Encrypted": "true" },
+    }),
+    // EFS creates its key grant through a forward access session. Only its
+    // default AWS-managed key is used: docs.aws.amazon.com/efs/latest/ug/EFSKMS.html.
+    allow("RunnerStorageKey", "kms:DescribeKey", arn("kms", "key/*"), {
+      StringEquals: { "kms:ViaService": sub("elasticfilesystem.${AWS::Region}.amazonaws.com") },
+      "ForAnyValue:StringEquals": { "kms:ResourceAliases": "alias/aws/elasticfilesystem" },
+    }),
+    allow("RunnerStorageKeyGrant", "kms:CreateGrant", arn("kms", "key/*"), {
+      StringEquals: { "kms:ViaService": sub("elasticfilesystem.${AWS::Region}.amazonaws.com") },
+      "ForAnyValue:StringEquals": { "kms:ResourceAliases": "alias/aws/elasticfilesystem" }, Bool: { "kms:GrantIsForAWSResource": "true" },
+    }),
+    allow("TagNewRunnerStorage", "elasticfilesystem:TagResource", [runnerStorage, runnerAccessPoints], {
+      StringEquals: { "aws:RequestTag/Deployment": ref("DeploymentId"), "elasticfilesystem:CreateAction": ["CreateFileSystem", "CreateAccessPoint"] },
+    }),
+    allow("OwnRunnerStorage", ["elasticfilesystem:CreateMountTarget", "elasticfilesystem:CreateAccessPoint", "elasticfilesystem:ModifyMountTargetSecurityGroups",
+      "elasticfilesystem:DescribeFileSystems", "elasticfilesystem:DescribeMountTargets", "elasticfilesystem:DescribeMountTargetSecurityGroups",
+      "elasticfilesystem:DescribeLifecycleConfiguration", "elasticfilesystem:DescribeBackupPolicy", "elasticfilesystem:DescribeFileSystemPolicy"], runnerStorage, tagged("aws:ResourceTag/Deployment")),
+    allow("OwnRunnerStorageTags", ["elasticfilesystem:DescribeAccessPoints", "elasticfilesystem:ListTagsForResource", "elasticfilesystem:TagResource"],
+      [runnerStorage, runnerAccessPoints], tagged("aws:ResourceTag/Deployment")),
+    // EFS authorizes the owned file system first, then creates its mount ENI
+    // through a forward access session; the installer cannot create ENIs itself.
+    allow("RunnerMountNetwork", ["ec2:CreateNetworkInterface", "ec2:ModifyNetworkInterfaceAttribute"],
+      [arn("ec2", "network-interface/*"), arn("ec2", "subnet/*"), arn("ec2", "security-group/*")],
+      { "ForAnyValue:StringEquals": { "aws:CalledVia": "elasticfilesystem.amazonaws.com" } }),
+    allow("NewRunnerBackupVault", ["backup:CreateBackupVault", "backup:TagResource"], runnerVault, tagged("aws:RequestTag/Deployment")),
+    allow("NewRunnerBackupPlan", ["backup:CreateBackupPlan", "backup:TagResource"], runnerPlans, tagged("aws:RequestTag/Deployment")),
+    allow("OwnRunnerBackupVault", ["backup:DescribeBackupVault", "backup:ListTags", "backup:TagResource"], runnerVault, tagged("aws:ResourceTag/Deployment")),
+    allow("OwnRunnerBackupPlan", ["backup:GetBackupPlan", "backup:UpdateBackupPlan", "backup:CreateBackupSelection", "backup:GetBackupSelection", "backup:ListBackupSelections", "backup:ListTags", "backup:TagResource"], runnerPlans, tagged("aws:ResourceTag/Deployment")),
+    // Vault dependencies: docs.aws.amazon.com/aws-backup/latest/devguide/access-control.html.
+    // KMS ViaService names use .amazonaws.com in every partition (KMS condition reference).
+    allow("RunnerBackupStorage", "backup-storage:MountCapsule", "*", inRegion),
+    allow("RunnerBackupKey", ["kms:DescribeKey", "kms:GenerateDataKey", "kms:Decrypt", "kms:RetireGrant"], arn("kms", "key/*"), {
+      StringEquals: { "kms:ViaService": sub("backup.${AWS::Region}.amazonaws.com") },
+      "ForAnyValue:StringEquals": { "kms:ResourceAliases": "alias/aws/backup" },
+    }),
+    allow("RunnerBackupKeyGrant", "kms:CreateGrant", arn("kms", "key/*"), {
+      StringEquals: { "kms:ViaService": sub("backup.${AWS::Region}.amazonaws.com") },
+      "ForAnyValue:StringEquals": { "kms:ResourceAliases": "alias/aws/backup" }, Bool: { "kms:GrantIsForAWSResource": "true" },
+    }),
+    allow("RunnerBackupRole", ["iam:CreateRole", "iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:TagRole", "iam:UpdateAssumeRolePolicy"], iamRole("${Name}-runner-backup")),
+    allow("PassRunnerBackupRole", "iam:PassRole", iamRole("${Name}-runner-backup"), { StringEquals: { "iam:PassedToService": "backup.amazonaws.com" } }),
   ],
 };
 const launcherCode = `import boto3, json, urllib.request
@@ -127,7 +199,7 @@ def handler(event, context):
 `;
 const template = {
   AWSTemplateFormatVersion: "2010-09-09",
-  Description: "OpenWork installer. Creates a customer-owned runner and retained, encrypted Terraform state. The runner provisions billable ECS, RDS and load balancer resources (and, in a dedicated account, a VPC with a NAT gateway), plus a read-only health agent that reports status to OpenWork.",
+  Description: "OpenWork installer with retained encrypted Terraform state and a read-only health agent. Gateway profile deploys five required services: Den API, Den web, headless runner, Workbot and AI Gateway, plus RDS, load balancer, EFS and daily backups. Configure model providers in your Den; computer sandboxes are optional. Legacy profile preserves existing service choices. A dedicated network adds a VPC and NAT gateway. AWS resources are billable.",
   Parameters: {
     DeploymentId: { Type: "String", AllowedPattern: "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}" }, RunId: { Type: "String", AllowedPattern: "[a-f0-9-]{36}" },
     Challenge: { Type: "String", AllowedPattern: "[a-f0-9]{64}" }, ExpectedAccountId: { Type: "String", AllowedPattern: "[0-9]{12}" },
@@ -141,13 +213,44 @@ const template = {
     ServiceSubnetIds: { Type: "String", Default: "", AllowedPattern: "(subnet-[0-9a-f]{8,17}(,subnet-[0-9a-f]{8,17}){1,5})?" },
     LoadBalancerSubnetIds: { Type: "String", Default: "", AllowedPattern: "(subnet-[0-9a-f]{8,17}(,subnet-[0-9a-f]{8,17}){1,5})?" },
     EcsClusterArn: { Type: "String", Default: "", AllowedPattern: "(arn:aws:ecs:[a-z0-9-]+:[0-9]{12}:cluster/[A-Za-z0-9_-]{1,255})?" },
+    ManagedRuntimeProfile: { Type: "String", AllowedValues: ["legacy", "gateway"], Default: "legacy", Description: "Gateway deploys Den API/web, headless runner, Workbot and AI Gateway together. Configure model providers inside your Den. Only computer sandboxes are optional. Legacy retains existing service choices." },
+    HeadlessRunnerEnabled: { Type: "String", AllowedValues: ["true", "false"], Default: "false", Description: "Legacy profile only. Always enabled by the Gateway profile." },
+    WorkbotEnabled: { Type: "String", AllowedValues: ["true", "false"], Default: "false", Description: "Legacy profile only. Always enabled by the Gateway profile." },
+    SlackAssistantEnabled: { Type: "String", AllowedValues: ["true", "false"], Default: "false", Description: "Legacy profile only. Always enabled by the Gateway profile." },
+    HeadlessModelProtocol: { Type: "String", AllowedValues: ["anthropic", "openai", "openai-responses"], Default: "anthropic", Description: "Legacy profile only; ignored by Gateway. Configure Gateway model providers inside your Den." },
+    HeadlessModelBaseUrl: { Type: "String", Default: "https://api.anthropic.com/v1", MaxLength: 2048, AllowedPattern: "(https://[^/?#@\\s]+(/[^?#@\\s]*)?)?", Description: "Legacy profile only; ignored by Gateway." },
+    HeadlessModel: { Type: "String", Default: "", MaxLength: 200, Description: "Legacy profile only; ignored by Gateway." },
+    HeadlessModelSecretArn: { Type: "String", Default: "", AllowedPattern: "(arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6})?", Description: "Legacy profile only; ignored by Gateway. No global provider key is required by the Gateway profile." },
+    HeadlessComputerProvider: { Type: "String", AllowedValues: ["off", "daytona", "freestyle"], Default: "off" },
+    HeadlessComputerSecretArn: { Type: "String", Default: "", Description: "Existing plain-string Secrets Manager key ARN for the selected computer provider (Daytona or Freestyle).", AllowedPattern: "(arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6})?" },
+    HeadlessComputerSnapshot: { Type: "String", Default: "", MaxLength: 255, Description: "Computer snapshot in the Daytona account; required only when the computer provider is Daytona." },
+    DaytonaApiUrl: { Type: "String", Default: "https://app.daytona.io/api", MaxLength: 2048, AllowedPattern: "https://[^/?#@\\s]+(/[^?#@\\s]*)?" },
+    DaytonaTarget: { Type: "String", Default: "us", MaxLength: 80, AllowedPattern: "[a-z0-9][a-z0-9-]{0,79}" },
   },
   Conditions: {
+    IsGatewayRuntime: { "Fn::Equals": [ref("ManagedRuntimeProfile"), "gateway"] },
+    HasHeadlessRunner: { "Fn::Or": [{ Condition: "IsGatewayRuntime" }, { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }] },
     IsDedicated: { "Fn::Equals": [ref("NetworkMode"), "dedicated"] },
     IsExisting: { "Fn::Equals": [ref("NetworkMode"), "existing"] },
     HasCluster: { "Fn::And": [{ Condition: "IsExisting" }, { "Fn::Not": [{ "Fn::Equals": [ref("EcsClusterArn"), ""] }] }] },
   },
   Rules: {
+    AssistantsNeedRunner: {
+      RuleCondition: { "Fn::And": [{ "Fn::Equals": [ref("ManagedRuntimeProfile"), "legacy"] }, { "Fn::Or": [{ "Fn::Equals": [ref("WorkbotEnabled"), "true"] }, { "Fn::Equals": [ref("SlackAssistantEnabled"), "true"] }] }] },
+      Assertions: [{ Assert: { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }, AssertDescription: "Workbot and the Slack assistant need the headless runner." }],
+    },
+    RunnerModel: {
+      RuleCondition: { "Fn::And": [{ "Fn::Equals": [ref("ManagedRuntimeProfile"), "legacy"] }, { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }] },
+      Assertions: [{ Assert: { "Fn::And": [{ "Fn::Not": [{ "Fn::Equals": [ref("HeadlessModel"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessModelSecretArn"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessModelBaseUrl"), ""] }] }] }, AssertDescription: "A legacy runner needs its model id, HTTPS endpoint and existing model API key secret ARN. Gateway configures providers inside Den instead." }],
+    },
+    ComputerSecret: {
+      RuleCondition: { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerProvider"), "off"] }] },
+      Assertions: [{ Assert: { "Fn::And": [{ "Fn::Or": [{ "Fn::Equals": [ref("ManagedRuntimeProfile"), "gateway"] }, { "Fn::Equals": [ref("HeadlessRunnerEnabled"), "true"] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerSecretArn"), ""] }] }] }, AssertDescription: "Computer tools need the headless runner and an existing API key secret ARN for the selected provider." }],
+    },
+    DaytonaSnapshot: {
+      RuleCondition: { "Fn::Equals": [ref("HeadlessComputerProvider"), "daytona"] },
+      Assertions: [{ Assert: { "Fn::Not": [{ "Fn::Equals": [ref("HeadlessComputerSnapshot"), ""] }] }, AssertDescription: "Daytona computer tools need a computer snapshot in the Daytona account." }],
+    },
     ExistingNetwork: {
       RuleCondition: { "Fn::Equals": [ref("NetworkMode"), "existing"] },
       Assertions: [{ Assert: { "Fn::And": [{ "Fn::Not": [{ "Fn::Equals": [ref("VpcId"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("ServiceSubnetIds"), ""] }] }, { "Fn::Not": [{ "Fn::Equals": [ref("LoadBalancerSubnetIds"), ""] }] }] }, AssertDescription: "An existing network needs a VPC, private service subnets and public load balancer subnets." }],
@@ -160,9 +263,11 @@ const template = {
       OwnershipControls: { Rules: [{ ObjectOwnership: "BucketOwnerEnforced" }] },
     } },
     StateBucketPolicy: { Type: "AWS::S3::BucketPolicy", Properties: { Bucket: ref("StateBucket"), PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Deny", Principal: "*", Action: "s3:*", Resource: [get("StateBucket", "Arn"), join([get("StateBucket", "Arn"), "/*"])], Condition: { Bool: { "aws:SecureTransport": false } } }] } } },
+    RunnerCoreSupportPolicy: { Type: "AWS::IAM::ManagedPolicy", Properties: { Description: "Scoped core DNS, log discovery and task execution policy attachment.", PolicyDocument: coreSupportPolicy } },
+    RunnerSupplementalPolicy: { Type: "AWS::IAM::ManagedPolicy", Condition: "HasHeadlessRunner", Properties: { Description: "Opt-in deployment-owned runner storage and backups.", PolicyDocument: assistantPolicy } },
     // Only this stack's runner project may assume the role (no other CodeBuild
     // project in the account can borrow it).
-    RunnerRole: { Type: "AWS::IAM::Role", Properties: { RoleName: runnerRoleName, AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "codebuild.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": ref("AWS::AccountId") }, ArnLike: { "aws:SourceArn": sub("arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}-runner") } } }] }, Policies: [{ PolicyName: "ProvisionOpenWork", PolicyDocument: policy }] } },
+    RunnerRole: { Type: "AWS::IAM::Role", Properties: { RoleName: runnerRoleName, ManagedPolicyArns: [ref("RunnerCoreSupportPolicy"), when("HasHeadlessRunner", ref("RunnerSupplementalPolicy"))], AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Principal: { Service: "codebuild.amazonaws.com" }, Action: "sts:AssumeRole", Condition: { StringEquals: { "aws:SourceAccount": ref("AWS::AccountId") }, ArnLike: { "aws:SourceArn": sub("arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:project/${AWS::StackName}-runner") } } }] }, Policies: [{ PolicyName: "ProvisionOpenWork", PolicyDocument: policy }] } },
     Runner: { Type: "AWS::CodeBuild::Project", Properties: {
       Name: sub("${AWS::StackName}-runner"), ServiceRole: get("RunnerRole", "Arn"), ConcurrentBuildLimit: 1, TimeoutInMinutes: 120,
       Artifacts: { Type: "NO_ARTIFACTS" }, Environment: { Type: "LINUX_CONTAINER", ComputeType: "BUILD_GENERAL1_SMALL", Image: "aws/codebuild/standard:7.0", PrivilegedMode: false, EnvironmentVariables: Object.entries(environment).map(([Name, Value]) => ({ Name, Value, Type: "PLAINTEXT" })) },

@@ -65,6 +65,7 @@ function invalidCredentialHealth(
 }
 
 function oauthIssuer(configuration: ExternalMcpOAuthConfiguration | null | undefined): string | undefined {
+  if (configuration?.manualOAuthEndpoints) return new URL(configuration.manualOAuthEndpoints.authorizationEndpoint).origin
   const discovery = configuration?.discovery
   const metadata = discovery?.authorizationServerMetadata
   const metadataIssuer = metadata
@@ -230,8 +231,10 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     }
   }
 
+  // OAuth state (client registration, PKCE transactions, rotating tokens) is
+  // read back moments after it is written, so these reads use the primary.
   private async refreshConnection(): Promise<void> {
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ExternalMcpConnectionTable)
       .where(and(
@@ -246,7 +249,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
 
   private async memberAccount() {
     if (!this.member) return null
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ConnectedAccountTable)
       .where(and(
@@ -290,7 +293,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     load: async (context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined> => {
       assertCommitActive(context)
       await this.refreshConnection()
-      const rows = await db
+      const rows = await db.$primary
         .select()
         .from(OrgOAuthClientTable)
         .where(and(
@@ -320,7 +323,10 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           `The pre-registered OAuth client must allowlist the callback URL ${currentRedirectUri}.`,
         )
       }
-      const clientInformation = restoredClientInformation({ ...row, extra })
+      const restored = restoredClientInformation({ ...row, extra })
+      const clientInformation = this.connection.oauthConfiguration?.manualOAuthEndpoints
+        ? { ...restored, issuer: oauthIssuer(this.connection.oauthConfiguration) }
+        : restored
       return {
         clientInformation,
         revision: clientRevision(row),

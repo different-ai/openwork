@@ -107,7 +107,7 @@ try {
         } finally { await live.stop(); }
       }
       const testStart = performance.now();
-      const run = spawnSync(process.execPath, ["evals/bin/evals.mjs", "specs/core-chat.e2e.test.ts", "--local", "--engine", "v1", "--surface", "web"], {
+      const run = spawnSync(process.execPath, ["evals/bin/evals.mjs", "core-chat.e2e.test.ts", "--local", "--engine", "v1", "--surface", "web"], {
         cwd: root, encoding: "utf8", env: { ...process.env, OPENWORK_EVIDENCE_SOURCE_SHA: sha },
       });
       testSeconds = seconds(testStart);

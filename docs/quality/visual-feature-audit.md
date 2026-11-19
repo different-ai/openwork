@@ -25,7 +25,6 @@ claimed. Raw PR material and historical images are not committed here.
 | --- | --- | --- |
 | Workbot settings | Portaled, collision-aware chooser; below-card pointer target; empty Default selection; save and Undo; read-only boundary | `den-workbot-settings.e2e.test.ts` |
 | Workbot Calendar | Searchable and short model lists, keyboard dismissal, full recovery text, readable hours, stable toolbar, narrow forms | `workbot-calendar.e2e.test.ts`, `workbot-calendar-layout.e2e.test.ts` |
-| Desktop Calendar | Readable initial hour, bounded creation/details, setup and blocked-state direction | `automation-calendar.e2e.test.ts` |
 | Den text and search | Readable sentence-case labels, long workspace heading, clear palette empty state | `den-dashboard-activity.e2e.test.ts`, `den-command-palette.e2e.test.ts` |
 | Shared save bars | Painted bottom inset and focus scroll clearance; Remove-only rows stay inline | `permissions-ui.e2e.test.ts`, `ai-gateway-cloud-sign-in.e2e.test.ts` |
 | Gateway | Consistent provider filtering, loading/error/empty recovery, access-removal confirmation, searchable team assignment | `ai-gateway-provider-catalog.e2e.test.ts`, `ai-gateway-admin-provider.e2e.test.ts`, `ai-gateway-cloud-sign-in.e2e.test.ts`, `ai-gateway-spend-limits.e2e.test.ts` |

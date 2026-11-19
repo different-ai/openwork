@@ -64,6 +64,15 @@
       "override": "desktop apiBaseUrl / self-hosted Den API origin"
     },
     {
+      "host": "app.daytona.io",
+      "kind": "fetched",
+      "components": ["desktop"],
+      "purpose": "Daytona control API for computer use on an explicitly configured existing Linux sandbox, only when remote computers are enabled.",
+      "requirement": "opt-in",
+      "blockedEffect": "The configured Daytona computer cannot connect; local computer use and other targets are unaffected.",
+      "override": "OPENWORK_COMPUTER_DAYTONA_SANDBOX / DAYTONA_API_URL"
+    },
+    {
       "host": "app.openwork.software",
       "kind": "fetched",
       "components": ["server"],
@@ -97,15 +106,6 @@
       "purpose": "Source-code comment pointing maintainers to the Claude Code plugin format reference.",
       "requirement": "optional",
       "blockedEffect": "No runtime effect; it is not opened or fetched by OpenWork.",
-      "override": null
-    },
-    {
-      "host": "discord.gg",
-      "kind": "link-only",
-      "components": ["renderer"],
-      "purpose": "Community link from Settings.",
-      "requirement": "optional",
-      "blockedEffect": "The Discord community link will not open.",
       "override": null
     },
     {
@@ -313,6 +313,15 @@
       "purpose": "Favicon image service and the embedded browser panel's user-created new-tab page.",
       "requirement": "optional",
       "blockedEffect": "Favicons may be missing and the browser panel's new tab page may not load.",
+      "override": null
+    },
+    {
+      "host": "www.googleapis.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Google Drive resumable upload sessions prepared by OpenWork Cloud: the desktop server sends a workspace file's bytes directly to Google when uploading or saving a pulled file back to Drive.",
+      "requirement": "opt-in",
+      "blockedEffect": "Drive uploads larger than 4 MiB and saving pulled files back to Drive fail; smaller uploads through OpenWork Cloud still work.",
       "override": null
     }
   ]

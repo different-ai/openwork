@@ -1,6 +1,7 @@
 import type { FaqEntry } from "./faq";
 
 export const MIGRATION_GUIDE_URL = "https://openworklabs.com/docs/start-here/migrate-from-claude-cowork";
+export const IMPORT_HISTORY_GUIDE_PATH = "/docs/start-here/import-claude-history";
 
 // The one action on the migration page. The agent guide it points to lives in
 // packages/openwork-bootstrap/migrate.md and is served at /migrate.md.
@@ -27,7 +28,8 @@ export const migrationMoves = [
 ];
 
 export const migrationStays = [
-  "Conversation history and saved credentials",
+  "Saved credentials",
+  "Cowork tasks, which Claude's data export leaves out (Claude Code sessions and Claude chats import from Settings → Import)",
   "Plugins that are not in a public GitHub repository",
   "Scheduled tasks, which you recreate and run once by hand"
 ];
@@ -52,6 +54,11 @@ export const migrationSteps = [
 
 export const migrationFaq: FaqEntry[] = [
   {
+    question: "Can I bring my Claude conversations to OpenWork?",
+    answer:
+      "Claude Code sessions and Claude chats, yes: open Settings → Import in OpenWork. Claude Code sessions are found on your computer; Claude chats come from Claude's data export. Claude's export does not include Cowork tasks. Full guide: openworklabs.com/docs/start-here/import-claude-history."
+  },
+  {
     question: "Can I keep my Claude Cowork plugins in OpenWork?",
     answer:
       "Yes. Plugins from public GitHub marketplaces, including Anthropic's knowledge-work-plugins for Cowork, import into your OpenWork organization with their skills. Paste the migration prompt into Claude Code or run openwork-bootstrap migrate."
@@ -74,7 +81,7 @@ export const migrationFaq: FaqEntry[] = [
   {
     question: "What does not transfer from Claude Cowork?",
     answer:
-      "Conversation history, saved credentials, and scheduled tasks do not move. Plugins that are not in a public GitHub repository need to be added by hand."
+      "Saved credentials and scheduled tasks do not move, and Claude's data export does not include Cowork tasks. Claude Code sessions and Claude chats can be imported from Settings → Import in OpenWork. Plugins that are not in a public GitHub repository need to be added by hand."
   },
   {
     question: "Can I run the migration again later?",

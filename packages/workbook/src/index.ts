@@ -3,6 +3,7 @@ export {
   MAX_ENTRY_UNCOMPRESSED_BYTES,
   buildZip,
   listZipEntries,
+  parsedXmlText,
   readZipEntryData,
   readZipTextEntry,
   utf8Bytes,

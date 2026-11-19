@@ -1,12 +1,13 @@
 import { and, eq, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  GatewayKeyTable, GatewayProviderAccessTable, GatewayProviderTable, GatewayCredentialSetTable,
+  GatewayApiKeyTable, GatewayKeyTable, GatewayProviderAccessTable, GatewayProviderTable, GatewayCredentialSetTable,
   GatewayModelGroupTable, GatewayModelGroupModelTable, GatewayProviderModelTable,
   MemberTable, TeamTable, TeamMemberTable,
 } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
 import type { GatewaySelectionConflict, GatewayUsableModel } from "@openwork/types/den/gateway"
+import { AUTO_ROUTER_PROVIDER_ID, autoRouterModelId, autoRouterModelName } from "@openwork/types/den/auto-router"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 
 export type GatewayAccessScope = GatewayContext & { gatewayProviderId: typeof GatewayProviderTable.$inferSelect.id }
@@ -16,8 +17,8 @@ export type GatewayAccessRow = {
   credentialSet: typeof GatewayCredentialSetTable.$inferSelect
   model: typeof GatewayProviderModelTable.$inferSelect | null
 }
-export type LoadGatewayAccess = (scope: GatewayAccessScope) => Promise<GatewayAccessRow[]>
-export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name">
+export type LoadGatewayAccess = (scope: GatewayAccessScope, consistency?: "primary") => Promise<GatewayAccessRow[]>
+export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name"> & { litellmKeySource: string | null }
 /** An access row across every provider the member can reach, tagged with its provider. */
 export type GatewayMemberAccessRow = GatewayAccessRow & { provider: GatewayAccessProvider }
 export type LoadMemberGatewayAccess = (scope: GatewayContext) => Promise<GatewayMemberAccessRow[]>
@@ -36,16 +37,38 @@ export async function loadMemberGatewayAccess(scope: GatewayContext, executor: A
 
 export const loadMemberGatewayAccessFromDb: LoadMemberGatewayAccess = async (scope) => loadMemberGatewayAccess(scope, (await import("./db.js")).db)
 
+/**
+ * The caller's key is still active and still the member's, checked on every read so a revoked key loses
+ * access even if it was authenticated moments earlier. Member API keys live in their own table.
+ */
+function callerKeyActive(scope: GatewayContext) {
+  if (scope.keySource === "api_key") {
+    const keys = GatewayApiKeyTable
+    // A member's API key also stops at its expiry, even mid-session.
+    return sql`exists (select 1 from ${keys} where ${keys.id} = ${scope.gatewayKeyId}
+      and ${keys.org_membership_id} = ${MemberTable.id} and ${keys.organization_id} = ${MemberTable.organizationId}
+      and ${keys.status} = 'active' and ${keys.revoked_at} is null
+      and (${keys.expires_at} is null or ${keys.expires_at} > current_timestamp(3)))`
+  }
+  const keys = GatewayKeyTable
+  return sql`exists (select 1 from ${keys} where ${keys.id} = ${scope.gatewayKeyId}
+    and ${keys.org_membership_id} = ${MemberTable.id} and ${keys.organization_id} = ${MemberTable.organizationId}
+    and ${keys.status} = 'active' and ${keys.revoked_at} is null)`
+}
+
 function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: GatewayAccessScope["gatewayProviderId"] | undefined }, executor: AccessDb) {
   const grants = GatewayProviderAccessTable
   const groups = GatewayModelGroupTable
   const sets = GatewayCredentialSetTable
   const models = GatewayProviderModelTable
   const links = GatewayModelGroupModelTable
-  const provider = { id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name }
+  const provider = {
+    id: GatewayProviderTable.id, provider_id: GatewayProviderTable.provider_id, name: GatewayProviderTable.name,
+    litellmKeySource: sql`json_unquote(json_extract(${GatewayProviderTable.settings}, '$.litellm.keySource'))`
+      .mapWith((value: unknown) => typeof value === "string" ? value : null),
+  }
   return executor.select({ grant: grants, group: groups, credentialSet: sets, model: models, provider })
     .from(MemberTable)
-    .innerJoin(GatewayKeyTable, and(eq(GatewayKeyTable.org_membership_id, MemberTable.id), eq(GatewayKeyTable.organization_id, MemberTable.organizationId)))
     .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.organization_id, MemberTable.organizationId))
     .innerJoin(grants, eq(grants.gateway_provider_id, GatewayProviderTable.id))
     .innerJoin(groups, and(eq(groups.id, grants.model_group_id), eq(groups.gateway_provider_id, GatewayProviderTable.id)))
@@ -56,7 +79,7 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
       sql`(JSON_LENGTH(${GatewayProviderTable.model_ids}) = 0 OR JSON_CONTAINS(${GatewayProviderTable.model_ids}, JSON_QUOTE(${models.model_id})))`))
     .where(and(
       eq(MemberTable.id, scope.orgMembershipId), eq(MemberTable.organizationId, scope.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId),
-      eq(GatewayKeyTable.id, scope.gatewayKeyId), eq(GatewayKeyTable.status, "active"), isNull(GatewayKeyTable.revoked_at),
+      callerKeyActive(scope),
       // Omitted only by loadMemberGatewayAccess; the org boundary still comes from the member join.
       scope.gatewayProviderId === undefined ? undefined : eq(GatewayProviderTable.id, scope.gatewayProviderId),
       eq(GatewayProviderTable.status, "active"), eq(groups.status, "active"), eq(sets.status, "active"),
@@ -71,7 +94,10 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
     ))
 }
 
-export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db)
+export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope, consistency) => {
+  const { db } = await import("./db.js")
+  return loadGatewayAccess(scope, consistency === "primary" ? db.$primary : db)
+}
 
 export type GatewayGrantSelection = {
   row: GatewayAccessRow
@@ -152,15 +178,23 @@ export type GatewayListedModel = {
   owned_by: string
   name: string
   openwork: {
-    /** The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. */
+    /**
+     * The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. For a Smart
+     * Router, `openwork-auto`: it is called only through POST /api/v1/chat/completions.
+     */
     provider_id: string
     provider_name: string
     upstream_model_id: string
+    /** Set on Smart Routers, whose id is `openwork-smart-<router id>`. */
+    smart_router?: true
   }
 }
 
-/** Every model the member's grants allow, across providers, in the OpenAI list shape. */
-export function listGatewayModels(rows: GatewayMemberAccessRow[]): { object: "list"; data: GatewayListedModel[] } {
+/**
+ * Every model the member's grants allow, across providers, in the OpenAI list shape, then the Smart
+ * Routers the member can use.
+ */
+export function listGatewayModels(rows: GatewayMemberAccessRow[], smartRouters: readonly { id: string; routerName: string }[] = []): { object: "list"; data: GatewayListedModel[] } {
   const models = new Map<string, GatewayListedModel>()
   for (const row of rows) {
     if (!row.model || row.model.gateway_provider_id !== row.provider.id) continue
@@ -176,5 +210,16 @@ export function listGatewayModels(rows: GatewayMemberAccessRow[]): { object: "li
   }
   const data = [...models.values()].sort((a, b) =>
     a.openwork.provider_name.localeCompare(b.openwork.provider_name) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+  for (const router of smartRouters) {
+    const id = autoRouterModelId(router.id)
+    data.push({
+      id,
+      object: "model",
+      created: 0,
+      owned_by: "openwork",
+      name: autoRouterModelName(router.routerName),
+      openwork: { provider_id: AUTO_ROUTER_PROVIDER_ID, provider_name: "OpenWork", upstream_model_id: id, smart_router: true },
+    })
+  }
   return { object: "list", data }
 }

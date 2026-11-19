@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl } from "../_lib/den-flow";
 import { resolveMemberAuthGuardDecision, type MemberRoute, type SetupBootstrapStatus } from "../_lib/member-auth-routing";
 import { useDenFlow } from "../_providers/den-flow-provider";
@@ -27,7 +26,6 @@ export function MemberAuthGuard({
   setupStatus?: SetupBootstrapStatus;
   children: ReactNode;
 }) {
-  const searchParams = useSearchParams();
   const {
     user,
     runtimeConfig,
@@ -35,7 +33,6 @@ export function MemberAuthGuard({
   } = useDenFlow();
   const decision = resolveMemberAuthGuardDecision({
     route,
-    hasInstallToken: route === "/install" && Boolean(searchParams.get("token")?.trim()),
     setupStatus,
     authCheckStatus: memberAuthCheckStatus,
     signedIn: Boolean(user),

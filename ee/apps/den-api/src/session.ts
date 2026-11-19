@@ -1,16 +1,17 @@
-import { and, eq, gt, lt, lte } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { Context, MiddlewareHandler } from "hono"
 import { getSignedCookie } from "hono/cookie"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
+import { sessionTokenMatches } from "./session-token.js"
 import { auth, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX } from "./auth.js"
 import { cache, type CachedAuthSession } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
-import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
+import { sessionRefreshDue } from "./session-security-settings.js"
 
 type AuthSessionValue = {
   user: CachedAuthSession["user"]
@@ -152,6 +153,14 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   }
 
   return parsed
+}
+
+/**
+ * The request is a Connect capability call: an agent acting for the member (in Slack or Workbot chat), not the
+ * member's own browser. Only Den signs this header, so a caller cannot claim it.
+ */
+export function cameThroughConnect(headers: Headers): boolean {
+  return verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)) !== null
 }
 
 /** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
@@ -342,12 +351,21 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
   }
 
   const now = new Date()
-  const refreshCutoff = getDenSessionRefreshCutoff(now)
-  if (row.session.expiresAt > refreshCutoff) {
+  if (!sessionRefreshDue(row.session, now)) {
     return bearerSessionValue(row)
   }
 
-  const nextExpiresAt = getDenSessionExpiresAt(now)
+  // Extending reads the person's session limits (Auth & Security › General), so
+  // shorter ones set by any of their organizations apply here too.
+  let nextExpiresAt: Date
+  try {
+    const { userSessionExpiresAt } = await import("./session-security-lifetime.js")
+    nextExpiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
+  } catch (error) {
+    // The session stays valid until its current expiry; a later request extends it.
+    logger.error("session length could not be read", { auth_session_source: "den_session_middleware", request_id: requestContext?.requestId, error })
+    return bearerSessionValue(row)
+  }
   try {
     await db
       .update(AuthSessionTable)
@@ -356,10 +374,10 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
         updatedAt: now,
       })
       .where(and(
-        eq(AuthSessionTable.token, token),
+        sessionTokenMatches(token),
         gt(AuthSessionTable.expiresAt, now),
-        lte(AuthSessionTable.expiresAt, refreshCutoff),
-        lt(AuthSessionTable.expiresAt, nextExpiresAt),
+        // Not already extended by a concurrent request.
+        eq(AuthSessionTable.updatedAt, row.session.updatedAt),
       ))
   } catch (error) {
     logger.error("session refresh failed", {
@@ -396,12 +414,13 @@ export async function revokeBearerSession(headers: Headers) {
     return false
   }
 
-  const rows = await db
+  // primary: a session created moments ago must still have its cached id revoked.
+  const rows = await db.$primary
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
-    .where(eq(AuthSessionTable.token, token))
+    .where(sessionTokenMatches(token))
     .limit(1)
-  await db.delete(AuthSessionTable).where(eq(AuthSessionTable.token, token))
+  await db.delete(AuthSessionTable).where(sessionTokenMatches(token))
   // Sign-out/revocation is the authoritative point that invalidates cached auth.
   await cache.auth.revokeSession(token)
   const session = rows[0]

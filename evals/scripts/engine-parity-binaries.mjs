@@ -1,10 +1,19 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
+
+/** Retry interrupted archive transfers; callers verify the pinned hash before extraction. */
+export async function downloadEngineArchive(url, archive) {
+  await exec(process.platform === "win32" ? "curl.exe" : "curl", [
+    "--fail", "--silent", "--show-error", "--connect-timeout", "20", "--max-time", "300",
+    "--retry", "2", "--retry-all-errors", "--retry-delay", "1", "--retry-max-time", "600",
+    "--output", archive, url,
+  ], { timeout: 610_000 });
+}
 
 export async function binaryVersion(binary) {
   const { stdout } = await exec(binary, ["--version"], { timeout: 15_000 });
@@ -43,12 +52,10 @@ export async function prepareParityBinaries(root, overrides = process.env) {
     await mkdir(directory, { recursive: true });
     const staging = await mkdtemp(join(directory, ".install-"));
     try {
-      const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(180_000) });
-      if (!response.ok) throw new Error(`Engine archive returned HTTP ${response.status}`);
-      const bytes = Buffer.from(await response.arrayBuffer());
-      if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== artifact.integrity) throw new Error("Engine archive integrity mismatch");
       const archive = join(staging, "binary.tgz");
-      await writeFile(archive, bytes);
+      await downloadEngineArchive(url, archive);
+      const bytes = await readFile(archive);
+      if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== artifact.integrity) throw new Error("Engine archive integrity mismatch");
       await exec("tar", ["-xzf", archive, "-C", staging, `package/bin/${archiveName}`], { timeout: 60_000 });
       const extracted = join(staging, "package/bin", archiveName);
       await chmod(extracted, 0o755);

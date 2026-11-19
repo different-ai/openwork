@@ -38,8 +38,16 @@ mock_provider "aws" {
 
 mock_provider "random" {}
 
+override_resource {
+  target = aws_lambda_invocation.migrate
+  values = { result = "{\"exitCode\":0,\"image\":\"ghcr.io/different-ai/openwork-den-api@sha256:0942e02a8e2033151e982f51b24926fe5090807b7f7480d77f2c4fc5b806737e\"}" }
+}
+
 variables {
-  openwork_version    = "0.0.0-test"
+  openwork_version    = "0.18.58"
+  write_only_secrets  = false # exercise preserved legacy state path
+  database_ca_bundle  = "-----BEGIN CERTIFICATE-----test"
+  den_gateway_image   = "example.test/gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   vpc_id              = "vpc-123"
   alb_subnet_ids      = ["subnet-a", "subnet-b"]
   service_subnet_ids  = ["subnet-a", "subnet-b"]
@@ -127,13 +135,22 @@ run "web_on" {
 }
 
 run "web_certificate_covers_gateway" {
+  # Validation records are keyed by hostname, so planning works whether the
+  # mock leaves ACM's validation options unknown (Terraform) or uses these
+  # values (OpenTofu, which has no override_during).
   command = plan
 
-  # The real provider knows validation records at plan time; the mock does not.
   override_resource {
-    target          = aws_acm_certificate.this
-    override_during = plan
-    values          = { arn = "arn:aws:acm:us-east-1:123456789012:certificate/new", domain_validation_options = [] }
+    target = aws_acm_certificate.this
+    values = {
+      arn = "arn:aws:acm:us-east-1:123456789012:certificate/new"
+      domain_validation_options = [for h in ["openwork.example.com", "api.openwork.example.com", "chat.example.com"] : {
+        domain_name           = h
+        resource_record_name  = "_x.${h}."
+        resource_record_type  = "CNAME"
+        resource_record_value = "_y.acm-validations.aws."
+      }]
+    }
   }
 
   variables {
@@ -150,6 +167,10 @@ run "web_certificate_covers_gateway" {
   assert {
     condition     = contains(aws_acm_certificate.this[0].subject_alternative_names, "chat.example.com")
     error_message = "A module-created certificate must cover the gateway host."
+  }
+  assert {
+    condition     = toset(keys(aws_route53_record.certificate_validation)) == toset(["openwork.example.com", "api.openwork.example.com", "chat.example.com"])
+    error_message = "Each certificate hostname gets one validation record, keyed by hostname."
   }
   assert {
     condition     = local.environment.DAYTONA_SANDBOX_NAME_PREFIX == "acme-worker"

@@ -1,7 +1,9 @@
 /** @jsxImportSource react */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
+import { Cloud, Monitor, Check, ChevronDown, FileText, RefreshCw, Terminal, Zap } from "lucide-react";
+import { ComposerSendButton } from "./composer-send-button";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -48,6 +50,19 @@ import { ComposerSuggestionMenu, composerSuggestionRowClass } from "./composer-s
 import type { PlusMenuAgent, PlusMenuConnector, PlusMenuSection } from "./composer-plus-menu-model";
 import { connectionDiagnosticHistory, type ConnectionDiagnosticSource, type SendDiagnosticReason } from "@/app/lib/connection-diagnostic-history";
 import { composerDiagnosticBlockers } from "./composer-diagnostics";
+import { resolveComposerSubmit } from "./composer-submit";
+import { ModelRecoveryNote } from "./model-recovery-note";
+import { modelRecoveryChatKey, useModelRecoveryStore } from "../model-recovery-store";
+import { useNativeDictation } from "@openwork/ui/react";
+import { startNativeDictation } from "./start-native-dictation";
+import { useDesktopSpeechDictation } from "./desktop-speech-dictation";
+import { markFeatureUsed } from "@/app/lib/den";
+import { isDesktopRuntime } from "@/app/lib/runtime-env";
+import { NativeDictationControl } from "./native-dictation-control";
+import { useSessionReferencesMaybe, type SessionReferenceCandidate } from "@/components/chat/session-reference-context";
+import { formatRelativeTime } from "@/app/utils";
+import { filterSessionReferenceCandidates } from "./session-reference-search";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
 type MentionItem = {
   id: string;
@@ -67,9 +82,12 @@ type ComposerProps = {
   onQueue: () => void | Promise<void>;
   onStop: () => void | Promise<void>;
   busy: boolean;
+  childConversation?: boolean;
   editing?: boolean;
   stopping?: boolean;
   steering: boolean;
+  /** What Enter does while the agent is working; Cmd/Ctrl+Enter does the other. Defaults to queue. */
+  followUpDefault?: "queue" | "steer";
   submissionPreparing: boolean;
   submissionPreparingLabel?: string;
   queuedCount: number;
@@ -78,6 +96,7 @@ type ComposerProps = {
   preparingReasons?: readonly SendDiagnosticReason[];
   modelUnavailable?: boolean;
   modelUnavailableMessage?: string | null;
+  modelRecoveryScope?: string;
   organizationModelsEmpty?: boolean;
   statusLabel: string;
   modelPickerOpen: boolean;
@@ -102,6 +121,8 @@ type ComposerProps = {
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
+  /** Wait for an existing session's engine-bound model before editing its effort. */
+  modelSelectionPending?: boolean;
   agentLabel: string;
   selectedAgent: string | null;
   listAgents: () => Promise<Agent[]>;
@@ -121,6 +142,8 @@ type ComposerProps = {
   onInsertMention: (kind: ComposerMentionKind, value: string, draft?: string) => void;
   /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
+  /** A suggested next message, shown in gray while the message box is empty; Tab fills it in (feature `followUpSuggestions`). */
+  followUpSuggestion?: string | null;
   onPasteText: (text: string, draftOffset?: number) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
@@ -137,6 +160,12 @@ type ComposerProps = {
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
+/**
+ * The composer the person last typed in. With a side window open, "focus the
+ * prompt" (after a palette pick, a dialog, a model change) returns to that one
+ * instead of whichever composer registered last.
+ */
+let lastFocusedComposerRoot: HTMLElement | null = null;
 const DEFAULT_AGENT_NAME = "openwork";
 
 function isNonDefaultAgent(agent: Agent) {
@@ -205,6 +234,8 @@ function pluginSlashCommandName(file: CloudImportedPluginFile) {
 }
 
 export const ReactSessionComposer = memo(function ReactSessionComposer(props: ComposerProps) {
+  const latestProps = useRef(props);
+  latestProps.current = props;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const orgMcp = useOrgMcpConnections();
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -223,6 +254,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [activeMentionQuery, setActiveMentionQuery] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const [activeSessionTrigger, setActiveSessionTrigger] = useState<{ query: string; offset: number } | null>(null);
+  // Draft offset of the `#` whose list was dismissed.
+  const [sessionMenuDismissedAt, setSessionMenuDismissedAt] = useState<number | null>(null);
+  const sessionReferences = useSessionReferencesMaybe();
+  // Outside a page that can resolve tasks, `#` is plain text.
+  const sessionReferencesEnabled = Boolean(sessionReferences);
   const [menuIndex, setMenuIndex] = useState(0);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const commandsCacheRef = useRef<SlashCommandOption[] | null>(null);
@@ -255,14 +292,46 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   // compositionstart/compositionend events below.
   const imeComposingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const speechDictation = useDesktopSpeechDictation();
+  const dictationInput = () => rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']") ?? null;
+  const dictation = useNativeDictation({
+    enabled: true,
+    scope: props.sessionId,
+    text: props.draft,
+    onText: props.onDraftChange,
+    selection: () => editorRef.current?.draftSelectionRange() ?? { start: props.draft.length, end: props.draft.length },
+    focusInput: () => dictationInput()?.focus(),
+    startNative: isDesktopRuntime() ? startNativeDictation : undefined,
+    ...speechDictation,
+  });
+  const voiceSubmissionPending = useRef(false);
+  const [dictationSubmitting, setDictationSubmitting] = useState(false);
+  const prepareVoiceSubmission = async () => {
+    if (voiceSubmissionPending.current) return null;
+    if (dictation.localRecording && dictation.state === "starting") return null;
+    const scope = latestProps.current.sessionId;
+    voiceSubmissionPending.current = true;
+    if (dictation.localRecording) setDictationSubmitting(true);
+    try {
+      const text = dictation.localRecording ? await dictation.finish() : dictation.commit();
+      const current = latestProps.current;
+      if (text === null || current.sessionId !== scope) return null;
+      if (text !== current.draft) flushSync(() => current.onDraftChange(text));
+      return latestProps.current;
+    } finally {
+      voiceSubmissionPending.current = false;
+      if (dictation.localRecording) setDictationSubmitting(false);
+    }
+  };
   const draftRef = useRef(props.draft);
   useEffect(() => {
     draftRef.current = props.draft;
   }, [props.draft]);
 
   // Follow-up message UX (only relevant while the agent is busy):
-  // - Enter (and the send button) queues the message until the agent finishes.
+  // - Enter queues the message until the agent finishes.
   // - Cmd/Ctrl+Enter sends immediately (the agent adjusts mid-task, aka "steer").
+  // - Settings › Preferences can swap the two (`followUpDefault`).
   // - Escape arms a "Hit Escape again to stop the agent" prompt for 3s;
   //   a second Escape within that window stops the agent.
   const [escapeArmed, setEscapeArmed] = useState(false);
@@ -320,27 +389,25 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
   }, []);
 
-  // Editor submit (Enter). While idle this sends normally; while busy
-  // Enter queues until the agent finishes, and Cmd/Ctrl+Enter steers.
-  // An edit always replaces its original turn through the immediate send path.
-  const handleEditorSubmit = useCallback((options: { queue: boolean }) => {
-    const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
-    if (!hasContent) return;
-    if (props.submissionPreparing) return;
-    // A new Enter after Stop is fresh work, not a follow-up to the interrupted
-    // turn. The immediate send path fences admission on the shared interruption
-    // promise; dropping Enter here silently leaves the person's draft unsent.
-    if (props.stopping) {
-      void props.onSend();
-      return;
-    }
-    if (props.busy && !props.editing) {
-      if (options.queue) void props.onSteer();
-      else void props.onQueue();
-      return;
-    }
-    void props.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  // Editor submit (Enter, or Cmd/Ctrl+Enter when `queue` is set).
+  const handleEditorSubmit = useCallback(async (options: { queue: boolean }) => {
+    const current = await prepareVoiceSubmission();
+    if (!current) return;
+    const action = resolveComposerSubmit({
+      hasContent: current.draft.trim().length > 0 || current.attachments.length > 0,
+      disabled: current.disabled,
+      // A helper's conversation sends right away; it cannot queue or steer.
+      busy: current.busy && !current.childConversation,
+      editing: Boolean(current.editing),
+      stopping: Boolean(current.stopping),
+      submissionPreparing: current.submissionPreparing,
+      modifier: options.queue,
+      followUpDefault: current.followUpDefault,
+    });
+    if (action === "send") void current.onSend();
+    else if (action === "steer") void current.onSteer();
+    else if (action === "queue") void current.onQueue();
+  }, [dictation, props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 
@@ -361,6 +428,26 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setMentionOpen(mentionOpenNext);
     setMenuIndex(0);
   }, [mentionOpenNext, mentionQuery]);
+
+  // The task list stays open while the caret is in a `#query`, through spaces
+  // and queries with no match, until a task is picked, Escape is pressed, or
+  // the person presses outside the list. Dismissed, it stays closed for that
+  // `#` and opens again for the next one.
+  const handleSessionTriggerChange = useCallback((next: { query: string; offset: number } | null) => {
+    setActiveSessionTrigger((current) => (
+      current?.query === next?.query && current?.offset === next?.offset ? current : next
+    ));
+  }, []);
+  const sessionTriggerActive = sessionReferencesEnabled && activeSessionTrigger !== null;
+  const sessionQuery = activeSessionTrigger?.query ?? "";
+  useEffect(() => {
+    if (!sessionTriggerActive) setSessionMenuDismissedAt(null);
+  }, [sessionTriggerActive]);
+  const sessionMenuOpen = sessionTriggerActive && activeSessionTrigger.offset !== sessionMenuDismissedAt;
+  const dismissSessionMenu = () => setSessionMenuDismissedAt(activeSessionTrigger?.offset ?? null);
+  useEffect(() => {
+    if (sessionMenuOpen) setMenuIndex(0);
+  }, [sessionMenuOpen, sessionQuery]);
 
   useEffect(() => {
     if (!agentMenuOpen && !toolMenuOpen) return;
@@ -674,6 +761,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (!mentionQuery) return mentionItems.slice(0, 8);
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
   }, [mentionItems, mentionOpen, mentionQuery]);
+  // Read on each query so titles and new tasks are current while the list is open.
+  const sessionFiltered = useMemo(() => {
+    if (!sessionMenuOpen || !sessionReferences) return [];
+    return filterSessionReferenceCandidates(sessionReferences.candidates(), sessionQuery, { excludeSessionId: props.sessionId });
+  }, [props.sessionId, sessionMenuOpen, sessionQuery, sessionReferences]);
   const pastedTextTokens = useMemo(
     () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
@@ -701,8 +793,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
   const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
 
-  const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
-  const activeItems = activeMenu === "slash" ? slashFiltered : activeMenu === "mention" ? mentionFiltered : [];
+  const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : sessionMenuOpen ? "session" : null;
+  const activeItems: readonly unknown[] = activeMenu === "slash"
+    ? slashFiltered
+    : activeMenu === "mention" ? mentionFiltered : activeMenu === "session" ? sessionFiltered : [];
   const toolCommandItems = commands.filter(isLibraryCommand);
   const toolSkillItems = commands.filter((command) => command.source === "skill");
   const localCommandSkillNames = new Set(toolSkillItems.map((command) => command.name));
@@ -759,6 +853,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     [props.recentFiles, workspaceFileResults],
   );
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
+  const canSubmitVoice = dictation.localRecording && dictation.state !== "starting";
+  const sendPreparing = Boolean(props.submissionPreparing) || dictationSubmitting;
+  const sendUnavailable = (!canSend && !canSubmitVoice) || sendPreparing || (dictation.localRecording && dictation.state === "starting");
   const diagnosticsRef = useRef<ConnectionDiagnosticSource | null>(null);
   useEffect(() => {
     const diagnostics = connectionDiagnosticHistory.createSource();
@@ -954,8 +1051,24 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return true;
   };
 
+  const applySessionReferenceSelection = (candidate: SessionReferenceCandidate) => {
+    const draft = editorRef.current?.insertSessionReferenceAtSelection({
+      workspaceId: candidate.workspaceId,
+      sessionId: candidate.sessionId,
+      title: candidate.title,
+    });
+    if (draft == null) return false;
+    props.onDraftChange(draft);
+    setActiveSessionTrigger(null);
+    return true;
+  };
+
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
+    if (activeMenu === "session") {
+      const candidate = sessionFiltered[menuIndex];
+      return candidate ? applySessionReferenceSelection(candidate) : false;
+    }
     if (activeMenu === "slash") {
       const command = slashFiltered[menuIndex];
       if (!command) return false;
@@ -994,6 +1107,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     const handleFocus = () => {
       const root = rootRef.current;
       if (!root) return;
+      if (lastFocusedComposerRoot?.isConnected && lastFocusedComposerRoot !== root) return;
       const editable = root.querySelector<HTMLElement>("[contenteditable='true']");
       editable?.focus({ preventScroll: window.matchMedia("(max-width: 1023px)").matches });
     };
@@ -1016,6 +1130,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     };
   }, [props.onDraftChange]);
 
+  // Shown only where the usual placeholder would be: an empty, usable message box.
+  const followUpSuggestion = props.followUpSuggestion && !props.draft && props.attachments.length === 0 && !props.disabled
+    ? props.followUpSuggestion
+    : null;
+
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
     // IME composition guard — block Enter while IME is mid-character.
     const imeActive =
@@ -1025,11 +1144,30 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (event.key === "Enter" && imeActive) {
       return;
     }
+    // Tab in the empty message box takes the suggested follow-up as the draft,
+    // to edit or send. Elsewhere in the composer Tab still moves focus.
+    if (
+      event.key === "Tab" && followUpSuggestion && !imeActive
+      && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey
+      && !agentMenuOpen && !toolMenuOpen && !props.modelPickerOpen && !activeMenu
+      && event.target instanceof HTMLElement && event.target.closest("[data-composer-editor]")
+    ) {
+      event.preventDefault();
+      markFeatureUsed("followUpSuggestions");
+      props.onDraftChange(followUpSuggestion);
+      return;
+    }
     // Escape-to-stop while the agent is busy. Only when no menu is open so
     // Escape can still close menus. First press arms a confirmation prompt
     // for 3s; a second Escape within that window stops the agent.
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
-    if (event.key === "Escape" && props.busy && !anyMenuOpen) {
+    if (event.key === "Escape" && dictation.localRecording && !anyMenuOpen) {
+      event.preventDefault();
+      event.stopPropagation();
+      dictation.cancel();
+      return;
+    }
+    if (event.key === "Escape" && props.busy && !props.childConversation && !anyMenuOpen) {
       event.preventDefault();
       if (props.stopping) return;
       if (escapeArmed) {
@@ -1107,6 +1245,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
     }
 
+    // Escape closes even an empty menu without navigating out of the child.
+    if (activeMenu && event.key === "Escape") {
+      event.preventDefault();
+      if (activeMenu === "session") dismissSessionMenu();
+      setSlashOpen(false);
+      setMentionOpen(false);
+      return;
+    }
     if (!activeMenu || !activeItems.length) return;
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -1123,11 +1269,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       event.stopPropagation();
       void acceptActiveItem();
       return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setSlashOpen(false);
-      setMentionOpen(false);
     }
   };
 
@@ -1248,10 +1389,68 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     </ComposerSuggestionMenu>
   );
 
+  const renderSessionMenu = () => (
+    <ComposerSuggestionMenu
+      open={activeMenu === "session"}
+      anchor={panelRef}
+      onDismiss={dismissSessionMenu}
+    >
+      {sessionFiltered.length > 0 ? (
+        <div role="listbox" aria-label={t("composer.session_references_label")} className="flex flex-col gap-0.5" data-session-reference-menu="">
+          {sessionFiltered.map((candidate, index) => (
+            <button
+              key={`${candidate.workspaceId}:${candidate.sessionId}`}
+              ref={(element) => {
+                menuItemRefs.current[index] = element;
+              }}
+              type="button"
+              role="option"
+              aria-selected={index === menuIndex}
+              tabIndex={-1}
+              title={candidate.title}
+              className={composerSuggestionRowClass(index === menuIndex)}
+              onMouseMove={() => setMenuIndex(index)}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                applySessionReferenceSelection(candidate);
+              }}
+              onClick={(event) => {
+                if (event.detail === 0) applySessionReferenceSelection(candidate);
+              }}
+            >
+              <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 object-contain opacity-80 dark:invert" />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center justify-between gap-3">
+                  <span className="truncate text-xs font-semibold">{candidate.title}</span>
+                  {candidate.updatedAt > 0 ? (
+                    <span className="shrink-0 text-[11px] text-gray-10 tabular-nums">{formatRelativeTime(candidate.updatedAt)}</span>
+                  ) : null}
+                </span>
+                <span className="flex items-center gap-2 text-xs text-gray-10">
+                  <span className="min-w-0 truncate">{candidate.workspaceTitle}</span>
+                  {candidate.archived ? (
+                    <span className="shrink-0 rounded-sm bg-gray-3 px-1 text-[11px] text-gray-11">{t("composer.session_reference_archived")}</span>
+                  ) : null}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div role="status" className="px-3 py-2 text-xs text-gray-10">
+          {sessionQuery.trim() ? t("composer.session_references_no_match") : t("composer.session_references_empty")}
+        </div>
+      )}
+    </ComposerSuggestionMenu>
+  );
+
   return (
     <DevProfiler id="SessionComposer">
     <div
       ref={rootRef}
+      onFocusCapture={() => { lastFocusedComposerRoot = rootRef.current; }}
+      data-composer-menu-open={agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu) ? "true" : undefined}
       className={props.flush ? `relative ${toolMenuOpen ? "z-50" : "z-20"}` : `sticky bottom-0 shrink-0 ${toolMenuOpen ? "z-50" : "z-20"} bg-gradient-to-t from-dls-surface via-dls-surface/95 to-transparent px-4 pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:px-3 lg:px-8 ${props.compactTopSpacing ? "pt-0" : "pt-1"}`}
       style={{ contain: "layout style" }}
       onKeyDownCapture={handleKeyDownCapture}
@@ -1272,6 +1471,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
           {renderMentionMenu()}
           {renderSlashMenu()}
+          {renderSessionMenu()}
 
           {/*
             The pasted-text chip used to render twice — once inline inside
@@ -1299,9 +1499,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               pastedText={pastedTextTokens}
               attachments={attachmentTokens}
               submitDisabled={props.disabled}
-              placeholder={t("composer.placeholder")}
-              onChange={props.onDraftChange}
+              placeholder={followUpSuggestion ?? t("composer.placeholder")}
+              placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
+              onChange={dictation.edit}
               onMentionQueryChange={setActiveMentionQuery}
+              onSessionReferenceQueryChange={sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
+              onOpenSessionReference={sessionReferences?.openReference}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
               onExpandAttachment={setExpandedAttachmentId}
@@ -1360,6 +1563,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               }}
             />
 
+            <ModelRecoveryNote
+              scope={props.modelRecoveryScope}
+              sessionId={props.sessionId}
+              selectedModel={props.selectedModel}
+              onChange={() => props.onModelPickerOpenChange(true)}
+              onSwitchBack={(model) => props.onModelChange(model, null)}
+            />
             {/* Respond to the pane width, including desktop split views. */}
             {props.busy && !props.stopping && escapeArmed ? (
               <div data-composer-stop-confirmation role="status" className="mt-2 text-[12px] font-medium text-gray-10">
@@ -1448,9 +1658,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   hideValue={props.organizationModelsEmpty}
                   onOpenChange={props.onModelPickerOpenChange}
                   onChange={(model, variant) => {
-                    if (!props.steering) props.onModelChange(model, variant);
+                    if (!props.steering && !props.modelSelectionPending) {
+                      props.onModelChange(model, variant);
+                      if (props.modelRecoveryScope) useModelRecoveryStore.getState().clear(modelRecoveryChatKey(props.modelRecoveryScope, props.sessionId));
+                    }
                   }}
-                  disabled={props.steering}
+                  disabled={props.steering || props.modelSelectionPending}
                   sessionId={props.sessionId}
                   openWorkModelsEntitled={props.openWorkModelsEntitled}
                   openWorkModelsSyncing={props.openWorkModelsSyncing}
@@ -1459,7 +1672,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   behaviorLabel={props.modelVariantLabel}
                   behaviorOptions={props.modelBehaviorOptions}
                   onBehaviorChange={(value) => {
-                    if (!props.steering) props.onModelVariantChange(value);
+                    if (!props.steering && !props.modelSelectionPending) props.onModelVariantChange(value);
                   }}
                 />
                 {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
@@ -1495,72 +1708,38 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   Cmd/Ctrl+Enter still steers).
               */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
-                <button
-                  type="button"
+                <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} />
+                <ComposerSendButton
+                  mode={props.stopping ? "stopping" : showStop ? "stop" : sendPreparing ? "preparing" : "send"}
+                  ready={(canSend || canSubmitVoice) && !props.disabled}
                   onPointerDown={(event) => {
                     // Preserve focus until submission succeeds; rejected sends keep the keyboard.
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
                   }}
                   onClick={
                     showStop
-                      ? props.onStop
-                      : !canSend || props.submissionPreparing
+                      ? () => void props.onStop()
+                      : sendUnavailable
                         ? undefined
-                        : props.onSend
+                        : () => { void handleEditorSubmit({ queue: false }); }
                   }
                   disabled={
                     props.disabled
-                    || props.stopping
-                    || (!showStop && (!canSend || props.submissionPreparing))
+                    || Boolean(props.stopping)
+                    || (!showStop && sendUnavailable)
                   }
-                  aria-label={
+                  label={
                     props.stopping
                       ? t("composer.stopping")
                       : showStop
                         ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")
+                        : dictationSubmitting
+                          ? "Finishing dictation"
+                          : props.submissionPreparing
+                            ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
+                            : t("composer.run_task")
                   }
-                  aria-busy={props.stopping || props.submissionPreparing || undefined}
-                  className={`inline-flex h-9 max-h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    props.stopping
-                      ? "cursor-wait bg-[var(--dls-accent)] text-[var(--dls-accent-fg)]"
-                      : showStop
-                        ? "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                        : !canSend || props.disabled || props.submissionPreparing
-                          ? "bg-gray-4 text-gray-10"
-                          : "bg-[var(--dls-accent)] text-[var(--dls-accent-fg)] hover:bg-[var(--dls-accent-hover)]"
-                  }`}
-                  title={
-                    props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")
-                  }
-                >
-                  {props.stopping ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : showStop ? (
-                    <Square size={12} fill="currentColor" />
-                  ) : props.submissionPreparing ? (
-                    <LoaderCircle size={15} className="animate-spin" />
-                  ) : (
-                    <ArrowUp size={15} />
-                  )}
-                  <span className="sr-only">
-                    {props.stopping
-                      ? t("composer.stopping")
-                      : showStop
-                        ? t("composer.stop")
-                        : props.submissionPreparing
-                          ? props.submissionPreparingLabel ?? "Preparing connected service tools…"
-                          : t("composer.run_task")}
-                  </span>
-                </button>
+                />
               </div>
             </div>
           </div>
