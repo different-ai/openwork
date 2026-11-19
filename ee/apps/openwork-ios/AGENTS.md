@@ -5,7 +5,7 @@ here cannot tell you. Read `README.md` for what the app does and how to run it.
 
 ## Facts
 
-- App ID `com.differentai.openwork` (store) and `com.differentai.openwork.dev`
+- App ID `com.differentai.openwork.ios` (store) and `com.differentai.openwork.dev`
   (development). iPhone only, iOS 26 and later, portrait. It follows the
   system's light and dark appearance and text size.
 - Swift 6 language mode with strict concurrency. The app target isolates to
