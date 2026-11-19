@@ -10,6 +10,6 @@ export const metadata = withSocialMetadata({
   }
 });
 
-export default function SubscriptionTermsPage() {
-  return <LegalPage file="terms/subscription/subscription-terms.md" />;
+export default async function SubscriptionTermsPage() {
+  return await LegalPage({ file: "terms/subscription/subscription-terms.md" });
 }

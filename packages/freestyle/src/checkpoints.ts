@@ -1,7 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { FreestyleApiError } from "freestyle";
 import { ACCESS_FILE, client, execChecked, isMissing, waitForPublicAccess } from "./index.ts";
-import { parseEvidenceCheckpoint, type EvidenceCheckpoint } from "./checkpoint-schema.ts";
+import { parseEvidenceCheckpoint, type EvidenceCheckpoint } from "@openwork/evidence-provider/checkpoint";
+import { CheckpointCapacity, CheckpointUnavailable } from "@openwork/evidence-provider/review";
+
+export { CheckpointCapacity, CheckpointUnavailable };
 
 export const EVIDENCE_KIND = "openwork-evidence-source-v1";
 export const FORK_KIND = "openwork-evidence-fork-v1";
@@ -9,9 +12,6 @@ const root = "/opt/openwork-preview";
 const manifest = `${root}/checkpoint.json`;
 /** How long a saved checkpoint (a PR preview) can be opened. */
 export const CHECKPOINT_TTL_SECONDS = 12 * 3600;
-
-export class CheckpointUnavailable extends Error {}
-export class CheckpointCapacity extends Error {}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

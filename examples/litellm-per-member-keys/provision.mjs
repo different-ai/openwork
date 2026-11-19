@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 /**
  * @typedef {object} ProvisionerConfig
  * @property {string} denApiUrl
- * @property {string} denToken
+ * @property {string} [denToken] signed-in owner or admin bearer token
+ * @property {string} [denApiKey] organization API key (preferred for unattended runs)
  * @property {string} orgId
  * @property {string} providerId
  * @property {string} liteLlmBaseUrl
@@ -144,11 +145,23 @@ async function requestJson(url, init, secrets) {
 
 /** @param {ProvisionerConfig} input */
 function denHeaders(input) {
+  const auth = input.denApiKey
+    ? { "x-api-key": input.denApiKey }
+    : { authorization: `Bearer ${requireString(input.denToken, "OPENWORK_DEN_TOKEN or OPENWORK_DEN_API_KEY")}` };
   return {
-    authorization: `Bearer ${input.denToken}`,
+    ...auth,
     "content-type": "application/json",
     "x-openwork-org-id": input.orgId,
   };
+}
+
+/**
+ * @param {ProvisionerConfig} input
+ * @param {...string} extra
+ * @returns {string[]}
+ */
+function knownSecrets(input, ...extra) {
+  return [input.denToken, input.denApiKey, ...extra].filter((value) => typeof value === "string" && value.length > 0);
 }
 
 /**
@@ -315,7 +328,7 @@ export async function syncProviderModelMetadata(input) {
   const rawProviderId = requireString(input.providerId, "providerId");
   const providerId = encodeURIComponent(rawProviderId);
   const models = configuredModels(input);
-  const secrets = [input.denToken, input.liteLlmMasterKey];
+  const secrets = knownSecrets(input, input.liteLlmMasterKey);
   const providerList = await requestJson(
     `${denApiUrl}/v1/llm-providers?scope=manageable`,
     { headers: denHeaders(input) },
@@ -415,7 +428,7 @@ export async function reconcileMemberKeys(input) {
   const liteLlmBaseUrl = liteLlmAdminBaseUrl(input.liteLlmBaseUrl);
   const providerId = encodeURIComponent(requireString(input.providerId, "providerId"));
   const models = configuredModels(input);
-  const secrets = [input.denToken, input.liteLlmMasterKey];
+  const secrets = knownSecrets(input, input.liteLlmMasterKey);
   const listed = await requestJson(
     `${denApiUrl}/v1/llm-providers/${providerId}/member-credentials`,
     { headers: denHeaders(input) },
@@ -478,7 +491,7 @@ export async function offboardMember(input) {
   const liteLlmBaseUrl = liteLlmAdminBaseUrl(input.liteLlmBaseUrl);
   const providerId = encodeURIComponent(requireString(input.providerId, "providerId"));
   const orgMembershipId = requireString(input.orgMembershipId, "orgMembershipId");
-  const secrets = [input.denToken, input.liteLlmMasterKey];
+  const secrets = knownSecrets(input, input.liteLlmMasterKey);
   const listed = await requestJson(
     `${denApiUrl}/v1/llm-providers/${providerId}/member-credentials`,
     { headers: denHeaders(input) },
@@ -521,7 +534,8 @@ function env(name) {
 function configFromEnv() {
   return {
     denApiUrl: env("OPENWORK_DEN_API_URL"),
-    denToken: env("OPENWORK_DEN_TOKEN"),
+    denToken: process.env.OPENWORK_DEN_TOKEN || undefined,
+    denApiKey: process.env.OPENWORK_DEN_API_KEY || undefined,
     orgId: env("OPENWORK_ORG_ID"),
     providerId: env("OPENWORK_LLM_PROVIDER_ID"),
     liteLlmBaseUrl: env("LITELLM_BASE_URL"),

@@ -1,251 +1,23 @@
-name: Build and core checks
-run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
+name: Nightly regression
 
+# Nightly and manual runs only. Nothing here gates a merge, a deploy or a
+# release: the checks that do are the quick check (quick-check.yml), which
+# runs on every PR and every dev push.
 on:
-  pull_request:
-    branches:
-      - dev
-  push:
-    branches:
-      - dev
-
   schedule:
     - cron: "37 7 * * *"
   workflow_dispatch:
-
-concurrency:
-  group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
-  classify-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      lane: ${{ steps.classify.outputs.lane }}
-      den_contract: ${{ steps.classify.outputs.den_contract }}
-    steps:
-      - name: Classify changed files
-        id: classify
-        uses: actions/github-script@v8
-        with:
-          script: |
-            if (context.eventName !== "pull_request") {
-              core.setOutput("lane", "full")
-              // Pushes to dev keep their dedicated Generated Den SDK and API Contract workflows.
-              core.setOutput("den_contract", "false")
-              core.info("Selected lane: full")
-              return
-            }
-
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              per_page: 100,
-            })
-            const snapshotOnly = files.length === 1
-              && files[0].status === "modified"
-              && files[0].filename === "ee/apps/gateway/src/models/base.json"
-            const docsOnly = files.length > 0
-              && files.every((file) => file.filename.startsWith("packages/docs/")
-                && (!file.previous_filename || file.previous_filename.startsWith("packages/docs/")))
-            const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
-            core.setOutput("lane", lane)
-            core.info(`Selected lane: ${lane}`)
-
-            // Route, schema, or contract changes must ship the regenerated
-            // packages/docs/openapi.json and packages/sdk/src/gen.
-            const denContractPrefixes = ["ee/apps/den-api/", "ee/packages/", "packages/types/", "packages/sdk/"]
-            // The workflow itself is listed so changes to this check exercise it.
-            const denContractFiles = new Set(["packages/docs/openapi.json", ".spectral.yaml", ".spectral-baseline.json", "scripts/api-lint.mjs", ".github/workflows/ci-tests.yml"])
-            const touchesDenContract = (name) => Boolean(name) && (denContractFiles.has(name) || denContractPrefixes.some((prefix) => name.startsWith(prefix)))
-            const denContract = lane === "full" && files.some((file) => touchesDenContract(file.filename) || touchesDenContract(file.previous_filename))
-            core.setOutput("den_contract", denContract ? "true" : "false")
-            core.info(`Den API contract check: ${denContract ? "required" : "not affected"}`)
-
-  openwork-tests-core:
-    name: Unit tests
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      - name: Typecheck the headless runner
-        run: pnpm --filter @openwork-ee/headless-runner typecheck
-      - name: Boot the app provider tree
-        run: pnpm test:boot
-      - name: Run core unit tests
-        run: pnpm --dir evals run test:core
-      # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
-      # it used to run only nightly, and debt piled up unnoticed.
-      - name: Check the test framework (lint and ratchets)
-        run: |
-          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
-          pnpm evals:check
-
-  openwork-tests-build:
-    name: Build and boot the desktop app
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
-    timeout-minutes: 15
-    steps:
-      # Bootstrap before checkout or any action can execute repository code.
-      - name: Prepare virtual display
-        timeout-minutes: 6
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C
-          unset APT_CONFIG
-          . /etc/os-release
-          if [[ "${ID:-}" != ubuntu || "${VERSION_ID:-}" != 22.04 || "${VERSION_CODENAME:-}" != jammy ]] \
-            || [[ "$(/usr/bin/dpkg --print-architecture)" != amd64 ]] \
-            || [[ ! -r /usr/share/keyrings/ubuntu-archive-keyring.gpg || ! -s /usr/share/keyrings/ubuntu-archive-keyring.gpg ]]; then
-            echo 'Virtual display bootstrap requires Ubuntu 22.04/jammy amd64 and its archive keyring.' >&2
-            exit 1
-          fi
-          if command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null; then
-            echo 'Virtual display commands already installed; skipping APT.'
-            exit 0
-          fi
-
-          umask 077
-          apt_dir=$(mktemp -d /tmp/openwork-apt.XXXXXXXX)
-          trap 'rm -rf -- "$apt_dir"' EXIT
-          trap 'exit 130' INT
-          trap 'exit 143' TERM
-          mkdir "$apt_dir/sourceparts"
-          printf '%s\n' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu jammy-updates main universe' \
-            'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu jammy-security main universe' \
-            > "$apt_dir/sources.list"
-          chmod 0755 "$apt_dir" "$apt_dir/sourceparts"
-          chmod 0644 "$apt_dir/sources.list"
-          # Keep trusted image APT settings, but select only these signed Ubuntu sources.
-          apt_options=(-o "Dir::Etc::sourcelist=$apt_dir/sources.list" -o "Dir::Etc::sourceparts=$apt_dir/sourceparts"
-            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::Retries=1)
-
-          retryable_update() {
-            local line pending_error=false saw_transport=false
-            local transport='TLSWaitFd|Could not wait for server fd|Connection timed out|Connection failed|Could not connect to|Unable to connect to|Connection refused|Connection reset by peer|Temporary failure resolving|Could not resolve|Network is unreachable'
-            local fatal='[Cc]ertificate|[Ss]ignature|NO_PUBKEY|BADSIG|EXPKEYSIG|REVKEYSIG|[Nn]ot signed|[Rr]elease file|[Hh]ash [Ss]um mismatch|[Cc]onflicting values|[Mm]alformed|[Ss]yntax error|[Ii]nvalid operation|[Pp]ermission denied'
-            [[ "$status" == 100 || "$status" == 124 || "$status" == 137 ]] || return 1
-            while IFS= read -r line || [[ -n "$line" ]]; do
-              [[ ! "$line" =~ $fatal ]] || return 1
-              if [[ "$pending_error" == true ]]; then
-                [[ "$line" =~ $transport ]] || return 1
-                pending_error=false
-                saw_transport=true
-                continue
-              fi
-              case "$line" in
-                ''|Hit:*|Get:*|Ign:*|'Reading package lists...'*|'Fetched '*) ;;
-                Err:*) pending_error=true ;;
-                'E: Some index files failed to download. They have been ignored, or old ones used instead.') ;;
-                E:*|W:*|'  '*)
-                  [[ "$line" =~ $transport ]] || return 1
-                  saw_transport=true
-                  ;;
-                *) return 1 ;;
-              esac
-            done < "$apt_dir/update.log"
-            [[ "$pending_error" == false ]] && { [[ "$saw_transport" == true ]] || [[ "$status" == 124 || "$status" == 137 ]]; }
-          }
-
-          updated=false
-          source_mode=security
-          for attempt in 1 2 3; do
-            if [[ "$attempt" == 2 ]]; then sleep 5; fi
-            if [[ "$attempt" == 3 ]]; then
-              sleep 10
-              # Same signed jammy-security pocket; DNS may still select the same backend.
-              sources=$(<"$apt_dir/sources.list")
-              printf '%s\n' "${sources/security.ubuntu.com/archive.ubuntu.com}" > "$apt_dir/sources.list"
-              source_mode=archive-security-fallback
-            fi
-            echo "APT update attempt $attempt/3 source=$source_mode"
-            if sudo /usr/bin/timeout --signal=TERM --kill-after=5s 60s /usr/bin/apt-get "${apt_options[@]}" update --error-on=any > "$apt_dir/update.log" 2>&1; then
-              status=0
-            else
-              status=$?
-            fi
-            cat "$apt_dir/update.log"
-            echo "APT update attempt $attempt/3 source=$source_mode status=$status"
-            if [[ "$status" == 0 ]]; then
-              updated=true
-              break
-            fi
-            if ! retryable_update || [[ "$attempt" == 3 ]]; then
-              echo 'APT update failed; refusing to install from stale or unverified indexes.' >&2
-              exit "$status"
-            fi
-          done
-          [[ "$updated" == true ]] || exit 1
-          sudo /usr/bin/timeout --signal=TERM --kill-after=5s 120s /usr/bin/apt-get "${apt_options[@]}" install -y xvfb x11-utils
-          command -v xvfb-run >/dev/null && command -v xdpyinfo >/dev/null || {
-            echo 'Virtual display installation did not provide both required commands.' >&2
-            exit 1
-          }
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Cache Electron and pinned sidecars
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cache/electron
-            ~/.cache/electron-builder
-            apps/desktop/resources/sidecars
-          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
-      - name: Setup tests
-        id: setup
-        uses: ./.github/actions/setup-tests
-      - name: Check outbound access manifest
-        run: pnpm check:outbound-access
-      # Test source resolution differs from packaged Node plugin resolution.
-      - name: Bundle the server plugins the way packaged builds do
-        run: |
-          rm -rf packages/types/dist
-          pnpm --filter openwork-server build
-      - name: Typecheck Electron main against the IPC contract
-        run: pnpm --filter @openwork/desktop typecheck:electron
-      - name: Package and smoke-test the installed desktop
-        timeout-minutes: 7
-        env:
-          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
-      - name: Upload packaged smoke evidence and timings
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packaged-desktop-smoke-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
-            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
-            evals/results/test-runs/**
-          include-hidden-files: true
-          retention-days: 7
-
-  # Broad journeys, source-layout guards, and test-framework checks remain visible
-  # here without blocking unrelated PRs. No retries or ignored failures.
+  # Broad journeys, source-layout guards and test-framework checks. No retries
+  # or ignored failures.
   openwork-tests-extended:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -273,13 +45,13 @@ jobs:
           pnpm --filter @openwork/types build
           pnpm --filter @openwork-ee/den-db build
           pnpm --filter @openwork/email build
-          pnpm dev:den:mysql
+          pnpm ci:den:mysql
           pnpm --filter @openwork/desktop prepare:sidecar
       # One file at a time: every local Den boot resets den-web's shared .next/dev
       # build directory, so parallel Den specs crash each other's Den web.
       - name: Run all PR specs
         if: (success() || failure()) && steps.lane.outcome == 'success'
-        run: pnpm sdk:build && pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
+        run: pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
@@ -290,9 +62,50 @@ jobs:
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm --filter @openwork/desktop typecheck:electron
 
+  # The Linux packaged smoke boots an unpacked directory, which cannot install
+  # an update. This lane builds real signed enterprise .app bundles so
+  # packaged-update-install proves download -> install on quit -> relaunch.
+  packaged-desktop-macos:
+    name: Packaged desktop on macOS
+    runs-on: blacksmith-12vcpu-macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        uses: ./.github/actions/setup-tests
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Package, sign, and run the macOS packaged update journey
+        timeout-minutes: 30
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke-macos
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke-macos.mjs --server-built
+      - name: Upload macOS packaged evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-macos-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke-macos/profiles/**/electron.log
+            evals/results/test-runs/**
+          include-hidden-files: true
+          retention-days: 7
+
   validate-models-snapshot:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'snapshot'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -301,7 +114,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
 
       - name: Validate models snapshot
         run: |
@@ -354,12 +167,20 @@ jobs:
           }
           NODE
 
-  # Docs never reach a runtime path, so a docs-only PR only needs to prove the
-  # Mintlify site still builds and has no broken pages, anchors, or images.
+      # Builds both published catalogs (v1 /api.json and v2
+      # /experimental/v2.0/api.json) from the snapshots with plain Node: it
+      # checks base-v2.json and that the custom and OpenWork providers convert
+      # to valid v2 entries.
+      - name: Build v1 and v2 catalogs
+        run: node ee/apps/gateway/scripts/build-models.mjs
+
+  # Validate docs independently of the desktop smoke: images are site-only,
+  # while MD/MDX and docs.json also feed the desktop's embedded agent docs.
   validate-docs:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'docs'
     runs-on: ubuntu-latest
+    env:
+      # Uses native fetch instead of the old is-online/got cancellation probe.
+      MINT_VERSION: "4.2.1126"
     defaults:
       run:
         working-directory: packages/docs
@@ -369,135 +190,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: 24
-      - name: Validate the docs build
-        run: npx -y mint@4.2.868 validate
-      - name: Check for broken links and images
-        run: npx -y mint@4.2.868 broken-links
-
-  # Pull requests that change Den API routes or schemas must commit the
-  # regenerated OpenAPI snapshot and SDK. Pushes to dev keep the dedicated
-  # Generated Den SDK and API Contract workflows.
-  den-contract:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.den_contract == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    # Loading the live app initializes Better Auth's OAuth resource registry,
-    # which needs a reachable database even though generation never reads one.
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: password
-          MYSQL_DATABASE: openwork_den_contract_ci
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den_contract_ci
-      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.4.0
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Build den-api workspace dependencies
-        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
-      - name: Prepare the throwaway schema-export database
-        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
-        env:
-          NODE_OPTIONS: --conditions=development
-      - name: Regenerate the OpenAPI snapshot and SDK
-        run: pnpm den:contract
-      - name: Fail if the committed contract drifted from the route source
-        id: drift
-        run: |
-          set -euo pipefail
-          if ! git diff --exit-code --stat -- packages/docs/openapi.json packages/sdk/src/gen; then
-            echo "::error::The Den API contract is out of date. With MySQL on 127.0.0.1:3306 (pnpm dev:den:mysql), run 'pnpm den:contract' and commit packages/docs/openapi.json and packages/sdk/src/gen."
-            exit 1
-          fi
-          echo "OpenAPI snapshot and generated SDK match the route source."
-      # Den Contract Regenerated pushes this back to the PR, but only after
-      # Den Contract Conflicts merged dev into it with dev's generated files.
-      - name: Upload the regenerated contract
-        if: failure() && steps.drift.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: den-contract
-          path: |
-            packages/docs/openapi.json
-            packages/sdk/src/gen/
-          retention-days: 1
-      - name: Lint the contract and typecheck the SDK
-        run: pnpm api:lint && pnpm --filter @openwork/sdk typecheck
-
-  # Single stable context for branch rulesets to require. Green only when
-  # the lane selected by classification succeeds; always reports.
-  openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require the selected test lane to pass
-        env:
-          CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
-          LANE: ${{ needs.classify-changes.outputs.lane }}
-          CORE_RESULT: ${{ needs.openwork-tests-core.result }}
-          BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
-          SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
-          DOCS_RESULT: ${{ needs.validate-docs.result }}
-          DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
-          DEN_CONTRACT_RESULT: ${{ needs.den-contract.result }}
-        run: |
-          echo "classification: $CLASSIFY_RESULT ($LANE)"
-          echo "Den API contract (required: $DEN_CONTRACT): $DEN_CONTRACT_RESULT"
-          echo "core product regressions: $CORE_RESULT"
-          echo "packaging and IPC contract: $BUILD_RESULT"
-          echo "snapshot validation: $SNAPSHOT_RESULT"
-          echo "docs validation: $DOCS_RESULT"
-
-          if [ "$CLASSIFY_RESULT" != "success" ]; then
-            echo "Changed-file classification did not succeed; blocking merge." >&2
-            exit 1
-          fi
-
-          if [ "$DEN_CONTRACT" = "true" ] && [ "$DEN_CONTRACT_RESULT" != "success" ]; then
-            echo "The Den API contract check did not pass; regenerate with 'pnpm den:contract'." >&2
-            exit 1
-          fi
-          if [ "$DEN_CONTRACT" != "true" ] && [ "$DEN_CONTRACT_RESULT" != "skipped" ]; then
-            echo "The Den API contract check ran without being selected; blocking merge." >&2
-            exit 1
-          fi
-
-          case "$LANE" in
-            full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
-              ;;
-            docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
-              ;;
-            *)
-              echo "Changed-file classification returned an unexpected value; blocking merge." >&2
-              exit 1
-              ;;
-          esac
+      - name: Validate the docs build
+        run: pnpm dlx "mint@$MINT_VERSION" validate
+      - name: Check for broken links and images
+        run: pnpm dlx "mint@$MINT_VERSION" broken-links

@@ -5,6 +5,7 @@ import {
   gatewayUsageResetListOptionsSchema,
   gatewayUsageResetCursorSchema,
   gatewayWinningPolicies,
+  gatewayWinningPoliciesByScope,
   type GatewayUsageLimitPolicy,
   type GatewayUsageResetListOptions,
   type GatewayUsageResetPage,
@@ -12,6 +13,7 @@ import {
 } from "@openwork/types/den/gateway-usage-limits"
 import type { createDenDb } from "./client"
 import { GatewayUsageError } from "./gateway-usage-errors"
+import { usageProviderNames } from "./gateway-usage-read"
 import { AuthUserTable } from "./schema/auth"
 import { MemberTable } from "./schema/org"
 import { TeamMemberTable, TeamTable } from "./schema/teams"
@@ -59,7 +61,8 @@ function readCursor(
 }
 
 async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memberId"][]) {
-  const winners = new Map<string, ReturnType<typeof gatewayWinningPolicies>>()
+  // memberId -> provider scope -> winners
+  const winners = new Map<string, Map<string, ReturnType<typeof gatewayWinningPolicies>>>()
   if (memberIds.length === 0) return winners
   const memberships = await tx
     .select({ memberId: TeamMemberTable.orgMembershipId, teamId: TeamTable.id })
@@ -117,6 +120,7 @@ async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memb
           revision: policy.revision,
           hardLimit: policy.hardLimit,
           allowRequestReset: policy.allowRequestReset,
+          providerId: policy.inferenceProviderId ?? null,
           limits: [],
           assignments: [],
         }
@@ -128,7 +132,7 @@ async function pageWinners(tx: Transaction, scope: Scope, memberIds: Scope["memb
           costLimitMicroUsd: limit.costLimitMicroUsd,
         })
     }
-    winners.set(memberId, gatewayWinningPolicies([...candidates.values()]))
+    winners.set(memberId, gatewayWinningPoliciesByScope([...candidates.values()]))
   }
   return winners
 }
@@ -210,10 +214,16 @@ export async function readGatewayUsageResetPage(
     ),
   ]
   const winners = await pageWinners(tx, scope, pendingMemberIds)
+  const providerNames = await usageProviderNames(
+    tx,
+    scope.organizationId,
+    rows.map(({ request }) => request.providerScope),
+  )
   const requests = rows.map(
     ({ request, bucket, member, memberName, memberEmail }): GatewayUsageResetRequest => {
       const winner = winners
         .get(request.memberId)
+        ?.get(request.providerScope)
         ?.find(({ limit }) => limit.timeframe === request.timeframe)
       const period = gatewayUsagePeriod(request.timeframe, now)
       const eligible =
@@ -240,6 +250,10 @@ export async function readGatewayUsageResetPage(
         bucketId: request.bucketId,
         timeframe: request.timeframe,
         policyName: request.policyName,
+        providerId: request.providerScope || null,
+        providerName: request.providerScope
+          ? (providerNames.get(request.providerScope) ?? "Removed provider")
+          : null,
         reason: request.reason,
         status,
         createdAt: request.createdAt.toISOString(),

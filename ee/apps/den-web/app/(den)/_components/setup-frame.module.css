@@ -13,6 +13,7 @@
 .progressSummary > span:first-child { color: #171717; font-weight: 500; }
 .progressSummary > span:last-child { color: #777; font-size: 12px; font-variant-numeric: tabular-nums; }
 .steps { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; padding: 0; margin: 0; }
+.simplified .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .steps li { display: flex; min-width: 0; flex-direction: column; gap: 11px; font-size: 12px; line-height: 1.4; color: #8a8a8a; white-space: nowrap; }
 .progressSegment { display: block; height: 3px; width: 100%; border-radius: 3px; background: #e9e9e9; }
 .steps [aria-current] { color: #171717; font-weight: 500; }
@@ -127,6 +128,35 @@
 .embedded .grid { margin: 48px auto; }
 .embedded .intro h1 { font-size: clamp(36px, 3.6vw, 50px); }
 .embedded .cloud { display: none; }
+/* Simplified onboarding: brand on top, then one centered column holding the
+   progress and a single Den panel per step (P7, S1, V1-V4). Shared auth
+   controls are normalised to the Den primitives (DenInput 42px, DenButton
+   40px, 8px radius, #0f172a ink) so all three steps read as one flow. */
+.simplified { background: #fafafa; }
+/* Brand, progress and panel share one left edge, so nothing floats in a corner. */
+.simpleBody { max-width: 440px; margin: clamp(24px, 7vh, 72px) auto 48px; }
+.simpleBody > .brand { margin-bottom: 36px; font-size: 16px; letter-spacing: -.4px; gap: 9px; }
+.simpleBody > .brand img { width: 22px; height: 22px; }
+.simpleBody .progress { margin-bottom: 16px; }
+/* The dithered band is the brand moment of every step: same height, flush to the panel edge. */
+.simplified .panelVisual { height: 88px; margin-bottom: 24px; }
+.simplified .panel { --panel-padding: 28px; --panel-radius: 16px; border-color: #e5e7eb; box-shadow: none; animation: none; }
+.simpleTitle, .simplified .panel h2 { margin: 0; font-size: 20px; line-height: 1.4; font-weight: 600; letter-spacing: -.02em; color: #0f172a; overflow-wrap: anywhere; }
+.simpleTitle { margin-bottom: 20px; }
+.simplified .panel :global(.den-copy) { font-size: 13px; line-height: 1.5; color: #6b7280; }
+.simplified .panel :global(.den-label) { font-size: 13px; font-weight: 500; color: #111827; }
+.simplified .panel :global(.den-input) { height: 42px; padding: 0 16px; border-radius: 8px; border-color: #e5e7eb; font-size: 14px; line-height: 20px; }
+.simplified .panel :global(.den-input):focus { border-color: #d1d5db; box-shadow: 0 0 0 2px rgb(17 24 39 / .05); }
+.simplified .panel :global(.den-button-primary), .simplified .panel :global(.den-button-secondary) { min-height: 40px; height: 40px; padding: 0 20px; border-radius: 8px; font-size: 13px; font-weight: 500; transform: none; }
+.simplified .panel :global(.den-button-primary) { background: #0f172a; box-shadow: none; }
+.simplified .panel :global(.den-button-primary):hover:not(:disabled) { background: #111c33; transform: none; }
+.simplified .panel :global(.den-button-secondary) { box-shadow: inset 0 0 0 1px #e5e7eb; color: #374151; }
+.simplified .panel :global(.den-divider) { font-size: 12px; }
+/* Labels state the action; no trailing arrows (C7). */
+.simplified .panel button :global(svg.lucide-arrow-right) { display: none; }
+.simplified .panel button:active:not(:disabled) { transform: none; }
+/* Focus is a light ring, never a dark outline. */
+.simplified .panel button:focus-visible, .simplified .panel input:focus-visible, .simplified .panel a:focus-visible, .simplified .panel summary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(15 23 42 / .1); }
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1050px) {
   .embedded .grid { grid-template-columns: 1fr; margin-top: 28px; gap: 26px; }
@@ -160,5 +190,8 @@
   .footer { font-size: 11px; line-height: 1.6; }
   .footer > span:last-child { display: none; }
 }
+@media (max-width: 760px) { .simpleBody { margin: 8px auto 30px; } .simpleBody > .brand { margin-bottom: 24px; } .simplified .panel { --panel-padding: 20px; } .simplified .panelVisual { height: 64px; margin-bottom: 20px; } }
 @media (max-width: 420px) { .frame, .embedded { padding-inline: 16px; } }
+/* Explicit opt-in: do not change the display headline on other setup flows. */
+.intro h1.compactHeading { font-size: var(--text-xl); line-height: var(--text-xl--line-height); letter-spacing: -.03em; font-weight: var(--font-weight-semibold); }
 @media (prefers-reduced-motion: reduce) { .panel { animation: none; } .panel button { transition: none; } }

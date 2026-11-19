@@ -1,6 +1,6 @@
 import type { GeneratedArtifactView, GeneratedArtifactViewRevision, SavedAppDetail, SavedAppSummary } from "@openwork/types/workflows";
 import { DASHBOARD_TILE_CACHE_STORAGE_PREFIX } from "@/app/lib/dashboard-cache-storage";
-import type { DashboardMcpAppEntry } from "../dashboard/granted-dashboard-store";
+import type { DashboardMcpAppEntry } from "../dashboard/dashboard-mcp-app-entry";
 
 export function isLiveGeneratedApp(view: GeneratedArtifactView) {
   return view.dataMode === "live";

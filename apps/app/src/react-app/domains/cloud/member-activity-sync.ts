@@ -106,6 +106,8 @@ export async function refreshMemberActivity(input: {
   client: MemberActivityClient;
   feed: ActivityFeed;
   isCurrent: () => boolean;
+  /** The complete inventory this pass verified, before it reaches the feed. */
+  onLoaded?: (loaded: { capabilities: ConnectCapabilityInventory; connections: DenExternalMcpConnection[] }) => void;
 }): Promise<"updated" | "failed" | "stale"> {
   if (!input.isCurrent()) return "stale";
   input.feed.setRefreshState(input.scope, "refreshing");
@@ -122,6 +124,7 @@ export async function refreshMemberActivity(input: {
     ]);
     const connectionSnapshot = await connectionResources(inventory, connections);
     if (!input.isCurrent()) return "stale";
+    input.onLoaded?.({ capabilities: inventory, connections });
     const observedAt = Date.now();
     const providers = [...legacyProviders, ...gatewayProviders].map((provider): ActivityResource => ({
       id: provider.id,

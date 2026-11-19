@@ -13,7 +13,7 @@ const startMarkdown = [
   "",
   "Install the `openwork-bootstrap` CLI into a user-writable bin dir.",
   "",
-  "Production path: download the script, inspect it, then run it. Do not pipe remote scripts directly into a shell. The script downloads the `openwork-bootstrap` CLI (a single dependency-free Node file) and installs it into `$HOME/.local/bin` - no npm or npx required. If Node.js 20+ is missing, the script downloads the official Node.js build into `$HOME/.openwork/bootstrap/node` (checksum-verified, no admin rights), so the user does not need to install anything first.",
+  "Production path: download the script, inspect it, then run it. Do not pipe remote scripts directly into a shell. The script downloads the `openwork-bootstrap` CLI (a single dependency-free Node file) and installs it into `$HOME/.local/bin` - no npm or npx required. If a supported stable Node.js 24.x (24.22.1 or newer within that major) is missing, the script downloads the official Node.js 24.22.1 build into `$HOME/.openwork/bootstrap/node` (checksum-verified, no admin rights), so the user does not need to install anything first.",
   "",
   "```bash",
   "curl -fsSLo /tmp/openwork-install.sh https://openworklabs.com/install.sh",

@@ -224,7 +224,10 @@ export interface RepoOverviewMetadata extends ToolMetadata {
 }
 
 export interface SkillInput {
-  name: string;
+  /** OpenCode v2 loads a skill by id. */
+  id?: string;
+  /** OpenCode v1 loaded it by name. */
+  name?: string;
 }
 
 export interface SkillMetadata extends ToolMetadata {
@@ -340,6 +343,16 @@ export function isApplyPatchToolPart(part: ToolUIPart | DynamicToolUIPart): part
 }
 
 export type SkillToolPart = BuiltInDynamicToolPart<"skill", SkillInput>;
+
+/**
+ * The skill a person would recognize: v2 sends an id, and organization skills
+ * carry an engine prefix and Den's 8-character uniqueness suffix.
+ */
+export function skillDisplayName(input: Partial<SkillInput> | undefined): string {
+  const raw = (input?.id ?? input?.name ?? "").trim();
+  if (!raw.startsWith("openwork-cloud-")) return raw;
+  return raw.slice("openwork-cloud-".length).replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "");
+}
 
 export function isSkillToolPart(part: ToolUIPart | DynamicToolUIPart): part is SkillToolPart {
   return part.type === "dynamic-tool" && part.toolName === "skill";

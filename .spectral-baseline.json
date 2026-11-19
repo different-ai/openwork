@@ -1,7 +1,7 @@
 {
-  "warnings": 39,
+  "warnings": 38,
   "byRule": {
-    "ow-list-pagination": 23,
+    "ow-list-pagination": 22,
     "ow-timestamps-date-time": 16
   }
 }

@@ -1,4 +1,4 @@
-import React, { type CSSProperties, type ReactNode } from "react"
+import React, { type CSSProperties } from "react"
 import { Body, Button, Container, Head, Heading, Hr, Html, Img, Link, Preview, Section, Text } from "@react-email/components"
 
 const LOGO_URL = "https://openworklabs.com/email/openwork-mark.png"
@@ -61,7 +61,11 @@ export function TeamNudgeEmail({ organizationName, membersLink, mcpUrl, mcpDocsL
   )
 }
 
-function ReminderLayout({ preview, footer, children }: { preview: string; footer: ReactNode; children: ReactNode }) {
+function ReminderLayout({ preview, footer, children }: {
+  preview: string
+  footer: Parameters<typeof Text>[0]["children"]
+  children: Parameters<typeof Section>[0]["children"]
+}) {
   return (
     <Html>
       <Head />

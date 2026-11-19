@@ -8,9 +8,11 @@ import { digest, sourceTree, dependencyFingerprint, ensureLayer, type SourceEntr
  * Files that never execute inside the evidence VM. Anything not listed here is a
  * runtime input: changing it rebuilds the world. Keep this list conservative;
  * a missing exclusion only costs a rebuild, a wrong one reuses stale code.
- * Freestyle controller files that do enter the VM are digested separately.
+ * Controller files that do enter the VM are digested separately. Shared with
+ * the Daytona builder, so both providers rebuild for the same changes. The
+ * UI-guardrail checker/baseline run only in CI, never inside the guest runtime.
  */
-const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:prove|prepare|publish|verify|soak)-[^/]+$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
+const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|packages\/daytona-evidence\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:(?:prove|prepare|publish|verify|soak)-[^/]+|check-ui-guardrails(?:\.test)?\.mjs|ui-guardrails-baseline\.json)$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
 
 /** Bump the version when the template layout changes; cleanup reclaims older ones. */
 export const EVIDENCE_TEMPLATE_PREFIX = "ow-evidence-web-v3-";
@@ -26,7 +28,8 @@ export interface EvidenceTemplate { id: string; runtimeFingerprint: string }
 /** `imageSha` pins the dev commit whose warm image to start from; defaults to the dev head. */
 export type EvidenceBuildOptions = BuildOptions & { imageSha?: string };
 
-const TOOLS = toolsRecipe("acme-web") + `
+/** Shared with the Daytona evidence builder: both providers run the same steps in the VM. */
+export const EVIDENCE_TOOLS_RECIPE = toolsRecipe("acme-web") + `
 cat > /opt/openwork-preview/evidence-chrome <<'CHROME'
 #!/bin/sh
 exec /usr/bin/google-chrome-stable --no-sandbox --disable-dev-shm-usage "$@"
@@ -34,7 +37,10 @@ CHROME
 chmod 755 /opt/openwork-preview/evidence-chrome
 `;
 /** Incremental on the image: pnpm only adds or removes what the lockfile changed. */
-const DEPENDENCIES = dependencyRecipe("acme-web").replace("pnpm install --frozen-lockfile", "pnpm install --filter @openwork/freestyle... --frozen-lockfile");
+export const EVIDENCE_DEPENDENCIES_RECIPE = dependencyRecipe("acme-web").replace("pnpm install --frozen-lockfile", "pnpm install --filter @openwork/freestyle... --frozen-lockfile");
+
+/** Controller files copied into every evidence VM. */
+export const EVIDENCE_CONTROLLER_FILES: ControllerAsset[] = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];
 
 /** The newest dev commit, the source of the warm image. */
 export async function devHead(request: typeof fetch = fetch): Promise<string> {
@@ -56,10 +62,10 @@ export async function devHead(request: typeof fetch = fetch): Promise<string> {
 export async function ensureEvidenceImage(devSha: string, api = client(), options: BuildOptions = {}, devEntries?: SourceEntry[]) {
   if (!/^[a-f0-9]{40}$/.test(devSha)) throw new Error("A full dev commit SHA is required");
   const entries = devEntries ?? await sourceTree(devSha, options.sourceFetch);
-  return ensureLayer({ slug: `${EVIDENCE_IMAGE_PREFIX}${digest(TOOLS + DEPENDENCIES + dependencyFingerprint(entries))}`,
+  return ensureLayer({ slug: `${EVIDENCE_IMAGE_PREFIX}${digest(EVIDENCE_TOOLS_RECIPE + EVIDENCE_DEPENDENCIES_RECIPE + dependencyFingerprint(entries))}`,
     stage: "evidence-image", observe: options.observe ?? (() => {}), metadata: { devSha },
     parent: async () => "freestyle/ubuntu",
-    prepare: (vm) => runScript(vm, "evidence-image", `${TOOLS}\n${checkoutRecipe(devSha)}\n${DEPENDENCIES}`, options) }, api);
+    prepare: (vm) => runScript(vm, "evidence-image", `${EVIDENCE_TOOLS_RECIPE}\n${checkoutRecipe(devSha)}\n${EVIDENCE_DEPENDENCIES_RECIPE}`, options) }, api);
 }
 
 /**
@@ -107,9 +113,9 @@ export async function ensureEvidenceSnapshot(sha: string, api = client(), option
   devEntriesPromise.catch(() => undefined);
   const entries = await sourceTree(sha, options.sourceFetch);
   const observe = options.observe ?? (() => {});
-  const files: ControllerAsset[] = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];
+  const files = EVIDENCE_CONTROLLER_FILES;
   const controller = await Promise.all(files.map(readAsset));
-  const templateSlug = (fingerprint: string) => `${EVIDENCE_TEMPLATE_PREFIX}${digest(TOOLS + DEPENDENCIES + controller.join("\n") + fingerprint)}`;
+  const templateSlug = (fingerprint: string) => `${EVIDENCE_TEMPLATE_PREFIX}${digest(EVIDENCE_TOOLS_RECIPE + EVIDENCE_DEPENDENCIES_RECIPE + controller.join("\n") + fingerprint)}`;
   const runtimeFingerprint = evidenceRuntimeFingerprint(entries);
   // Set by parent(), read by prepare() and the fallback below.
   const state: { mode: "fast" | "full"; restart: string[] } = { mode: "full", restart: [] };
@@ -155,10 +161,9 @@ printf %s ${sha} > /opt/openwork-preview/built-from-sha
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-evidence.service", `[Unit]\nDescription=OpenWork isolated evidence web world\n[Service]\nWorkingDirectory=/workspace\nEnvironment=PATH=/opt/openwork-preview/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nExecStart=/usr/bin/env node /opt/openwork-preview/evidence-runtime.mjs\n`);
       await vm.fs.writeTextFile("/etc/systemd/system/openwork-evidence-gateway.service", `[Unit]\nDescription=Private evidence viewer\n[Service]\nExecStart=/usr/bin/env node /opt/openwork-preview/gateway.mjs\n`);
       await runScript(vm, "evidence-world", `${checkoutRecipe(sha)}
-${DEPENDENCIES}
+${EVIDENCE_DEPENDENCIES_RECIPE}
 pnpm --filter @openwork-ee/den-api run build:workspace-dependencies
 pnpm --filter openwork-server build
-pnpm --filter @openwork/sdk build
 systemctl daemon-reload
 systemctl start openwork-evidence
 for attempt in $(seq 1 480); do

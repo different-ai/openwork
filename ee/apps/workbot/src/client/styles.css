@@ -40,9 +40,19 @@ body,
   height: 100%;
 }
 
+/*
+ * An explicit root colour: Safari 26 falls back to it behind its status bar and toolbar when no fixed element is at
+ * the edge (a transparent root reads as white). The page never bounces as a whole; only the conversation scrolls.
+ */
+html {
+  background: #fbfcfd;
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   font-family: var(--font-sans);
   background: #fbfcfd;
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
 }

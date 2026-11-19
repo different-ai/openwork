@@ -18,12 +18,12 @@ interface WrappedContext {
   agent?: unknown;
   probe?: unknown;
   step?: unknown;
-  specRuntimeContext?: { step: unknown; checkpointEnd?: () => Promise<void> };
+  specRuntimeContext?: { step: unknown; checkpointStart?: () => Promise<void>; checkpointEnd?: () => Promise<void> };
   task?: { tags?: string[] };
   skip(note?: string): never;
 }
 
-/** Vitest tag: this test's world is worth reopening at its end state (see User.checkpoint). */
+/** Vitest tag: this test's world is worth reopening at its start and end states (see User.checkpoint). */
 export const CHECKPOINTS_TAG = "checkpoints";
 
 function messageText(error: unknown): string {
@@ -46,6 +46,9 @@ export function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T 
             return skip(note);
           };
           try {
+            const tagged = task?.tags?.includes(CHECKPOINTS_TAG) === true;
+            // The world as launched for this commit, before the body changes it.
+            if (tagged) await specRuntimeContext?.checkpointStart?.();
             const result = await Reflect.apply(callback, undefined, [{
               place,
               evidence,
@@ -58,7 +61,7 @@ export function wrapTestApi<T extends (...args: never[]) => unknown>(api: T): T 
               skip: wrappedSkip,
             }]);
             // Only a passing body reaches here, so the end state is the verified state.
-            if (task?.tags?.includes(CHECKPOINTS_TAG)) await specRuntimeContext?.checkpointEnd?.();
+            if (tagged) await specRuntimeContext?.checkpointEnd?.();
             evidence.setOutcome("passed");
             return result;
           } catch (error) {

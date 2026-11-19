@@ -1,3 +1,4 @@
+import { credentialPromptSchema } from "@openwork/types/den/credential-prompt"
 import {
   accessRoleValues,
   configObjectCreatedViaValues,
@@ -287,11 +288,21 @@ export const pluginCreateSchema = z.object({
   marketplaceId: marketplaceIdSchema.optional(),
 })
 
+/** A stable key: lowercase letters, digits, dots, dashes and underscores. */
+export const externalKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/)
+
+export const configObjectExternalKeySchema = z.object({
+  /** The key a configuration import finds this object by; null clears it. */
+  externalKey: externalKeySchema.nullable(),
+})
+
 export const pluginUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
+  /** The key a configuration import finds this plugin by; null clears it. */
+  externalKey: externalKeySchema.nullable().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.description === undefined) {
+  if (value.name === undefined && value.description === undefined && value.externalKey === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Provide at least one field to update.",
@@ -621,6 +632,7 @@ export const libraryItemSchema = z.discriminatedUnion("type", [
     edges: z.array(effectiveAccessEdgeSchema),
     state: z.enum(["ready", "needs_signin", "needs_admin_setup"]),
     resultState: z.enum(["never_run", "fresh", "stale", "needs_attention"]),
+    failureReason: z.string().nullable().optional(),
     latestSuccessfulAt: nullableTimestampSchema,
     viewState: z.enum(["default", "custom_active", "build_failed", "retired"]),
     activeViewTitle: nullableStringSchema,
@@ -653,6 +665,7 @@ export const configObjectVersionSchema = z.object({
 
 export const configObjectSchema = z.object({
   id: configObjectIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   objectType: configObjectTypeSchema,
   sourceMode: configObjectSourceModeSchema,
@@ -710,6 +723,7 @@ export const pluginExtensionSchema = z.object({
 
 export const pluginSchema = z.object({
   id: pluginIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema,
@@ -990,6 +1004,20 @@ export const pluginListResponseSchema = pluginArchListResponseSchema("PluginArch
 export const pluginDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginDetailResponse", pluginSchema)
 export const pluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMutationResponse", pluginSchema)
 export const pluginMembershipListResponseSchema = pluginArchListResponseSchema("PluginArchPluginMembershipListResponse", pluginMembershipSchema)
+export const resolvedPluginsQuerySchema = z.object({
+  pluginIds: z.string()
+    .transform((value) => [...new Set(value.split(",").map((id) => id.trim()).filter(Boolean))])
+    .pipe(z.array(pluginIdSchema).min(1).max(100))
+    .describe("Comma-separated plugin ids, at most 100."),
+})
+export const resolvedPluginsResponseSchema = z.object({
+  plugins: z.record(z.string(), pluginMembershipListResponseSchema).describe("Each visible plugin's resolved contents, keyed by plugin id: the body GET /v1/plugins/:pluginId/resolved returns."),
+  failures: z.record(z.string(), z.object({
+    status: z.union([z.literal(403), z.literal(404)]),
+    error: z.string(),
+    message: z.string(),
+  })).describe("Requested plugins the caller cannot view (403) or that do not exist (404), keyed by plugin id, with the error GET /v1/plugins/:pluginId/resolved returns."),
+}).meta({ ref: "PluginArchResolvedPluginsResponse" })
 export const pluginMembershipDetailResponseSchema = pluginArchDetailResponseSchema("PluginArchPluginMembershipDetailResponse", pluginMembershipSchema)
 export const pluginMembershipMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchPluginMembershipMutationResponse", pluginMembershipSchema)
 export const marketplaceListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplaceListResponse", marketplaceSchema)
@@ -1131,8 +1159,7 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
     })),
   }),
 )
-export const pluginMcpRequirementConfigureResponseSchema = pluginArchMutationResponseSchema(
-  "PluginArchPluginMcpRequirementConfigureResponse",
+const pluginMcpRequirementConfigureItemSchema = (
   z.object({
     binding: z.object({
       id: pluginMcpRequirementBindingIdSchema,
@@ -1153,8 +1180,15 @@ export const pluginMcpRequirementConfigureResponseSchema = pluginArchMutationRes
     links: z.object({
       yourConnections: z.string(),
     }),
-  }),
+  })
 )
+/** An API-key requirement set up without its key also returns credentialPrompt. */
+export const pluginMcpRequirementConfigureResponseSchema = z.object({
+  ok: z.literal(true),
+  item: pluginMcpRequirementConfigureItemSchema,
+  credentialPrompt: credentialPromptSchema.optional(),
+  nextStep: z.string().optional(),
+}).meta({ ref: "PluginArchPluginMcpRequirementConfigureResponse" })
 export const marketplacePluginListResponseSchema = pluginArchListResponseSchema("PluginArchMarketplacePluginListResponse", marketplacePluginSchema)
 export const marketplacePluginMutationResponseSchema = pluginArchMutationResponseSchema("PluginArchMarketplacePluginMutationResponse", marketplacePluginSchema)
 export const accessGrantListResponseSchema = pluginArchListResponseSchema("PluginArchAccessGrantListResponse", accessGrantSchema)

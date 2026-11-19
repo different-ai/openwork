@@ -1,0 +1,87 @@
+---
+title: "Agent permissions"
+description: "Choose what agents can do on members' computers: run commands, edit files, open websites, and use local skills and MCP servers."
+keywords: ["agent permissions", "block commands", "allow commands", "allow list", "block list", "approved websites", "block websites", "local skills", "local MCP servers", "team permissions", "enterprise controls"]
+---
+
+Agent permissions decide what the agent can do on a member's computer in the OpenWork desktop app. You set them for everyone in your organization, and override them for a team.
+
+<Note>
+Agent permissions is an Enterprise feature that is rolling out, and applies to members whose app runs the new OpenCode v2 engine. It sits under **Settings**, next to **Permissions**, in OpenWork Cloud; if it shows an **Enterprise** badge, contact us to turn it on for your organization.
+</Note>
+
+## Who can manage agent permissions
+
+- Members with the **Manage agent permissions** permission (owners by default) can change agent permissions.
+- Members with **View agent permissions** (admins by default) can view them.
+- With **Permissions** on, owners can grant either one to Admin permissions or a team's permissions.
+
+## What you can control
+
+| Permission | Choices | Lists |
+| --- | --- | --- |
+| **Run commands** | **Allow**, **Ask first**, or **Block** | Commands |
+| **Edit files** | **Allow**, **Ask first**, or **Block** | None |
+| **Open websites** | **Allow**, **Ask first**, or **Block** | Websites |
+| **Search the web** | Allowed or blocked | None |
+| **Use local skills** | Allowed or blocked | None |
+| **Use local MCP servers** | Allowed or blocked | None |
+
+- **Ask first** has the agent ask the member each time before it acts.
+- **Always allowed** lists exceptions while a permission is set to **Ask first** or **Block**. They run without asking.
+- **Always blocked** lists what is blocked in every case. A blocked pattern always wins over an allowed one.
+- **Use local skills** and **Use local MCP servers** cover the skills and MCP servers on members' computers, all of them at once. Your organization's skills and connections in OpenWork Cloud aren't affected and keep working, including the connections OpenWork adds to members' apps for them.
+
+### Patterns
+
+- **Commands**: `*` matches any text. `git *` matches every `git` command, including `git` on its own. `npm test` matches only that command.
+- **Websites**: `docs.example.com` matches that site, `*.example.com` its subdomains, and `example.com/docs` the pages under `/docs`. Start with `https://` to match only secure pages.
+
+## Everyone and teams
+
+- **Everyone**'s permissions apply to every member.
+- A team's choice for a permission replaces **Everyone**'s for the team's members. A team's lists add to **Everyone**'s.
+- When someone is in several teams, the strictest choice among their teams applies: **Block**, then **Ask first**, then **Allow**. A team without its own choice counts with **Everyone**'s. An **Always allowed** pattern is an exception only when every one of their teams that doesn't allow the permission lists it, so one team's list never undoes another team's stricter choice.
+
+## Set agent permissions
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
+2. Go to **Settings › Agent permissions**. The list shows **Everyone** and each team that has its own agent permissions.
+3. Open **Everyone** or a team's agent permissions. To give a team its own, click **Create team agent permissions**, choose the team, and change what should differ from **Everyone**.
+4. Change a permission's choice, or add patterns to its lists. On a team, a changed permission overrides **Everyone**'s; click the reset icon next to it to use **Everyone**'s again.
+5. To check what would happen, choose **Command**, **Website**, **Local skill**, or **Local MCP server** under **Try a request** and type one in. The check uses your unsaved changes.
+6. Click **Save changes** (or **Create team agent permissions** for a new team). To go back after saving, click **Undo** in the confirmation.
+7. To put a team back on **Everyone**'s agent permissions, open the team's and click **Remove**.
+
+Members' apps apply changes the next time they refresh their organization's settings: when the app starts or wakes up, when the member signs in, and every hour.
+
+## What members see
+
+On OpenCode v2, tools whose every use is blocked are hidden from the agent. For example, when web search is off, the agent isn't offered the built-in web search tool and can choose an available organization connection instead. Tools with allowed exceptions or **Ask first** rules stay available.
+
+When a particular call is blocked, the agent is told what was blocked, by which pattern, and for whom it is set, for example: *Your organization's agent permissions block the command `rm -rf build` ("rm *" is blocked for Contractors).*
+
+In the built-in browser, a blocked website doesn't load and the browser shows the same reason. A website set to **Ask first** opens once the member approves it, and stays approved until the permissions change. Right after signing in on a new computer, the built-in browser waits a few seconds for the member's permissions.
+
+## Known limits
+
+- **Commands named through a variable.** Command rules match the command as it is written. When a command line sets the variable that names a program, as in `x=rm; $x -rf build`, `export x=rm`, `for x in rm` or `${x:-rm}`, the program is checked with each value the line gives it, so `rm *` blocks it. A program named through a variable the line doesn't set, such as `$EDITOR`, a substitution such as `$(which rm)` or a pattern such as `/bin/r?` can't be matched to a rule. Where commands are blocked it is blocked; where a command rule only blocks some commands, such as `rm *`, it is asked about, and the member can approve it.
+- **Command lines OpenWork can't fully read.** A line nested or long enough that OpenWork stops reading it is handled the same way. A script that only exists when the command runs, such as `curl … | sh`, is checked as written.
+- **Text that looks like a command.** Each line of a command is checked, including the text in a heredoc (`cat <<EOF` … `EOF`). A line there that matches a blocked pattern blocks the whole command, even though it is only written to a file.
+- **Ask first for file edits.** It applies to the agent's file editing. When commands are allowed, a command that writes a file, such as `echo … > notes.txt`, isn't asked about; set **Run commands** to **Ask first** as well to cover those.
+- **Pages that change their address in place.** Website rules apply to every request the built-in browser makes. A page on an allowed site that switches to another of its own addresses without loading it, as single-page apps do, is checked again only when it requests something from there.
+- **Right after signing in.** On a computer that doesn't have the member's agent permissions yet, the agent can act for the few seconds until OpenWork reads them from Den. The built-in browser and adding a local skill or MCP server wait a few seconds for them instead.
+- **While Den is unreachable.** The desktop app keeps working with the latest agent permissions it has on the computer rather than blocking the member, so changes made in Den apply once it can reach Den again. A member who signs in while Den is unreachable works under the latest permissions on the computer, if any, until Den answers.
+- **The audit log.** Each change to agent permissions is recorded with the permission's choice before and after and how many patterns were added or removed; the patterns themselves are withheld. Anyone who can view the audit log can see these entries.
+
+<Accordion title="Technical details">
+**Rules.** Den resolves each member's permissions into ordered OpenCode permission rules (`action`, `resource`, `effect`) and delivers them in `GET /v1/me/desktop-config` as `agentPermissions.rules`, each labeled with **Everyone** or the team's name. The last matching rule decides. A choice other than **Allow** becomes a `*` rule, its **Always allowed** patterns follow, and its **Always blocked** patterns come last. A permission left at **Allow** adds no rules, so a member's own settings apply.
+
+**Engines.** On OpenCode v2 the rules become the engine's own permission rules, with blocks written as Ask first, and OpenWork's agent permissions plugin decides every permission request after the engine: it blocks with the rule named, and a workspace's own config can't loosen it. If the plugin can't load, blocked actions ask the member instead. OpenCode v1 does not apply agent permissions to what the agent does: members whose app still runs v1 need the new engine for them to take effect. On either engine, the built-in browser follows the website rules and adding a blocked local skill or MCP server in OpenWork is refused. Blocked local MCP servers are disabled from any config source and aren't registered by OpenWork; adding one in OpenWork is refused. Blocked local skills are left out of what the agent is offered, and loading one is refused with the rule named. OpenWork's own connection to your organization, and the organization connections it adds for members, stay on, and your organization's skills in OpenWork Cloud stay available through it; while local skills are blocked, the agent finds them through OpenWork Cloud rather than in its own skill list. Your organization's connections are recognized by the name and address OpenWork registered them with, so a workspace server that reuses one of their names is treated as local. Settings saved before these two permissions became switches keep their choice, and one that blocked any skill or server by name now blocks all of them; their lists no longer apply.
+
+**Websites.** Patterns match the address's host, its subdomains for `*.`, its port and scheme when the pattern names them (`https://example.com:443` matches only port 443), and its path as a prefix. The built-in browser applies them to every page, frame and request it makes, whoever makes it, including the scripts and other resources an allowed page loads; only a page can ask first.
+
+**Offline.** The desktop app keeps the last rules it received and applies them while Den is unreachable, to the agent, the built-in browser and adding local skills or MCP servers, so members keep working. Signing out, or another member signing in, removes them.
+
+**API.** `GET /v1/agent-permissions` lists everyone's and each team's settings. `PUT /v1/agent-permissions/everyone` and `PUT /v1/agent-permissions/teams/{teamId}` replace them; `DELETE /v1/agent-permissions/teams/{teamId}` removes a team's overrides.
+</Accordion>

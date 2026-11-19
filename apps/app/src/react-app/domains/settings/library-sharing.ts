@@ -75,18 +75,6 @@ export function libraryAudiencePeopleCount(audience: LibraryAudience, directory:
   return ids.size;
 }
 
-/** The right-hand row caption for something the member made. */
-export function libraryOwnedCaption(audience: LibraryAudience, changedJustNow: boolean): string {
-  if (changedJustNow) {
-    return isLibraryAudienceShared(audience)
-      ? t("extensions.row_changed_just_now_shared", { audience: libraryAudienceName(audience) })
-      : t("extensions.row_changed_just_now");
-  }
-  return isLibraryAudienceShared(audience)
-    ? t("extensions.row_owned_shared", { audience: libraryAudienceName(audience) })
-    : t("extensions.row_owned_just_me");
-}
-
 /** A cloud plugin with a single skill or MCP reads as that thing, not as a plugin. */
 export function libraryCloudItemTaxonomy(kinds: string[], componentCount: number): ExtensionTaxonomy {
   const unique = [...new Set(kinds.map((kind) => kind.toLowerCase()))];
@@ -99,16 +87,6 @@ export function libraryCloudItemTaxonomy(kinds: string[], componentCount: number
 
 export function isOwnedLibraryPlugin(item: Pick<DenLibraryPluginItem, "role" | "edges">) {
   return item.role === "owner" || item.edges.some((edge) => edge.kind === "mine");
-}
-
-/** Who shared an item with the member, for the From OpenWork caption. */
-export function librarySharedByCaption(item: Pick<DenLibraryPluginItem, "edges">, organizationName: string): string {
-  for (const edge of item.edges) {
-    if (edge.kind === "person" && edge.sharedByName) return t("extensions.row_shared_by", { name: edge.sharedByName });
-    if (edge.kind === "team") return t("extensions.row_cloud_from", { source: edge.teamName });
-    if (edge.kind === "catalog" && edge.marketplaceName) return t("extensions.row_cloud_from", { source: edge.marketplaceName });
-  }
-  return t("extensions.row_cloud_from", { source: organizationName });
 }
 
 /** Who else can use a connection, read from how it reached the member. */

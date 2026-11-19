@@ -6,12 +6,12 @@ import { isRecord } from "./http.js";
 const AUTO_LIMIT = { context: 1_050_000, input: 922_000, output: 128_000 };
 /** Written by earlier builds; still ours, and rewritten to the current shape on the next start. */
 const PREVIOUS_AUTO_LIMIT = { context: 135_168, input: 131_072, output: 4_096 };
-function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID, limit = AUTO_LIMIT) {
+function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID, limit = AUTO_LIMIT, images = true) {
   return {
-    id, name: "GPT-6 Luna", attachment: false, reasoning: false, temperature: false, tool_call: true,
+    id, name: "GPT-6 Luna", attachment: images, reasoning: false, temperature: false, tool_call: true,
     options: { reasoningEffort: "none", store: false },
     limit,
-    modalities: { input: ["text"], output: ["text"] },
+    modalities: { input: images ? ["text", "image"] : ["text"], output: ["text"] },
   };
 }
 function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
@@ -37,9 +37,10 @@ export function isOwnedProvider(value: unknown): boolean {
   const id = previousAdapter ? "openai/gpt-5.6-luna" : ANONYMOUS_INFERENCE_MODEL_ID;
   const model = value.models[id];
   if (!isRecord(model) || !hasExactKeys(model, Object.keys(generatedModel()))) return false;
-  return [AUTO_LIMIT, PREVIOUS_AUTO_LIMIT].some((limit) => {
-    const generated = generatedModel(id, limit);
+  // Earlier builds wrote a text-only model; recognize it so the next start rewrites it.
+  return [AUTO_LIMIT, PREVIOUS_AUTO_LIMIT].some((limit) => [true, false].some((images) => {
+    const generated = generatedModel(id, limit, images);
     const expected = previousAdapter ? { ...generated, name: "GPT-5.6 Luna", options: { reasoningEffort: "none" } } : generated;
     return Object.entries(expected).every(([key, value]) => JSON.stringify(model[key]) === JSON.stringify(value));
-  });
+  }));
 }

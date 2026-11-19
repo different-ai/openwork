@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -16,6 +17,7 @@ import {
   GATEWAY_PROVIDER_CREDENTIAL_STATUSES,
   GATEWAY_PROVIDER_STATUSES,
 } from "@openwork/types/den/gateway"
+import type { GatewayAwsSsoSettings } from "@openwork/types/den/inference"
 import {
   compatJsonColumn,
   denTypeIdColumn,
@@ -102,6 +104,36 @@ export const GatewayKeyTable = mysqlTable(
   ],
 )
 
+/**
+ * Keys members create themselves for 3rd party tools. Separate from
+ * gateway_keys, which holds the one key OpenWork issues and pushes to each member's own apps. Only a
+ * digest is stored: the key is shown once when it is created. A key authenticates as its member, so it
+ * reaches exactly what that member's grants allow.
+ */
+export const GatewayApiKeyTable = mysqlTable(
+  "gateway_api_keys",
+  {
+    id: denTypeIdColumn("gatewayApiKey", "id").notNull().primaryKey(),
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    name: varchar("name", { length: 64 }).notNull(),
+    key_hash: varchar("key_hash", { length: 64 }).notNull(),
+    key_prefix: varchar("key_prefix", { length: 32 }).notNull(),
+    status: mysqlEnum("status", GATEWAY_KEY_STATUSES).notNull().default("active"),
+    last_used_at: timestamp("last_used_at", { fsp: 3 }),
+    /** The key stops working at this time; null never expires. */
+    expires_at: timestamp("expires_at", { fsp: 3 }),
+    revoked_at: timestamp("revoked_at", { fsp: 3 }),
+    revoked_by_org_membership_id: denTypeIdColumn("member", "revoked_by_org_membership_id"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("gateway_api_keys_key_hash").on(table.key_hash),
+    index("gateway_api_keys_org_status").on(table.organization_id, table.status),
+    index("gateway_api_keys_member_status").on(table.org_membership_id, table.status),
+  ],
+)
+
 export const GatewayModelGroupTable = mysqlTable(
   "gateway_model_groups",
   {
@@ -139,6 +171,10 @@ export const GatewayCredentialSetTable = mysqlTable(
     credential_mode: mysqlEnum("credential_mode", GATEWAY_PROVIDER_CREDENTIAL_MODES).notNull(),
     oauth_client_id: varchar("oauth_client_id", { length: 255 }),
     oauth_client_secret: encryptedTextColumn("oauth_client_secret"),
+    // Non-secret member sign-in settings: Entra ID tenant (Microsoft Foundry) or
+    // IAM Identity Center instance, account and permission set (Amazon Bedrock).
+    oauth_tenant_id: varchar("oauth_tenant_id", { length: 64 }),
+    aws_sso: compatJsonColumn<GatewayAwsSsoSettings>("aws_sso"),
     status: mysqlEnum("status", GATEWAY_PROVIDER_STATUSES).notNull().default("active"),
     ...timestamps,
   },
@@ -240,6 +276,70 @@ export const GatewayProviderOauthStateTable = mysqlTable(
     uniqueIndex("gateway_provider_oauth_states_state").on(table.state),
     index("gateway_provider_oauth_states_expires_at").on(table.expires_at),
     index("gateway_provider_oauth_states_set_member").on(table.credential_set_id, table.org_membership_id),
+  ],
+)
+
+/**
+ * LiteLLM keys OpenWork created for a member ("OpenWork creates each person's
+ * key" mode). One row per member and slot: a LiteLLM team id, `personal` for a
+ * key without a team, or `mirror` for a copy of the member's existing key. The
+ * `member` slot carries only the member's lookup status. The key value itself
+ * lives in gateway_provider_credentials; LiteLLM's token hash is kept so the
+ * key can be deleted in LiteLLM when access ends.
+ */
+export const GatewayLiteLlmIssuedKeyTable = mysqlTable(
+  "gateway_litellm_issued_keys",
+  {
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    slot: varchar("slot", { length: 191 }).notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    message: text("message"),
+    litellm_user_id: varchar("litellm_user_id", { length: 255 }),
+    litellm_team_id: varchar("litellm_team_id", { length: 255 }),
+    litellm_token_id: varchar("litellm_token_id", { length: 128 }),
+    mirrored_from_token_id: varchar("mirrored_from_token_id", { length: 128 }),
+    source_fingerprint: varchar("source_fingerprint", { length: 64 }),
+    credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id"),
+    credential_id: denTypeIdColumn("inferenceProviderCredential", "credential_id"),
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    checked_at: timestamp("checked_at", { fsp: 3 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ name: "gateway_litellm_issued_keys_pk", columns: [table.gateway_provider_id, table.org_membership_id, table.slot] }),
+    index("gateway_litellm_issued_keys_member").on(table.org_membership_id),
+  ],
+)
+
+/**
+ * One row per person on a TrueFoundry provider: the TrueFoundry user OpenWork
+ * found (or added) by their email, and the personal access token it created
+ * for them. The token itself lives in the member's credential row; it is kept
+ * after access is lost only until the token can delete itself in TrueFoundry
+ * (admin keys cannot delete another user's tokens).
+ */
+export const GatewayTrueFoundryUserTable = mysqlTable(
+  "gateway_truefoundry_users",
+  {
+    gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id").notNull(),
+    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
+    status: varchar("status", { length: 32 }).notNull(),
+    message: text("message"),
+    truefoundry_user_id: varchar("truefoundry_user_id", { length: 255 }),
+    truefoundry_user_created: timestamp("truefoundry_user_created", { fsp: 3 }),
+    token_id: varchar("token_id", { length: 128 }),
+    token_name: varchar("token_name", { length: 64 }),
+    credential_id: denTypeIdColumn("inferenceProviderCredential", "credential_id"),
+    model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
+    access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
+    checked_at: timestamp("checked_at", { fsp: 3 }).notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    primaryKey({ name: "gateway_truefoundry_users_pk", columns: [table.gateway_provider_id, table.org_membership_id] }),
+    index("gateway_truefoundry_users_member").on(table.org_membership_id),
   ],
 )
 
@@ -348,6 +448,17 @@ export const gatewayKeyRelations = relations(GatewayKeyTable, ({ one }) => ({
   }),
 }))
 
+export const gatewayApiKeyRelations = relations(GatewayApiKeyTable, ({ one }) => ({
+  organization: one(OrganizationTable, {
+    fields: [GatewayApiKeyTable.organization_id],
+    references: [OrganizationTable.id],
+  }),
+  orgMembership: one(MemberTable, {
+    fields: [GatewayApiKeyTable.org_membership_id],
+    references: [MemberTable.id],
+  }),
+}))
+
 export const gatewayModelGroupRelations = relations(GatewayModelGroupTable, ({ one, many }) => ({
   gatewayProvider: one(GatewayProviderTable, {
     fields: [GatewayModelGroupTable.gateway_provider_id],
@@ -381,12 +492,15 @@ export const gatewayCredentialSetRelations = relations(GatewayCredentialSetTable
 export const gatewayProvider = GatewayProviderTable
 export const gatewayProviderModel = GatewayProviderModelTable
 export const gatewayKey = GatewayKeyTable
+export const gatewayApiKey = GatewayApiKeyTable
 export const gatewayModelGroup = GatewayModelGroupTable
 export const gatewayModelGroupModel = GatewayModelGroupModelTable
 export const gatewayCredentialSet = GatewayCredentialSetTable
 export const gatewayProviderCredential = GatewayProviderCredentialTable
 export const gatewayProviderAccess = GatewayProviderAccessTable
 export const gatewayProviderOauthState = GatewayProviderOauthStateTable
+export const gatewayLiteLlmIssuedKey = GatewayLiteLlmIssuedKeyTable
+export const gatewayTrueFoundryUser = GatewayTrueFoundryUserTable
 
 // Temporary source aliases, not parallel tables or legacy column mappings.
 export {

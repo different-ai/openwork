@@ -1,0 +1,461 @@
+{
+  "mcp__codex_app__automation_update": {
+    "type": "object",
+    "properties": {},
+    "oneOf": [
+      {
+        "$ref": "#/$defs/__schema0"
+      },
+      {
+        "$ref": "#/$defs/__schema3"
+      },
+      {
+        "$ref": "#/$defs/__schema21"
+      },
+      {
+        "$ref": "#/$defs/__schema24"
+      }
+    ],
+    "$defs": {
+      "__schema0": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "view"
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "__schema1": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema10": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "failed_runs_only"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "__schema11": {
+        "type": "string",
+        "enum": [
+          "cron"
+        ]
+      },
+      "__schema12": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/__schema13"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "__schema13": {
+        "type": "string"
+      },
+      "__schema14": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema15": {
+        "type": "string",
+        "enum": [
+          "none",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      },
+      "__schema16": {
+        "type": "string",
+        "enum": [
+          "create",
+          "suggested_create"
+        ]
+      },
+      "__schema17": {
+        "type": "object",
+        "properties": {
+          "destination": {
+            "$ref": "#/$defs/__schema19"
+          },
+          "kind": {
+            "$ref": "#/$defs/__schema18"
+          },
+          "mode": {
+            "$ref": "#/$defs/__schema16"
+          },
+          "name": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "notificationPolicy": {
+            "$ref": "#/$defs/__schema9"
+          },
+          "prompt": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "rrule": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "status": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "targetThreadId": {
+            "$ref": "#/$defs/__schema20"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "rrule",
+          "status",
+          "kind",
+          "mode"
+        ],
+        "additionalProperties": false
+      },
+      "__schema18": {
+        "type": "string",
+        "enum": [
+          "heartbeat"
+        ]
+      },
+      "__schema19": {
+        "type": "string",
+        "enum": [
+          "local",
+          "thread"
+        ]
+      },
+      "__schema2": {
+        "type": "string"
+      },
+      "__schema20": {
+        "$ref": "#/$defs/__schema2",
+        "type": "string"
+      },
+      "__schema21": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "destination": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "worktree"
+                ]
+              },
+              "executionEnvironment": {
+                "type": "string",
+                "enum": [
+                  "worktree",
+                  "local"
+                ]
+              },
+              "id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "kind": {
+                "$ref": "#/$defs/__schema11"
+              },
+              "localEnvironmentConfigPath": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "mode": {
+                "$ref": "#/$defs/__schema23"
+              },
+              "model": {
+                "$ref": "#/$defs/__schema14"
+              },
+              "name": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "notificationPolicy": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "projectId": {
+                "$ref": "#/$defs/__schema12"
+              },
+              "prompt": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "reasoningEffort": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "rrule": {
+                "$ref": "#/$defs/__schema22"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema8"
+              }
+            },
+            "required": [
+              "name",
+              "prompt",
+              "rrule",
+              "status",
+              "kind",
+              "projectId",
+              "model",
+              "reasoningEffort",
+              "mode",
+              "id",
+              "executionEnvironment"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "destination": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "kind": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "mode": {
+                "$ref": "#/$defs/__schema23"
+              },
+              "name": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "notificationPolicy": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "prompt": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "rrule": {
+                "$ref": "#/$defs/__schema22"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "targetThreadId": {
+                "$ref": "#/$defs/__schema20"
+              }
+            },
+            "required": [
+              "name",
+              "prompt",
+              "rrule",
+              "status",
+              "kind",
+              "mode",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "__schema22": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema23": {
+        "type": "string",
+        "enum": [
+          "update",
+          "suggested_update"
+        ]
+      },
+      "__schema24": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "delete"
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "__schema3": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/__schema4"
+          },
+          {
+            "$ref": "#/$defs/__schema17"
+          }
+        ]
+      },
+      "__schema4": {
+        "type": "object",
+        "properties": {
+          "destination": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "executionEnvironment": {
+            "type": "string",
+            "enum": [
+              "local"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/__schema11"
+          },
+          "mode": {
+            "$ref": "#/$defs/__schema16"
+          },
+          "model": {
+            "$ref": "#/$defs/__schema14"
+          },
+          "name": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "notificationPolicy": {
+            "$ref": "#/$defs/__schema9"
+          },
+          "projectId": {
+            "$ref": "#/$defs/__schema12"
+          },
+          "prompt": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "reasoningEffort": {
+            "$ref": "#/$defs/__schema15"
+          },
+          "rrule": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "status": {
+            "$ref": "#/$defs/__schema8"
+          }
+        },
+        "required": [
+          "name",
+          "prompt",
+          "rrule",
+          "status",
+          "kind",
+          "projectId",
+          "model",
+          "reasoningEffort",
+          "mode",
+          "executionEnvironment"
+        ],
+        "additionalProperties": false
+      },
+      "__schema5": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema6": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema7": {
+        "$ref": "#/$defs/__schema2"
+      },
+      "__schema8": {
+        "type": "string",
+        "enum": [
+          "ACTIVE",
+          "PAUSED"
+        ]
+      },
+      "__schema9": {
+        "$ref": "#/$defs/__schema10"
+      }
+    }
+  },
+  "mcp__cua_repl__js": {
+    "type": "object",
+    "properties": {
+      "code": {
+        "type": "string",
+        "description": "JavaScript to execute using the initialized cua_repl runtime."
+      },
+      "completion_summary": {
+        "type": "string",
+        "description": "Write a headline for the observed outcome in three to six words total. Start with a past-tense verb and name the result in plain language, as in 'Booked a plumber for Thursday' or 'Renewed vehicle registration'. Leave identifiers, values, and explanations for the reply."
+      },
+      "timeout_ms": {
+        "type": "integer",
+        "description": "Optional execution timeout in milliseconds. Defaults to 30000 (30 seconds) when omitted."
+      },
+      "title": {
+        "type": "string",
+        "description": "Short user-facing description of what this code block is doing. Prefer a few words in present-progressive form, such as 'Checking the mobile layout' or 'Comparing prices', over imperative or past-tense titles."
+      }
+    },
+    "additionalProperties": false,
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "JavaScript to execute using the initialized cua_repl runtime."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Optional execution timeout in milliseconds. Defaults to 30000 (30 seconds) when omitted."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short user-facing description of what this code block is doing. Prefer a few words in present-progressive form, such as 'Checking the mobile layout' or 'Comparing prices', over imperative or past-tense titles."
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "completion_summary": {
+            "type": "string",
+            "description": "Write a headline for the observed outcome in three to six words total. Start with a past-tense verb and name the result in plain language, as in 'Booked a plumber for Thursday' or 'Renewed vehicle registration'. Leave identifiers, values, and explanations for the reply."
+          }
+        },
+        "required": [
+          "completion_summary"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

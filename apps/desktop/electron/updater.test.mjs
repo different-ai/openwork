@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  evalUpdaterFeedUrl,
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
   staleUpdaterStatePaths,
@@ -96,7 +97,7 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
   const { registerUpdaterIpc: registerIsolatedUpdaterIpc } = await import(
     updaterModuleUrl.href
   );
-  registerIsolatedUpdaterIpc({
+  const controls = registerIsolatedUpdaterIpc({
     app: {
       isPackaged: true,
       getVersion: () => "0.17.0",
@@ -113,7 +114,7 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
     writeDefaults: async (args) => { defaultsWrites.push(args); },
     ...(assertActivation ? { assertActivation } : {}),
   });
-  return { tempDir, handlers, defaultsWrites, ...harness };
+  return { tempDir, handlers, defaultsWrites, controls, ...harness };
 }
 
 describe("staleUpdaterStatePaths", () => {
@@ -569,6 +570,41 @@ describe("pre-activation guard", () => {
 });
 
 describe("downloaded update lifecycle", () => {
+  it("does not start a staged Windows update while the session is ending", async () => {
+    const { tempDir, handlers, updater, controls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      platform: "win32",
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+
+      controls.holdInstallForSessionEnd();
+      assert.equal(updater.autoInstallOnAppQuit, false);
+
+      // A download that finishes during shutdown must not re-arm install on quit.
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores session end outside Windows", async () => {
+    const { tempDir, handlers, updater, controls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      controls.holdInstallForSessionEnd();
+      assert.equal(updater.autoInstallOnAppQuit, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("a transient failed check does not invalidate a downloaded update", async () => {
     const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
       version: "0.17.1",
@@ -1040,6 +1076,51 @@ describe("macOS native staging", () => {
       });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("evalUpdaterFeedUrl", () => {
+  it("honours only a plain-HTTP loopback feed", () => {
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: " http://127.0.0.1:4567/feed/ " }), "http://127.0.0.1:4567/feed");
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: "http://localhost:4567" }), "http://localhost:4567");
+    assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: "http://[::1]:4567" }), "http://[::1]:4567");
+  });
+
+  it("ignores remote, credentialed, non-HTTP, and malformed feeds", () => {
+    for (const value of [
+      undefined,
+      "",
+      "https://127.0.0.1:4567",
+      "http://example.com/feed",
+      "http://127.0.0.1.example.com/feed",
+      "http://user:pass@127.0.0.1:4567",
+      "file:///tmp/feed",
+      "not a url",
+    ]) {
+      assert.equal(evalUpdaterFeedUrl({ OPENWORK_EVAL_UPDATE_FEED_URL: value }), null, String(value));
+    }
+  });
+
+  it("points the untargeted feed at the loopback feed", async () => {
+    const handlers = new Map();
+    const userData = await mkdtemp(path.join(os.tmpdir(), "openwork-eval-feed-"));
+    const previous = process.env.OPENWORK_EVAL_UPDATE_FEED_URL;
+    process.env.OPENWORK_EVAL_UPDATE_FEED_URL = "http://127.0.0.1:4567";
+    try {
+      registerUpdaterIpc({
+        app: { isPackaged: false, getVersion: () => desktopVersion, getPath: () => userData },
+        ipcMain: { handle: (name, handler) => handlers.set(name, handler) },
+        getMainWindow: () => null,
+        manifestChannel: "enterprise",
+      });
+      assert.equal((await handlers.get("openwork:updater:getChannel")()).feedUrl, "http://127.0.0.1:4567");
+      // A version-targeted check still resolves to the fixed GitHub release.
+      assert.equal(targetedStableUpdaterFeed("0.17.22", "0.17.23"), "https://github.com/different-ai/openwork/releases/download/v0.17.23");
+    } finally {
+      if (previous === undefined) delete process.env.OPENWORK_EVAL_UPDATE_FEED_URL;
+      else process.env.OPENWORK_EVAL_UPDATE_FEED_URL = previous;
+      await rm(userData, { recursive: true, force: true });
     }
   });
 });

@@ -11,6 +11,7 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandPanel,
 } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/sonner";
@@ -20,32 +21,14 @@ import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { DashboardMasonry } from "./dashboard-masonry";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
-import { mcpAppIdSchema } from "@openwork/types/mcp-app";
+import { readBuiltDashboardApps, subscribeBuiltDashboardApps, writeBuiltDashboardApps } from "./built-dashboard-placement";
+
+export { readBuiltDashboardApps } from "./built-dashboard-placement";
 
 export function builtDashboardScope(
   scope: ReturnType<typeof useAppsClient>["scope"],
 ) {
   return `openwork:personal-mcp-apps:v1:${JSON.stringify(scope)}`;
-}
-
-export function readBuiltDashboardApps(scope: string): string[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const value: unknown = JSON.parse(
-      window.localStorage.getItem(scope) ?? "[]",
-    );
-    return Array.isArray(value)
-      ? [
-          ...new Set(
-            value.filter(
-              (id): id is string => mcpAppIdSchema.safeParse(id).success,
-            ),
-          ),
-        ]
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 export function useBuiltDashboardApps() {
@@ -59,7 +42,13 @@ export function useBuiltDashboardApps() {
   const currentPlacement = useRef({ key, ids });
   currentPlacement.current = { key, ids };
   useEffect(() => {
-    setPlacement({ key, ids: readBuiltDashboardApps(key) });
+    const sync = (next: string[]) => {
+      currentPlacement.current = { key, ids: next };
+      setPlacement({ key, ids: next });
+    };
+    const unsubscribe = subscribeBuiltDashboardApps(key, sync);
+    sync(readBuiltDashboardApps(key));
+    return unsubscribe;
   }, [key]);
   const query = useQuery({
     queryKey: ["built-dashboard-apps", ...context.scope],
@@ -103,11 +92,7 @@ export function useBuiltDashboardApps() {
         : current.filter((id) => id !== appId);
       setPlacement({ key, ids: next });
       currentPlacement.current = { key, ids: next };
-      try {
-        window.localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        /* In-memory placement remains usable. */
-      }
+      writeBuiltDashboardApps(key, next);
     },
   };
 }
@@ -147,31 +132,34 @@ export function BuiltAppPicker({
       />
       <p className="px-4 pt-3 text-xs text-muted-foreground">{search.trim() ? "Matches" : "Artifacts available to you"} <span className="ml-1 tabular-nums">{matching.length}</span></p>
       <CommandEmpty>No artifacts match your search.</CommandEmpty>
-      <CommandList>
-        {(app: BuiltMcpAppCatalogEntry) => (
-          <CommandItem
-            key={app.connectionId}
-            value={app}
-            aria-label={`Add ${app.title}`}
-            disabled={built.ids.includes(app.connectionId)}
-            onClick={() => {
-              built.setAdded(app.connectionId, true);
-              toast(`Added ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, false) } });
-              onAdded();
-            }}
-          >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background"><Blocks className="size-4 text-muted-foreground" /></span>
-            <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{app.title}</span><span className="block truncate text-xs text-muted-foreground">{app.pluginName}</span></span>
-            <span className="text-xs text-muted-foreground">
-              {built.ids.includes(app.connectionId) ? (
-                <Check className="size-4" aria-label="Added" />
-              ) : (
-                "Add"
-              )}
-            </span>
-          </CommandItem>
-        )}
-      </CommandList>
+      {/* Long catalogs scroll here so the search field and footer stay in the dialog. */}
+      <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
+        <CommandList>
+          {(app: BuiltMcpAppCatalogEntry) => (
+            <CommandItem
+              key={app.connectionId}
+              value={app}
+              aria-label={`Add ${app.title}`}
+              disabled={built.ids.includes(app.connectionId)}
+              onClick={() => {
+                built.setAdded(app.connectionId, true);
+                toast(`Added ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, false) } });
+                onAdded();
+              }}
+            >
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-background"><Blocks className="size-4 text-muted-foreground" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{app.title}</span><span className="block truncate text-xs text-muted-foreground">{app.pluginName}</span></span>
+              <span className="text-xs text-muted-foreground">
+                {built.ids.includes(app.connectionId) ? (
+                  <Check className="size-4" aria-label="Added" />
+                ) : (
+                  "Add"
+                )}
+              </span>
+            </CommandItem>
+          )}
+        </CommandList>
+      </CommandPanel>
       <div className="flex justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground"><span>Only artifacts you can open show here.</span><span aria-hidden="true">↑↓ to move · ↵ to add</span></div>
     </Command>
   );

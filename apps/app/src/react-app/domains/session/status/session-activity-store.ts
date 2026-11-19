@@ -40,10 +40,15 @@ type SessionActivityRecord = {
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
+  // When this session waited for a person's approval or answer, oldest first.
+  // Working time leaves these out; the newest wait is open while it lasts.
+  waits: WaitInterval[];
   messageRoles: Record<string, SessionMessageRole>;
   childSessionIds: string[];
   updatedAt: number;
 };
+
+export type WaitInterval = { start: number; end?: number };
 
 type SessionLike = {
   id: string;
@@ -80,7 +85,7 @@ type SessionActivityStore = {
     options?: { snapshotStartedAt?: number },
   ) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
-  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
+  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean; markDeltaProgress?: boolean }) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
@@ -107,6 +112,7 @@ const createRecord = (): SessionActivityRecord => ({
   compacting: false,
   waitingPermissionIds: [],
   waitingQuestionIds: [],
+  waits: [],
   messageRoles: {},
   childSessionIds: [],
   updatedAt: 0,
@@ -212,11 +218,27 @@ function sameActivityRecord(
     && current.compacting === next.compacting
     && sameStrings(current.waitingPermissionIds, next.waitingPermissionIds)
     && sameStrings(current.waitingQuestionIds, next.waitingQuestionIds)
+    && current.waits === next.waits
     && sameMessageRoles(current.messageRoles, next.messageRoles)
     && sameStrings(current.childSessionIds, next.childSessionIds);
 }
 
 type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
+
+// Waits before the current run no longer matter, so only the newest are kept.
+const MAX_WAIT_INTERVALS = 50;
+
+/** Opens a wait when an approval or answer is first requested and closes it when none remain. */
+function withWaits(record: SessionActivityRecord): SessionActivityRecord {
+  const waiting = waitingKindForRecord(record) !== undefined;
+  const last = record.waits.at(-1);
+  if (waiting === (last !== undefined && last.end === undefined)) return record;
+  const now = Date.now();
+  const waits = waiting
+    ? [...record.waits, { start: now }]
+    : [...record.waits.slice(0, -1), { start: last!.start, end: now }];
+  return { ...record, waits: waits.slice(-MAX_WAIT_INTERVALS) };
+}
 
 function updateRecord(
   state: SessionActivityDerivedState,
@@ -226,7 +248,7 @@ function updateRecord(
 ): SessionActivityDerivedState {
   const workspaceRecords = state.recordsByWorkspaceId[workspaceId] ?? {};
   const currentRecord = workspaceRecords[sessionId];
-  const nextRecord = updater(currentRecord ?? createRecord());
+  const nextRecord = withWaits(updater(currentRecord ?? createRecord()));
   const status = statusForRecord(nextRecord);
   if (currentRecord && sameActivityRecord(currentRecord, nextRecord, status)) return state;
   const recordWithStatus = { ...nextRecord, status, updatedAt: Date.now() };
@@ -480,7 +502,11 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       if (!record.runActive) return record;
       if (message && record.messageRoles[message] && record.messageRoles[message] !== "assistant") return record;
       if (message && !record.messageRoles[message] && options?.allowUnknownMessageRole !== true) return record;
-      return { ...record, assistantOutput: true };
+      return {
+        ...record,
+        assistantOutput: true,
+        lastProgressAt: options?.markDeltaProgress ? Math.max(record.lastProgressAt, Date.now()) : record.lastProgressAt,
+      };
     }));
   },
   setWaitingRequest: (workspaceId, sessionId, kind, requestId, waiting) => {

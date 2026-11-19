@@ -13,7 +13,8 @@ import type { Place } from "../../evals/packages/env/src/place.ts";
 import { defaultDaytonaExec, execInSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/index.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 
-export const ACME_MODEL = "claude-haiku-4-5-20251001";
+// Use a catalog-supported alias; inventing a version/date makes Den reject the provider.
+export const ACME_MODEL = "claude-haiku-5-5";
 export const ACME_REPLY = "Acme AI Gateway is working.";
 export const ACME_ENCRYPTION_KEY = "local-dev-db-encryption-key-please-change-1234567890";
 
@@ -33,6 +34,12 @@ export async function startAcmeUpstream(stack: AsyncDisposableStack, checkpoint?
   const requests: { model: string; authenticated: boolean }[] = [];
   const upstream = createServer(async (request, response) => {
     try {
+      // The runner verifies its model catalog from this list; Workbot refuses turns on an unverified catalog.
+      if (request.method === "GET" && request.url?.split("?")[0] === "/v1/models") {
+        if (request.headers["x-api-key"] !== key) { response.writeHead(401).end(); return; }
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ data: [{ id: ACME_MODEL, name: ACME_MODEL }] }));
+        return;
+      }
       if (request.method !== "POST" || request.url?.split("?")[0] !== "/v1/messages") {
         response.writeHead(404).end();
         return;
@@ -102,7 +109,7 @@ export async function gatewayEnvironment(upstreamUrl: string) {
   } };
 }
 
-export async function startAcmeGateway(stack: AsyncDisposableStack, databaseUrl: string, settings: Awaited<ReturnType<typeof gatewayEnvironment>>) {
+export async function startAcmeGateway(stack: AsyncDisposableStack, databaseUrl: string, settings: { baseUrl: string; env: Record<string, string> }) {
   const child = spawn(process.execPath, ["--conditions=development", "--import", "tsx", "src/server.ts"], {
     cwd: fileURLToPath(new URL("../../ee/apps/gateway", import.meta.url)),
     env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: "test", OPENWORK_DEV_MODE: "1",
@@ -208,7 +215,7 @@ export async function probeAcmeGatewayDirect(admin: DenSession, world: AcmeGatew
   return { reply: ACME_REPLY, upstreamRequests: requests.length };
 }
 
-export async function seedAcmeGateway(admin: DenSession, upstream: { key: string; baseUrl: string }) {
+export async function seedAcmeGateway(admin: DenSession, upstream: { key: string; baseUrl: string; model?: string }) {
   const headers = { authorization: `Bearer ${admin.token}` };
   const orgs = await denFetch(admin, "/v1/me/orgs", { headers });
   const org = record(orgs.body) && Array.isArray(orgs.body.orgs) ? orgs.body.orgs.find(record) : undefined;
@@ -217,11 +224,16 @@ export async function seedAcmeGateway(admin: DenSession, upstream: { key: string
   const orgHeaders = { ...headers, "x-openwork-org-id": orgId };
   const created = await denFetch(admin, "/v1/inference-providers", {
     method: "POST", headers: orgHeaders,
-    body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [ACME_MODEL],
+    body: JSON.stringify({ name: "Acme AI Gateway", providerId: "anthropic", modelIds: [upstream.model ?? ACME_MODEL],
       credential: { kind: "api_key", secret: upstream.key }, settings: { upstreamBaseUrl: `${upstream.baseUrl}/v1` }, allMembers: true }),
   });
   const provider = record(created.body) && record(created.body.inferenceProvider) ? created.body.inferenceProvider : undefined;
-  if (created.response.status !== 201 || typeof provider?.id !== "string") throw new Error(`Acme provider creation failed: HTTP ${created.response.status}`);
+  if (created.response.status !== 201 || typeof provider?.id !== "string") {
+    // Log only the structured error code, never credentials or the raw response.
+    const error = record(created.body) && typeof created.body.error === "string" && /^[a-z_]{1,64}$/.test(created.body.error)
+      ? ` (${created.body.error})` : "";
+    throw new Error(`Acme provider creation failed: HTTP ${created.response.status}${error}`);
+  }
   const providerId = provider.id;
   const connected = await denFetch(admin, `/v1/inference-providers/${providerId}/connect`, { headers: orgHeaders });
   const connection = record(connected.body) && record(connected.body.inferenceProvider) ? connected.body.inferenceProvider : undefined;

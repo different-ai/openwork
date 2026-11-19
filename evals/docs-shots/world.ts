@@ -90,16 +90,6 @@ async function memberId(session: DenSession, organizationId: string): Promise<st
 }
 
 async function enableDocsCapabilities(admin: DenSession, organizationId: string): Promise<void> {
-  const route = `/v1/admin/organizations/${organizationId}/capabilities`;
-  const result = await denFetch(admin, route, {
-    method: "PUT",
-    headers: auth(admin),
-    body: JSON.stringify({ capabilities: { mcpConnections: true } }),
-  });
-  if (!result.response.ok) {
-    throw new Error(`PUT ${route} failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
-  }
-
   // Cloud is entitled by OpenWork Web access, not a per-organization flag.
   const webRoute = `/v1/admin/organizations/${organizationId}/openwork-web-access`;
   const webResult = await denFetch(admin, webRoute, {

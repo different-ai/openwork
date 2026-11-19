@@ -13,7 +13,7 @@ export type OrganizationPlan = {
   grandfatheredAt?: string
 }
 
-export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics", "auditLogs"] as const
+export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics", "auditLogs", "scim"] as const
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number]
 
 export type OrganizationEntitlements = Record<EntitlementKey, boolean>
@@ -30,6 +30,7 @@ const ENTITLEMENT_FEATURE_LABELS: Record<EntitlementKey, string> = {
   orgControls: "Enforced SSO and desktop version controls",
   analytics: "Usage analytics",
   auditLogs: "Audit logs",
+  scim: "SCIM provisioning",
 }
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
@@ -99,6 +100,8 @@ export function getOrganizationEntitlements(
     orgControls: entitled,
     analytics: entitled,
     auditLogs: getAuditEntitlement(metadata).enabled,
+    // SCIM provisioning is Enterprise. (SSO, including sign-up through SSO, is Team.)
+    scim: entitled,
   }
 }
 

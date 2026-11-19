@@ -1,15 +1,21 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { connectorAccountReady } from "./connector-detail";
-import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
+import { type ConnectorRoute, routeSignInMethod } from "./connector-route";
+import type { DiscoveryCheck } from "./connector-discovery-stream";
+import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFieldsForTarget } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
-import { resolveMcpAuthorizationPollOutcome } from "./mcp-account-authorization-state";
+import { credentialModeForAuth, personalApiKeyStatus, usesMemberApiKey } from "./member-api-key";
+import { pollMcpAuthorization } from "./mcp-account-authorization-state";
 import { openMcpAuthorizationTab, safeMcpAuthorizationUrl, showMcpAuthorizationFailure } from "./mcp-authorization-url";
 import {
+  apiKeyAuthSchemeInput,
+  DEFAULT_API_KEY_AUTH_SCHEME,
   type CreateMcpConnectionInput,
+  type ExternalMcpApiKeyAuthScheme,
   type ExternalMcpConnection,
   type ExternalMcpPreset,
   type ExternalMcpTool,
@@ -22,6 +28,7 @@ import {
   useMcpConnections,
   useMcpConnectionTools,
   useStartMcpConnectionOAuth,
+  useUpdateMcpConnection,
 } from "./mcp-connections-data";
 import type { SetupCheck } from "./setup-checks";
 
@@ -30,7 +37,11 @@ export type ConnectorTarget = {
   url: string;
   description: string;
   /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
-  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId"> | null;
+  preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">
+    & Partial<Pick<ExternalMcpPreset, "presetId" | "defaultOAuthScopes" | "optionalOAuthScopes" | "oauthCallbackUrl">>
+    | null;
+  /** Scopes the admin explicitly chose (guided Slack setup); they win over the preset's and the server's lists. */
+  requestedScopes?: readonly string[];
 };
 
 const POLL_INTERVAL_MS = 1500;
@@ -66,7 +77,7 @@ type SignInState =
 export type ConnectorSetupMode = "admin" | "member";
 
 /** The fields step two needs from an admin before anyone can sign in. */
-export type OAuthAppInput = { clientId: string; clientSecret: string };
+export type OAuthAppInput = { clientId: string; clientSecret: string; manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
@@ -79,65 +90,130 @@ function errorMessage(error: unknown, fallback: string): string {
  * saves the key or OAuth app step two asks for, or right away when there is
  * nothing to sign in to.
  */
-export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member" }: {
+export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member", route = null, routeRequired = false, liveDiscovery = false }: {
   target: ConnectorTarget | null;
   initialConnectionId: string | null;
   onConnectionCreated?: (connectionId: string) => void;
   mode?: ConnectorSetupMode;
+  /** The sign-in route the admin chose for a custom connector; it overrides detection. */
+  route?: ConnectorRoute | null;
+  /** A custom connector waits for its route before any check creates a connection. */
+  routeRequired?: boolean;
+  /** Stream real phase results for the opt-in custom connector checklist. */
+  liveDiscovery?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { orgId, orgContext } = useOrgDashboard();
-  const discover = useDiscoverMcpConnectionRequirements();
+  const { mutateAsync: discoverRequirements } = useDiscoverMcpConnectionRequirements();
   const createConnection = useCreateMcpConnection();
+  const updateConnection = useUpdateMcpConnection();
   const deleteConnection = useDeleteMcpConnection();
   const startOAuth = useStartMcpConnectionOAuth();
   const usable = useMcpConnections("usable");
   const [discovery, setDiscovery] = useState<McpRequirementsDiscovery | null>(null);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
+  const [discoveryPending, setDiscoveryPending] = useState(true);
+  const discoveryIdentity = useRef<string | null>(null);
+  const [discoveryChecks, setDiscoveryChecks] = useState<DiscoveryCheck[]>([]);
+  const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
   const [connectionId, setConnectionId] = useState<string | null>(initialConnectionId);
   const [createdHere, setCreatedHere] = useState(false);
   const [signIn, setSignIn] = useState<SignInState>({ kind: "idle" });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [skipped, setSkipped] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [skipError, setSkipError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const discoveredUrl = useRef<string | null>(null);
   const autoCreated = useRef(false);
+  const authorizationAttempt = useRef(0);
+  const setupSuspended = useRef(false);
+  const authorizationTab = useRef<Window | null>(null);
+  const submittedConfiguration = useRef<{ route: ConnectorRoute; oauthApp: OAuthAppInput | null } | null>(null);
+  const [hasSubmittedConfiguration, setHasSubmittedConfiguration] = useState(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
-  const findDone = discovery !== null && discovery.status !== "unreachable" && discovery.status !== "unsupported";
-  const method: ConnectorSignInMethod | null = findDone && discovery ? connectorSignInMethod(discovery, target?.preset) : null;
+  // A chosen route answers what detection could not, so only an unreachable server fails the first check.
+  const findDone = !discoveryPending && discovery !== null && discovery.status !== "unreachable" && (discovery.status !== "unsupported" || route !== null);
+  const awaitingRoute = routeRequired && route === null;
+  const method: ConnectorSignInMethod | null = !findDone || !discovery || awaitingRoute
+    ? null
+    : route ? routeSignInMethod(route) : connectorSignInMethod(discovery, target?.preset);
+  const [probeHeaders, setProbeHeaders] = useState<ConnectorRoute["requestHeaders"] | undefined>();
+  const routeHeaders = route?.requestHeaders ?? probeHeaders;
+  const requestHeaders = useMemo(() => routeHeaders ?? [], [routeHeaders]);
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
-  const tools = useMcpConnectionTools(connectionId ?? "", signedIn);
+  const apiKeyConfigured = connection?.authType === "apikey";
+  const usesIndividualKeys = Boolean(connection && usesMemberApiKey(connection));
+  const tools = useMcpConnectionTools(connectionId ?? "", signedIn && !usesIndividualKeys);
 
+  const discoveryUrl = target?.url;
   useEffect(() => {
-    // A deep link can resolve the catalog entry before the organization loads.
-    if (!target || !orgId || discoveredUrl.current === target.url) return;
-    discoveredUrl.current = target.url;
-    setDiscovery(null);
+    if (!discoveryUrl || !orgId) return;
+    const controller = new AbortController();
+    let current = true;
+    const identity = `${orgId}\n${discoveryUrl}`;
+    // Retrying the same server keeps its detected selection and own-app fields mounted.
+    // Different servers/organizations must never inherit the previous discovery.
+    if (discoveryIdentity.current !== identity) setDiscovery(null);
+    discoveryIdentity.current = identity;
+    setDiscoveryPending(true);
     setDiscoveryError(null);
-    discover.mutateAsync(target.url)
-      .then((result) => setDiscovery(result))
-      .catch((error: unknown) => setDiscoveryError(errorMessage(error, "OpenWork could not reach it.")));
-  }, [discover, orgId, target]);
+    setDiscoveryChecks([]);
+    void discoverRequirements({
+      url: discoveryUrl,
+      requestHeaders,
+      signal: controller.signal,
+      ...(liveDiscovery ? { onCheck: (check: DiscoveryCheck) => {
+        if (!current) return;
+        setDiscoveryChecks((checks) => [...checks.filter((entry) => entry.id !== check.id), check]);
+      } } : {}),
+    }).then((result) => { if (current) { setDiscovery(result); setDiscoveryPending(false); } })
+      .catch((error: unknown) => {
+        if (!current) return;
+        setDiscoveryPending(false);
+        setDiscoveryError(errorMessage(error, "OpenWork could not reach it."));
+        setDiscoveryChecks((checks) => checks.map((check) => check.status === "running"
+          ? { ...check, status: "failed", code: "unavailable" } : check));
+      });
+    return () => { current = false; controller.abort(); };
+  }, [discoverRequirements, discoveryUrl, orgId, requestHeaders, liveDiscovery, discoveryAttempt]);
 
   const stopPolling = useCallback(() => {
     if (pollTimer.current) clearInterval(pollTimer.current);
     pollTimer.current = null;
   }, []);
-  useEffect(() => stopPolling, [stopPolling]);
+  useEffect(() => () => {
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
+    stopPolling();
+  }, [stopPolling]);
 
-  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType" | "apiKey" | "oauthClient">) => {
+  const createForMe = useCallback(async (auth: Pick<CreateMcpConnectionInput, "authType"> & Partial<Pick<CreateMcpConnectionInput, "apiKey" | "apiKeyAuthScheme" | "credentialMode" | "oauthClient" | "manualOAuthEndpoints" | "requestHeaders" | "requestedScopes">>, active?: () => boolean) => {
     if (!target || !orgContext) throw new Error("Your organization is still loading. Try again in a moment.");
+    const generation = authorizationAttempt.current;
+    const current = () => !setupSuspended.current && authorizationAttempt.current === generation && (!active || active());
     const created = await createConnection.mutateAsync({
       name: target.name,
       url: target.url,
       authType: auth.authType,
-      credentialMode: auth.authType === "oauth" ? "per_member" : "shared",
+      credentialMode: credentialModeForAuth(
+        auth.authType,
+        auth.credentialMode ?? (auth.authType === "oauth" ? "per_member" : "shared"),
+      ),
       ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+      ...apiKeyAuthSchemeInput(auth.authType, auth.apiKeyAuthScheme ?? DEFAULT_API_KEY_AUTH_SCHEME),
       ...(auth.oauthClient ? { oauthClient: auth.oauthClient } : {}),
-      ...(auth.authType === "oauth" ? oauthRequestFields(discovery) : {}),
+      ...(auth.authType === "oauth" ? oauthRequestFieldsForTarget(discovery, target) : {}),
+      ...(auth.authType === "oauth" && auth.requestedScopes !== undefined ? { requestedScopes: auth.requestedScopes } : {}),
+      ...(auth.manualOAuthEndpoints ? { manualOAuthEndpoints: auth.manualOAuthEndpoints } : {}),
+      ...((auth.requestHeaders ?? requestHeaders).length > 0 ? { requestHeaders: auth.requestHeaders ?? requestHeaders } : {}),
       access: { orgWide: false, memberIds: [orgContext.currentMember.id], teamIds: [] },
     });
+    if (!current()) {
+      await deleteConnection.mutateAsync(created.id);
+      throw new Error("This unfinished connection was canceled.");
+    }
     setConnectionId(created.id);
     setCreatedHere(true);
     onConnectionCreated?.(created.id);
@@ -146,16 +222,26 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
     ]);
     return created.id;
-  }, [createConnection, discovery, onConnectionCreated, orgContext, queryClient, target, usable]);
+  }, [createConnection, deleteConnection, discovery, onConnectionCreated, orgContext, queryClient, requestHeaders, target, usable]);
 
   useEffect(() => {
-    if (method !== "none" || connectionId || autoCreated.current) return;
+    if (routeRequired && route === null) {
+      setupSuspended.current = false;
+      autoCreated.current = false;
+    }
+  }, [routeRequired, route]);
+
+  useEffect(() => {
+    if (setupSuspended.current || method !== "none" || connectionId || autoCreated.current) return;
     autoCreated.current = true;
-    createForMe({ authType: "none" }).catch((error: unknown) => setSignIn({ kind: "failed", message: errorMessage(error, "Could not add it.") }));
+    const generation = authorizationAttempt.current;
+    createForMe({ authType: "none" }).catch((error: unknown) => {
+      if (!setupSuspended.current && authorizationAttempt.current === generation) setSignIn({ kind: "failed", message: errorMessage(error, "Could not add it.") });
+    });
   }, [method, connectionId, createForMe]);
 
   /** Step two for a server that takes a key: the admin's key is shared by everyone who gets it. */
-  const saveApiKey = useCallback(async (apiKey: string) => {
+  const saveApiKey = useCallback(async (apiKey: string, apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
     const key = apiKey.trim();
     if (!key) {
       setSaveError("Paste the key first.");
@@ -164,7 +250,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     setSaving(true);
     setSaveError(null);
     try {
-      await createForMe({ authType: "apikey", apiKey: key });
+      await createForMe({ authType: "apikey", credentialMode: "shared", apiKey: key, apiKeyAuthScheme });
     } catch (error) {
       setSaveError(errorMessage(error, "The key did not save."));
     } finally {
@@ -172,7 +258,24 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [createForMe]);
 
-  /** Step two for a server that only accepts a pre-registered OAuth app; sign-in follows. */
+  /** Creates one organization connection; every granted member supplies their own key later. */
+  const savePerMemberApiKeys = useCallback(async (apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await createForMe({ authType: "apikey", credentialMode: "per_member", apiKeyAuthScheme });
+    } catch {
+      setSaveError("The connection did not save. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }, [createForMe]);
+
+  /**
+   * Step two for a server that only accepts a pre-registered OAuth app; sign-in follows.
+   * Also the way out when automatic sign-in setup fails: the OAuth app is
+   * added to the connection that sign-in already created.
+   */
   const saveOAuthApp = useCallback(async (input: OAuthAppInput) => {
     const clientId = input.clientId.trim();
     const clientSecret = input.clientSecret.trim();
@@ -180,31 +283,67 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       setSaveError("Paste the client ID first.");
       return;
     }
-    if (!clientSecret && oauthClientSecretRequired(discovery)) {
+    if (!input.manualOAuthEndpoints && !clientSecret && oauthClientSecretRequired(discovery)) {
       setSaveError(`${target?.name ?? "This server"} needs the client secret too.`);
       return;
     }
     setSaving(true);
     setSaveError(null);
+    const oauthClient = { clientId, ...(clientSecret ? { clientSecret } : {}) };
     try {
-      await createForMe({ authType: "oauth", oauthClient: { clientId, ...(clientSecret ? { clientSecret } : {}) } });
+      // A failed sign-in attempt updates the connection, so read its latest version first.
+      const latest = connection ? (await usable.refetch()).data?.find((entry) => entry.id === connection.id) ?? connection : null;
+      if (latest && latest.authType === "oauth" && latest.updatedAt) {
+        await updateConnection.mutateAsync({
+          connectionId: latest.id,
+          expectedUpdatedAt: latest.updatedAt,
+          name: latest.name,
+          url: latest.url,
+          authType: "oauth",
+          credentialMode: latest.credentialMode,
+          exposeDirectly: latest.exposeDirectly,
+          oauthClient,
+          ...(input.manualOAuthEndpoints ? { manualOAuthEndpoints: input.manualOAuthEndpoints } : {}),
+          access: latest.access ?? { orgWide: false, memberIds: orgContext ? [orgContext.currentMember.id] : [], teamIds: [] },
+        });
+        await usable.refetch();
+      } else {
+        await createForMe({ authType: "oauth", oauthClient, ...(input.manualOAuthEndpoints ? { manualOAuthEndpoints: input.manualOAuthEndpoints } : {}) });
+      }
+      setSignIn({ kind: "idle" });
     } catch (error) {
       setSaveError(errorMessage(error, "The OAuth app did not save."));
     } finally {
       setSaving(false);
     }
-  }, [createForMe, discovery, target?.name]);
+  }, [connection, createForMe, discovery, orgContext, target?.name, updateConnection, usable]);
 
-  const startSignIn = useCallback(async () => {
+  const startSignIn = useCallback(async (configuration?: { route: ConnectorRoute; oauthApp: OAuthAppInput | null }) => {
     if (!target) return;
+    if (configuration) {
+      submittedConfiguration.current = configuration;
+      setHasSubmittedConfiguration(true);
+    }
+    const reviewed = configuration ?? submittedConfiguration.current;
+    const attempt = ++authorizationAttempt.current;
+    const active = () => authorizationAttempt.current === attempt;
     stopPolling();
+    authorizationTab.current?.close();
     setSignIn({ kind: "waiting" });
     let tab: Window | null = null;
     let id = connectionId;
     try {
       tab = openMcpAuthorizationTab({ connectionId: id ?? "", connectionName: target.name });
-      id = id ?? await createForMe({ authType: "oauth" });
+      authorizationTab.current = tab;
+      const app = reviewed?.oauthApp;
+      id = id ?? await createForMe({
+        authType: "oauth",
+        ...(reviewed ? { requestHeaders: reviewed.route.requestHeaders, requestedScopes: reviewed.route.requestedScopes } : {}),
+        ...(app ? { oauthClient: { clientId: app.clientId.trim(), ...(app.clientSecret.trim() ? { clientSecret: app.clientSecret.trim() } : {}) }, ...(app.manualOAuthEndpoints ? { manualOAuthEndpoints: app.manualOAuthEndpoints } : {}) } : {}),
+      }, active);
+      if (!active()) { tab.close(); return; }
       const result = await startOAuth.mutateAsync(id);
+      if (!active()) { tab.close(); return; }
       if (result.status === "connected") {
         tab.close();
         await usable.refetch();
@@ -217,18 +356,19 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       const startedAt = Date.now();
       let fetching = false;
       pollTimer.current = setInterval(async () => {
-        if (fetching) return;
+        if (!active() || fetching) return;
         fetching = true;
-        const refreshed = await usable.refetch();
-        fetching = false;
-        const current = refreshed.data?.find((entry) => entry.id === pollId);
-        const outcome = resolveMcpAuthorizationPollOutcome({
-          connected: Boolean(current && connectorAccountReady(current)),
-          authorizationWindowClosed: openedTab.closed,
-          elapsedMs: Date.now() - startedAt,
+        const outcome = await pollMcpAuthorization({
+          authorizationWindow: openedTab,
+          readConnected: async () => {
+            const current = (await usable.refetch()).data?.find((entry) => entry.id === pollId);
+            return Boolean(current && connectorAccountReady(current));
+          },
+          startedAt,
           timeoutMs: POLL_TIMEOUT_MS,
         });
-        if (outcome === "pending") return;
+        fetching = false;
+        if (!active() || outcome === "pending") return;
         stopPolling();
         if (outcome === "connected") {
           setSignIn({ kind: "idle" });
@@ -238,6 +378,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
         }
       }, POLL_INTERVAL_MS);
     } catch (error) {
+      if (!active()) { tab?.close(); return; }
       const message = errorMessage(error, "Sign-in did not start.");
       showMcpAuthorizationFailure(tab, {
         connectionId: id ?? "",
@@ -249,14 +390,69 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [connectionId, createForMe, queryClient, startOAuth, stopPolling, target, usable]);
 
+  /** Edit an unpublished setup without leaving an orphan connection or silently losing its draft. */
+  const restartSetup = useCallback(async (): Promise<boolean> => {
+    setupSuspended.current = true;
+    submittedConfiguration.current = null;
+    setHasSubmittedConfiguration(false);
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
+    stopPolling();
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (connectionId) {
+        if (!createdHere) throw new Error("This saved connection must be edited from its settings.");
+        await deleteConnection.mutateAsync(connectionId);
+      }
+      setConnectionId(null);
+      setCreatedHere(false);
+      setSignIn({ kind: "idle" });
+      setSkipped(false);
+      await queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items });
+      return true;
+    } catch (error) {
+      setupSuspended.current = false;
+      setSaveError(errorMessage(error, "Could not reopen setup. Try again."));
+      return false;
+    } finally { setSaving(false); }
+  }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
+
   /** Cancel removes a connection this flow created and never finished. */
   const discard = useCallback(async () => {
+    setupSuspended.current = true;
+    submittedConfiguration.current = null;
+    setHasSubmittedConfiguration(false);
+    authorizationAttempt.current++;
+    authorizationTab.current?.close();
     stopPolling();
     if (connectionId && createdHere) {
       await deleteConnection.mutateAsync(connectionId).catch(() => undefined);
       await queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items });
     }
   }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
+
+  /**
+   * Add it without every check passing, e.g. when the provider refuses
+   * automatic sign-in setup. Creates the connection if no step has yet, so the
+   * admin can finish its settings on the connector's page later.
+   */
+  const skipChecks = useCallback(async () => {
+    stopPolling();
+    setSkipping(true);
+    setSkipError(null);
+    try {
+      if (!connectionId) {
+        await createForMe({ authType: method === "sign_in" || method === "oauth_app" ? "oauth" : "none" });
+      }
+      setSignIn({ kind: "idle" });
+      setSkipped(true);
+    } catch (error) {
+      setSkipError(errorMessage(error, "Could not add it."));
+    } finally {
+      setSkipping(false);
+    }
+  }, [connectionId, createForMe, method, stopPolling]);
 
   const name = target?.name ?? "it";
   const findFailed = discoveryError !== null || (discovery !== null && !findDone);
@@ -265,8 +461,8 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const blocked = needsAdminInput && mode === "member" && !connection;
   const methodFailed = method === "unsupported";
   const methodDone = method === "none" || method === "sign_in" || adminInputSaved;
-  const usesKey = method === "api_key" || connection?.authType === "apikey";
-  const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && connection !== null));
+  const usesKey = method === "api_key" || apiKeyConfigured;
+  const canSignIn = !signedIn && signIn.kind !== "waiting" && (method === "sign_in" || (method === "oauth_app" && (connection !== null || hasSubmittedConfiguration)));
   const toolList = tools.data?.tools ?? [];
 
   const methodDescription = (() => {
@@ -274,7 +470,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     if (method === "none") return "No sign-in needed.";
     if (method === "sign_in") return `You sign in with your own ${name} account.`;
     if (method === "api_key") {
-      if (adminInputSaved) return "Key added. Everyone uses it.";
+      if (adminInputSaved) return usesIndividualKeys ? "Individual keys enabled." : "Key added. Everyone uses it.";
       return mode === "member" ? `An admin adds the key for ${name}.` : `${name} needs a key.`;
     }
     if (method === "oauth_app") {
@@ -287,9 +483,10 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const signInDescription = (() => {
     if (signedIn) {
       if (connection?.authType === "none") return "Nothing to sign in to.";
-      if (connection?.authType === "apikey") return "Uses the key you added.";
+      if (connection?.authType === "apikey") return usesIndividualKeys ? "Each person can now add their own key in My Library." : "Uses the key you added.";
       return connection?.externalAccountId ? `As ${connection.externalAccountId}.` : "You are signed in.";
     }
+    if (usesIndividualKeys) return "Each person adds their own key.";
     if (signIn.kind === "failed") return signIn.message;
     if (signIn.kind === "waiting") return `${name} opened in a new tab. Come back here when you are done.`;
     if (canSignIn) return `${name} opens in a new tab. Come back here when you are done.`;
@@ -312,11 +509,15 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     },
     {
       id: "sign-in",
-      title: signedIn
+      title: usesIndividualKeys
+        ? "Individual keys enabled"
+        : signedIn
         ? usesKey ? `Connected to ${name}` : `Signed in to ${name}`
         : usesKey ? `Connect to ${name}` : `Sign in to ${name}`,
       description: signInDescription,
-      status: signedIn
+      status: usesIndividualKeys
+        ? "done"
+        : signedIn
         ? "done"
         : signIn.kind === "failed" ? "failed"
           : signIn.kind === "waiting" || (usesKey && connection) || (method === "none" && !connection) ? "running"
@@ -324,15 +525,18 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     },
     {
       id: "tools",
-      title: "Has things your AI can do",
-      description: tools.error
+      title: usesIndividualKeys ? "Ready for first use" : "Has things your AI can do",
+      description: usesIndividualKeys
+        ? "Tools appear after each person adds a working key."
+        : tools.error
         ? "OpenWork could not read what it can do. Try again later."
         : tools.data ? toolsSentence(toolList) : signedIn ? "Reading them now." : usesKey ? "They show up once the key works." : "They show up after you sign in.",
-      status: tools.error ? "failed" : tools.data ? "done" : signedIn ? "running" : "waiting",
+      status: usesIndividualKeys ? "done" : tools.error ? "failed" : tools.data ? "done" : signedIn ? "running" : "waiting",
     },
   ];
 
   const doneCount = checks.filter((check) => check.status === "done").length;
+  const anyFailed = checks.some((check) => check.status === "failed");
   const stepNumber = Math.min(checks.findIndex((check) => check.status !== "done") + 1 || checks.length, checks.length);
 
   return {
@@ -342,18 +546,44 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     connection,
     connectionId,
     tools: toolList,
+    retryTools: tools.refetch,
     method,
     /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
+    discovery,
+    discoveryChecks,
+    discoveryFailed: discoveryError !== null,
+    retryDiscovery: (headers?: ConnectorRoute["requestHeaders"]) => {
+      if (headers) setProbeHeaders(headers);
+      setDiscoveryAttempt((attempt) => attempt + 1);
+    },
+    /** The first check is still waiting on the server. */
+    discovering: discoveryPending,
+    /** OpenWork could not reach the server at all. */
+    unreachable: discoveryError !== null || discovery?.status === "unreachable",
     secretRequired: oauthClientSecretRequired(discovery),
     saving,
     saveError,
     saveApiKey,
+    savePerMemberApiKeys,
     saveOAuthApp,
     canSignIn,
+    signedIn,
     signingIn: signIn.kind === "waiting",
+    signInError: signIn.kind === "failed" ? signIn.message : null,
+    /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
+    signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
+    restartSetup,
+    canEditSetup: !connectionId || createdHere,
+    connectionProblem: signIn.kind === "failed" ? signIn.message : saveError,
     discard,
+    /** A check failed, so an admin may add the connector anyway and finish it from its page. */
+    canSkip: mode === "admin" && anyFailed && !skipped,
+    skipped,
+    skipping,
+    skipError,
+    skipChecks,
   };
 }
 
@@ -361,8 +591,10 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
 export function useMemberSignIn() {
   const queryClient = useQueryClient();
   const startOAuth = useStartMcpConnectionOAuth();
+  const usable = useMcpConnections("usable");
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [failure, setFailure] = useState<{ id: string; message: string } | null>(null);
+  const [apiKeyTarget, setApiKeyTarget] = useState<{ id: string; name: string } | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => () => {
     if (timer.current) clearInterval(timer.current);
@@ -373,7 +605,22 @@ export function useMemberSignIn() {
     queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   ]);
 
-  async function signIn(item: { id: string; name: string }) {
+  async function signIn(item: {
+    id: string;
+    name: string;
+    authType?: ExternalMcpConnection["authType"];
+    credentialMode?: ExternalMcpConnection["credentialMode"];
+  }) {
+    const connection = usable.data?.find((entry) => entry.id === item.id);
+    const authType = item.authType ?? connection?.authType;
+    const credentialMode = item.credentialMode ?? connection?.credentialMode;
+    if (authType === "apikey" && credentialMode === "per_member") {
+      if (timer.current) clearInterval(timer.current);
+      setPendingId(null);
+      setFailure(null);
+      setApiKeyTarget({ id: item.id, name: item.name });
+      return;
+    }
     if (timer.current) clearInterval(timer.current);
     setPendingId(item.id);
     setFailure(null);
@@ -410,5 +657,17 @@ export function useMemberSignIn() {
     }
   }
 
-  return { signIn, pendingId, failure };
+  function apiKeyStatus(connectionId: string) {
+    const connection = usable.data?.find((entry) => entry.id === connectionId);
+    return connection ? personalApiKeyStatus(connection) : null;
+  }
+
+  return {
+    apiKeyStatus,
+    apiKeyTarget,
+    closeApiKey: () => setApiKeyTarget(null),
+    failure,
+    pendingId,
+    signIn,
+  };
 }

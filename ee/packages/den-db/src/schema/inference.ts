@@ -201,6 +201,8 @@ export const GatewayRequestLogTable = mysqlTable(
     org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
     inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id"),
     gateway_key_id: denTypeIdColumn("gatewayKey", "gateway_key_id"),
+    // Set instead of gateway_key_id when a member's own API key made the request.
+    gateway_api_key_id: denTypeIdColumn("gatewayApiKey", "gateway_api_key_id"),
     gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
     gateway_provider_credential_id: denTypeIdColumn(
       "inferenceProviderCredential",
@@ -242,7 +244,9 @@ export const GatewayRequestLogTable = mysqlTable(
   },
   (table) => [
     uniqueIndex("gateway_request_logs_openwork_request_id").on(table.openwork_request_id),
-    index("gateway_request_logs_org_started").on(table.organization_id, table.started_at),
+    // Route precedes time so per-route usage reads skip other routes' rows;
+    // organization-only lookups still use the leading column.
+    index("gateway_request_logs_org_route_started").on(table.organization_id, table.route, table.started_at),
     index("gateway_request_logs_member_started").on(table.org_membership_id, table.started_at),
     index("gateway_request_logs_provider_started").on(
       table.gateway_provider_id,
@@ -323,8 +327,9 @@ export const GatewayUsageRollupTable = mysqlTable(
       table.bucket_start,
       table.dimension_key,
     ),
-    index("gateway_usage_rollups_org_granularity_bucket").on(
+    index("gateway_usage_rollups_org_route_granularity_bucket").on(
       table.organization_id,
+      table.route,
       table.granularity,
       table.bucket_start,
     ),
@@ -503,6 +508,8 @@ export const AnonymousInferenceUsageTable = mysqlTable("anonymous_inference_usag
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   /** No usage report arrived, so the fixed estimate was charged. */
   estimated: boolean("estimated").notNull().default(false),
@@ -552,6 +559,8 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,

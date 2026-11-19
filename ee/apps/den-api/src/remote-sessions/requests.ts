@@ -1,7 +1,9 @@
+import { isDeepStrictEqual } from "node:util"
 import { and, asc, eq, gt, inArray, lte } from "@openwork-ee/den-db/drizzle"
-import { RemoteSessionRequestTable } from "@openwork-ee/den-db/schema/remote-session-commands"
+import { RemoteSessionCommandTable, RemoteSessionRequestTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  remoteSessionAnswerInputSchema,
   remoteSessionReadInputSchema,
   remoteSessionRequestResultSchema,
   remoteSessionSendInputSchema,
@@ -11,7 +13,10 @@ import {
   type RemoteSessionRequestResult,
 } from "@openwork/types/automations"
 import { db } from "../db.js"
-import { automationUpdateChangedRows } from "../automations/update-result.js"
+import { detachableCommands, detachedCommandValues } from "./commands.js"
+
+/** The computer no longer holds the receipt of the command a request came through. */
+export const UNKNOWN_RECEIPT_ERROR_CODE = "unknown_receipt"
 
 /** Requests are interactive: an unanswered one is useless after a couple of minutes. */
 export const REMOTE_SESSION_REQUEST_TTL_MS = 2 * 60_000
@@ -52,15 +57,20 @@ type EnqueueInput = RemoteSessionRequestInput & {
 
 export interface RemoteSessionRequestStore {
   enqueue(input: EnqueueInput): Promise<RemoteSessionRequest>
-  /** Only the target runner can claim, once, before the request expires. */
+  /** Only the target runner can claim before expiry; recovery keeps the same sticky owner. */
   claim(input: {
     requestId: string
     organizationId: string
     ownerMemberId: string
     runnerId: string
     now: number
+    recoverClaimed?: boolean
   }): Promise<RemoteSessionRequest | null>
-  /** Only the runner holding the claim can complete, once. */
+  /**
+   * Scoped, immutable receipts outlive admission TTL; identical retries are acknowledged.
+   * A request that fails with `unknown_receipt` detaches the attach command it
+   * came through, in the same transaction, so the session can be attached again.
+   */
   complete(input: RemoteSessionRequestCompleteRequest & {
     requestId: string
     organizationId: string
@@ -71,6 +81,14 @@ export interface RemoteSessionRequestStore {
   /** Reads a request for its creator, settling it as expired once its deadline passed unanswered. */
   get(input: { requestId: string; organizationId: string; createdByUserId: string }): Promise<RemoteSessionRequest | null>
   listPendingForRunner(input: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    now: number
+    limit: number
+  }): Promise<RemoteSessionRequest[]>
+  /** Claimed requests remain sticky to the same runner until their original TTL. */
+  listRecoverableForRunner(input: {
     organizationId: string
     ownerMemberId: string
     runnerId: string
@@ -97,6 +115,10 @@ function mapInput(row: RequestRow): RemoteSessionRequestInput | null {
   if (row.action === "send") {
     const input = remoteSessionSendInputSchema.safeParse(row.input)
     return input.success ? { action: "send", input: input.data } : null
+  }
+  if (row.action === "answer") {
+    const input = remoteSessionAnswerInputSchema.safeParse(row.input)
+    return input.success ? { action: "answer", input: input.data } : null
   }
   const input = remoteSessionStopInputSchema.safeParse(row.input)
   return input.success ? { action: "stop", input: input.data } : null
@@ -129,9 +151,32 @@ function mapRequest(row: RequestRow): RemoteSessionRequest {
 }
 
 async function requestById(requestId: DenTypeId<"remoteSessionRequest">): Promise<RemoteSessionRequest | null> {
-  const rows = await db.select().from(RemoteSessionRequestTable)
+  // primary: reads back rows enqueue/get just wrote.
+  const rows = await db.$primary.select().from(RemoteSessionRequestTable)
     .where(eq(RemoteSessionRequestTable.id, requestId)).limit(1)
   return rows[0] ? mapRequest(rows[0]) : null
+}
+
+export function remoteSessionRequestRecoverable(request: RemoteSessionRequest, input: {
+  organizationId: string; ownerMemberId: string; runnerId: string; now: number
+}) {
+  return request.organizationId === normalizeDenTypeId("organization", input.organizationId)
+    && request.ownerMemberId === normalizeDenTypeId("member", input.ownerMemberId)
+    && request.targetRunnerId === input.runnerId
+    && request.status === "claimed"
+    && request.expiresAt > input.now
+}
+
+export function remoteSessionRequestCompletionMatches(request: RemoteSessionRequest, input: RemoteSessionRequestCompleteRequest & {
+  organizationId: string; ownerMemberId: string; runnerId: string
+}) {
+  return request.organizationId === normalizeDenTypeId("organization", input.organizationId)
+    && request.ownerMemberId === normalizeDenTypeId("member", input.ownerMemberId)
+    && request.targetRunnerId === input.runnerId
+    && request.status === input.status
+    && (input.status === "done"
+      ? isDeepStrictEqual(request.outcome, input.outcome) && request.error === null
+      : isDeepStrictEqual(request.error, input.error) && request.outcome === null)
 }
 
 export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
@@ -163,46 +208,86 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
   async claim(input) {
     const requestId = requestIdOrNull(input.requestId)
     if (!requestId) return null
-    const now = new Date(input.now)
-    const result = await db.update(RemoteSessionRequestTable).set({
-      status: "claimed",
-      claimed_at: now,
-      updated_at: now,
-    }).where(and(
-      eq(RemoteSessionRequestTable.id, requestId),
-      eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
-      eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
-      eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
-      eq(RemoteSessionRequestTable.status, "pending"),
-      gt(RemoteSessionRequestTable.expires_at, now),
-    ))
-    if (!automationUpdateChangedRows(result)) return null
-    return requestById(requestId)
+    return db.transaction(async (tx) => {
+      const scope = and(
+        eq(RemoteSessionRequestTable.id, requestId),
+        eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+        eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+        eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
+      )
+      const rows = await tx.select().from(RemoteSessionRequestTable).where(scope).limit(1).for("update")
+      const existing = rows[0] ? mapRequest(rows[0]) : null
+      if (!existing || existing.expiresAt <= input.now) return null
+      if (input.recoverClaimed && remoteSessionRequestRecoverable(existing, input)) return existing
+      if (existing.status !== "pending") return null
+      const now = new Date(input.now)
+      await tx.update(RemoteSessionRequestTable).set({ status: "claimed", claimed_at: now, updated_at: now })
+        .where(and(scope, eq(RemoteSessionRequestTable.status, "pending"), gt(RemoteSessionRequestTable.expires_at, now)))
+      return { ...existing, status: "claimed", claimedAt: input.now, updatedAt: input.now }
+    })
   },
 
   async complete(input) {
     const requestId = requestIdOrNull(input.requestId)
     if (!requestId) return null
-    const existing = await requestById(requestId)
-    // The outcome must answer the action that was asked.
-    if (input.status === "done" && existing && input.outcome.action !== existing.action) return null
-    const now = new Date(input.now)
-    const result = await db.update(RemoteSessionRequestTable).set({
-      status: input.status,
-      result: input.status === "done" ? input.outcome : null,
-      error_code: input.status === "failed" ? input.error.code : null,
-      error_message: input.status === "failed" ? input.error.message : null,
-      completed_at: now,
-      updated_at: now,
-    }).where(and(
-      eq(RemoteSessionRequestTable.id, requestId),
-      eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
-      eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
-      eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
-      eq(RemoteSessionRequestTable.status, "claimed"),
-    ))
-    if (!automationUpdateChangedRows(result)) return null
-    return requestById(requestId)
+    return db.transaction(async (tx) => {
+      const scope = and(
+        eq(RemoteSessionRequestTable.id, requestId),
+        eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+        eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+        eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
+      )
+      const rows = await tx.select().from(RemoteSessionRequestTable).where(scope).limit(1).for("update")
+      const existing = rows[0] ? mapRequest(rows[0]) : null
+      if (!existing) return null
+      if (existing.status === "done" || existing.status === "failed") {
+        return remoteSessionRequestCompletionMatches(existing, input) ? existing : null
+      }
+      // Expiry prevents native admission, not delivery of a receipt for an
+      // already-admitted effect. An expired, never-claimed request is rejected.
+      if (!["claimed", "expired"].includes(existing.status) || existing.claimedAt === null) return null
+      // The outcome must answer the action that was asked.
+      if (input.status === "done" && input.outcome.action !== existing.action) return null
+      const now = new Date(input.now)
+      await tx.update(RemoteSessionRequestTable).set({
+        status: input.status,
+        result: input.status === "done" ? input.outcome : null,
+        error_code: input.status === "failed" ? input.error.code : null,
+        error_message: input.status === "failed" ? input.error.message : null,
+        completed_at: now,
+        updated_at: now,
+      }).where(and(scope, inArray(RemoteSessionRequestTable.status, ["claimed", "expired"])))
+      if (input.status === "done" && input.outcome.action === "send" && !input.outcome.result.alreadyPresent) {
+        // Reset only on the first transition, in the same transaction as the
+        // receipt. A completion retry can never erase a newer final answer.
+        await tx.update(RemoteSessionCommandTable).set({
+          session_status: "running", session_waiting_for: null, session_final_text: null,
+          // Observations come only from the runner's clock. Den's time here
+          // would reject the entire next turn on a laptop whose clock is behind.
+          // Runners serialize report delivery around the send receipt.
+          session_error_code: null, session_error_message: null, session_observed_at: null, updated_at: now,
+        }).where(and(
+          eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", existing.commandId)),
+          eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+          eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+          eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
+          eq(RemoteSessionCommandTable.status, "delivered"),
+        ))
+      }
+      if (input.status === "failed" && input.error.code === UNKNOWN_RECEIPT_ERROR_CODE) {
+        // The computer lost this attach's receipt: every later request would fail
+        // the same way. A command that started the session is left as it is.
+        await tx.update(RemoteSessionCommandTable).set(detachedCommandValues(now)).where(and(
+          eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", existing.commandId)),
+          eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+          eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+          eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
+          detachableCommands(),
+        ))
+      }
+      return { ...existing, status: input.status, outcome: input.status === "done" ? input.outcome : null,
+        error: input.status === "failed" ? input.error : null, completedAt: input.now, updatedAt: input.now }
+    })
   },
 
   async get(input) {
@@ -213,7 +298,8 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
       eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       eq(RemoteSessionRequestTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
     )
-    const rows = await db.select().from(RemoteSessionRequestTable).where(scope).limit(1)
+    // primary: polled right after enqueue while waiting for the desktop.
+    const rows = await db.$primary.select().from(RemoteSessionRequestTable).where(scope).limit(1)
     const request = rows[0] ? mapRequest(rows[0]) : null
     if (!request || !["pending", "claimed"].includes(request.status) || request.expiresAt > Date.now()) {
       return request
@@ -228,13 +314,25 @@ export const databaseRemoteSessionRequestStore: RemoteSessionRequestStore = {
   },
 
   async listPendingForRunner(input) {
-    const rows = await db.select().from(RemoteSessionRequestTable).where(and(
+    // primary: the runner asks for work as soon as a request is enqueued.
+    const rows = await db.$primary.select().from(RemoteSessionRequestTable).where(and(
       eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
       eq(RemoteSessionRequestTable.status, "pending"),
       gt(RemoteSessionRequestTable.expires_at, new Date(input.now)),
     )).orderBy(asc(RemoteSessionRequestTable.created_at), asc(RemoteSessionRequestTable.id)).limit(input.limit)
+    return rows.map(mapRequest)
+  },
+
+  async listRecoverableForRunner(input) {
+    const rows = await db.$primary.select().from(RemoteSessionRequestTable).where(and(
+      eq(RemoteSessionRequestTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionRequestTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
+      eq(RemoteSessionRequestTable.target_runner_id, input.runnerId),
+      eq(RemoteSessionRequestTable.status, "claimed"),
+      gt(RemoteSessionRequestTable.expires_at, new Date(input.now)),
+    )).orderBy(asc(RemoteSessionRequestTable.claimed_at), asc(RemoteSessionRequestTable.id)).limit(input.limit)
     return rows.map(mapRequest)
   },
 }

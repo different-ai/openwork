@@ -92,7 +92,7 @@ export function PdfPreview({ url, title, className }: PdfPreviewProps) {
   // Chromium's built-in PDF viewer (enabled via webPreferences.plugins) renders
   // reliably through <embed>; <object>/sandboxed <iframe> show a blank frame.
   // The blob URL comes from a trusted workspace file.
-  return <embed src={url} type="application/pdf" title={title} className={cn("h-full w-full border-0", className)} />;
+  return <embed src={url} type="application/pdf" title={title} data-testid="artifact-pdf-preview" className={cn("h-full w-full border-0", className)} />;
 }
 
 interface ImagePreviewProps extends React.ComponentProps<"div"> {

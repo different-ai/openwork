@@ -4,7 +4,7 @@ import { createDenClient, denOriginComparisonKey } from "@/app/lib/den";
 import { readGatewayUsageScope as readScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useDenAuth } from "./den-auth-provider";
-import { corroboratesGatewayUsageError, gatewayUsageResetDelay, gatewayUsageQueryPrefix, type GatewayUsageErrorEvidence } from "./gateway-usage-state";
+import { allGatewayUsageBuckets, corroboratesGatewayUsageError, gatewayUsageResetDelay, gatewayUsageQueryPrefix, type GatewayUsageErrorEvidence } from "./gateway-usage-state";
 import { refreshGatewayUsageAfterCompletion } from "./gateway-usage-refresh";
 import type { GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 function subscribeScope(listener: () => void) {
@@ -103,7 +103,7 @@ export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKe
     retry: false,
     mutationFn: async (input: { bucketId: string; reason: string }) => {
       const organizationId = assertCurrent();
-      const bucket = query.data?.buckets.find((item) => item.id === input.bucketId);
+      const bucket = query.data ? allGatewayUsageBuckets(query.data).find((item) => item.id === input.bucketId) : undefined;
       if (query.isError || !bucket?.canRequestReset || bucket.resetRequestStatus === "pending") throw new Error("Refresh usage limits to check increase eligibility.");
       const result = await client.requestGatewayUsageReset(organizationId, input);
       assertCurrent();
@@ -111,9 +111,11 @@ export function useGatewayUsage(requested: boolean, panelOpen = false, refreshKe
     },
     onSuccess: (request) => {
       if (readScope() !== scope) return;
+      const pending = <T extends { id: string }>(bucket: T) => bucket.id === request.bucketId ? { ...bucket, canRequestReset: false, resetRequestStatus: request.status } : bucket;
       queryClient.setQueryData(queryKey, query.data ? {
         ...query.data,
-        buckets: query.data.buckets.map((bucket) => bucket.id === request.bucketId ? { ...bucket, canRequestReset: false, resetRequestStatus: request.status } : bucket),
+        buckets: query.data.buckets.map(pending),
+        ...(query.data.providers ? { providers: query.data.providers.map((provider) => ({ ...provider, buckets: provider.buckets.map(pending) })) } : {}),
       } : undefined);
     },
     onSettled: async () => {

@@ -68,6 +68,8 @@ Start with one model so it is easy to verify the configuration. You can add more
 
 When adding either `google-vertex` or `google-vertex-anthropic`, OpenWork pre-fills **Region** with `global`. Keep it only if your selected models support the global endpoint and it meets your organization's data-location requirements; otherwise enter a supported region before saving. This default does not change existing providers or replace a region you enter.
 
+For EU or US multi-region processing, enter `eu` or `us` in **Region**. OpenWork uses Google's corresponding `aiplatform.eu.rep.googleapis.com` or `aiplatform.us.rep.googleapis.com` endpoint. This works with both Vertex providers; select models available in that multi-region. See [Google's multi-region endpoint documentation](https://docs.cloud.google.com/gemini-enterprise-agent-platform/resources/locations#multi-region_endpoints).
+
 ### Gemini
 
 Open **Agent Platform → Model Garden**, choose a managed Gemini text/chat model, and check its model ID and supported locations. Record the location you will use in OpenWork.

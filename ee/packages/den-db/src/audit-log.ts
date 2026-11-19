@@ -1,20 +1,21 @@
 import { createHash, randomUUID } from "node:crypto"
-import { and, eq, sql } from "drizzle-orm"
+import { and, eq, isNull, sql } from "drizzle-orm"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { createDenDb } from "./client"
-import type { AuditActor, AuditCategory, AuditEventEnvelope, AuditPolicy } from "@openwork/types/den/audit"
+import { auditEventEnvelopeSchema, type AuditActor, type AuditCategory, type AuditEventEnvelope, type AuditPolicy } from "@openwork/types/den/audit"
 export type { AuditActor, AuditCategory, AuditEventEnvelope, AuditPolicy } from "@openwork/types/den/audit"
-import { AuditEventResourceTable, AuditOperationStepTable, AuditOperationTable, AuditPolicyTable, AuditStateTable, AuditUsageFactTable } from "./schema/audit"
+import { AuditEventResourceTable, AuditOperationStepTable, AuditOperationTable, AuditPolicyTable, AuditStateTable, AuditUsageFactTable, PlatformAuditEventTable } from "./schema/audit"
 import { AuditEventTable } from "./schema/workers"
 
 export type AuditDatabase = ReturnType<typeof createDenDb>["db"]
 export type AuditTx = Parameters<Parameters<AuditDatabase["transaction"]>[0]>[0]
+export type AuditOrigin = "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin"
 export type AuditContext = {
   organizationId: string
   actor: AuditActor
   principalKey: string
   initiatingActor?: AuditActor
-  origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin"
+  origin: AuditOrigin
   originTrust: "authenticated" | "reported"
   requestId: string | null
   correlationId?: string | null
@@ -33,11 +34,17 @@ export type AuditEventInput = {
   changes?: { before: Record<string, unknown> | null; after: Record<string, unknown> | null; changedFields: string[] }
   reasonCode?: string
   idempotencyKey?: string
+  /** Request template context; route is the registered template, never the concrete URL. */
+  http?: AuditHttpContext
 }
+export type AuditHttpContext = { method: string; route: string; status?: number }
 
 export const MAX_AUDIT_EVENT_BYTES = 262_144
 const categories: AuditCategory[] = ["change", "security", "execution", "access", "read", "request", "lifecycle"]
-const kinds = new Set(["provider.configuration", "audit.access", "audit.policy"])
+// Operation kinds are declared by den-api's route/domain registries; storage only
+// enforces their shape. Workflow correlation stays limited to AUDIT_WORKFLOW_REGISTRY.
+const kindPattern = /^[a-z][a-z0-9_.-]{0,127}$/
+const origins: AuditOrigin[] = ["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"]
 export const AUDIT_WORKFLOW_REGISTRY = {
   "provider.configuration": {
     status: "pilot",
@@ -149,10 +156,10 @@ function actor(input: AuditActor): AuditActor {
 
 function validateContext(context: AuditContext) {
   const organizationId = normalizeDenTypeId("organization", context.organizationId)
-  if (!kinds.has(context.kind)) fail()
+  if (typeof context.kind !== "string" || !kindPattern.test(context.kind)) fail()
   text(context.principalKey, 512)
   text(context.scope, 512)
-  if (!["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"].includes(context.origin) || !["authenticated", "reported"].includes(context.originTrust)) fail()
+  if (!origins.includes(context.origin) || !["authenticated", "reported"].includes(context.originTrust)) fail()
   if (context.requestId !== null) text(context.requestId, 128)
   if (context.jobRunId !== undefined) text(context.jobRunId, 128)
   if (context.causedByEventId !== undefined) normalizeDenTypeId("auditEvent", context.causedByEventId)
@@ -231,6 +238,14 @@ export function auditOperationBinding(context: AuditContext, useCorrelation = tr
   return digest(canonicalAuditJson([context.organizationId, context.principalKey, context.kind, context.scope, hint]))
 }
 
+function httpValue(input: AuditHttpContext): AuditHttpContext {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) fail()
+  if (typeof input.method !== "string" || !/^[A-Z]{1,16}$/.test(input.method)) fail()
+  text(input.route, 512)
+  if (input.status !== undefined) integer(input.status, 100, 599)
+  return { method: input.method, route: input.route, ...(input.status === undefined ? {} : { status: input.status }) }
+}
+
 function eventValue(input: AuditEventInput): Omit<AuditEventInput, "idempotencyKey"> {
   text(input.action, 128)
   if (!/^[a-z][a-z0-9_.-]*$/.test(input.action) || !categories.includes(input.category) || !["succeeded", "failed", "denied", "unknown"].includes(input.outcome)) fail()
@@ -265,24 +280,52 @@ function eventValue(input: AuditEventInput): Omit<AuditEventInput, "idempotencyK
     }
     changes = { before: snapshotCopy(input.changes.before), after: snapshotCopy(input.changes.after), changedFields }
   }
-  const event = { action: input.action, category: input.category, outcome: input.outcome, resources, ...(changes ? { changes } : {}), ...(input.reasonCode === undefined ? {} : { reasonCode: input.reasonCode }) }
+  const http = input.http === undefined ? undefined : httpValue(input.http)
+  const event = { action: input.action, category: input.category, outcome: input.outcome, resources, ...(changes ? { changes } : {}), ...(input.reasonCode === undefined ? {} : { reasonCode: input.reasonCode }), ...(http ? { http } : {}) }
   canonicalAuditJson(event)
   return event
 }
 
-async function lockAuditPolicyState(tx: AuditTx, inputOrganizationId: string) {
-  const organizationId = normalizeDenTypeId("organization", inputOrganizationId)
-  await tx.insert(AuditStateTable).values({ organization_id: organizationId }).onDuplicateKeyUpdate({ set: { organization_id: sql`${AuditStateTable.organization_id}` } })
-  const [state] = await tx.select().from(AuditStateTable).where(eq(AuditStateTable.organization_id, organizationId)).limit(1).for("update")
-  if (!state) throw new AuditLogError("audit_storage_inconsistent")
-  const [storedPolicy] = await tx.select().from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1).for("update")
-  return { state, storedPolicy }
+// Audit writes never lock rows: no per-organization counter or sequence is
+// maintained on the write path. Events are ordered by their time-ordered
+// TypeID; tenant totals (audit_state) are recomputed by refreshAuditUsageCounts
+// on a schedule. A policy change racing an append can let one event through
+// just after capture turns off (or miss one just after it turns on).
+
+/**
+ * A stored envelope as the current schema. Version 1 envelopes carried a
+ * per-organization sequence; it is dropped and they are served as version 2.
+ */
+export function parseStoredAuditEnvelope(value: unknown): AuditEventEnvelope | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null
+  const entries = Object.entries(value)
+  const legacy = entries.some(([key, version]) => key === "schemaVersion" && version === 1)
+  const current = legacy ? Object.fromEntries([...entries.filter(([key]) => key !== "sequence" && key !== "schemaVersion"), ["schemaVersion", 2]]) : value
+  const parsed = auditEventEnvelopeSchema.safeParse(current)
+  return parsed.success ? parsed.data : null
 }
 
-export async function assertAuditPolicyCurrent(tx: AuditTx, policy: AuditPolicy): Promise<void> {
+function affectedRows(result: unknown): number | null {
+  if (Array.isArray(result)) return affectedRows(result[0])
+  if (typeof result !== "object" || result === null) return null
+  if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected
+  if ("affectedRows" in result && typeof result.affectedRows === "number") return result.affectedRows
+  return null
+}
+
+async function readStoredPolicy(database: AuditDatabase | AuditTx, organizationId: string) {
+  const [row] = await database.select().from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, normalizeDenTypeId("organization", organizationId))).limit(1)
+  return row
+}
+
+function assertStoredPolicyMatches(storedPolicy: typeof AuditPolicyTable.$inferSelect | undefined, policy: AuditPolicy, now = new Date()): asserts storedPolicy is typeof AuditPolicyTable.$inferSelect {
+  if (!storedPolicy || policyIdentity(policyValue(storedPolicy)) !== policyIdentity(policy) || storedPolicy.effective_at > now) throw new AuditLogError("audit_policy_changed")
+}
+
+/** Plain read: the stored policy still has the identity the caller captured. */
+export async function assertAuditPolicyCurrent(database: AuditDatabase | AuditTx, policy: AuditPolicy): Promise<void> {
   validatePolicy(policy)
-  const { storedPolicy } = await lockAuditPolicyState(tx, policy.organizationId)
-  if (!storedPolicy || policyIdentity(policyValue(storedPolicy)) !== policyIdentity(policy) || storedPolicy.effective_at > new Date()) throw new AuditLogError("audit_policy_changed")
+  assertStoredPolicyMatches(await readStoredPolicy(database, policy.organizationId), policy)
 }
 
 export async function setAuditCaptureState(tx: AuditTx, input: { context: AuditContext; captureOn: boolean; expectedRevision: number }): Promise<void> {
@@ -297,14 +340,17 @@ export async function setAuditCaptureState(tx: AuditTx, input: { context: AuditC
     if (captureOn) throw new AuditLogError("audit_policy_not_configured")
     return
   }
-  const { storedPolicy } = await lockAuditPolicyState(tx, identity.organizationId)
-  if (!storedPolicy || storedPolicy.revision !== expectedRevision) throw new AuditLogError("audit_policy_changed")
-  const before = policyValue(storedPolicy)
+  if (existing.revision !== expectedRevision) throw new AuditLogError("audit_policy_changed")
+  const before = existing
   if (before.enabled === captureOn) return
   const now = new Date()
   const after: AuditPolicy = { ...before, enabled: captureOn, revision: add(before.revision, 1), effectiveAt: now.toISOString() }
   validatePolicy(after)
-  await tx.update(AuditPolicyTable).set({ enabled: after.enabled, revision: after.revision, effective_at: now }).where(eq(AuditPolicyTable.organization_id, identity.organizationId))
+  // Optimistic concurrency: the revision guard replaces a row lock. A
+  // concurrent writer that bumped the revision first makes this update miss.
+  const result = await tx.update(AuditPolicyTable).set({ enabled: after.enabled, revision: after.revision, effective_at: now })
+    .where(and(eq(AuditPolicyTable.organization_id, identity.organizationId), eq(AuditPolicyTable.revision, expectedRevision)))
+  if (affectedRows(result) === 0) throw new AuditLogError("audit_policy_changed")
   const snapshot = (policy: AuditPolicy) => ({ captureOn: policy.enabled, revision: policy.revision, effectiveAt: policy.effectiveAt })
   await appendAuditEventCore(tx, { context, policy: after, event: {
     action: captureOn ? "audit.capture.enabled" : "audit.capture.disabled", category: "lifecycle", outcome: "succeeded",
@@ -314,12 +360,25 @@ export async function setAuditCaptureState(tx: AuditTx, input: { context: AuditC
   } })
 }
 
-export async function appendAuditEvent(tx: AuditTx, input: { context: AuditContext; policy: AuditPolicy; event: AuditEventInput }): Promise<AuditEventEnvelope | null> {
+/** Operation outcome projection (audit_operation.outcome); never part of the event envelope or its content hash. */
+export type AuditOperationOutcome = "succeeded" | "failed" | "unknown"
+const operationOutcomes: AuditOperationOutcome[] = ["succeeded", "failed", "unknown"]
+type AppendAuditEventInput = { context: AuditContext; policy: AuditPolicy; event: AuditEventInput; operationOutcome?: AuditOperationOutcome }
+type OperationRow = typeof AuditOperationTable.$inferSelect
+
+/**
+ * Appends one event. `operationOutcome` (request/service/job outcome events only)
+ * updates the operation's outcome projection in the same transaction; an
+ * idempotent replay of an existing event changes nothing.
+ */
+export async function appendAuditEvent(tx: AuditTx, input: AppendAuditEventInput): Promise<AuditEventEnvelope | null> {
   if (!input.policy.enabled || !input.policy.categories.includes(input.event.category)) return null
   return appendAuditEventCore(tx, input)
 }
 
-async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext; policy: AuditPolicy; event: AuditEventInput }): Promise<AuditEventEnvelope> {
+async function appendAuditEventCore(tx: AuditTx, input: AppendAuditEventInput): Promise<AuditEventEnvelope> {
+  const operationOutcome = input.operationOutcome
+  if (operationOutcome !== undefined && !operationOutcomes.includes(operationOutcome)) fail()
   const context = { ...input.context }
   const policy = { ...input.policy, categories: [...input.policy.categories] }
   validatePolicy(policy)
@@ -327,35 +386,39 @@ async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext;
   context.actor = identity.actor
   context.initiatingActor = identity.initiatingActor
   if (identity.organizationId !== policy.organizationId) fail()
+  const organizationId = identity.organizationId
   const event = eventValue(input.event)
   const idempotencyKey = input.event.idempotencyKey
   if (idempotencyKey !== undefined) text(idempotencyKey, 512)
   const claim = workflowClaim(context)
   const contentHash = digest(canonicalAuditJson({ actor: identity.actor, initiatingActor: identity.initiatingActor, origin: context.origin, originTrust: context.originTrust, ...(claim ? { workflow: { step: claim.step, scope: claim.scope } } : {}), ...(context.jobRunId ? { jobRunId: context.jobRunId } : {}), ...(context.causedByEventId ? { causedByEventId: context.causedByEventId } : {}), event }))
-  const { state, storedPolicy } = await lockAuditPolicyState(tx, identity.organizationId)
-  if (!storedPolicy || policyIdentity(policyValue(storedPolicy)) !== policyIdentity(policy)) throw new AuditLogError("audit_policy_changed")
   const now = new Date()
-  if (storedPolicy.effective_at > now) throw new AuditLogError("audit_policy_changed")
+  const storedPolicy = await readStoredPolicy(tx, organizationId)
+  assertStoredPolicyMatches(storedPolicy, policy, now)
+
+  // Every read below is a plain read. Rows only ever touched by one request
+  // (its operation, its events) are written; nothing shared by the whole
+  // organization is read-modified-written, so appends never queue on each other.
+  const findOperation = async (key: string) => (await tx.select().from(AuditOperationTable).where(and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.binding_key, key))).limit(1))[0]
+  const matchesContext = (operation: OperationRow) => operation.kind === context.kind && operation.scope === context.scope && operation.principal_key === context.principalKey && operation.origin === context.origin && operation.origin_trust === context.originTrust && canonicalAuditJson(operation.initiating_actor) === canonicalAuditJson(identity.initiatingActor)
   const requestBinding = auditOperationBinding(context, false)
   let bindingKey = requestBinding
-  const findOperation = async (key: string) => (await tx.select().from(AuditOperationTable).where(and(eq(AuditOperationTable.organization_id, identity.organizationId), eq(AuditOperationTable.binding_key, key))).limit(1).for("update"))[0]
-  const matchesContext = (operation: typeof AuditOperationTable.$inferSelect) => operation.kind === context.kind && operation.scope === context.scope && operation.principal_key === context.principalKey && operation.origin === context.origin && operation.origin_trust === context.originTrust && canonicalAuditJson(operation.initiating_actor) === canonicalAuditJson(identity.initiatingActor)
-  let operation: typeof AuditOperationTable.$inferSelect | undefined = await findOperation(requestBinding)
-  let insertClaim = false
+  let operation: OperationRow | undefined = await findOperation(requestBinding)
+  let claimStep = false
   if (!operation && claim) {
     bindingKey = auditOperationBinding(context)
     operation = await findOperation(bindingKey)
     if (operation?.retention_state === "evicting") throw new AuditLogError("audit_operation_unavailable")
-    if (!operation) insertClaim = true
+    if (!operation) claimStep = true
     else {
       const claims = await tx.select({ hash: AuditOperationStepTable.step_hash, requestId: AuditOperationStepTable.request_id }).from(AuditOperationStepTable)
-        .where(and(eq(AuditOperationStepTable.organization_id, identity.organizationId), eq(AuditOperationStepTable.operation_id, operation.id))).limit(claim.maximum + 1).for("update")
-      if (claims.length > claim.maximum) throw new AuditLogError("audit_storage_inconsistent")
+        .where(and(eq(AuditOperationStepTable.organization_id, organizationId), eq(AuditOperationStepTable.operation_id, operation.id))).limit(claim.maximum + 1)
       const existingClaim = claims.find((entry) => entry.hash === claim.hash)
+      // Without a lock the claim cap is a soft bound: concurrent claims can pass it by a few.
       if (operation.attachment_expires_at <= now || !matchesContext(operation) || existingClaim && existingClaim.requestId !== claim.requestId || !existingClaim && claims.length >= claim.maximum) {
         bindingKey = requestBinding
         operation = undefined
-      } else insertClaim = !existingClaim
+      } else claimStep = !existingClaim
     }
   }
   while (operation && operation.attachment_expires_at <= now) {
@@ -365,26 +428,56 @@ async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext;
   }
   if (operation && (operation.retention_state !== "retained" || !matchesContext(operation))) throw new AuditLogError("audit_operation_unavailable")
   if (operation && idempotencyKey !== undefined) {
-    const [duplicate] = await tx.select().from(AuditEventTable).where(and(eq(AuditEventTable.org_id, identity.organizationId), eq(AuditEventTable.operation_id, operation.id), eq(AuditEventTable.idempotency_key, digest(idempotencyKey)))).limit(1).for("update")
+    const [duplicate] = await tx.select().from(AuditEventTable).where(and(eq(AuditEventTable.org_id, organizationId), eq(AuditEventTable.operation_id, operation.id), eq(AuditEventTable.idempotency_key, digest(idempotencyKey)))).limit(1)
     if (duplicate) {
       if (duplicate.content_hash !== contentHash) throw new AuditLogError("audit_idempotency_mismatch")
-      if (!duplicate.envelope || duplicate.envelope.organizationId !== identity.organizationId || duplicate.envelope.operationId !== operation.id) throw new AuditLogError("audit_storage_inconsistent")
-      return duplicate.envelope
+      const stored = parseStoredAuditEnvelope(duplicate.envelope)
+      if (!stored || stored.organizationId !== organizationId || stored.operationId !== operation.id) throw new AuditLogError("audit_storage_inconsistent")
+      return stored
     }
   }
   if (context.causedByEventId) {
-    const [cause] = await tx.select({ id: AuditEventTable.id }).from(AuditEventTable).where(and(eq(AuditEventTable.org_id, identity.organizationId), eq(AuditEventTable.id, normalizeDenTypeId("auditEvent", context.causedByEventId)))).limit(1).for("update")
+    const [cause] = await tx.select({ id: AuditEventTable.id }).from(AuditEventTable).where(and(eq(AuditEventTable.org_id, organizationId), eq(AuditEventTable.id, normalizeDenTypeId("auditEvent", context.causedByEventId)))).limit(1)
     if (!cause) fail()
   }
-  const operationId = operation?.id ?? createDenTypeId("auditOperation")
+
+  // Creates the operation for a binding, or joins the one a concurrent append
+  // of the same request created first (the unique binding index decides).
+  const ensureOperation = async (key: string): Promise<OperationRow> => {
+    const createdId = createDenTypeId("auditOperation")
+    await tx.insert(AuditOperationTable).values({
+      id: createdId, organization_id: organizationId, binding_key: key, kind: context.kind, scope: context.scope, principal_key: context.principalKey,
+      initiating_actor: identity.initiatingActor, origin: context.origin, origin_trust: context.originTrust, first_recorded_at: now,
+      attachment_expires_at: new Date(now.getTime() + policy.attachmentWindowSeconds * 1000), event_count: 0, logical_bytes: 0,
+    }).onDuplicateKeyUpdate({ set: { id: sql`${AuditOperationTable.id}` } })
+    const row = await findOperation(key)
+    if (!row) throw new AuditLogError("audit_storage_inconsistent")
+    if (row.retention_state !== "retained" || !matchesContext(row)) throw new AuditLogError("audit_operation_unavailable")
+    if (row.id === createdId) {
+      await tx.insert(AuditUsageFactTable).values({ id: createDenTypeId("auditUsageFact"), organization_id: organizationId, operation_id: row.id, delta: 1, effective_at: now, policy_revision: policy.revision, allowance: policy.allowance, excess_mode: policy.excessMode })
+        .onDuplicateKeyUpdate({ set: { id: sql`${AuditUsageFactTable.id}` } })
+    }
+    return row
+  }
+  if (!operation) operation = await ensureOperation(bindingKey)
+  if (claimStep && claim) {
+    await tx.insert(AuditOperationStepTable).values({ organization_id: organizationId, operation_id: operation.id, step_hash: claim.hash, workflow_step: claim.step, step_scope: claim.scope, request_id: claim.requestId })
+      .onDuplicateKeyUpdate({ set: { step_hash: sql`${AuditOperationStepTable.step_hash}` } })
+    const [owner] = await tx.select({ requestId: AuditOperationStepTable.request_id }).from(AuditOperationStepTable)
+      .where(and(eq(AuditOperationStepTable.organization_id, organizationId), eq(AuditOperationStepTable.operation_id, operation.id), eq(AuditOperationStepTable.step_hash, claim.hash))).limit(1)
+    if (!owner) throw new AuditLogError("audit_storage_inconsistent")
+    // Another request claimed the same step at the same moment: this request
+    // keeps its own request-bound operation instead.
+    if (owner.requestId !== claim.requestId) operation = await ensureOperation(requestBinding)
+  }
+
   const eventId = createDenTypeId("auditEvent")
   const envelopeWithoutBytes: Omit<AuditEventEnvelope, "logicalBytes"> = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: eventId,
-    organizationId: identity.organizationId,
-    operationId,
-    sequence: add(state.last_sequence, 1),
-    operation: { kind: context.kind, scope: context.scope, origin: operation?.origin ?? context.origin, originTrust: operation?.origin_trust ?? context.originTrust, initiatingActor: operation?.initiating_actor ?? identity.initiatingActor, startedAt: (operation?.first_recorded_at ?? now).toISOString() },
+    organizationId,
+    operationId: operation.id,
+    operation: { kind: context.kind, scope: context.scope, origin: operation.origin, originTrust: operation.origin_trust, initiatingActor: operation.initiating_actor, startedAt: operation.first_recorded_at.toISOString() },
     actor: identity.actor,
     ...event,
     occurredAt: now.toISOString(),
@@ -395,32 +488,112 @@ async function appendAuditEventCore(tx: AuditTx, input: { context: AuditContext;
   }
   const logicalBytes = Buffer.byteLength(canonicalAuditJson(envelopeWithoutBytes), "utf8")
   const envelope: AuditEventEnvelope = { ...envelopeWithoutBytes, logicalBytes }
-  const operationEventCount = add(operation?.event_count ?? 0, 1)
-  const operationBytes = add(operation?.logical_bytes ?? 0, logicalBytes)
-  const retainedOperations = add(state.retained_operations, operation ? 0 : 1)
-  const eventCount = add(state.event_count, 1)
-  const totalBytes = add(state.logical_bytes, logicalBytes)
-  if (!operation) {
-    await tx.insert(AuditOperationTable).values({
-      id: operationId, organization_id: identity.organizationId, binding_key: bindingKey, kind: context.kind, scope: context.scope, principal_key: context.principalKey,
-      initiating_actor: identity.initiatingActor, origin: context.origin, origin_trust: context.originTrust, first_recorded_at: now,
-      attachment_expires_at: new Date(now.getTime() + policy.attachmentWindowSeconds * 1000), event_count: operationEventCount, logical_bytes: operationBytes,
-    })
-    await tx.insert(AuditUsageFactTable).values({ id: createDenTypeId("auditUsageFact"), organization_id: identity.organizationId, operation_id: operationId, delta: 1, effective_at: now, policy_revision: policy.revision, allowance: policy.allowance, excess_mode: policy.excessMode })
-  } else {
-    await tx.update(AuditOperationTable).set({ event_count: operationEventCount, logical_bytes: operationBytes }).where(and(eq(AuditOperationTable.organization_id, identity.organizationId), eq(AuditOperationTable.id, operationId)))
-  }
-  if (insertClaim && claim) await tx.insert(AuditOperationStepTable).values({ organization_id: identity.organizationId, operation_id: operationId, step_hash: claim.hash, workflow_step: claim.step, step_scope: claim.scope, request_id: claim.requestId })
   await tx.insert(AuditEventTable).values({
-    id: eventId, org_id: identity.organizationId, actor_user_id: identity.actor.type === "user" && identity.actor.id ? normalizeDenTypeId("user", identity.actor.id) : null,
-    action: event.action, operation_id: operationId, sequence: envelope.sequence, envelope, logical_bytes: logicalBytes,
+    id: eventId, org_id: organizationId, actor_user_id: identity.actor.type === "user" && identity.actor.id ? normalizeDenTypeId("user", identity.actor.id) : null,
+    action: event.action, operation_id: operation.id, envelope, logical_bytes: logicalBytes,
     idempotency_key: idempotencyKey === undefined ? null : digest(idempotencyKey), content_hash: contentHash, created_at: now,
   })
   if (event.resources.length) await tx.insert(AuditEventResourceTable).values(event.resources.map((resource) => ({
-    id: createDenTypeId("auditEventResource"), organization_id: identity.organizationId, event_id: eventId, operation_id: operationId,
+    id: createDenTypeId("auditEventResource"), organization_id: organizationId, event_id: eventId, operation_id: operation.id,
     resource_type: resource.type, resource_id: resource.id, relationship: resource.relationship, label: resource.label ?? null,
   })))
-  await tx.update(AuditStateTable).set({ last_sequence: envelope.sequence, retained_operations: retainedOperations, event_count: eventCount, logical_bytes: totalBytes, updated_at: now }).where(eq(AuditStateTable.organization_id, identity.organizationId))
-  if (storedPolicy.capture_started_at === null) await tx.update(AuditPolicyTable).set({ capture_started_at: now }).where(eq(AuditPolicyTable.organization_id, identity.organizationId))
+  // Relative increment on this request's own operation row; never a shared counter.
+  await tx.update(AuditOperationTable).set({
+    event_count: sql`${AuditOperationTable.event_count} + 1`,
+    logical_bytes: sql`${AuditOperationTable.logical_bytes} + ${logicalBytes}`,
+    ...(operationOutcome ? { outcome: operationOutcome } : {}),
+  }).where(and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.id, operation.id)))
+  if (storedPolicy.capture_started_at === null) {
+    await tx.update(AuditPolicyTable).set({ capture_started_at: now }).where(and(eq(AuditPolicyTable.organization_id, organizationId), isNull(AuditPolicyTable.capture_started_at)))
+  }
   return envelope
+}
+
+export type AuditUsageRefreshSummary = { organizations: number; refreshedAt: string }
+
+/**
+ * Recomputes every organization's audit_state totals from the stored rows.
+ * Run on a schedule (den-api POST /internal/audit/usage/refresh); the append
+ * path never touches audit_state. Plain aggregate reads, one upsert per
+ * organization, no transaction and no row locks held across statements.
+ *
+ * Event and byte totals sum the per-operation counters that every append
+ * increments in the same transaction as its event insert, so they equal a
+ * count over audit_event without reading its envelope rows (which made the
+ * refresh take minutes for large organizations).
+ */
+export async function refreshAuditUsageCounts(database: AuditDatabase, options: { organizationIds?: readonly string[] } = {}): Promise<AuditUsageRefreshSummary> {
+  const organizationIds = options.organizationIds
+    ? options.organizationIds.map((id) => normalizeDenTypeId("organization", id))
+    : (await database.select({ id: AuditPolicyTable.organization_id }).from(AuditPolicyTable)).map((row) => row.id)
+  for (const organizationId of organizationIds) {
+    const [usage] = await database.select({
+      retainedOperations: sql<number>`coalesce(sum(${AuditOperationTable.retention_state} = 'retained'), 0)`.mapWith(Number),
+      eventCount: sql<number>`coalesce(sum(${AuditOperationTable.event_count}), 0)`.mapWith(Number),
+      logicalBytes: sql<number>`coalesce(sum(${AuditOperationTable.logical_bytes}), 0)`.mapWith(Number),
+    }).from(AuditOperationTable).where(eq(AuditOperationTable.organization_id, organizationId))
+    const totals = { retained_operations: usage?.retainedOperations ?? 0, event_count: usage?.eventCount ?? 0, logical_bytes: usage?.logicalBytes ?? 0 }
+    if (!Object.values(totals).every((value) => Number.isSafeInteger(value) && value >= 0)) throw new AuditLogError("audit_counter_overflow")
+    const updatedAt = new Date()
+    await database.insert(AuditStateTable).values({ organization_id: organizationId, ...totals, updated_at: updatedAt })
+      .onDuplicateKeyUpdate({ set: { ...totals, updated_at: updatedAt } })
+  }
+  return { organizations: organizationIds.length, refreshedAt: new Date().toISOString() }
+}
+
+export type PlatformAuditEventInput = {
+  requestId: string | null
+  method: string
+  /** Registered route template, never a concrete URL. */
+  route: string
+  action: string
+  outcome: "succeeded" | "failed" | "denied" | "unknown"
+  status: number
+  reasonCode?: string | null
+  /** Only authenticated user/service ids; unknown requires a null id. */
+  actor: { type: "user" | "service" | "unknown"; id: string | null; credentialId?: string | null }
+  origin: AuditOrigin
+  /**
+   * Resource reference: the declared type with a validated path id, or a resource the
+   * handler named. Type organization only for an id taken from trusted authenticated
+   * context (never from untrusted input); there is no organization attribution column.
+   */
+  target?: { type: string; id: string | null } | null
+  occurredAt?: Date
+  /**
+   * Row id generated by the caller once per logical record, so a retried insert
+   * after an ambiguous commit collides on the primary key instead of duplicating.
+   */
+  id?: string
+}
+
+/** Tenantless request evidence: never an organization id, IP, user agent, header or body. */
+export async function appendPlatformAuditEvent(database: AuditDatabase | AuditTx, input: PlatformAuditEventInput): Promise<string> {
+  const http = httpValue({ method: input.method, route: input.route, status: input.status })
+  text(input.action, 128)
+  if (!kindPattern.test(input.action) || !["succeeded", "failed", "denied", "unknown"].includes(input.outcome) || !origins.includes(input.origin)) fail()
+  const reasonCode = input.reasonCode ?? null
+  if (reasonCode !== null && !kindPattern.test(reasonCode)) fail()
+  if (input.requestId !== null) text(input.requestId, 128)
+  if (!["user", "service", "unknown"].includes(input.actor.type)) fail()
+  if (input.actor.type === "unknown" ? input.actor.id !== null : input.actor.id === null) fail()
+  if (input.actor.id !== null) text(input.actor.id, 255)
+  if (input.actor.type === "user" && input.actor.id !== null) normalizeDenTypeId("user", input.actor.id)
+  const credentialId = input.actor.credentialId ?? null
+  if (credentialId !== null) text(credentialId, 255)
+  const target = input.target ?? null
+  if (target !== null) {
+    text(target.type, 64)
+    if (!kindPattern.test(target.type)) fail()
+    if (target.id !== null) text(target.id, 255)
+  }
+  const occurredAt = input.occurredAt ?? new Date()
+  if (!Number.isFinite(occurredAt.getTime())) fail()
+  const id = input.id === undefined ? createDenTypeId("platformAuditEvent") : normalizeDenTypeId("platformAuditEvent", input.id)
+  await database.insert(PlatformAuditEventTable).values({
+    id, occurred_at: occurredAt, request_id: input.requestId, method: http.method, route: http.route, action: input.action,
+    outcome: input.outcome, status: input.status, reason_code: reasonCode, actor_type: input.actor.type, actor_id: input.actor.id,
+    credential_id: credentialId, origin: input.origin, target_type: target?.type ?? null, target_id: target?.id ?? null,
+  })
+  return id
 }

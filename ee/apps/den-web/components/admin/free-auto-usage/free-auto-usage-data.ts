@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { requestAdmin, type AdminResult } from "../admin-request";
+import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
+import { useAdminSessionCookie } from "../admin-shell";
 
 /** Mirrors `GET /v1/admin/free-auto/usage`. Amounts are micro-USD; days are UTC. */
 export type FreeAutoUsage = {
@@ -9,6 +10,8 @@ export type FreeAutoUsage = {
   requests: number;
   estimatedRequests: number;
   inputTokens: number;
+  /** The part of inputTokens served from OpenAI's prompt cache. */
+  cachedInputTokens: number;
   outputTokens: number;
 };
 
@@ -16,7 +19,6 @@ export type FreeAutoOrganizationUsage = FreeAutoUsage & {
   id: string;
   name: string;
   slug: string | null;
-  enrolled: boolean;
   subscribed: boolean;
   memberCount: number;
   activePeople: number;
@@ -27,7 +29,7 @@ export type FreeAutoOrganizationUsage = FreeAutoUsage & {
 export type FreeAutoUsageReport = {
   generatedAt: string;
   range: { days: number; from: string; to: string; timezone: "UTC" };
-  settings: { membersEnabled: boolean; rolloutAllOrganizations: boolean; weeklyLimitMicroUsd: number };
+  settings: { membersEnabled: boolean; weeklyLimitMicroUsd: number };
   totals: FreeAutoUsage & { activePeople: number; activeOrganizations: number };
   members: FreeAutoUsage & { activePeople: number };
   guests: FreeAutoUsage;
@@ -47,13 +49,13 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 function isUsage(value: unknown): value is FreeAutoUsage {
-  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "outputTokens"].every((key) => isCount(value[key]));
+  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "cachedInputTokens", "outputTokens"].every((key) => isCount(value[key]));
 }
 function isOrganization(value: unknown): value is FreeAutoOrganizationUsage {
   if (!isRecord(value) || !isUsage(value)) return false;
   const row: Record<string, unknown> = value;
   return typeof row.id === "string" && typeof row.name === "string"
-    && typeof row.enrolled === "boolean" && typeof row.subscribed === "boolean"
+    && typeof row.subscribed === "boolean"
     && ["memberCount", "activePeople", "peopleAtWeeklyLimit"].every((key) => isCount(row[key]))
     && (row.lastUsedAt === null || typeof row.lastUsedAt === "string");
 }
@@ -76,34 +78,43 @@ export type FreeAutoUsageState =
 
 /** Loads the report for a range; keeps the last report on screen while a new range or refresh loads. */
 export function useFreeAutoUsage(days: FreeAutoRange) {
-  const [state, setState] = useState<FreeAutoUsageState>({ status: "loading", report: null });
+  const hasSessionCookie = useAdminSessionCookie();
+  const [state, setState] = useState<FreeAutoUsageState>(() => hasSessionCookie ? { status: "loading", report: null }
+    : { status: "signed-out", message: "", report: null });
   const [nonce, setNonce] = useState(0);
   const last = useRef<FreeAutoUsageReport | null>(null);
   useEffect(() => {
     const controller = new AbortController();
+    if (nonce === 0 && !hasSessionCookie && !withStoredBearer({}).Authorization) {
+      last.current = null;
+      setState({ status: "signed-out", message: "", report: null });
+      return () => controller.abort();
+    }
     setState({ status: "loading", report: last.current });
     requestAdmin(`/v1/admin/free-auto/usage?days=${days}`, parseFreeAutoUsageReport, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         if (result.access === "ready") { last.current = result.data; setState({ status: "ready", report: result.data }); }
-        else setState({ status: result.access, message: result.message, report: last.current });
+        else {
+          if (result.access !== "error") last.current = null;
+          setState({ status: result.access, message: result.message, report: last.current });
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({ status: "error", message: error instanceof Error ? error.message : "The request failed.", report: last.current });
       });
     return () => controller.abort();
-  }, [days, nonce]);
+  }, [days, hasSessionCookie, nonce]);
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
   return { state, refresh };
 }
 
 export type OrganizationSort = "spend" | "requests" | "people" | "limit" | "recent";
 
-export function selectOrganizations(rows: readonly FreeAutoOrganizationUsage[], options: { search: string; sort: OrganizationSort; enrolledOnly: boolean }) {
+export function selectOrganizations(rows: readonly FreeAutoOrganizationUsage[], options: { search: string; sort: OrganizationSort }) {
   const needle = options.search.trim().toLowerCase();
-  const filtered = rows.filter((row) => (!options.enrolledOnly || row.enrolled)
-    && (!needle || row.name.toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle) || (row.slug ?? "").toLowerCase().includes(needle)));
+  const filtered = rows.filter((row) => !needle || row.name.toLowerCase().includes(needle) || row.id.toLowerCase().includes(needle) || (row.slug ?? "").toLowerCase().includes(needle));
   const key: Record<OrganizationSort, (row: FreeAutoOrganizationUsage) => number> = {
     spend: (row) => row.costMicroUsd,
     requests: (row) => row.requests,
@@ -121,9 +132,9 @@ function csvCell(value: string | number | boolean | null) {
 
 /** One row per listed organization, amounts in USD, for spreadsheets. */
 export function organizationsCsv(report: FreeAutoUsageReport): string {
-  const header = ["organization_id", "name", "enrolled", "subscribed", "members", "active_people", "requests", "estimated_requests",
-    "input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
-  const rows = report.organizations.map((row) => [row.id, row.name, row.enrolled, row.subscribed, row.memberCount, row.activePeople, row.requests,
-    row.estimatedRequests, row.inputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
+  const header = ["organization_id", "name", "subscribed", "members", "active_people", "requests", "estimated_requests",
+    "input_tokens", "cached_input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
+  const rows = report.organizations.map((row) => [row.id, row.name, row.subscribed, row.memberCount, row.activePeople, row.requests,
+    row.estimatedRequests, row.inputTokens, row.cachedInputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
   return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
 }

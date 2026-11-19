@@ -93,20 +93,27 @@ Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes is treated as that
 PR's proof of work. Nothing is required and nothing is blocked: a PR that
 touches no E2E spec produces no proof evidence, and the run says so.
 
-The non-required **PR change proof** workflow selects those specs from the live
-PR file list and runs each one in its own bounded job on the exact PR head, with
-a virtual display so Electron-driving specs can run. Each job uploads one hashed
-artifact. Failed, skipped, unsupported, and cancelled proofs stay visible as
-non-passing executions; they never fall back to packaged smoke or another
-regression.
+PRs run only the quick check. Start the non-required **PR change proof** by hand:
+
+```sh
+gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
+```
+
+It selects specs from the live PR file list and uploads their records as artifacts.
+Only secret-free GitHub lanes run; Daytona and real-Mac tests still cannot run
+there. Unsupported proofs are not passes and never fall back to another regression.
 
 The credentialed **Evidence review** workflow runs trusted default-branch code.
-It re-reads the current PR file list, derives the same selection, and accepts
-exactly one artifact per selected spec and run attempt. Every test record must
-name that spec and the current PR SHA. Records from all selected specs are
-combined into one report with one section per test. Downloaded PR artifacts are
-data and are never imported or executed. Unrelated evidence, unexpected proof
-artifacts, stale heads or attempts, and missing or duplicate records are refused.
+For a completed hand-started run, it uses GitHub's API to find exactly one open
+same-repository PR with the run's branch and head SHA; forks and ambiguous or
+missing matches are skipped. Dispatch inputs and artifacts never establish identity.
+Existing pull-request runs remain supported. It re-reads the current PR file list,
+derives the same selection, and accepts exactly one artifact per selected spec and
+run attempt. Every test record must name that spec and the current PR SHA. Records
+from all selected specs are combined into one report with one section per test.
+Downloaded PR artifacts are data and are never imported or executed. Unrelated
+evidence, unexpected proof artifacts, stale heads or attempts, and missing or
+duplicate records are refused.
 
 Candidate publisher and review-app checks live in the PR-only
 `Evidence review candidate checks` workflow. It has no publishing secret or
@@ -129,6 +136,18 @@ The publish job summary says **published**, **skipped**, **unavailable**, or
 links to the private report; no raw trace or public screenshots are used as a
 fallback. Signed-in project members should verify the report commit and sources.
 Anonymous report, JSON, and image requests must redirect to Vercel Authentication.
+
+## Sandbox provider infrastructure
+
+The reviewer derives launch choices **on the server** from its own provider credentials and supported preview worlds. This is CI/reviewer infrastructure, portable to self-hosted and hosted reviewers; it does not require an OpenWork Cloud organization or query a Den feature authority. Local Daytona CLI authentication proves nothing about a hosted reviewer. When both providers are available, the existing native-selector pattern offers **Provider**; one available provider is selected automatically. `OPENWORK_EVIDENCE_PROVIDER` is the preferred provider, not an enable switch. Unknown configuration fails closed. Missing credentials show an unavailable control and name the review app owner who can configure it.
+
+Freestyle keeps its existing preview worlds. Fresh Daytona previews currently support **OpenWork web only**: a new private Linux VM running the web app and local engine from the report's exact fetchable product commit. Desktop and ACME choices remain visible but unavailable for Daytona; saved browser checkpoints are not passed off as fresh app previews. **Launch** opens an environment for manual review; it does not run verification tests or the enterprise `verify-openwork` skill.
+
+Daytona needs server-only `DAYTONA_API_KEY` and a Linux-VM region (`OPENWORK_DAYTONA_EVIDENCE_REGION`, default `us-west-3`). It reuses the existing Daytona REST client/layer builder and shared app-web guest recipes, not CLI subprocesses or another provisioning service. Report SHA and association come from immutable server storage, never browser input. The gateway uses a signed provider hostname, a per-instance HttpOnly access cookie, two-hour access expiry and a guest shutdown timer; provider auto-deletion and the existing evidence cleanup backstop reclaim owned expired VMs. Failed launches remove only their owned VM. No provider credential enters a guest, report response or browser.
+
+**Configuration boundary:** only the review deployment's server-side provider credentials and advertised capabilities authorize a fresh preview. Missing credentials, unknown providers and unsupported worlds fail closed. Configuration is rechecked for POSTs, readiness polling and deferred builds; removing a provider configuration prevents new allocation without revoking already-issued access or changing checkpoint opening. Provider API origins still require HTTPS, and same-origin request checks, immutable report source, private gateway isolation and expiry remain mandatory. This infrastructure configuration is separate from product feature flags; it does not enable or alter any Cloud/customer rollout.
+
+Cold Daytona preparation can exceed the review function's 800-second budget. Operators can prewarm an exact pushed commit with the exported `buildDaytonaPreview(sha, "app-web")` in `@openwork/daytona-evidence/previews` using a scoped server credential; the same builder is used by the UI. Do not claim a ready preview until snapshot storage and authenticated app/backend probes pass. `OPENWORK_EVIDENCE_PROVIDER=daytona` chooses a preferred provider; it neither supplies credentials nor proves live availability.
 
 ## Interactive Freestyle previews
 
@@ -155,8 +174,20 @@ The hourly **Freestyle cleanup** workflow (`scripts/cleanup-freestyle.ts`) recla
 old naming versions, superseded cache layers and expired checkpoints, and fails when
 too many OpenWork snapshots remain. Run it with `--dry-run` to see the plan.
 
-Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment. Every report
-offers **Launch in Freestyle**. The server reads the commit from the stored report;
+### Checkpoints on Daytona
+
+When CI runs evidence worlds on Daytona (`OPENWORK_EVIDENCE_PROVIDER=daytona`),
+checkpoints are Daytona memory snapshots (`ow-dy-checkpoint-v1-*`). Each records
+`provider: "daytona"` and always opens on Daytona, whatever the default is. **Open
+from here** starts the reviewer's own VM from the snapshot and returns a signed
+Daytona host plus the in-VM gateway's one-hour access link. Set `DAYTONA_API_KEY`
+(an organization with Linux VMs in `us-west-3`) in the protected Vercel Preview
+environment; without it Daytona checkpoints show "Checkpoint access is not
+configured". Checkpoint access keeps its recorded provider, independently of the preferred fresh-preview provider.
+The hourly **Evidence world cleanup** reclaims Daytona checkpoints after 14 hours.
+
+Set `FREESTYLE_API_KEY` in the protected Vercel Preview environment to offer
+**Launch in Freestyle**. The server reads the commit from the stored report;
 the browser cannot select another revision. On the first launch it checks out that
 exact public commit in an isolated builder, installs OpenWork, starts the web app
 and local engine, and saves a private running snapshot. Later launches clone it.

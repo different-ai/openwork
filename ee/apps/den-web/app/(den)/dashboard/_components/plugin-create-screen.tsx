@@ -13,6 +13,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
+import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 /** B1: a member makes a plugin for themselves. */
 export function LibraryPluginCreateScreen() {
@@ -26,7 +27,7 @@ export function LibraryPluginCreateScreen() {
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
+      <ItemHeader compact back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
       <PluginCreateForm
         connections={ownConnections}
         startWith={startWithSkill ? "skill" : undefined}
@@ -47,7 +48,8 @@ export function AdminPluginCreateScreen() {
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
+      <PluginsSetupIntro introKey="plugins.new" />
+      <ItemHeader compact back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
       <PluginCreateForm
         connections={connections}
         cancelHref={getPluginsRoute(orgSlug)}

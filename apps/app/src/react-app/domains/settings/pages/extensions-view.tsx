@@ -39,7 +39,7 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
   }
 }
 
-function sectionForFilter(filter: ExtensionInventoryFilter): ExtensionsSection {
+export function sectionForFilter(filter: ExtensionInventoryFilter): ExtensionsSection {
   switch (filter) {
     case "app":
       return "apps";
@@ -89,7 +89,6 @@ export type ExtensionsViewProps = {
   /** Hide the view's own description line (the settings shell already shows the tab description in-pane). */
   hideDescription?: boolean;
   selectedWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   canEditPlugins: boolean;
   canUseGlobalScope: boolean;
   accessHint?: string | null;
@@ -102,7 +101,7 @@ export type ExtensionsViewProps = {
     initialState: ExtensionInventoryState;
     pluginsContent: ReactNode;
     detailId: string | null;
-    onDetailIdChange?: (id: string | null) => void;
+    onDetailIdChange?: (id: string | null, filter?: ExtensionInventoryFilter) => void;
     onRefresh: () => void;
   }) => ReactNode;
   onRefresh: () => void;
@@ -110,7 +109,7 @@ export type ExtensionsViewProps = {
   setSectionRoute?: (tab: ExtensionsSection) => void;
   showHeader?: boolean;
   detailId?: string | null;
-  onDetailIdChange?: (id: string | null) => void;
+  onDetailIdChange?: (id: string | null, filter?: ExtensionInventoryFilter) => void;
 };
 
 export function ExtensionsView(props: ExtensionsViewProps) {

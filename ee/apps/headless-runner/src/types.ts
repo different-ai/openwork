@@ -1,4 +1,6 @@
 import { z } from "zod"
+import { headlessModelAccessSchema } from "@openwork-ee/headless-protocol"
+export { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 
 /** A saved file as messages refer to it. */
 export const attachmentSchema = z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number() })
@@ -12,6 +14,17 @@ export const toolCallSchema = z.object({
   inputError: z.string().optional(),
 })
 export type ToolCall = z.infer<typeof toolCallSchema>
+
+/**
+ * The App a tool result opened: an App built in OpenWork (Connect's `openwork/mcpApp` launch of the App's own
+ * `open_app`), by its id and name. Kept on the tool message for the caller that shows the App; the model reads only
+ * the result's text.
+ */
+export const toolAppSchema = z.object({
+  id: z.string().min(1).max(200),
+  title: z.string().max(200),
+})
+export type ToolApp = z.infer<typeof toolAppSchema>
 
 /** Engine-neutral transcript entry. Stored as JSON, one row per entry. */
 export const messageSchema = z.discriminatedUnion("role", [
@@ -35,6 +48,8 @@ export const messageSchema = z.discriminatedUnion("role", [
     images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
     /** PDFs a tool returned, passed to the model as document input (text and page images). */
     documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+    /** The App this result opened, for the caller to show. */
+    app: toolAppSchema.optional(),
   }),
 ])
 export type Message = z.infer<typeof messageSchema>
@@ -44,11 +59,13 @@ export type ToolSpec = {
   name: string
   description: string
   inputSchema: Record<string, unknown>
+  /** Its server says it only reads (MCP `readOnlyHint`): calls to it may run at the same time. Never sent to the model. */
+  readOnly?: boolean
 }
 
 export type ToolImage = { mediaType: string; data: string }
 export type ToolDocument = { mediaType: "application/pdf"; data: string; name: string }
-export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[] }
+export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[]; app?: ToolApp }
 
 /**
  * How long a session's turns may keep repeating a step (same calls, same results) before the model is asked to stop
@@ -73,16 +90,51 @@ export const RESUMABLE: ReadonlySet<TurnStatus> = new Set(["failed", "interrupte
 export const ACTIVE: ReadonlySet<TurnStatus> = new Set(["queued", "running"])
 
 /**
+ * How a turn runs. `steps`: one step at a time from stored state (see steps.ts), so a runner deploy can switch a
+ * cell between steps instead of cutting a step off. Absent: the whole turn runs in one go, as it always has.
+ */
+export const executionSchema = z.enum(["steps"])
+export type Execution = z.infer<typeof executionSchema>
+
+/** Den's index capability: opaque, base64url parts joined by dots, at most 2 KiB. */
+export const INDEX_CAPABILITY = /^[A-Za-z0-9_.-]{1,2048}$/
+
+/** Den's resume grant for one turn: `hrg_` and 32 random bytes as base64url. */
+export const RESUME_GRANT = /^hrg_[A-Za-z0-9_-]{43}$/
+
+/**
  * Credentials a trusted caller supplies with each turn. They are held in
- * memory for the life of that turn only and are never written to disk.
+ * memory for the life of that turn only and are never written to disk, except
+ * `resumeGrant`, which is stored encrypted when self-resume is configured.
  */
 export const turnCredentialsSchema = z
   .object({
     modelApiKey: z.string().min(1).max(4096).optional(),
+    modelAccess: headlessModelAccessSchema.optional(),
     mcpToken: z.string().min(1).max(16_384).optional(),
+    /** Trusted caller policy, also enforced for the runner's local tools. */
+    readOnly: z.boolean().optional(),
+    /**
+     * Exchanged with Den for a fresh MCP token for this turn (and its tasks and reports), so the runner refreshes the
+     * token in place and resumes the turn itself after a restart. Accepted always; ignored without self-resume.
+     */
+    resumeGrant: z.string().regex(RESUME_GRANT).optional(),
+    /**
+     * Den's index capability for this session: kept with the session (`store.setIndexCapability`) for the Den index
+     * flusher (den-index.ts), never held with the turn, logged or exported. Opaque to the runner: only its size and characters are checked.
+     */
+    indexCapability: z.string().regex(INDEX_CAPABILITY).optional(),
   })
   .strict()
 export type TurnCredentials = z.infer<typeof turnCredentialsSchema>
+
+/**
+ * The two views of a conversation's desktop, which callers may offer separately: `browser` (the web browser) and
+ * `computer` (the desktop's native applications).
+ */
+export const DESKTOP_VIEWS = ["browser", "computer"] as const
+export const desktopViewSchema = z.enum(DESKTOP_VIEWS)
+export type DesktopView = z.infer<typeof desktopViewSchema>
 
 /**
  * An optional Linux computer per conversation (`@openwork-ee/headless-computer`), loaded only when configured.
@@ -94,7 +146,21 @@ export type SessionComputer = {
   toolNames: ReadonlySet<string>
   /** The snapshot new computers boot from, for logs. */
   image: string
-  run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  desktopTools?: ToolSpec[]
+  desktopRun?(sessionId: string, input: Record<string, unknown>, signal?: AbortSignal, policy?: { browserRecovery: boolean }): Promise<ToolResult>
+  /** Desktop failures may carry `desktopCode` (`desktop_outdated`, `desktop_unresponsive`, `desktop_updating`, `desktop_replacing`), which the runner reports as its error code. */
+  desktopViewer?(sessionId: string, input: { view: "browser" | "computer"; control: boolean; origin: string }): Promise<{ state: "paused" } | { state: "connected"; url: string; expiresAt: number; paused: boolean }>
+  browserDemonstration?(sessionId: string, command: import("@openwork/types/browser-demonstration").DemonstrationCommand): Promise<import("@openwork/types/browser-demonstration").DemonstrationReply>
+  desktopAction?(sessionId: string, action: "continue" | "pause" | "resume" | "rebuild"): Promise<{ ok: boolean }>
+  /** `callKey` names this one call for good, so a command started under it can be picked up later (`pickUp`). */
+  run(sessionId: string, name: string, input: Record<string, unknown>, callKey?: string): Promise<ToolResult>
+  /**
+   * The result of a command started under `callKey` whose result never reached the runner: its real result once it
+   * ends, or that it is still running. Null when the computer never started it. Never starts a command or a computer.
+   */
+  pickUp?(sessionId: string, name: string, input: Record<string, unknown>, callKey: string): Promise<ToolResult | null>
+  /** Whether this conversation has a computer here at all (see computer-route.ts); unset means every conversation does. */
+  available?(sessionId: string): boolean
   known(sessionId: string): boolean
   prewarm(sessionId: string): void
   release(sessionId: string): void

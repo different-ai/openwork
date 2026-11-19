@@ -1,3 +1,4 @@
+import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import { z } from "zod";
 import type { GatewayMemberConnection } from "./gateway-member-connections-data";
 import { getProviderIconSlug } from "./llm-provider-data";
@@ -146,9 +147,13 @@ export function modelCount(count: number): string {
   return count === 1 ? "1 model" : `${count} models`;
 }
 
-/** The brand people sign in with; every member sign-in the Gateway supports today is Google. */
-export function signInBrand(provider: Pick<LibraryModelProvider, "providerKey">): string {
-  return provider.providerKey.startsWith("google") ? "Google" : "your account";
+/**
+ * The brand people sign in with: Google (Vertex), AWS (Bedrock) or Microsoft (Foundry). A provider whose sign-in
+ * depends on how it is set up (LiteLLM with Microsoft sign-in) is named by the person's own credential set.
+ */
+export function signInBrand(provider: Pick<LibraryModelProvider, "providerKey"> & Partial<Pick<LibraryModelProvider, "memberSets">>): string {
+  const method = gatewayMemberSignInMethod(provider.providerKey) ?? provider.memberSets?.[0]?.signInMethod ?? null;
+  return method === "google" ? "Google" : method === "aws_sso" ? "AWS" : method === "microsoft" ? "Microsoft" : "your account";
 }
 
 export function matchesModelQuery(provider: LibraryModelProvider, query: string): boolean {

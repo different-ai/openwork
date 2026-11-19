@@ -4,6 +4,7 @@ import { ContentBlockSchema, type ContentBlock } from "@modelcontextprotocol/sdk
 export type AgentToolContentPart =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string }
+  | { type: "resource_link"; uri: string; name: string; mimeType?: string; size?: number }
 
 const MAX_INLINE_IMAGE_BYTES = 1024 * 1024
 const MAX_IMAGE_DIMENSION = 1568
@@ -92,6 +93,18 @@ function stringifyModelPayload(value: unknown): string {
   return JSON.stringify(value, null, 2)!
 }
 
+/** A route that returns a top-level `resourceLink` also gets the standard MCP `resource_link` content part. */
+function findResourceLink(payload: unknown): AgentToolContentPart | undefined {
+  if (!isRecord(payload) || !isRecord(payload.resourceLink)) return undefined
+  const link = payload.resourceLink
+  if (link.type !== "resource_link" || typeof link.uri !== "string" || typeof link.name !== "string") return undefined
+  return {
+    type: "resource_link", uri: link.uri, name: link.name,
+    ...(typeof link.mimeType === "string" ? { mimeType: link.mimeType } : {}),
+    ...(typeof link.size === "number" ? { size: link.size } : {}),
+  }
+}
+
 function findImagePayload(value: unknown, seen = new WeakSet<object>()): (Record<string, unknown> & {
   contentBase64: string
   mimeType: string
@@ -127,7 +140,8 @@ export async function buildRestToolContent(payload: unknown): Promise<AgentToolC
     type: "text",
     text: stringifyModelPayload(sanitizeModelPayload(payload)),
   }
-  if (!imagePayload) return [textPart]
+  const resourceLink = findResourceLink(payload)
+  if (!imagePayload) return resourceLink ? [textPart, resourceLink] : [textPart]
 
   const byteSize = Buffer.byteLength(imagePayload.contentBase64, "base64")
 

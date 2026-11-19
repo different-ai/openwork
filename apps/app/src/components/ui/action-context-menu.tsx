@@ -33,15 +33,18 @@ type ActionContextMenuProps = {
 
 export function ActionContextMenu({ actions, children, render, className, contentClassName, includeEditing = false, tabIndex }: ActionContextMenuProps) {
   const showNative = useNativeContextMenu();
+  // With nothing to offer (e.g. a reply still streaming), keep the element and
+  // let the platform's own menu open instead of an empty one.
+  const empty = actions.length === 0;
 
   const onContextMenu = (event: MouseEvent<HTMLElement>) => {
-    if (!showNative || event.defaultPrevented || (!includeEditing && hasNativeEditingPriority(event.nativeEvent))) return;
+    if (empty || !showNative || event.defaultPrevented || (!includeEditing && hasNativeEditingPriority(event.nativeEvent))) return;
     event.preventDefault();
     event.stopPropagation();
     void showNative(actions, { point: { x: event.clientX, y: event.clientY }, includeEditing });
   };
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (event.defaultPrevented || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
+    if (empty || event.defaultPrevented || !(event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) return;
     if (showNative && !includeEditing && hasNativeEditingPriority(event.nativeEvent)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -75,7 +78,7 @@ export function ActionContextMenu({ actions, children, render, className, conten
   if (showNative) return nativeTrigger;
 
   return (
-    <ContextMenu>
+    <ContextMenu disabled={empty}>
       <ContextMenuTrigger render={render} className={className} tabIndex={tabIndex} onKeyDown={onKeyDown} {...editableMarker} {...(children !== undefined ? { children } : {})} />
       <ContextMenuContent className={contentClassName}>
         <ActionMenuItems actions={actions} variant="context" />

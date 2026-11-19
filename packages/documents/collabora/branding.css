@@ -1,0 +1,36 @@
+/* OpenWork's editor surface. Loaded through Collabora's integrator branding hook. */
+html[data-openwork-editor=true] {
+  --color-main-background: var(--ow-doc-bg, Canvas);
+  --color-background-lighter: var(--ow-doc-bg, Canvas);
+  --color-background-dark: var(--ow-doc-chip, ButtonFace);
+  --color-text-dark: var(--ow-doc-text, CanvasText);
+  --color-text-darker: var(--ow-doc-text, CanvasText);
+  --color-text-lighter: var(--ow-doc-muted, GrayText);
+  --color-border: var(--ow-doc-line, ButtonBorder);
+  --color-primary: var(--ow-doc-text, CanvasText);
+  --color-primary-element: var(--ow-doc-text, CanvasText);
+  --color-primary-element-light: var(--ow-doc-chip, ButtonFace);
+  --color-canvas: var(--ow-doc-chip, ButtonFace);
+  --co-body-bg: var(--ow-doc-bg, Canvas);
+  --co-primary-element: var(--ow-doc-text, CanvasText);
+  --co-primary-text: var(--ow-doc-text, CanvasText);
+  --default-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --jquery-ui-font: var(--default-font);
+}
+/* Hide actual controls, not a cropped iframe: hidden controls cannot receive focus. */
+html[data-openwork-editor=true]:not([data-openwork-tools=true]) :is(.main-nav, #toolbar-row, #toolbar-up, #toolbar-down, #ruler, .cool-ruler, #sidebar-dock-wrapper, #sidebar-panel, #navigator-floating-icon, #document-header, #mobile-edit-button, #mobile-wizard-header, #toolbar-mobile-back, #toolbar-mobile-top, #presentation-toolbar) { display: none !important; }
+html[data-openwork-editor=true]:not([data-openwork-tools=true]) #document-container { margin-top: 0 !important; bottom: 0 !important; }
+html[data-openwork-editor=true] :is(#formulabar-row, #spreadsheet-toolbar) { background: var(--color-main-background); color: var(--color-text-dark); border-color: var(--color-border); font-family: var(--default-font); }
+html[data-openwork-editor=true] #formulabar-row { padding: 4px 12px; gap: 8px; grid-template-columns: 90px auto; border-top: 0; border-bottom: 1px solid var(--color-border); }
+html[data-openwork-editor=true] #spreadsheet-toolbar { border-top: 1px solid var(--color-border); }
+html[data-openwork-editor=true] .spreadsheet-tab { border-radius: 6px; box-shadow: none; }
+html[data-openwork-editor=true] :is(#sidebar-panel, #navigator-panel, .ui-dialog, .jsdialog) { font-family: var(--default-font); }
+html[data-openwork-editor=true] #document-header { filter: grayscale(1); }
+html[data-openwork-editor=true] .main-nav { background: var(--color-main-background) !important; color: var(--color-text-dark); border-bottom: 1px solid var(--color-border); }
+html[data-openwork-editor=true] :is(.lo-menu > li > a, .lo-menu > li > a.has-submenu, #document-name-input, #document-name-input.disabled) { color: var(--color-text-dark) !important; }
+html[data-openwork-editor=true]:not([data-openwork-tools=true]) [data-docType=presentation] .navigation-header { display: none; }
+html[data-openwork-editor=true] #navigation-sidebar { background: var(--color-main-background); color: var(--color-text-dark); border-right: 1px solid var(--color-border); }
+html[data-openwork-editor=true] #navigation-options .tab { color: var(--color-text-lighter); font: 13px/1.5 var(--default-font); }
+html[data-openwork-editor=true] #navigation-options .tab.selected { color: var(--color-text-dark) !important; }
+html[data-openwork-editor=true] #navigation-options .tab.selected::after { border-bottom-color: var(--color-text-dark); }
+html[data-openwork-editor=true] .preview-img-currentpart { outline: 2px solid var(--color-text-lighter); }

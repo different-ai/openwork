@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
-import { freeAutoSwitchedOff, modelForNewTask } from "@/app/lib/inference-access";
+import { cloudMcpModelContext } from "@/react-app/domains/connections/cloud-mcp-model-context";
+import { freeAutoSwitchedOff, modelForNewTask, openComposerModelPickerEvent } from "@/app/lib/inference-access";
 import { useAutoAccess, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { newSessionDraftSlot, newSessionDraftOwnerKey, openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { getSessionDraft, clearSessionDraft } from "@/react-app/domains/session/sync/draft-store";
@@ -18,26 +19,27 @@ import { useLocation, useNavigate } from "react-router";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
-import { captureAnalyticsEvent, markTaskRunStart } from "@/app/lib/analytics";
+import { captureAnalyticsEvent, markTaskRunStart, featureAnalytics, taskRunQuality, captureOnboardingEvent } from "@/app/lib/analytics";
+import { useOnboardingStep } from "./use-onboarding-step";
 import { trackSessionActive, trackTaskStarted } from "@/app/lib/den-telemetry";
+import { noteActivationConnectionStatuses, noteActivationRunStarted } from "../domains/cloud/activation/use-activation";
 import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { sendWithModelUnavailableRetry } from "@/react-app/domains/session/sync/model-unavailable-retry";
+import { createClientV2, isOpencodeV2BaseUrl, isOpencodeV2Client, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { composeNativeSessionHistory, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { composeNativeSessionHistory } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
 import { sendSessionCommand, sessionWorkHeld } from "@/app/lib/opencode-interruption";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
+import { getDisplaySessionTitle } from "@/app/lib/session-title";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
+import { buildOpenworkWorkspaceBaseUrl } from "@/app/lib/openwork-server";
 import {
-  buildOpenworkWorkspaceBaseUrl,
-  readOpenworkServerSettings,
-} from "@/app/lib/openwork-server";
-import {
+  resolveEngineRootEndpoint,
   resolveWorkspaceEndpoint,
-  workspaceServerId,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
 import { buildOpenworkEnvRuntimeKey } from "@/app/lib/openwork-env-runtime";
@@ -49,7 +51,6 @@ import {
   pickDirectory,
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
-  workspaceCreateRemote,
   workspaceForget,
   workspaceSetRuntimeActive,
   workspaceSetSelected,
@@ -73,9 +74,7 @@ import type {
 } from "@/app/types";
 import { buildFeedbackUrl } from "@/app/lib/feedback";
 import {
-  getWorkspaceTaskLoadErrorDisplay,
   isDesktopRuntime,
-  isSandboxWorkspace,
   normalizeDirectoryPath,
   normalizeSessionStatus,
   resolveModelDisplayName,
@@ -92,7 +91,6 @@ import {
   createRouteSession,
   createRouteSessionOnEngine,
   deleteRouteSession,
-  downloadWorkspaceJson,
   folderNameFromPath,
   getSessionStatus,
   isActiveSessionStatus,
@@ -103,7 +101,6 @@ import {
   TASK_CREATE_RETRY_DELAYS_MS,
   toSessionGroups,
   withTransientEngineRetry,
-  workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
 import { reloadEngineWithDesktopFallback } from "@/react-app/shell/engine-reload-escalation";
@@ -118,20 +115,32 @@ import { ActivityPage } from "@/react-app/domains/activity/activity-page";
 import type { ActivityResource } from "@/react-app/kernel/activity-types";
 import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
+import { automationProviderCatalog } from "@/react-app/domains/automations/automation-model-options";
+import { remoteThreadAttentionBySession, useRemoteThreadAttentionKey } from "@/react-app/domains/session/remote-threads/remote-thread-store";
+import { CreatedSkillSharingProvider } from "./created-skill-sharing-provider";
+import { RemoteSessionHeader, RemoteSessionSurface } from "@/react-app/domains/session/remote-threads/remote-session-surface";
+import { isRemoteSessionRouteId, remoteSessionRouteId } from "@/lib/remote-session-route";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
 import { automationsStateChangedEvent } from "@/react-app/domains/automations/automation-events";
-import type {
-  NewTaskComposerContext,
-  NewTaskComposerHandoff,
+import {
+  MOVE_NEW_TASK_DRAFT_EVENT,
+  type NewTaskComposerContext,
+  type NewTaskComposerHandoff,
 } from "@/react-app/domains/session/chat/new-task-composer";
 import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
-import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
+import { newChatDefaultModel, orgDefaultModelForEngine } from "@/react-app/domains/models/org-default-model";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { ReactSessionRuntime } from "@/react-app/domains/session/sync/runtime-sync";
-import { createSessionChildIdsSelector, useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
+import { carryDraftBrowser } from "@/react-app/domains/session/panel/use-browser-presentation";
+import { createSessionChildIdsSelector, useSessionActivityStore, type SessionWaitingKind } from "@/react-app/domains/session/status/session-activity-store";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { canLinkSessionTo } from "@/react-app/domains/session/sidebar/session-tree";
+import { SessionReportBridge } from "@/react-app/domains/session/links/session-report-bridge";
+import type { SessionLink } from "@openwork/types/session-link";
 import { createWorkspaceSessionAttentionSelector, sessionAttentionLabel, sessionAttentionSidebarStatus } from "@/react-app/domains/session/status/session-attention";
 import { buildOpenworkSessionSystemContext } from "@/react-app/domains/session/sync/env-context";
 import {
@@ -145,14 +154,24 @@ import { useSessionInteractions } from "@/react-app/domains/session/sync/use-ses
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue, sanitizeModelBehaviorValue } from "@/app/lib/model-behavior";
 import { computeModelAvailability, createUnavailableConfirmationGate, type ModelAvailability } from "@/react-app/domains/session/surface/model-availability";
+import { useModelRemovalConfirmation } from "@/react-app/domains/session/surface/use-model-removal-confirmation";
+import { closestAvailableModel } from "@/react-app/domains/session/surface/model-removal";
+import { modelRecoveryChatKey, useModelRecoveryStore } from "@/react-app/domains/session/surface/model-recovery-store";
+import { readModelDisplayMemory, rememberModelDisplayNames } from "@/react-app/domains/session/surface/model-display-memory";
 import { useSessionFindStore } from "@/react-app/domains/session/surface/find-store";
 import { useModelPicker } from "@/react-app/domains/session/modals/use-model-picker";
+import { usePreWorkspaceGatewayModels } from "@/react-app/domains/models/use-pre-workspace-gateway-models";
 import { GatewayModelAccessProvider, type GatewayModelSelectionHandle } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
 import { hasPendingGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/pending-gateway-model-selection";
 import { captureFavoriteModelTarget, isFavoriteModelTargetCurrent } from "./favorite-model-shortcut";
 import { getSessionModelSelection, useSessionModelStore } from "@/react-app/domains/session/surface/session-model-store";
 import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStore } from "@/react-app/domains/session/surface/session-mode-memory";
-import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "@/react-app/domains/session/chat/workbench-store";
+import { setPendingChatSeed } from "@/react-app/domains/session/chat/pending-chat-seed";
+import { appendQuoteToDraft } from "@/react-app/domains/session/links/selection-quote";
+import { SIDE_QUESTION_COMMAND } from "@/react-app/domains/session/links/side-question";
+import { showSideChatTab, useSideQuestionStore } from "@/react-app/domains/session/links/side-question-store";
+import { withSideChatActivity } from "@/react-app/domains/session/sidebar/side-chat-status";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
   useModelCollectionsStore,
@@ -164,7 +183,6 @@ import {
 } from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
 import { assertQueuedSendCurrent, getQueuedSendGeneration } from "@/react-app/domains/session/surface/queued-drain-machine";
-import { CreateRemoteWorkspaceModal } from "@/react-app/domains/workspace/create-remote-workspace-modal";
 import { CreateWorkspaceModal } from "@/react-app/domains/workspace/create-workspace-modal";
 import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types";
 import {
@@ -174,10 +192,13 @@ import {
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
   resolveGatewayConnectProviders,
+  resolveGatewayCloudProviderIds,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
+import { assignedModelOptions, mergeModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
+import { runtimeModelOptions } from "@/react-app/domains/models/catalog";
+import { pickerFallbackModels } from "@/react-app/domains/connections/provider-auth/live-provider-sync";
+import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, starterModel, openWorkModelsLunaReplacement, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
 import {
   filterEntitledModelOptions,
   keylessProviderIds,
@@ -200,28 +221,22 @@ import {
   IDLE_CLOUD_MCP_SUBMISSION_GATE_STATE,
   type CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
-import { useRemoteAccessRestart } from "@/react-app/domains/workspace/remote-access-restart";
 import { RenameWorkspaceModal } from "@/react-app/domains/workspace/rename-workspace-modal";
-import { useRemoteWorkspaceConnectionEditor } from "@/react-app/domains/workspace/use-remote-workspace-connection-editor";
+import { cloudSurfaceAvailable } from "@/react-app/domains/cloud/cloud-surface-availability";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import {
   hasOpenWorkModelsAvailable,
   shouldShowOpenWorkModelsSyncing,
 } from "@/react-app/domains/cloud/openwork-models-promo";
-import {
-  diagnoseRemoteWorkspaceTaskLoadFailure,
-  getRemoteWorkspaceConnectionKey,
-  testRemoteWorkspaceConnection,
-} from "@/react-app/domains/workspace/remote-workspace-diagnostics";
-import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-workspace-state";
 import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
-import { commandPaletteModelTarget, createCommandPaletteModelControls } from "./command-palette-models";
-import { requestRenameSession } from "./session-actions-bus";
+import { commandPaletteModelOptions, commandPaletteModelTarget, createCommandPaletteModelControls } from "./command-palette-models";
+import { requestSessionDialog } from "./session-actions-bus";
+import { buildSessionMenuActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { sessionMenuActionsToPalette } from "./command-palette-session-actions";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
-import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
 import { useBootState } from "./boot-state";
 import {
   forgetWorkspaceMemory,
@@ -254,6 +269,7 @@ import { useBootOverlayVisible } from "./boot-state";
 import {
   createDenClient,
   isDenOrgAdminRole,
+  markFeatureUsed,
   readDenSettings,
   type DenOrgRole,
 } from "@/app/lib/den";
@@ -296,7 +312,7 @@ import {
 import { WorkspaceProvider } from "./workspace-provider";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { SettingsSurface } from "./settings-route";
-import { resolveNewTaskModel, setWorkspaceDefaultModel, useWorkspaceDefaultModel, workspaceModelScope, writeStoredDefaultModel } from "@/react-app/kernel/model-config";
+import { readWorkspaceDefaultModel, setWorkspaceDefaultModel, useWorkspaceDefaultModel, workspaceModelScope, writeStoredDefaultModel } from "@/react-app/kernel/model-config";
 import { useWorkspaceDefaultModelSync } from "@/react-app/kernel/workspace-default-model-sync";
 import { useWorkspaceModelProfile } from "@/react-app/kernel/use-workspace-model-default";
 import {
@@ -381,6 +397,8 @@ function focusPromptSoon() {
 }
 
 const EVAL_UNAVAILABLE_PROVIDER_ID = "eval-unavailable-provider";
+/** Bound on the first chat waiting for the organization provider sync. */
+const FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS = 20_000;
 
 function nextEvalUnavailableModel(current: ModelRef | null | undefined) {
   return {
@@ -398,6 +416,8 @@ function singlePickedDirectory(selection: string | string[] | null) {
       ? selection[0] ?? null
       : null;
 }
+
+const NO_ROUTE_SESSIONS: RouteSession[] = [];
 
 function focusedWorkbenchPaneOwner() {
   const workbench = useWorkbenchStore.getState();
@@ -421,11 +441,16 @@ export function SessionRoute() {
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
-  // On desktop, Dashboard and Automations stay in the sidebar while signed
-  // out: each page explains that it needs OpenWork Cloud and calls nothing.
+  const artifactsLabel = "Artifacts";
+  // Artifacts and Automations stay in the sidebar while signed out, on Desktop
+  // and Web alike: each page is an empty state that asks to sign in and calls
+  // nothing.
   const denAuthChecking = denAuth.status === "checking";
-  const signedOutDesktopSurfaces = isDesktopRuntime() && !denAuthChecking && !denAuth.isSignedIn;
-  const dashboardSurfaceAvailable = mcpAppsDashboardEnabled || signedOutDesktopSurfaces;
+  const dashboardSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: mcpAppsDashboardEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const dashboardRouteActive = dashboardSurfaceAvailable && dashboardRouteRequested;
   const dashboardWorkspaceRoute = dashboardRouteRequested
     && (dashboardAvailabilityLoading || dashboardSurfaceAvailable);
@@ -436,9 +461,17 @@ export function SessionRoute() {
   // Desktop and Web share one Automations surface; the runtime only decides
   // the placement of what each creates. Den's deployment flag stays the gate.
   const automationsEnabled = automationDeploymentEnabled;
-  const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
+  const automationsSurfaceAvailable = cloudSurfaceAvailable({
+    deploymentEnabled: automationsEnabled,
+    authChecking: denAuthChecking,
+    signedIn: denAuth.isSignedIn,
+  });
   const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   const denSettings = readDenSettings();
+  const retainedArtifactsScope = dashboardSurfaceAvailable && denAuth.isSignedIn && denAuth.verifiedIdentity
+    && denAuth.verifiedIdentity.organizationId === denSettings.activeOrgId
+    ? JSON.stringify([denSettings.baseUrl, denSettings.apiBaseUrl, denAuth.verifiedIdentity.principalId, denAuth.verifiedIdentity.organizationId])
+    : null;
   const sessionDraftScope = resolveSessionDraftScope({
     hasCloudCredential: Boolean(denSettings.authToken?.trim()),
     verifiedIdentity: denAuth.verifiedIdentity,
@@ -495,10 +528,11 @@ export function SessionRoute() {
   ]);
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
+  // The organization's (or team's) default model for new chats; only the v2 engine applies it.
+  const orgConfiguredDefaultModel = useOrgRestrictions().defaultModel;
   const restrictionNotice = useRestrictionNotice();
   const [activeOrganizationRole, setActiveOrganizationRole] = useState<DenOrgRole | null>(null);
   const [openworkServerHostInfoState, setOpenworkServerHostInfoState] = useState<OpenworkServerInfo | null>(null);
-  const [openworkServerSettingsVersion, setOpenworkServerSettingsVersion] = useState(0);
 
   const [developerMode, setDeveloperMode] = useState(() => {
     if (typeof window === "undefined") return false;
@@ -508,6 +542,7 @@ export function SessionRoute() {
     navigateToWorkspaceSession,
     routeWorkspaceId,
     selectedSessionId,
+    remoteThreadKey,
     loading,
     effectiveLoading,
     connectionPending,
@@ -554,20 +589,26 @@ export function SessionRoute() {
     handleRuntimeSessionCreated,
     handleRuntimeSessionUpdated,
     handleRuntimeSessionDeleted,
-    handleRemoteWorkspaceConnectionSaved,
-    runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
     workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
-    onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
+    onServerSettingsChanged: () => undefined,
     onHostInfo: setOpenworkServerHostInfoState,
   });
   const modelProfileId = useWorkspaceModelProfile();
   const workspaceDefaultScope = workspaceModelScope({ profileId: modelProfileId,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
   const workspaceDefault = useWorkspaceDefaultModel(workspaceDefaultScope);
-  const configuredNewTaskModel = workspaceDefault?.model ?? local.prefs.defaultModel;
+  // An organization model this desktop confirms it cannot use falls back to the app's own default.
+  const [unusableOrgDefaultKey, setUnusableOrgDefaultKey] = useState<string | null>(null);
+  const orgNewTaskModel = useMemo(() => {
+    const model = orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl);
+    return model && `${model.providerID}/${model.modelID}` !== unusableOrgDefaultKey ? model : null;
+  }, [orgConfiguredDefaultModel, opencodeBaseUrl, unusableOrgDefaultKey]);
+  const newChatDefault = newChatDefaultModel({ workspaceDefault, orgDefault: orgNewTaskModel,
+    appDefault: { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null } });
+  const configuredNewTaskModel = newChatDefault.model;
   // This route creates the provider below; use its same scope when choosing a new-task default.
   const autoAccessWorkspace = { openworkServerClient: selectedWorkspaceEndpoint?.client ?? null,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "" };
@@ -575,7 +616,7 @@ export function SessionRoute() {
   const observedAutoStatus = observedAutoSnapshot?.status === "success" ? observedAutoSnapshot.data : undefined;
   const autoChecking = isDesktopRuntime() && observedAutoSnapshot?.status !== "error" && !observedAutoStatus;
   const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus, autoChecking);
-  const newTaskVariant = workspaceDefault ? workspaceDefault.variant : local.prefs.modelVariant ?? null;
+  const newTaskVariant = newChatDefault.variant;
   // Background callers (automations, remote sessions) read this from the workspace's server.
   useWorkspaceDefaultModelSync({ endpoint: selectedWorkspaceEndpoint, connected: !selectedWorkspaceError,
     model: newTaskModel, variant: newTaskVariant, pending: autoChecking });
@@ -611,7 +652,6 @@ export function SessionRoute() {
     locationKey: location.key,
     navigationGeneration: routeNavigationRef.current.generation,
   };
-  const archiveDisabledReason = isOpencodeV2BaseUrl(opencodeBaseUrl) ? V2_SESSION_ARCHIVE_UNAVAILABLE : undefined;
   const canPrefetchSelectedWorkspace = Boolean(opencodeClient && selectedWorkspaceEndpoint && !selectedWorkspaceError);
   const prefetchRuntimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId;
   const cancelOpeningPrefetchRef = useRef<(() => void) | undefined>(undefined);
@@ -639,7 +679,7 @@ export function SessionRoute() {
   // a per-tile fallback so tiles keep working when the selected workspace does
   // not configure their server.
   const dashboardEndpoints = useMemo(() => {
-    if (!dashboardRouteActive) return [];
+    if (!dashboardRouteActive && !retainedArtifactsScope) return [];
     const endpoints: ResolvedWorkspaceEndpoint[] = [];
     if (selectedWorkspaceEndpoint) endpoints.push(selectedWorkspaceEndpoint);
     for (const workspace of workspaces) {
@@ -649,7 +689,7 @@ export function SessionRoute() {
       }
     }
     return endpoints;
-  }, [dashboardRouteActive, endpointForWorkspace, selectedWorkspaceEndpoint, workspaces]);
+  }, [dashboardRouteActive, retainedArtifactsScope, endpointForWorkspace, selectedWorkspaceEndpoint, workspaces]);
   const dashboardEndpoint = dashboardEndpoints[0] ?? null;
   const dashboardFallbackEndpoints = useMemo(
     () => dashboardEndpoints.slice(1).map((endpoint) => ({
@@ -671,12 +711,26 @@ export function SessionRoute() {
     })) return;
     void refreshRouteState({ supersede: true });
   }, [cloudWorkspace.gatewayMode, cloudWorkspace.viewModel.variant, cloudWorkspace.visible, refreshRouteState]);
-  const cloudMcpProviderModel = useMemo(() => local.prefs.defaultModel
-    ? {
-        provider: local.prefs.defaultModel.providerID,
-        model: local.prefs.defaultModel.modelID,
-      }
-    : undefined, [local.prefs.defaultModel?.modelID, local.prefs.defaultModel?.providerID]);
+  const providerListQuery = useProviderListQuery({
+    client: opencodeClient,
+    baseUrl: opencodeBaseUrl,
+    directory: selectedWorkspaceRoot || undefined,
+  });
+  const connectSessionId = useWorkbenchStore((state) => selectedSessionId && state.focusedPane === "secondary"
+    && state.secondary?.workspaceId === selectedWorkspaceId
+    ? state.secondary.sessionId
+    : selectedSessionId);
+  const connectSessionModel = useSessionModelStore((state) =>
+    connectSessionId ? state.bySessionId[connectSessionId]?.model ?? null : null);
+  const connectOrgModel = useMemo(() => orgDefaultModelForEngine(orgConfiguredDefaultModel, opencodeBaseUrl),
+    [orgConfiguredDefaultModel, opencodeBaseUrl]);
+  const cloudMcpProviderModel = useMemo(() => cloudMcpModelContext({
+    sessionModel: connectSessionModel,
+    workspaceModel: workspaceDefault?.model,
+    orgModel: connectOrgModel,
+    globalModel: local.prefs.defaultModel,
+    providerList: providerListQuery.isError ? undefined : providerListQuery.data,
+  }), [connectSessionModel, workspaceDefault, connectOrgModel, local.prefs.defaultModel, providerListQuery.data, providerListQuery.isError]);
   const sessionMcpMaintenance = useSessionMcpMaintenance({
     cloudSignedIn: denAuth.isSignedIn,
     cloudAuthStatus: denAuth.status,
@@ -718,8 +772,6 @@ export function SessionRoute() {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
-  const [createWorkspaceRemoteBusy, setCreateWorkspaceRemoteBusy] = useState(false);
-  const [createWorkspaceRemoteError, setCreateWorkspaceRemoteError] = useState<string | null>(null);
   const [renameWorkspaceId, setRenameWorkspaceId] = useState<string | null>(null);
   const [renameWorkspaceTitle, setRenameWorkspaceTitle] = useState("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = useState(false);
@@ -749,11 +801,6 @@ export function SessionRoute() {
   // options for whichever model is currently selected so the composer's
   // behavior pill actually shows its options (bug: was empty before).
 
-  const openworkServerSettings = useMemo(
-    () => readOpenworkServerSettings(),
-    [openworkServerSettingsVersion],
-  );
-
   const activeReloadBlockingSessions = useMemo(
     () =>
       Object.values(sessionsByWorkspaceId)
@@ -771,12 +818,15 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
+  const selectSessionChildIds = useMemo(createSessionChildIdsSelector, []);
+  const sessionChildIdsByWorkspaceId = useSessionActivityStore(selectSessionChildIds);
   const selectedInteractionSessionIds = useMemo(() => {
     const selected = selectedSessionId?.trim();
     if (!selected) return [];
     const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
-    return [selected, ...getSessionDescendantIds(sessions, selected)];
-  }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
+    const children = sessionChildIdsByWorkspaceId[selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId];
+    return [selected, ...getSessionDescendantIds(sessions, selected, children)];
+  }, [selectedSessionId, selectedWorkspaceId, selectedWorkspaceEndpoint?.workspaceId, sessionsByWorkspaceId, sessionChildIdsByWorkspaceId]);
   const activeSelectedWorkspaceSessionIds = useMemo(
     () => Array.from(new Set([
       ...selectedInteractionSessionIds,
@@ -788,12 +838,6 @@ export function SessionRoute() {
     ])),
     [selectedInteractionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
   );
-  const remoteAccessRestart = useRemoteAccessRestart({
-    isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
-    onHostInfo: setOpenworkServerHostInfoState,
-    onSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
-  });
-
   useEffect(() => {
     if (!isDesktopRuntime() || selectedWorkspace?.workspaceType !== "local") return;
     let cancelled = false;
@@ -819,7 +863,7 @@ export function SessionRoute() {
     };
   }, [openworkServerHostInfoState?.generation, refreshRouteState, selectedWorkspace?.workspaceType]);
 
-  const { engineReloadVersion, routeEngineInfo, reloadWorkspaceEngineFromUi } = useEngineReload({
+  const { engineReloadVersion, reloadWorkspaceEngineFromUi } = useEngineReload({
     client,
     opencodeBaseUrl,
     workspaceId: selectedWorkspaceId,
@@ -855,24 +899,6 @@ export function SessionRoute() {
     }
   }, [activeReloadBlockingSessions.length, reloadWorkspaceEngineFromUi, selectedWorkspaceRoot]);
 
-  const shareWorkspaceState = useShareWorkspaceState({
-    workspaces,
-    openworkServerHostInfo: openworkServerHostInfoState,
-    openworkServerSettings,
-    engineInfo: routeEngineInfo,
-    exportWorkspaceBusy: false,
-    openLink: (url) => platform.openLink(url),
-    workspaceLabel,
-  });
-
-
-  const remoteWorkspaceConnectionEditor = useRemoteWorkspaceConnectionEditor({
-    workspaces,
-    client,
-    onSaved: handleRemoteWorkspaceConnectionSaved,
-  });
-
-
   const pendingConversation = pendingConversationForRoute(pendingConversations, requestedPendingId, sessionDraftScope, selectedWorkspaceId, location.pathname === "/session");
   const workspaceSessionGroups = useMemo(() => {
     const lists = withPendingSessionPublication(sessionsByWorkspaceId, pendingConversations, sessionDraftScope);
@@ -889,6 +915,7 @@ export function SessionRoute() {
     // Only the pending route may adopt its completion. Background completion
     // never navigates away from a conversation the person chose meanwhile.
     if (!pendingConversation?.sessionId) return;
+    carryDraftBrowser(pendingConversation.sessionId);
     writeLastSessionFor(pendingConversation.destination.workspaceId, pendingConversation.sessionId);
     navigateToWorkspaceSession(pendingConversation.destination.workspaceId, pendingConversation.sessionId);
   }, [pendingConversation?.sessionId, pendingConversation?.destination.workspaceId, navigateToWorkspaceSession]);
@@ -903,48 +930,79 @@ export function SessionRoute() {
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
   const sessionWaitingByWorkspaceId = useSessionActivityStore((state) => state.waitingByWorkspaceId);
-  const selectSessionChildIds = useMemo(createSessionChildIdsSelector, []);
-  const sessionChildIdsByWorkspaceId = useSessionActivityStore(selectSessionChildIds);
   const selectWorkspaceAttention = useMemo(createWorkspaceSessionAttentionSelector, []);
 
   useEffect(() => {
     for (const group of workspaceSessionGroups) {
       seedWorkspaceActivitySessions(group.workspace.id, group.sessions);
-      const serverId = workspaceServerId(group.workspace);
-      if (serverId && serverId !== group.workspace.id) {
-        seedWorkspaceActivitySessions(serverId, group.sessions);
-      }
     }
   }, [seedWorkspaceActivitySessions, workspaceSessionGroups]);
 
   const attentionLocale = currentLocale();
+  const remoteAttentionKey = useRemoteThreadAttentionKey();
+  const sideChats = useWorkbenchStore((state) => state.sideChats);
+  const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
+  // A side chat records the session it was opened from, so it is listed under it everywhere.
+  const sideChatLinkFor = useCallback((parent: { workspaceId: string; sessionId: string } | null | undefined, workspaceId: string): SessionLink | undefined => {
+    if (!sessionTreeEnabled || !parent || parent.workspaceId !== workspaceId) return undefined;
+    if (!canLinkSessionTo(sessionsByWorkspaceIdRef.current[workspaceId] ?? [], parent.sessionId)) return undefined;
+    return { kind: "side", parentID: parent.sessionId };
+  }, [sessionTreeEnabled, sessionsByWorkspaceIdRef]);
   const sidebarSessionAttention = useMemo(() => {
+    const remoteAttention = remoteThreadAttentionBySession(remoteAttentionKey);
     const statusById: Record<string, string> = {};
     const labelById: Record<string, string> = {};
     const sourceById: Record<string, "child" | "descendant"> = {};
+    const kindById: Record<string, SessionWaitingKind> = {};
     for (const group of workspaceSessionGroups) {
-      const serverId = workspaceServerId(group.workspace);
       const attention = selectWorkspaceAttention(group.sessions, {
         statuses: sessionActivityByWorkspaceId[group.workspace.id],
         waiting: sessionWaitingByWorkspaceId[group.workspace.id],
         childIds: sessionChildIdsByWorkspaceId[group.workspace.id],
-        serverStatuses: serverId ? sessionActivityByWorkspaceId[serverId] : undefined,
-        serverWaiting: serverId ? sessionWaitingByWorkspaceId[serverId] : undefined,
-        serverChildIds: serverId ? sessionChildIdsByWorkspaceId[serverId] : undefined,
       });
       for (const session of group.sessions) {
         const entry = attention.get(session.id);
         if (!entry) continue;
         statusById[session.id] = sessionAttentionSidebarStatus(entry);
+        const kind = entry.blockedBy?.kind ?? sessionWaitingByWorkspaceId[group.workspace.id]?.[session.id];
+        if (entry.status === "waiting" && kind) kindById[session.id] = kind;
         if (entry.blockedBy) {
           labelById[session.id] = sessionAttentionLabel(entry.blockedBy);
           sourceById[session.id] = entry.blockedBy.relationship;
         }
       }
+      // A task this chat started on another computer waits on the person, like a sub-agent would.
+      for (const session of group.sessions) {
+        const remote = remoteAttention.get(session.id);
+        const own = statusById[session.id];
+        if (!remote || own === "waiting" || own === "error") continue;
+        statusById[session.id] = "waiting";
+        labelById[session.id] = sessionAttentionLabel({ sessionId: session.id, title: remote.title, kind: remote.kind });
+        sourceById[session.id] = "child";
+        kindById[session.id] = remote.kind;
+      }
     }
-    return { statusById, labelById, sourceById };
-  }, [attentionLocale, selectWorkspaceAttention, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
+    return { statusById: withSideChatActivity(statusById, sideChats, workspaceSessionGroups), labelById, sourceById, kindById };
+  }, [attentionLocale, remoteAttentionKey, selectWorkspaceAttention, sideChats, sessionActivityByWorkspaceId, sessionWaitingByWorkspaceId, sessionChildIdsByWorkspaceId, workspaceSessionGroups]);
   const sidebarSessionStatusById = sidebarSessionAttention.statusById;
+  const selectedSidebarSession = useMemo(() => {
+    if (!selectedWorkspaceId || !selectedSessionId) return null;
+    return workspaceSessionGroups.find((group) => group.workspace.id === selectedWorkspaceId)
+      ?.sessions.find((session) => session?.id === selectedSessionId) ?? null;
+  }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
+  // Palette, header button and Cmd/Ctrl+Shift+E all run this one toggle. The archive flow is set up further down.
+  const archiveSessionRef = useRef<((sessionId: string, archived: boolean, workspaceId: string) => Promise<unknown>) | null>(null);
+  const currentSessionArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
+  const currentSessionArchive = useMemo(() => {
+    const sessionId = selectedSidebarSession?.id;
+    const workspaceId = selectedWorkspaceId;
+    if (!sessionId || !workspaceId || !opencodeClient) return undefined;
+    return {
+      archived: currentSessionArchived,
+      toggle: () => { void archiveSessionRef.current?.(sessionId, !currentSessionArchived, workspaceId); },
+    };
+  }, [currentSessionArchived, opencodeClient, selectedSidebarSession?.id, selectedWorkspaceId]);
 
   const sidebarActiveWorkspaceId = useMemo(() => {
     const sessionId = selectedSessionId?.trim() ?? "";
@@ -957,22 +1015,9 @@ export function SessionRoute() {
     return selectedWorkspaceId;
   }, [selectedSessionId, selectedWorkspaceId, workspaceSessionGroups]);
 
-  const workspaceConnectionStateById = useMemo(() => {
-    const next: Record<string, WorkspaceConnectionState> = { ...workspaceConnectionOverrides };
-    for (const workspace of workspaces) {
-      if (workspace.workspaceType !== "remote") continue;
-      const error = errorsByWorkspaceId[workspace.id]?.trim();
-      if (!error || next[workspace.id]?.status === "connecting") continue;
-      next[workspace.id] ??= {
-        status: "error",
-        message: getWorkspaceTaskLoadErrorDisplay(workspace, error).message || error,
-        checkedAt: null,
-      };
-    }
-    return next;
-  }, [errorsByWorkspaceId, workspaceConnectionOverrides, workspaces]);
+  const workspaceConnectionStateById: Record<string, WorkspaceConnectionState> = workspaceConnectionOverrides;
   useSessionHistoryRuntimeOwners(workspaces.flatMap((workspace) => {
-    if (connectionPending && workspace.workspaceType !== "remote") return [];
+    if (connectionPending) return [];
     const connection = workspaceConnectionStateById[workspace.id];
     const runtime = resolveWorkbenchPaneEndpoint({
       workspaceId: workspace.id,
@@ -987,12 +1032,14 @@ export function SessionRoute() {
       authToken: runtime.endpoint.token }];
   }));
 
-  const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot);
-  const providerListQuery = useProviderListQuery({
-    client: opencodeClient,
-    baseUrl: opencodeBaseUrl,
-    directory: selectedWorkspaceRoot || undefined,
-  });
+  const mcpConnectedCount = useMcpConnectedCount(opencodeClient, selectedWorkspaceRoot,
+    (statuses) => noteActivationConnectionStatuses(opencodeBaseUrl, statuses));
+  const automationCatalog = useMemo(
+    () => providerListQuery.data === undefined || providerListQuery.isError
+      ? undefined
+      : automationProviderCatalog(getConnectedProviderItems(filterProviderList(providerListQuery.data, disabledProviderIds))),
+    [providerListQuery.data, providerListQuery.isError, disabledProviderIds],
+  );
   const { providerCatalog, modelVariantLabel, modelBehaviorOptions, modelVariantValue } =
     useModelBehavior({
       providerList: providerListQuery.data,
@@ -1001,15 +1048,33 @@ export function SessionRoute() {
     });
   const newTaskBehavior = useMemo(() => getModelBehaviorSummary(newTaskModel?.providerID ?? "",
     newTaskModel ? providerCatalog[newTaskModel.providerID]?.[newTaskModel.modelID] : undefined, newTaskVariant), [newTaskModel, newTaskVariant, providerCatalog]);
+  // Same as Settings: a member who signed in before creating a workspace
+  // still has the local server's managed engine, so organization providers
+  // sync at sign-in instead of racing the first chat's workspace creation.
+  const engineRootEndpoint = useMemo(
+    () => (isDesktopRuntime() && !loading && workspaces.length === 0
+      ? resolveEngineRootEndpoint({ baseUrl, token })
+      : null),
+    [baseUrl, loading, token, workspaces.length],
+  );
+  const providerAuthClient = useMemo(() => {
+    if (opencodeClient || !engineRootEndpoint) return opencodeClient;
+    return createClient(engineRootEndpoint.opencodeBaseUrl, undefined, { token: engineRootEndpoint.token, mode: "openwork" });
+  }, [engineRootEndpoint, opencodeClient]);
+  const engineRootServer = useMemo(
+    () => (engineRootEndpoint && client ? { baseUrl, token, client } : null),
+    [baseUrl, client, engineRootEndpoint, token],
+  );
   const {
     store: sessionProviderAuthStore,
     snapshot: sessionProviderAuthSnapshot,
     cloudProviderSyncReady,
     cloudProviderList,
     refreshCloudProviderSync,
+    liveProviderSync,
   } = useSessionProviderAuth({
-    opencodeClient,
-    opencodeBaseUrl,
+    opencodeClient: providerAuthClient,
+    opencodeBaseUrl: opencodeBaseUrl || (engineRootEndpoint?.opencodeBaseUrl ?? ""),
     providers,
     providerDefaults,
     providerConnectedIds,
@@ -1018,6 +1083,7 @@ export function SessionRoute() {
     selectedWorkspaceEndpoint,
     selectedWorkspaceRoot,
     selectedWorkspaceId,
+    engineRootServer,
     localServerHostToken: openworkServerHostInfoState?.hostToken?.trim() ?? "",
     localServerGeneration: openworkServerHostInfoState?.generation ?? null,
     setProviders,
@@ -1025,10 +1091,22 @@ export function SessionRoute() {
     setProviderConnectedIds,
     setDisabledProviderIds,
   });
+  const preWorkspaceGatewayModels = usePreWorkspaceGatewayModels({
+    enabled: Boolean(engineRootEndpoint && !opencodeClient),
+    sessionVersion: denSessionVersion,
+  });
   const organizationAssignedModelOptions = useMemo(
-    () => withImportedModelMetadata(assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders), sessionProviderAuthSnapshot.importedCloudProviders),
-    [sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
+    () => withImportedModelMetadata(mergeModelOptions(
+      assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders),
+      preWorkspaceGatewayModels.options,
+    ), sessionProviderAuthSnapshot.importedCloudProviders),
+    [preWorkspaceGatewayModels.options, sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
   );
+  const pickerFallbackOptions = useMemo(() => pickerFallbackModels({
+    liveProviderSync,
+    engineListLoaded: Boolean(providerListQuery.data) && !providerListQuery.isPlaceholderData,
+    assigned: organizationAssignedModelOptions,
+  }), [liveProviderSync, organizationAssignedModelOptions, providerListQuery.data, providerListQuery.isPlaceholderData]);
   useEffect(() => {
     if (!denAuth.isSignedIn) {
       setActiveOrganizationRole(null);
@@ -1063,8 +1141,9 @@ export function SessionRoute() {
     };
   }, [denAuth.isSignedIn, denAuth.status, denSessionVersion]);
   const handleModelPickerOpen = useCallback(() => {
+    void preWorkspaceGatewayModels.refresh().catch(() => undefined);
     void refreshCloudProviderSync("model_picker_open");
-  }, [refreshCloudProviderSync]);
+  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync]);
   const openWorkModelsEntitled = useMemo(() => {
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
@@ -1087,6 +1166,10 @@ export function SessionRoute() {
   ]);
   const gatewayProviderIds = useMemo(
     () => resolveGatewayProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
+    [sessionProviderAuthSnapshot.importedCloudProviders],
+  );
+  const gatewayCloudProviderIds = useMemo(
+    () => resolveGatewayCloudProviderIds(sessionProviderAuthSnapshot.importedCloudProviders),
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
@@ -1169,6 +1252,11 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
+  // Members whose organization has Luna in OpenWork Models move off free Auto onto their own usage.
+  const newTaskLunaReplacement = openWorkModelsLunaReplacement(configuredNewTaskModel, entitledModelOptions);
+  useEffect(() => {
+    if (newTaskLunaReplacement) changeNewTaskModel(newTaskLunaReplacement, null);
+  }, [newTaskLunaReplacement?.providerID, newTaskLunaReplacement?.modelID, changeNewTaskModel]);
   const { query: initialAutoAccess } = useAutoAccess(entitledModelOptions.some(isAutoModel) || Boolean(configuredNewTaskModel && isAutoModel(configuredNewTaskModel)), autoAccessWorkspace);
   useEffect(() => {
     if ((initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle") || freeAutoSwitchedOff(initialAutoAccess.data)) return;
@@ -1179,10 +1267,30 @@ export function SessionRoute() {
         empty: !Object.values(sessionsByWorkspaceId).some((sessions) => sessions.length > 0),
         explicit: localStorage.getItem(EXPLICIT_MODEL_CHOICE_KEY) !== null,
       })) return;
-      const auto = available.find(isAutoModel);
-      if (auto) local.setPrefs((previous) => ({ ...previous, defaultModel: auto, modelVariant: null }));
+      const starter = starterModel(available);
+      if (starter) local.setPrefs((previous) => ({ ...previous, defaultModel: starter, modelVariant: null }));
     } catch {}
   }, [initialAutoAccess.isPending, initialAutoAccess.fetchStatus, initialAutoAccess.data, cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local, workspaceDefault]);
+  // OpenCode Zen is retired (using the existing Zen
+  // policy): disable the provider in the engine on the screen everyone uses,
+  // not only while Settings is open, and move a Zen default to a model the
+  // person can actually use. Never re-enable Zen here; that races Disconnect.
+  const opencodeZenBlocked = checkDesktopRestriction({ restriction: "allowZenModel" });
+  useEffect(() => {
+    if (!opencodeZenBlocked || !providerAuthClient || !selectedWorkspaceId) return;
+    void sessionProviderAuthStore.ensureProjectProviderDisabledState("opencode", true).catch((error: unknown) => {
+      console.warn("[opencode-zen] failed to disable OpenCode Zen in the engine", error);
+    });
+  }, [opencodeZenBlocked, providerAuthClient, selectedWorkspaceId, selectedWorkspaceRoot, sessionProviderAuthStore]);
+  useEffect(() => {
+    if (!opencodeZenBlocked) return;
+    const current = local.prefs.defaultModel;
+    if (current && current.providerID !== "opencode") return;
+    // Already filtered by policy, so Zen is gone from it while blocked.
+    const usable = entitledModelOptions.filter((option) => option.providerID !== "opencode");
+    const replacement = starterModel(usable) ?? usable[0];
+    if (replacement) local.setPrefs((previous) => ({ ...previous, defaultModel: { providerID: replacement.providerID, modelID: replacement.modelID }, modelVariant: null }));
+  }, [opencodeZenBlocked, entitledModelOptions, local]);
   const openWorkModelsAvailable = hasOpenWorkModelsAvailable({
     providerConnectedIds,
     providers,
@@ -1193,7 +1301,7 @@ export function SessionRoute() {
     workspaceReady: Boolean(selectedWorkspaceId && opencodeClient),
     reloadPending: sessionProviderAuthSnapshot.cloudProviderServerSync?.reloadPending === true,
   });
-  const organizationModelsEmpty = isOrganizationModelsEmpty({
+  const catalogOrganizationModelsEmpty = isOrganizationModelsEmpty({
     workspaceReady: Boolean(selectedWorkspaceId && opencodeClient),
     loading,
     restrictToCloud: restrictToCloudProviders,
@@ -1205,7 +1313,7 @@ export function SessionRoute() {
     baseUrl: opencodeBaseUrl,
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
-    fallbackOptions: organizationAssignedModelOptions,
+    fallbackOptions: pickerFallbackOptions,
     importedProviders: sessionProviderAuthSnapshot.importedCloudProviders,
     pendingProviders: gatewayConnectProviders,
     disabledProviders: disabledProviderIds,
@@ -1266,27 +1374,41 @@ export function SessionRoute() {
   // reads as unsettled → pending) instead of judging the new workspace with
   // stale data.
   //
-  // Catalog denials are additionally confirmation-gated: Settings visits and
-  // engine reload churn can settle a momentarily incomplete catalog, and a
-  // denial younger than the confirmation window renders as pending instead of
-  // flashing "Model no longer available" during the transition. The recheck
-  // tick re-evaluates tracked denials so a genuine one still surfaces once it
-  // matures, even without further catalog changes.
+  // Debounce catalog churn before checking Den. Time alone never confirms an
+  // organization model's removal: two complete member inventory reads, with an
+  // engine refetch between them, must independently establish lost assignment.
+  const modelRecoveryScope = JSON.stringify([sessionDraftScope, opencodeBaseUrl, selectedWorkspaceId]);
+  const selectedSessionModelSelection = useSessionModelStore((state) =>
+    (selectedSessionId ? state.bySessionId[selectedSessionId] ?? null : null),
+  );
+  const activeComposerModel = selectedSessionModelSelection?.model ?? (selectedSessionId ? local.prefs.defaultModel : newTaskModel) ?? null;
+  const recoveryChatKey = modelRecoveryChatKey(modelRecoveryScope, selectedSessionId);
+  // Persist names under the existing stable workspace identity, not a local
+  // server port or engine-version URL that can change at the next launch.
+  const modelDisplayScope = workspaceDefaultScope ? JSON.stringify([sessionDraftScope, workspaceDefaultScope]) : null;
+  const rememberedModelTitles = useMemo(() => readModelDisplayMemory(modelDisplayScope ?? ""), [modelDisplayScope]);
+  useEffect(() => {
+    if (!modelDisplayScope) return;
+    const selected = modelPicker.knownOptions.find((option) => option.providerID === activeComposerModel?.providerID
+      && option.modelID === activeComposerModel.modelID);
+    if (selected) rememberModelDisplayNames(modelDisplayScope, rememberedModelTitles, [selected]);
+  }, [modelDisplayScope, rememberedModelTitles, modelPicker.knownOptions, activeComposerModel]);
   const modelAvailabilityGate = useMemo(() => createUnavailableConfirmationGate(), []);
   const [availabilityRecheckTick, bumpAvailabilityRecheck] = useReducer(
     (value: number) => value + 1,
     0,
   );
-  const resolveModelAvailability = useCallback((model: ModelRef | null): ModelAvailability =>
+  const resolveCatalogModelAvailability = useCallback((model: ModelRef | null): ModelAvailability =>
     modelAvailabilityGate.confirm(model, computeModelAvailability(model, {
       workspaceReady: Boolean(selectedWorkspaceId && opencodeClient),
-      loading,
+      loading: loading || providerListQuery.isPlaceholderData || providerListQuery.isError,
       signedIn: denAuth.isSignedIn,
       cloudProviderSyncReady,
       openWorkModelsSyncing,
       restrictToCloud: restrictToCloudProviders,
       checkRestriction: checkDesktopRestriction,
       cloudProviderList,
+      liveProviderSync,
       providerList: providerListQuery.data,
     })), [
     // The tick only forces re-evaluation of denials tracked by the gate.
@@ -1299,24 +1421,60 @@ export function SessionRoute() {
     modelAvailabilityGate,
     opencodeClient,
     openWorkModelsSyncing,
+    liveProviderSync,
+    providerListQuery.isPlaceholderData,
+    providerListQuery.isError,
     providerListQuery.data,
     restrictToCloudProviders,
     selectedWorkspaceId,
   ]);
   useEffect(() => {
     const delay = modelAvailabilityGate.nextRecheckDelay();
-    if (delay === null) return;
+    if (delay === null || delay === 0) return;
     const timer = window.setTimeout(() => bumpAvailabilityRecheck(), delay + 16);
     return () => window.clearTimeout(timer);
-  }, [modelAvailabilityGate, resolveModelAvailability]);
+  }, [modelAvailabilityGate, resolveCatalogModelAvailability]);
+  const catalogAvailability = resolveCatalogModelAvailability(activeComposerModel);
+  const modelRemovalConfirmation = useModelRemovalConfirmation({
+    model: activeComposerModel,
+    missing: catalogAvailability.status === "unavailable" && catalogAvailability.reason !== "provider_blocked",
+    ready: !loading && cloudProviderSyncReady && !providerListQuery.isError
+      && !providerListQuery.isPlaceholderData && Boolean(opencodeClient && selectedWorkspaceId),
+    scope: modelRecoveryScope,
+    chatKey: recoveryChatKey,
+    refreshEngine: async () => {
+      const refreshed = await providerListQuery.refetch();
+      if (refreshed.isError || !refreshed.data || !activeComposerModel) return false;
+      return computeModelAvailability(activeComposerModel, {
+        workspaceReady: true, loading: false, signedIn: denAuth.isSignedIn,
+        cloudProviderSyncReady, openWorkModelsSyncing: false,
+        restrictToCloud: restrictToCloudProviders, checkRestriction: checkDesktopRestriction,
+        cloudProviderList: refreshed.data, providerList: refreshed.data,
+      }).status === "unavailable";
+    },
+  });
+  const organizationRemovalConfirmed = modelRemovalConfirmation.confirmed;
+  const resolveModelAvailability = useCallback((model: ModelRef | null): ModelAvailability => {
+    const verdict = resolveCatalogModelAvailability(model);
+    if (verdict.status !== "unavailable" || verdict.reason === "provider_blocked") return verdict;
+    // Catalog absence alone cannot revoke an organization model. Without two
+    // authoritative reads keep the selection usable, including sign-in-required providers.
+    if (model && isCloudManagedProviderKey(model.providerID)
+      && !(organizationRemovalConfirmed && activeComposerModel?.providerID === model.providerID
+        && activeComposerModel.modelID === model.modelID)) return { status: "pending" };
+    return verdict;
+  }, [resolveCatalogModelAvailability, organizationRemovalConfirmed, activeComposerModel]);
+  const organizationModelsEmpty = catalogOrganizationModelsEmpty
+    && (!activeComposerModel || !isCloudManagedProviderKey(activeComposerModel.providerID) || organizationRemovalConfirmed);
   const selectedModelUnavailable =
     resolveModelAvailability(newTaskModel).status === "unavailable";
+  const orgNewTaskModelUnavailable = Boolean(orgNewTaskModel && !workspaceDefault
+    && resolveModelAvailability(orgNewTaskModel).status === "unavailable");
+  useEffect(() => {
+    if (orgNewTaskModelUnavailable && orgNewTaskModel) setUnusableOrgDefaultKey(`${orgNewTaskModel.providerID}/${orgNewTaskModel.modelID}`);
+  }, [orgNewTaskModel, orgNewTaskModelUnavailable]);
   // The composer the user is looking at: the selected conversation's
   // remembered model when it has one, otherwise the global default.
-  const selectedSessionModelSelection = useSessionModelStore((state) =>
-    (selectedSessionId ? state.bySessionId[selectedSessionId] ?? null : null),
-  );
-  const activeComposerModel = selectedSessionModelSelection?.model ?? (selectedSessionId ? local.prefs.defaultModel : newTaskModel) ?? null;
   const activeComposerAvailability = resolveModelAvailability(activeComposerModel);
   const activeComposerTargetsSession = Boolean(selectedSessionModelSelection && selectedSessionId);
   const selectedModelUnavailableKey = activeComposerAvailability.status === "unavailable" && activeComposerModel
@@ -1327,14 +1485,8 @@ export function SessionRoute() {
   useEffect(() => {
     if (hasPendingGatewayModelSelection()) return;
     if (!selectedModelUnavailableKey || activityRouteActive) {
-      // The active composer's model is fine (or pending). If the picker was
-      // auto-opened for a previously broken composer — e.g. the New Task
-      // default — do not let that recovery modal follow the user into a
-      // conversation whose own model is valid, or into Activity where there
-      // is no composer to recover. Explicit model actions still open it.
-      if (autoOpenedUnavailableModelRef.current) {
-        modelPicker.setOpen(false);
-      }
+      // The active composer's model is fine (or pending): a later loss of it
+      // is handled again.
       autoOpenedUnavailableModelRef.current = null;
       return;
     }
@@ -1346,7 +1498,7 @@ export function SessionRoute() {
       // default; a conversation's own unavailable model must surface the
       // picker for that conversation instead.
       entitledOrgDefaultModel: activeComposerTargetsSession || workspaceDefault ? false : Boolean(entitledOrgDefaultModel),
-      organizationModelsEmpty,
+      organizationModelsEmpty: organizationModelsEmpty && !organizationRemovalConfirmed,
       autoOpenedUnavailableModelKey: autoOpenedUnavailableModelRef.current,
     })) return;
     if (!activeComposerTargetsSession && !workspaceDefault && entitledOrgDefaultModel) {
@@ -1355,12 +1507,36 @@ export function SessionRoute() {
     }
 
     autoOpenedUnavailableModelRef.current = selectedModelUnavailableKey;
-    setModelPickerSessionId(activeComposerTargetsSession ? selectedSessionId : null);
-    modelPicker.setQuery("");
-    modelPicker.setRecentProviderIds(new Set());
-    modelPicker.setCompactOpen(false);
-    modelPicker.setOpen(true);
-  }, [activityRouteActive, activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId, workspaceDefault]);
+    const targetSessionId = selectedSessionId;
+    // A local disconnect or policy restriction isn't an organization removal.
+    if (!organizationRemovalConfirmed) {
+      window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined, focusAlternative: true } }));
+      return;
+    }
+    // Move on to the next model the picker lists that can run, instead of
+    // stopping the person with a dialog. Only when nothing else can run does
+    // the composer's own picker open to say so.
+    const collections = useModelCollectionsStore.getState();
+    // Named options from the same catalog the entitlement check reads, limited to what the member may use.
+    const entitled = new Set(entitledModelOptions.filter((option) => !option.disabled).map((option) => `${option.providerID}/${option.modelID}`));
+    const connected = new Set(runtimeModelOptions(cloudProviderList ?? providerListQuery.data)
+      .map((option) => `${option.providerID}/${option.modelID}`));
+    const assigned = new Set(modelRemovalConfirmation.assignedModels.map((model) => `${model.providerID}/${model.modelID}`));
+    const candidates = modelPicker.actionOptions.filter((option) => !option.disabled && !option.gatewayAuthorization
+      && entitled.has(`${option.providerID}/${option.modelID}`) && connected.has(`${option.providerID}/${option.modelID}`)
+      && (!isCloudManagedProviderKey(option.providerID) || assigned.has(`${option.providerID}/${option.modelID}`)));
+    const previous = activeComposerModel
+      ? rememberedModelTitles.get(`${activeComposerModel.providerID}/${activeComposerModel.modelID}`) ?? activeComposerModel : null;
+    const replacement = previous ? closestAvailableModel(candidates, collections.favorites, collections.recent, previous,
+      (option) => resolveModelAvailability(option).status === "available") : null;
+    if (!replacement) {
+      window.dispatchEvent(new CustomEvent(openComposerModelPickerEvent, { detail: { sessionId: targetSessionId ?? undefined, focusAlternative: true } }));
+      return;
+    }
+    if (targetSessionId) useSessionModelStore.getState().setModel(targetSessionId, replacement, null);
+    else changeNewTaskModel(replacement, null);
+    if (previous) useModelRecoveryStore.getState().record(recoveryChatKey, { previous, replacement });
+  }, [activityRouteActive, activeComposerModel, activeComposerTargetsSession, changeNewTaskModel, cloudProviderList, cloudProviderSyncReady, denAuth.isSignedIn, entitledModelOptions, entitledOrgDefaultModel, providerListQuery.data, organizationModelsEmpty, resolveModelAvailability, selectedModelUnavailableKey, selectedSessionId, workspaceDefault, organizationRemovalConfirmed, recoveryChatKey, modelPicker.actionOptions, rememberedModelTitles, modelRemovalConfirmation.assignedModels]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).
@@ -1387,12 +1563,11 @@ export function SessionRoute() {
     todos,
   } = useSessionInteractions({
     client: opencodeClient,
-    // Match ReactSessionRuntime and SessionSurface: remote route IDs can carry
-    // a client-only prefix, while interaction caches use the server workspace.
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
     interactionSessionIds: selectedInteractionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
+    rememberFileSend: selectedWorkspaceEndpoint?.client?.rememberFileSend,
   });
   const activePermissionSourceTitle = useMemo(() => {
     if (!activePermission || activePermission.sessionID === selectedSessionId) return null;
@@ -1487,8 +1662,10 @@ export function SessionRoute() {
     // and causes it to re-fetch (picking up newly created skills).
     void engineReloadVersion;
     if (!opencodeClient) return [];
-    return listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
-  }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot]);
+    const commands = await listCommands(opencodeClient, selectedWorkspaceRoot || undefined);
+    if (!sideQuestionsEnabled || !isOpencodeV2Client(opencodeClient) || commands.some((command) => command.name === SIDE_QUESTION_COMMAND)) return commands;
+    return [{ id: "openwork:side-question", name: SIDE_QUESTION_COMMAND, description: t("side_question.command_description"), source: "command" }, ...commands];
+  }, [engineReloadVersion, opencodeClient, selectedWorkspaceRoot, sideQuestionsEnabled]);
 
   // Shared by the composer (plug menu, @ mentions) and the command palette.
   // Hidden and subagent-only entries are excluded — those are task-tool
@@ -1503,12 +1680,12 @@ export function SessionRoute() {
   }, [engineReloadVersion, opencodeClient]);
 
   const handleOpenSettings = useCallback((route = "/settings/general", workspaceId = sidebarActiveWorkspaceId) => {
-    const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
+    const sessionId = workspaceId === sidebarActiveWorkspaceId ? connectSessionId : null;
     const tab = route.replace(/^\/settings\/?/, "").replace(/^\/+|\/+$/g, "") || "general";
     const target = workspaceId ? workspaceSettingsRoute(workspaceId, tab) : route;
     writeActiveWorkspaceId(workspaceId || null);
     navigate(target, { state: { workspaceId, sessionId } });
-  }, [navigate, selectedSessionId, sidebarActiveWorkspaceId]);
+  }, [navigate, connectSessionId, sidebarActiveWorkspaceId]);
 
   const handleOpenExtensions = useCallback((path = "", workspaceId = sidebarActiveWorkspaceId) => {
     const sessionId = workspaceId === sidebarActiveWorkspaceId ? selectedSessionId : null;
@@ -1528,6 +1705,18 @@ export function SessionRoute() {
   const [libraryHeaderActionsTarget, setLibraryHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
+
+  // A task on another computer opens in the main pane under
+  // `remote:<threadKey>` and returns to its chat like a helper.
+  const remoteTaskRouteActive = Boolean(remoteThreadKey) && !activityRouteActive && !pendingConversation;
+  const remoteHelperNavigation = useMemo(() => ({
+    // The same scope the chat pane remembers its return in (session-page.tsx).
+    scope: JSON.stringify([opencodeBaseUrl?.trim() ?? "", selectedWorkspaceEndpoint?.workspaceId || null, sessionDraftScope]),
+    openParent: (sessionId: string) => navigateToWorkspaceSession(selectedWorkspaceId, sessionId),
+  }), [opencodeBaseUrl, selectedWorkspaceEndpoint?.workspaceId, sessionDraftScope, navigateToWorkspaceSession, selectedWorkspaceId]);
+  const openRemoteTask = useCallback((threadKey: string) => {
+    navigateToWorkspaceSession(selectedWorkspaceId, remoteSessionRouteId(threadKey));
+  }, [navigateToWorkspaceSession, selectedWorkspaceId]);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
@@ -1557,8 +1746,7 @@ export function SessionRoute() {
     // explicitly to SessionSurface from the per-workspace endpoint resolved
     // by `resolveWorkspaceEndpoint`. If we leak them in here, the spread of
     // `surfaceProps` in SessionPage overrides those correct values with the
-    // local server's, and remote workspaces silently end up calling the
-    // local server with the local `rem_*` id.
+    // local server's.
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
@@ -1571,6 +1759,7 @@ export function SessionRoute() {
       },
       providerCatalog,
       gatewayProviderIds,
+      gatewayCloudProviderIds,
       gatewayUsageProviderScope: sessionProviderAuthSnapshot.gatewayUsageProviderScope ?? null,
       modelPickerOpen: modelPicker.compactOpen,
       modelOptions: modelPicker.options,
@@ -1578,6 +1767,7 @@ export function SessionRoute() {
       // effective session model through `resolveModelAvailability`.
       modelUnavailable: selectedModelUnavailable,
       modelUnavailableMessage,
+      modelRecoveryScope,
       resolveModelAvailability,
       organizationModelsEmpty,
       selectedModel: local.prefs.defaultModel ?? { providerID: "", modelID: "" },
@@ -1600,6 +1790,9 @@ export function SessionRoute() {
           openSettings: handleOpenSettings,
         });
       },
+      // Library detail ids hold ":" and "/", so they travel as one encoded segment.
+      onOpenLibraryDetail: (detailId: string) => handleOpenExtensions(encodeURIComponent(detailId)),
+      skillSharingProvider: CreatedSkillSharingProvider,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return { outcome: "cancelled", reason: "context_changed" };
@@ -1656,7 +1849,12 @@ export function SessionRoute() {
                 },
                 prompt: async () => {
                   assertCurrent();
+                  captureOnboardingEvent("onboarding_composer_submitted", { has_attachments: draft.attachments.length > 0 });
+                  captureOnboardingEvent("onboarding_model_resolved", {
+                    source: sessionModelSelection ? "session" : sendModel ? "app_default" : "none",
+                  });
                   captureAnalyticsEvent("task_message_sent", {
+                    is_first_run_on_install: taskRunQuality.isFirstRun(),
                     mode: draft.mode ?? "prompt",
                     is_command: Boolean(draft.command),
                     attachment_count: draft.attachments.length,
@@ -1666,6 +1864,7 @@ export function SessionRoute() {
                     model_id: sendModel?.modelID ?? null,
                   });
                   markTaskRunStart(targetSessionId);
+                  taskRunQuality.start(targetSessionId, sendModel);
                   // Den org adoption signals (auth-gated inside; no-op when signed out).
                   // This remains inside the post-readiness send closure so a blocked
                   // Cloud submission cannot create a run or report that one started.
@@ -1689,6 +1888,7 @@ export function SessionRoute() {
                   ];
                   trackSessionActive(targetSessionId, telemetryDimensions);
                   trackTaskStarted(targetSessionId, telemetryDimensions);
+                  noteActivationRunStarted(targetSessionId, draft.parts);
 
                   if (draft.mode === "shell") {
                     onPrepared?.();
@@ -1721,14 +1921,24 @@ export function SessionRoute() {
                   });
                   assertCurrent();
                   onPrepared?.(v2AcknowledgementText(parts));
-                  const result = await promptClient.session.promptAsync({
-                    sessionID: targetSessionId,
-                    messageID: draft.messageId,
-                    parts,
-                    model: sendModel ?? undefined,
-                    agent: sendAgent ?? undefined,
-                    ...(sendVariant ? { variant: sendVariant } : {}),
-                    system,
+                  const result = await sendWithModelUnavailableRetry({
+                    request: {
+                      sessionID: targetSessionId,
+                      messageID: draft.messageId,
+                      parts,
+                      model: sendModel ?? undefined,
+                      agent: sendAgent ?? undefined,
+                      ...(sendVariant ? { variant: sendVariant } : {}),
+                      system,
+                    },
+                    send: (request) => promptClient.session.promptAsync(request),
+                    refreshModels: () => ensureProviderListQuery(getReactQueryClient(), {
+                      client: promptClient,
+                      baseUrl: opencodeBaseUrl,
+                      directory: selectedWorkspaceRoot,
+                      force: true,
+                    }),
+                    assertCurrent,
                   });
                   if (result.error) {
                     if (isPromptAdmissionUnknown(result.error)) throw result.error;
@@ -1785,8 +1995,6 @@ export function SessionRoute() {
         );
         return result;
       },
-      isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
-      isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
       onRevertToMessage: async (messageId: string, sessionId: string) => {
         const targetSessionId = sessionId.trim() || selectedSessionId;
         if (!targetSessionId) return false;
@@ -1833,6 +2041,9 @@ export function SessionRoute() {
           || selectedConversationRef.current.sessionId !== navigationOwner.sessionId
           || selectedConversationRef.current.draftScope !== navigationOwner.draftScope
           || focusedWorkbenchPaneOwner() !== paneOwner) return;
+        // A fork continues with the model and setting its source conversation used.
+        const sourceSelection = getSessionModelSelection(targetSessionId);
+        if (sourceSelection) useSessionModelStore.getState().setModel(forked.id, sourceSelection.model, sourceSelection.variant);
         writeLastSessionFor(selectedWorkspaceId, forked.id);
         rememberPendingCreatedSession(selectedWorkspaceId, forked.id);
         setSessionsByWorkspaceId((current) => ({
@@ -1853,9 +2064,7 @@ export function SessionRoute() {
         }));
       },
       environmentRuntimeKey,
-      onApplyEnvironmentChanges: isDesktopRuntime() && selectedWorkspace?.workspaceType !== "remote"
-        ? handleApplyEnvironmentChanges
-        : undefined,
+      onApplyEnvironmentChanges: isDesktopRuntime() ? handleApplyEnvironmentChanges : undefined,
     };
   }, [
     client,
@@ -1874,12 +2083,14 @@ export function SessionRoute() {
     developerMode,
     modelLabel,
     modelUnavailableMessage,
+    modelRecoveryScope,
     organizationModelsEmpty,
     modelVariantLabel,
     modelVariantValue,
     navigate,
     providerCatalog,
     gatewayProviderIds,
+    gatewayCloudProviderIds,
     sessionProviderAuthSnapshot.gatewayUsageProviderScope,
     openWorkModelsEntitled,
     openWorkModelsSyncing,
@@ -1955,6 +2166,7 @@ export function SessionRoute() {
     const scopedSurface = {
       ...surfaceProps,
       workspaceRoot,
+      modelRecoveryScope: JSON.stringify([sessionDraftScope, endpoint.opencodeBaseUrl, workspace.id]),
       modelUnavailable: false,
       modelUnavailableMessage: null,
       resolveModelAvailability: undefined,
@@ -1965,6 +2177,7 @@ export function SessionRoute() {
           openSettings: (path) => handleOpenSettings(path, workspace.id),
         });
       },
+      onOpenLibraryDetail: (detailId: string) => handleOpenExtensions(encodeURIComponent(detailId), workspace.id),
       onOpenConnect: () => handleOpenExtensions("", workspace.id),
       listCommands: async (): Promise<SlashCommandOption[]> => {
         void engineReloadVersion;
@@ -1984,9 +2197,7 @@ export function SessionRoute() {
           directory: workspaceRoot || undefined,
         }));
       },
-      isRemoteWorkspace: workspace.workspaceType === "remote",
-      isSandboxWorkspace: isSandboxWorkspace(workspace),
-      environmentRuntimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
+      environmentRuntimeKey,
       onApplyEnvironmentChanges: undefined,
       onSendDraft: async (draft: ComposerDraft, sessionId: string, onPrepared?: (text?: string) => void, agent?: string | null): Promise<CloudMcpSubmissionResult> => {
         const targetSessionId = sessionId.trim() || session.sessionId;
@@ -2033,7 +2244,12 @@ export function SessionRoute() {
                 },
                 prompt: async () => {
                   assertCurrent();
+                  captureOnboardingEvent("onboarding_composer_submitted", { has_attachments: draft.attachments.length > 0 });
+                  captureOnboardingEvent("onboarding_model_resolved", {
+                    source: sessionModelSelection ? "session" : sendModel ? "app_default" : "none",
+                  });
                   captureAnalyticsEvent("task_message_sent", {
+                    is_first_run_on_install: taskRunQuality.isFirstRun(),
                     mode: draft.mode ?? "prompt",
                     is_command: Boolean(draft.command),
                     attachment_count: draft.attachments.length,
@@ -2043,6 +2259,7 @@ export function SessionRoute() {
                     model_id: sendModel?.modelID ?? null,
                   });
                   markTaskRunStart(targetSessionId);
+                  taskRunQuality.start(targetSessionId, sendModel);
                   const projectDimension = readWorkspaceProjectDimension(workspace.id);
                   const modelSelection = sessionModelSelection ? "manual" : "default";
                   const telemetryDimensions = [
@@ -2056,6 +2273,7 @@ export function SessionRoute() {
                   ];
                   trackSessionActive(targetSessionId, telemetryDimensions);
                   trackTaskStarted(targetSessionId, telemetryDimensions);
+                  noteActivationRunStarted(targetSessionId, draft.parts);
                   if (draft.mode === "shell") {
                     onPrepared?.();
                     await shellInSession(workspaceOpencodeClient, targetSessionId, text, { messageID: draft.messageId });
@@ -2078,19 +2296,29 @@ export function SessionRoute() {
                   const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                     workspaceId: workspace.id,
                     cacheKey: targetSessionId,
-                    runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
+                    runtimeKey: environmentRuntimeKey,
                     desktopTransport: isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? undefined : "main",
                   });
                   assertCurrent();
                   onPrepared?.(v2AcknowledgementText(parts));
-                  const result = await promptClient.session.promptAsync({
-                    sessionID: targetSessionId,
-                    messageID: draft.messageId,
-                    parts,
-                    model: sendModel ?? undefined,
-                    agent: sendAgent ?? undefined,
-                    ...(sendVariant ? { variant: sendVariant } : {}),
-                    system,
+                  const result = await sendWithModelUnavailableRetry({
+                    request: {
+                      sessionID: targetSessionId,
+                      messageID: draft.messageId,
+                      parts,
+                      model: sendModel ?? undefined,
+                      agent: sendAgent ?? undefined,
+                      ...(sendVariant ? { variant: sendVariant } : {}),
+                      system,
+                    },
+                    send: (request) => promptClient.session.promptAsync(request),
+                    refreshModels: () => ensureProviderListQuery(getReactQueryClient(), {
+                      client: promptClient,
+                      baseUrl: endpoint.opencodeBaseUrl,
+                      directory: workspaceRoot,
+                      force: true,
+                    }),
+                    assertCurrent,
                   });
                   if (result.error) {
                     if (isPromptAdmissionUnknown(result.error)) throw result.error;
@@ -2170,6 +2398,7 @@ export function SessionRoute() {
       workspaceTitle: paneEndpoint.workspaceTitle,
       workspaceRoot,
       workspaceType: paneEndpoint.workspaceType,
+      sandboxBackend: paneEndpoint.workspace.sandboxBackend,
       runtimeWorkspaceId: endpoint.workspaceId,
       opencodeBaseUrl: endpoint.opencodeBaseUrl,
       openworkToken: endpoint.token,
@@ -2293,9 +2522,10 @@ export function SessionRoute() {
       },
       draftScope: sessionDraftScope,
       selectedModel: newTaskModel ?? { providerID: "", modelID: "" },
-      modelOptions: organizationAssignedModelOptions,
+      modelOptions: pickerFallbackOptions,
       modelUnavailable: resolveModelAvailability(newTaskModel).status === "unavailable",
       modelUnavailableMessage,
+      modelRecoveryScope,
       organizationModelsEmpty,
       onRefreshOrganizationModels: refreshOrganizationModelAccess,
       modelPickerOpen: modelPicker.compactOpen,
@@ -2303,12 +2533,14 @@ export function SessionRoute() {
         modelPicker.setCompactOpen(open);
         if (open) {
           void sessionProviderAuthStore.refreshCloudOrgProviders({ force: true }).catch(() => undefined);
+          void preWorkspaceGatewayModels.refresh().catch(() => undefined);
           void refreshCloudProviderSync("model_picker_open");
         }
       },
       onModelChange: (model: ModelRef, variant?: string | null) => {
         changeNewTaskModel(model, variant !== undefined ? variant
           : newTaskModel?.providerID === model.providerID && newTaskModel.modelID === model.modelID ? newTaskVariant : null);
+        featureAnalytics.modelChanged(newTaskModel, model, false);
         modelPicker.setCompactOpen(false);
       },
       openWorkModelsEntitled,
@@ -2337,14 +2569,15 @@ export function SessionRoute() {
         );
         return result;
       },
-      isRemoteWorkspace: selectedWorkspace?.workspaceType === "remote",
-      isSandboxWorkspace: selectedWorkspace ? isSandboxWorkspace(selectedWorkspace) : false,
       onOpenSettingsSection: (section: ComposerSettingsSection) => {
         openComposerConfigure(section, {
           openLibrary: handleOpenExtensions,
           openSettings: handleOpenSettings,
         });
       },
+      // Library detail ids hold ":" and "/", so they travel as one encoded segment.
+      onOpenLibraryDetail: (detailId: string) => handleOpenExtensions(encodeURIComponent(detailId)),
+      skillSharingProvider: CreatedSkillSharingProvider,
     };
   }, [
     client,
@@ -2354,6 +2587,7 @@ export function SessionRoute() {
     listSlashCommands,
     local,
     modelUnavailableMessage,
+    modelRecoveryScope,
     newTaskModel,
     newTaskVariant,
     newTaskBehavior.label,
@@ -2365,7 +2599,7 @@ export function SessionRoute() {
     opencodeClient,
     openWorkModelsEntitled,
     openWorkModelsSyncing,
-    organizationAssignedModelOptions,
+    pickerFallbackOptions,
     organizationModelsEmpty,
     refreshCloudProviderSync,
     refreshOrganizationModelAccess,
@@ -2400,7 +2634,6 @@ export function SessionRoute() {
       });
       return;
     }
-    setCreateWorkspaceRemoteError(null);
     setCreateWorkspaceOpen(true);
   }, [checkDesktopRestriction, restrictionNotice, workspaces.length]);
 
@@ -2450,33 +2683,6 @@ export function SessionRoute() {
     }
   }, [workspaces]);
 
-  const handleShareWorkspace = useCallback((workspaceId: string) => {
-    shareWorkspaceState.openShareWorkspace(workspaceId);
-  }, [shareWorkspaceState]);
-
-  const handleSaveShareRemoteAccess = useCallback(
-    async (enabled: boolean) => {
-      if (!isDesktopRuntime()) return;
-      await remoteAccessRestart.save(enabled);
-    },
-    [remoteAccessRestart],
-  );
-
-  const handleExportWorkspaceConfig = useCallback(
-    async (workspaceId: string) => {
-      const workspace = workspaces.find((item) => item.id === workspaceId) ?? null;
-      if (!workspace) return;
-      const endpoint = endpointForWorkspace(workspace);
-      if (endpoint) {
-        const payload = await endpoint.client.exportWorkspace(endpoint.workspaceId);
-        downloadWorkspaceJson(workspaceExportFilename(workspace), payload);
-        return;
-      }
-      throw new Error("OpenWork server is unavailable. Reconnect the server before exporting workspace config.");
-    },
-    [endpointForWorkspace, workspaces],
-  );
-
   const handleForgetWorkspace = useCallback(
     async (workspaceId: string) => {
       if (typeof window !== "undefined") {
@@ -2510,10 +2716,12 @@ export function SessionRoute() {
     if (getSessionModelSelection(sessionId)) return;
     const scope = workspaceModelScope({ profileId: modelProfileId, workspaceId: endpoint.workspaceId,
       opencodeBaseUrl: endpoint.opencodeBaseUrl, localRuntime: isDesktopRuntime() });
-    const { model, variant } = resolveNewTaskModel(scope, { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null });
+    const { model, variant } = newChatDefaultModel({ workspaceDefault: readWorkspaceDefaultModel(scope),
+      orgDefault: orgDefaultModelForEngine(orgConfiguredDefaultModel, endpoint.opencodeBaseUrl),
+      appDefault: { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null } });
     const availableModel = modelForNewTask(model, observedAutoStatus, autoChecking);
     if (availableModel?.providerID && availableModel.modelID) useSessionModelStore.getState().setModel(sessionId, availableModel, variant);
-  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId, observedAutoStatus, autoChecking]);
+  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId, observedAutoStatus, autoChecking, orgConfiguredDefaultModel]);
 
   const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
     workspaceId: string,
@@ -2543,8 +2751,8 @@ export function SessionRoute() {
       // A stalled engine (rollover, overload) misses the 10 s request timeout
       // and used to surface as a dead-end "unavailable" toast that only Cmd+R
       // seemed to fix. Retry transient failures with a visible countdown first.
-      const session = await withTransientEngineRetry({
-        load: () => createRouteSession(endpoint, workspace.path?.trim() || undefined),
+      const created = await withTransientEngineRetry({
+        load: () => createRouteSessionOnEngine(endpoint, workspace.path?.trim() || undefined, sideChatLinkFor(sideChatOwner, workspaceId)),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
           const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
@@ -2555,6 +2763,7 @@ export function SessionRoute() {
           });
         },
       });
+      const { session, endpoint: sessionEndpoint } = created;
       if (workspaceId === selectedWorkspaceId) {
         void refreshCloudProviderSync("new_chat");
       }
@@ -2572,7 +2781,8 @@ export function SessionRoute() {
       useComposerStateStore.setState({ pendingFocusSessionId: session.id });
       rememberPendingCreatedSession(workspaceId, session.id);
       seedCreatedSessionSnapshot(workspaceId, session);
-      applyWorkspaceDefaultToSession(session.id, endpoint);
+      // Defaults are engine-specific: use the endpoint that actually created the session.
+      applyWorkspaceDefaultToSession(session.id, sessionEndpoint);
       useSessionAgentStore.getState().setAgent(session.id, agent);
       setSessionsByWorkspaceId((current) => {
         const next = {
@@ -2638,12 +2848,17 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [applyWorkspaceDefaultToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, newTaskAgent, refreshCloudProviderSync, refreshRouteState, reloadWorkspaceSessions, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+  }, [applyWorkspaceDefaultToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, newTaskAgent, refreshCloudProviderSync, refreshRouteState, reloadWorkspaceSessions, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, sideChatLinkFor, workspaces]);
 
   const handleCreateTaskInWorkspace = useCallback((workspaceId: string) => {
     openNewSessionDraft({ workspaceId }, navigate);
     focusPromptSoon();
   }, [navigate]);
+
+  // Shared by Cmd/Ctrl+N and the command palette's "New session".
+  const createNewSessionInSelectedWorkspace = useCallback(() => {
+    if (selectedWorkspaceId) handleCreateTaskInWorkspace(selectedWorkspaceId);
+  }, [handleCreateTaskInWorkspace, selectedWorkspaceId]);
 
   const handleCreateSplitTaskInWorkspace = useCallback(
     (_workspaceId: string) => {
@@ -2656,6 +2871,42 @@ export function SessionRoute() {
     },
     [navigate],
   );
+
+  // Text selected in a reply starts a side chat of that session with the text
+  // quoted. A side chat already beside it is a conversation of its own, so this
+  // opens a new draft; an open draft just gets the quote added.
+  const handleStartSideChatWithQuote = useCallback((text: string) => {
+    const workbench = useWorkbenchStore.getState();
+    const parent = workbench.primary;
+    if (!parent) return;
+    if (sideQuestionsEnabled) {
+      useSideQuestionStore.getState().setQuote(parent.sessionId, text);
+      showSideChatTab(parent.sessionId);
+      return;
+    }
+    const groupId = sessionManagementStore.getState().groupsByWorkspace[parent.workspaceId]?.assignments[parent.sessionId];
+    const destination = { workspaceId: parent.workspaceId, groupId, parent };
+    const ownerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
+    if (!ownerKey) return;
+    const composer = useComposerStateStore.getState();
+    const existing = composer.sessions[ownerKey]?.draft
+      || getSessionDraft(sessionDraftScope, destination.workspaceId, newSessionDraftSlot(destination))?.text
+      || "";
+    const draft = appendQuoteToDraft(existing, text);
+    const attached = workbench.sideChats[workbenchSessionKey(parent)];
+    if (attached?.draftDestination && isSameWorkbenchSession(workbench.secondary, attached)) {
+      // That draft's composer is on screen and owns its text: hand it the new text.
+      setPendingChatSeed(draft);
+    } else {
+      saveSessionDraft(sessionDraftScope, destination.workspaceId, newSessionDraftSlot(destination), { text: persistableComposerDraftText(draft), mode: "prompt" });
+      composer.setDraft(ownerKey, draft);
+      const tab = { workspaceId: parent.workspaceId, workspaceTitle: parent.workspaceTitle, sessionId: newSessionDraftSlot(destination), title: "Draft", draftDestination: destination };
+      workbench.openTab(tab);
+      workbench.setSideChat(parent, tab);
+    }
+    markFeatureUsed("sessionTree");
+    focusPromptSoon();
+  }, [sessionDraftScope, sideQuestionsEnabled]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -2749,6 +3000,7 @@ export function SessionRoute() {
         gatewayModelSelectionRef.current?.select(option, () => {
           if (activeSessionId) useSessionModelStore.getState().setModel(activeSessionId, next, variant);
           else changeNewTaskModel(next, variant);
+          featureAnalytics.modelChanged(selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel), next, Boolean(activeSessionId));
           useModelCollectionsStore.getState().recordRecent(next);
         }, () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
           && (!activeSessionId || getSessionModelSelection(activeSessionId) === selection));
@@ -2809,6 +3061,7 @@ export function SessionRoute() {
       }
       // Without a focused conversation the shortcut sets the new-task model, which follows the workspace default.
       else changeNewTaskModel(modelRef, decision.variant);
+      featureAnalytics.modelChanged(selection?.model ?? (activeSessionId ? local.prefs.defaultModel : newTaskModel), modelRef, Boolean(activeSessionId));
       useModelCollectionsStore.getState().recordRecent(modelRef);
     };
     const isCurrent = () => isFavoriteModelTargetCurrent(target, useWorkbenchStore.getState(), favoriteModelScope.current)
@@ -2864,15 +3117,14 @@ export function SessionRoute() {
     setTerminalOpen,
     sessionNumberShortcuts,
   } = useShellShortcuts({
-    canCreateTask,
-    workspaceId: selectedWorkspaceId,
-    onCreateTask: (workspaceId: string) => void handleCreateTaskInWorkspace(workspaceId),
+    onCreateNewSession: createNewSessionInSelectedWorkspace,
     onNextSessionTab: goToNextSessionTab,
     onPrevSessionTab: goToPrevSessionTab,
     onCycleThinkingMode: cycleThinkingMode,
     onCycleFavoriteModel: cycleFavoriteModel,
     onCycleModelSource: () => { cycleFavoriteModel(true); },
     onToggleFastMode: toggleFastMode,
+    onToggleArchiveSession: currentSessionArchive?.toggle,
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -2902,10 +3154,10 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
-  const { archiveSession, archiveDialog } = useSessionArchive({
+  const { archiveSession, archiveSessionInWorkspace, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
-    endpointForWorkspace,
+    endpointForSessionWorkspace,
     selectedWorkspaceId,
     selectedSessionId,
     navigateToWorkspaceSession,
@@ -2921,9 +3173,10 @@ export function SessionRoute() {
       });
     },
   });
-  const handleArchiveSession = async (sessionId: string, archived: boolean) => {
-    await archiveSession(sessionId, archived);
+  const handleArchiveSession = async (sessionId: string, archived: boolean, workspaceId: string) => {
+    await archiveSessionInWorkspace(workspaceId, sessionId, archived);
   };
+  archiveSessionRef.current = handleArchiveSession;
 
   useSessionControlActions({
     workspaces,
@@ -2934,7 +3187,7 @@ export function SessionRoute() {
     canCreateTask,
     openworkClient: client,
     opencodeClient,
-    archiveDisabledReason,
+    sessionStatusById: sidebarSessionStatusById,
     endpointForWorkspace,
     navigateToSession: navigateToSessionForControl,
     navigateToSessionRoot: navigateToSessionRootForControl,
@@ -2944,7 +3197,9 @@ export function SessionRoute() {
     },
     openModelPicker: openModelPickerForControl,
     refreshRouteState,
+    reloadWorkspaceSessions,
     archiveSession,
+    sessionTreeEnabled,
   });
 
   const seedUnavailableModelControlAction = useMemo<OpenworkControlAction | null>(() => {
@@ -3193,6 +3448,7 @@ export function SessionRoute() {
     behavior?: { value: string | null },
   ) => {
     const explicitBehavior = behavior !== undefined;
+    const previous = targetSessionId ? getSessionModelSelection(targetSessionId)?.model ?? local.prefs.defaultModel : newTaskModel;
     useModelCollectionsStore.getState().recordRecent(next);
     if (targetSessionId) {
       const sessionStore = useSessionModelStore.getState();
@@ -3201,8 +3457,9 @@ export function SessionRoute() {
     }
     if (!targetSessionId) changeNewTaskModel(next, explicitBehavior ? behavior.value
       : newTaskModel?.providerID === next.providerID && newTaskModel.modelID === next.modelID ? newTaskVariant : null);
+    featureAnalytics.modelChanged(previous, next, Boolean(targetSessionId));
     focusPromptSoon();
-  }, [changeNewTaskModel, newTaskModel, newTaskVariant]);
+  }, [changeNewTaskModel, local.prefs.defaultModel, newTaskModel, newTaskVariant]);
 
   // Refresh the non-tab fields of the nav ref during render. The `options`
   // field is maintained by the `onSessionTabsChange` callback from SessionPage.
@@ -3225,67 +3482,64 @@ export function SessionRoute() {
     ) ?? null;
   }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
 
+  // Management actions intentionally target the route/main session, not the focused side chat.
   const currentSessionActionPaletteItems = useMemo<PaletteItem[]>(() => {
     if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
-    const items: PaletteItem[] = [{
-      id: "session.pin.toggle",
-      title: currentSessionPinned
-        ? t("session_management.unpin_session")
-        : t("session_management.pin_session"),
-      detail: currentSessionForGroupMove.title,
-      meta: "Session",
-      keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
-      group: "actions",
-      action: () => {
-        setCommandPaletteOpen(false);
-        sessionManagementStore.getState().togglePin(selectedSessionId);
-      },
-    }];
-    if (opencodeClient) {
-      items.push({
-        id: "session.rename",
-        title: "Rename session…",
-        detail: currentSessionForGroupMove.title,
-        meta: "Session",
-        keywords: ["rename", "title", "name", "edit title"],
-        group: "actions",
-        action: () => {
-          setCommandPaletteOpen(false);
-          requestRenameSession(selectedSessionId);
-        },
-      });
+    const target = { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId, title: currentSessionForGroupMove.title };
+    const isArchived = (selectedSidebarSession?.time?.archived ?? 0) > 0;
+    const actions = buildSessionMenuActions({
+      isPinned: currentSessionPinned,
+      isArchived,
+      groups: [], assignedGroupId: null,
+      onTogglePin: () => sessionManagementStore.getState().togglePin(target.sessionId),
+      onAssignGroup: () => {}, // The palette's group submode also supports unsent drafts.
+      onRename: opencodeClient ? () => requestSessionDialog({ action: "rename", target }) : undefined,
+      onDelete: client ? () => requestSessionDialog({ action: "delete", target }) : undefined,
+      onArchive: opencodeClient ? async () => {
+        await archiveSessionInWorkspace(target.workspaceId, target.sessionId, !isArchived);
+      } : undefined,
+    });
+    return sessionMenuActionsToPalette(actions, target.title, () => setCommandPaletteOpen(false));
+  }, [archiveSessionInWorkspace, client, currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedSidebarSession, selectedWorkspaceId]);
+
+  const paletteSecondarySession = useWorkbenchStore((state) => state.secondary);
+
+  // An empty composer has a group too: the one its new task will be created in.
+  // The focused unsent side chat wins over the main empty composer.
+  const paletteDraftDestination = useWorkbenchStore((state) => (
+    state.focusedPane === "secondary" && state.secondary?.draftDestination ? state.secondary.draftDestination : null
+  ));
+  const paletteDraftGroupMove = useMemo(() => {
+    if (!selectedWorkspaceId) return null;
+    const draftGroup = new URLSearchParams(location.search).get("draftGroup") || undefined;
+    const destination = paletteDraftDestination
+      ?? (selectedSessionId ? null : { workspaceId: selectedWorkspaceId, groupId: draftGroup });
+    // Groups are listed for the selected workspace only.
+    if (!destination || destination.workspaceId !== selectedWorkspaceId) return null;
+    const draftOwnerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
+    return draftOwnerKey ? { draftOwnerKey, groupId: destination.groupId ?? null } : null;
+  }, [location.search, paletteDraftDestination, selectedSessionId, selectedWorkspaceId, sessionDraftScope]);
+
+  const currentSessionGroupId = paletteDraftGroupMove
+    ? paletteDraftGroupMove.groupId
+    : selectedSessionId ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null : null;
+
+  const handleMoveCurrentSessionToGroup = useCallback((groupId: string | null) => {
+    if (paletteDraftGroupMove) {
+      window.dispatchEvent(new CustomEvent(MOVE_NEW_TASK_DRAFT_EVENT, { detail: { draftOwnerKey: paletteDraftGroupMove.draftOwnerKey, groupId } }));
+      focusPromptSoon();
+      return;
     }
-    return items;
-  }, [currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedWorkspaceId]);
-
-  const currentSessionGroupId = selectedSessionId
-    ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null
-    : null;
-
-  const handleMoveCurrentSessionToGroup = useCallback((groupId: string) => {
     if (!selectedWorkspaceId || !selectedSessionId) return;
     assignSessionToGroup(selectedWorkspaceId, selectedSessionId, groupId);
-  }, [assignSessionToGroup, selectedSessionId, selectedWorkspaceId]);
-
-  const sessionSearchFetcher = useMemo<SessionMessageFetcher | null>(() => {
-    if (!client) return null;
-    // Cap the transcript fetch to keep multi-workspace scans fast; matches in
-    // anything older than the most recent 400 messages are traded away for
-    // responsiveness.
-    return async (workspaceId: string, sessionId: string) => {
-      const workspace = workspaces.find((item) => item.id === workspaceId);
-      const endpoint = endpointForWorkspace(workspace);
-      if (!endpoint) throw new Error("Workspace runtime is not connected.");
-      return getNativeSessionMessages(endpoint, sessionId, { limit: 400 });
-    };
-  }, [client, endpointForWorkspace, workspaces]);
+  }, [assignSessionToGroup, paletteDraftGroupMove, selectedSessionId, selectedWorkspaceId]);
 
   const sessionSearchPaletteItem = useMemo<PaletteItem>(() => ({
     id: "session-search.open",
-    title: "Search session messages",
-    detail: "Deep search every session, including message content",
+    title: "Search sessions",
+    detail: "Find a session by title in any workspace",
     meta: "Cmd/Ctrl+Shift+F",
-    searchText: "search find sessions messages history transcript content",
+    searchText: "search find sessions titles history",
     action: () => {
       setCommandPaletteOpen(false);
       setSessionSearchOpen(true);
@@ -3461,6 +3715,9 @@ export function SessionRoute() {
     if (workspaceId === selectedWorkspaceId) void refreshCloudProviderSync("new_chat");
     claimComposerSessionDraftScope(session.id, sessionDraftScopeKey(pending.scope, endpoint.workspaceId, session.id));
     markComposerAutoSend(session.id, pendingConversationAutoSendPayload(pending, endpoint, session.id));
+    // The first message was typed in the new-task composer; keep the keyboard
+    // in the created session's composer so a follow-up needs no extra click.
+    useComposerStateStore.setState({ pendingFocusSessionId: session.id });
     rememberPendingCreatedSession(workspaceId, session.id);
     applyWorkspaceDefaultToSession(session.id, endpoint);
     const next = { ...sessionsByWorkspaceIdRef.current, [workspaceId]: mergeWorkspaceRouteSession(sessionsByWorkspaceIdRef.current[workspaceId] ?? [], session) };
@@ -3480,6 +3737,7 @@ export function SessionRoute() {
     if (!folder) return;
     const agent = newTaskAgent;
     const projectLabel = options?.projectLabel?.trim() ?? "";
+    captureOnboardingEvent("onboarding_workspace_started", { choice: onPrepared ? "default_chat" : "folder" });
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
@@ -3595,6 +3853,7 @@ export function SessionRoute() {
         if (session?.id) focusPromptSoon();
       }
     } catch (error) {
+      captureOnboardingEvent("onboarding_workspace_failed", { reason: "workspace_setup_failed" });
       setCreateWorkspaceError(describeWorkspaceCreateError(error));
       if (onPrepared || options?.firstTaskPrompt || options?.firstTaskAttachments?.length) throw error;
     } finally {
@@ -3624,6 +3883,18 @@ export function SessionRoute() {
           if (canCreateWorkspaces()) handleOpenCreateWorkspace();
           throw new Error("Choose a workspace before retrying this message.");
         }
+        // The first workspace's engine instance reads its providers when this
+        // chat starts. Let the organization provider sync begun at sign-in
+        // finish first (bounded; on timeout the send proceeds as before).
+        if (newTaskModel && isCloudManagedProviderKey(newTaskModel.providerID)) {
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, FIRST_CHAT_PROVIDER_SYNC_TIMEOUT_MS);
+            void sessionProviderAuthStore.runCloudProviderSync("new_chat").finally(() => {
+              window.clearTimeout(timer);
+              resolve();
+            });
+          });
+        }
         const home = await getDesktopHomeDir().catch(() => "");
         const folder = home ? await joinDesktopPath(home, "OpenWork Chat").catch(() => "") : "";
         if (!folder) throw new Error("Choose a workspace before retrying this message.");
@@ -3637,7 +3908,7 @@ export function SessionRoute() {
       const current = usePendingConversationStore.getState().conversations[pending.id];
       if (current) publishCreatedConversation(current, created, newTaskAgent, prepared?.title);
     });
-  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, publishCreatedConversation, sessionDraftScope, workspacesRef]);
+  }, [endpointForWorkspace, handleCreateWorkspace, handleOpenCreateWorkspace, navigate, newTaskAgent, newTaskModel, publishCreatedConversation, sessionDraftScope, sessionProviderAuthStore, workspacesRef]);
 
   const createWorkspaceControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "workspace.create",
@@ -3686,59 +3957,14 @@ export function SessionRoute() {
   }), [reloadWorkspaceSessions, workspaces]);
   useControlAction(reloadWorkspaceSessionsControlAction);
 
-  const handleCreateRemoteWorkspace = useCallback(async (input: {
-    openworkHostUrl?: string | null;
-    openworkToken?: string | null;
-    directory?: string | null;
-    displayName?: string | null;
-  }) => {
-    const baseUrlValue = input.openworkHostUrl?.trim() ?? "";
-    if (!baseUrlValue) return false;
-    setCreateWorkspaceRemoteBusy(true);
-    setCreateWorkspaceRemoteError(null);
-    try {
-      const remoteType: "openwork" = "openwork";
-      const payload = {
-        baseUrl: baseUrlValue,
-        openworkHostUrl: baseUrlValue,
-        openworkToken: input.openworkToken?.trim() || null,
-        displayName: input.displayName?.trim() || null,
-        directory: input.directory?.trim() || null,
-        remoteType,
-      };
-      let list: WorkspaceList | null = null;
-      if (isDesktopRuntime()) {
-        list = await workspaceCreateRemote(payload);
-      } else if (client) {
-        list = await client.createRemoteWorkspace(payload).catch(() => null);
-      }
-      if (!list) {
-        throw new Error("OpenWork server is unavailable. Start or reconnect the server before connecting a remote workspace.");
-      }
-      const createdId = resolveWorkspaceListSelectedId(list) || list.workspaces[list.workspaces.length - 1]?.id || "";
-      if (createdId) {
-        await workspaceSetSelected(createdId).catch(() => undefined);
-        await workspaceSetRuntimeActive(createdId).catch(() => undefined);
-      }
-      setCreateWorkspaceOpen(false);
-      // Mark onboarding complete so the /welcome redirect never fires again.
-      local.setPrefs((prev) => ({ ...prev, hasCompletedOnboarding: true }));
-      await refreshRouteState();
-      return true;
-    } catch (error) {
-      setCreateWorkspaceRemoteError(error instanceof Error ? error.message : t("app.unknown_error"));
-      return false;
-    } finally {
-      setCreateWorkspaceRemoteBusy(false);
-    }
-  }, [client, local, refreshRouteState]);
-
   const startAppConversation = async (prompt: string) => {
     const sessionId = await handleCreateTaskInWorkspaceWithOpenMode(selectedWorkspaceId, "primary");
     if (!sessionId) throw new Error("Could not start a conversation. Check that your workspace is connected.");
     saveSessionDraft(sessionDraftScope, selectedWorkspaceId, sessionId, { text: prompt, mode: "prompt" });
     focusPromptSoon();
   };
+
+  const composerImpressionRef = useOnboardingStep("composer", !effectiveLoading && !selectedSessionId && !activityRouteActive && !cloudWorkspaceMainContentTakeover);
 
   return (
     <WorkspaceProvider
@@ -3757,9 +3983,8 @@ export function SessionRoute() {
     >
     {opencodeClient && selectedWorkspaceEndpoint && opencodeBaseUrl && selectedWorkspaceServerToken ? (
       <ReactSessionRuntime
-        // Use the server-side workspace id (the one without the `rem_`
-        // prefix) so the React Query cache keys session-sync writes match
-        // the keys SessionSurface reads from. Otherwise events arrive but
+        // Use the server-side workspace id so the React Query cache keys
+        // session-sync writes match the keys SessionSurface reads from. Otherwise events arrive but
         // the UI never sees them and gets stuck on "thinking".
         workspaceId={selectedWorkspaceEndpoint.workspaceId}
         sessionId={selectedSessionId}
@@ -3771,18 +3996,29 @@ export function SessionRoute() {
         onSessionDeleted={handleRuntimeSessionDeleted}
       />
     ) : null}
+    {sessionTreeEnabled && selectedWorkspaceId && opencodeBaseUrl && isOpencodeV2BaseUrl(opencodeBaseUrl) ? (
+      <SessionReportBridge
+        sessions={sessionsByWorkspaceId[selectedWorkspaceId] ?? NO_ROUTE_SESSIONS}
+        statuses={sessionActivityByWorkspaceId[selectedWorkspaceId]}
+        engine={{ baseUrl: opencodeBaseUrl, directory: selectedWorkspaceRoot || undefined, token: selectedWorkspaceServerToken || undefined }}
+      />
+    ) : null}
     <SessionPage
+      ref={composerImpressionRef}
+      currentSessionArchive={currentSessionArchive}
       sessionReferenceInventories={sessionReferenceInventories}
       createWorkspaceSessionMetadataCallbacks={createWorkspaceSessionMetadataCallbacks}
       isSessionReferenceCurrent={isSessionReferenceCurrent}
       sessionNumberShortcuts={sessionNumberShortcuts}
       selectedSessionId={selectedSessionId}
+      historySessionId={selectedSessionId ?? (remoteThreadKey ? remoteSessionRouteId(remoteThreadKey) : null)}
       selectedWorkspaceId={selectedWorkspaceId}
       selectedWorkspaceDisplay={selectedWorkspace ? {
         id: selectedWorkspace.id,
         name: selectedWorkspace.name ?? undefined,
         displayName: selectedWorkspace.displayNameResolved,
         workspaceType: selectedWorkspace.workspaceType,
+        sandboxBackend: selectedWorkspace.sandboxBackend,
       } : { workspaceType: "local" }}
       selectedWorkspaceRoot={selectedWorkspaceRoot}
       selectedWorkspaceError={selectedWorkspaceError}
@@ -3825,7 +4061,6 @@ export function SessionRoute() {
         submitting: sessionProviderAuthSnapshot.providerAuthBusy,
         error: sessionProviderAuthSnapshot.providerAuthError,
         preferredProviderId: sessionProviderAuthSnapshot.providerAuthPreferredProviderId,
-        workerType: sessionProviderAuthSnapshot.providerAuthWorkerType,
         providers: sessionProviderAuthSnapshot.providerAuthProviders.filter(
           (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction }),
         ),
@@ -3837,6 +4072,11 @@ export function SessionRoute() {
             ([providerId]) => !isDesktopProviderBlocked({ providerId, checkRestriction: checkDesktopRestriction }),
           ),
         ),
+        claudeAgent: sessionProviderAuthSnapshot.claudeAgent,
+        onConnectClaudeAgent: sessionProviderAuthStore.connectClaudeAgent,
+        onSignInClaudeAgent: sessionProviderAuthStore.signInClaudeAgent,
+        onCancelClaudeAgentSignIn: sessionProviderAuthStore.cancelClaudeAgentSignIn,
+        onCheckClaudeAgentInstalled: sessionProviderAuthStore.checkClaudeAgentInstalled,
         onSelect: sessionProviderAuthStore.startProviderAuth,
         onSubmitApiKey: async (providerId, apiKey) => {
           const result = await sessionProviderAuthStore.submitProviderApiKey(providerId, apiKey);
@@ -3864,11 +4104,35 @@ export function SessionRoute() {
         />
       }
       // Page titles match their sidebar labels.
-      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? artifactsLabel : automationsRouteActive ? "Automations" : dashboardRouteActive ? artifactsLabel : undefined}
       // Dashboard, Automations and Library share one flat page surface.
       primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
-      primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
-      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
+      primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
+      primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
+      onOpenRemoteTask={openRemoteTask}
+      onStartSideChatWithQuote={sessionTreeEnabled || sideQuestionsEnabled ? handleStartSideChatWithQuote : undefined}
+      retainedArtifactSlot={retainedArtifactsScope ? {
+        scope: retainedArtifactsScope,
+        active: dashboardRouteActive && !appsRouteActive,
+        content: <WorkspaceProvider
+          client={opencodeClient}
+          opencodeBaseUrl={opencodeBaseUrl}
+          openworkServerClient={dashboardEndpoint?.client ?? null}
+          workspaceId={dashboardEndpoint?.workspaceId ?? ""}
+          selectedWorkspaceRoot={selectedWorkspaceRoot}
+        >
+          <DashboardPage
+            active={dashboardRouteActive && !appsRouteActive}
+            fallbackEndpoints={dashboardFallbackEndpoints}
+            onCreateApp={startAppConversation}
+            headerActionsTarget={dashboardRouteActive && !appsRouteActive ? dashboardHeaderActionsTarget : null}
+            onSignIn={() => handleOpenSettings("/settings/cloud-account")}
+          />
+        </WorkspaceProvider>,
+      } : undefined}
+      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : remoteTaskRouteActive && remoteThreadKey ? (
+        <RemoteSessionSurface key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} />
+      ) : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -3880,12 +4144,12 @@ export function SessionRoute() {
         </WorkspaceProvider>
       ) : automationsRouteActive ? (
         <AutomationsPage
-          providerCatalog={providerCatalog}
+          providerCatalog={automationCatalog}
           workspaceId={selectedWorkspaceId}
           headerActionsTarget={automationsHeaderActionsTarget}
           onSignIn={() => handleOpenSettings("/settings/cloud-account")}
         />
-      ) : dashboardRouteActive ? (
+      ) : dashboardRouteActive && retainedArtifactsScope ? <></> : dashboardRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -3914,6 +4178,7 @@ export function SessionRoute() {
         sessionStatusById: sidebarSessionStatusById,
         sessionAttentionLabelById: sidebarSessionAttention.labelById,
         sessionAttentionSourceById: sidebarSessionAttention.sourceById,
+        sessionAttentionKindById: sidebarSessionAttention.kindById,
         connectingWorkspaceId: null,
         workspaceConnectionStateById,
         newTaskDisabled: !canCreateTask,
@@ -3927,6 +4192,7 @@ export function SessionRoute() {
             }
           : undefined,
         dashboardActive: dashboardRouteActive || appsRouteActive,
+        dashboardLabel: artifactsLabel,
         onOpenDashboard: dashboardSurfaceAvailable
           ? () => {
               navigate(dashboardRoute());
@@ -3957,7 +4223,8 @@ export function SessionRoute() {
         onOpenSession: (workspaceId, sessionId) => {
           setLegacySelectedWorkspaceId(workspaceId);
           writeActiveWorkspaceId(workspaceId || null);
-          writeLastSessionFor(workspaceId, sessionId);
+          // Back/forward can open a task on another computer; it is not a local session to restore.
+          if (!isRemoteSessionRouteId(sessionId)) writeLastSessionFor(workspaceId, sessionId);
           navigateToWorkspaceSession(workspaceId, sessionId);
         },
         onPrefetchSession: handlePrefetchSession,
@@ -3998,15 +4265,14 @@ export function SessionRoute() {
             if (!currentWorkspace) throw new Error("Workspace is unavailable. Try again.");
             const workspaceEndpoint = endpointForWorkspace(currentWorkspace);
             if (!workspaceEndpoint?.token) throw new Error("Workspace is disconnected. Reconnect and try again.");
-            return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined);
+            const link = sideChatLinkFor(destination.parent, workspaceId);
+            if (link) markFeatureUsed("sessionTree");
+            return createRouteSessionOnEngine(workspaceEndpoint, currentWorkspace.path?.trim() || undefined, link);
           }, (created) => publishCreatedConversation(pending, created, agent, workspace?.displayNameResolved));
         },
         onOpenRenameWorkspace: handleOpenRenameWorkspace,
-        onShareWorkspace: handleShareWorkspace,
         onRevealWorkspace: (id) => void handleRevealWorkspace(id),
-        onRecoverWorkspace: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "recover"),
-        onTestWorkspaceConnection: (workspaceId) => runRemoteWorkspaceConnectionCheck(workspaceId, "test"),
-        onEditWorkspaceConnection: remoteWorkspaceConnectionEditor.open,
+        onRetryWorkspace: (workspaceId) => reloadWorkspaceSessions(workspaceId),
         onForgetWorkspace: (id) => void handleForgetWorkspace(id),
         onOpenCreateWorkspace: handleOpenCreateWorkspace,
         onOpenSessionSearch: () => setSessionSearchOpen(true),
@@ -4023,37 +4289,6 @@ export function SessionRoute() {
       }}
       todos={todos}
       sessionLoadingById={(sessionId) => effectiveLoading && Boolean(sessionId && sessionId === selectedSessionId)}
-      shareWorkspaceModal={
-        shareWorkspaceState.shareWorkspaceOpen
-          ? {
-              open: true,
-              onClose: shareWorkspaceState.closeShareWorkspace,
-              workspaceName: shareWorkspaceState.shareWorkspaceName,
-              workspaceDetail: shareWorkspaceState.shareWorkspaceDetail,
-              fields: shareWorkspaceState.shareFields,
-              remoteAccess:
-                isDesktopRuntime() && shareWorkspaceState.shareWorkspace?.workspaceType === "local"
-                  ? {
-                      enabled: openworkServerSettings.remoteAccessEnabled === true,
-                      busy: remoteAccessRestart.busy,
-                      error: remoteAccessRestart.error,
-                      status: remoteAccessRestart.status,
-                      onSave: handleSaveShareRemoteAccess,
-                    }
-                  : undefined,
-              note: shareWorkspaceState.shareNote,
-              onExportConfig:
-                shareWorkspaceState.exportDisabledReason === null
-                  ? () => {
-                      const id = shareWorkspaceState.shareWorkspaceId;
-                      if (!id) return;
-                      void handleExportWorkspaceConfig(id);
-                    }
-                  : undefined,
-              exportDisabledReason: shareWorkspaceState.exportDisabledReason,
-            }
-          : null
-      }
       activePermission={activePermission}
       activePermissionSourceTitle={activePermissionSourceTitle}
       permissionReplyBusy={permissionReplyBusy}
@@ -4064,33 +4299,36 @@ export function SessionRoute() {
       safeStringify={safeStringify}
       onRenameSession={
         opencodeClient
-          ? async (sessionId, nextTitle) => {
+          ? async (sessionId, nextTitle, workspaceId) => {
               const trimmed = nextTitle.trim();
               if (!trimmed) return;
-              await opencodeClient.session.update({
-                sessionID: sessionId,
-                title: trimmed,
-                directory: selectedWorkspaceRoot || undefined,
-              });
-              await refreshRouteState();
+              const owner = workspaces.find((workspace) => workspace.id === workspaceId
+                && sessionsByWorkspaceId[workspace.id]?.some((session) => session.id === sessionId));
+              const endpoint = owner ? endpointForSessionWorkspace(owner) : null;
+              if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
+              const createEngineClient = isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? createClientV2 : createClient;
+              const ownerClient = createEngineClient(endpoint.opencodeBaseUrl, owner.path, { token: endpoint.token, mode: "openwork" });
+              unwrap(await ownerClient.session.update({ sessionID: sessionId, title: trimmed, directory: owner.path }));
+              await reloadWorkspaceSessions(owner.id);
             }
           : undefined
       }
       onDeleteSession={
         client && selectedWorkspaceId
-          ? async (sessionId) => {
-              const endpoint = endpointForWorkspace(selectedWorkspace);
-              if (!endpoint) return;
+          ? async (sessionId, workspaceId) => {
+              const owner = workspaces.find((workspace) => workspace.id === workspaceId
+                && sessionsByWorkspaceId[workspace.id]?.some((session) => session.id === sessionId));
+              const endpoint = owner ? endpointForWorkspace(owner) : null;
+              if (!owner || !endpoint) throw new Error("The session's workspace is no longer connected.");
               await deleteRouteSession(endpoint, sessionId);
-              if (selectedSessionId === sessionId) {
-                navigateToWorkspaceSession(selectedWorkspaceId);
+              if (selectedWorkspaceId === workspaceId && selectedSessionId === sessionId) {
+                navigateToWorkspaceSession(workspaceId);
               }
-              await refreshRouteState();
+              await reloadWorkspaceSessions(workspaceId);
             }
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
-      archiveDisabledReason={archiveDisabledReason}
       statusBar={{
         // No per-session loading state here: the account row renders only
         // app-scoped facts. Session loading lives in the pane; an unresolved
@@ -4098,6 +4336,7 @@ export function SessionRoute() {
         reloadBusy: reloadCoordinator.reloadBusy,
         reloadError: reloadCoordinator.reloadError,
         openWorkConnectState: sessionMcpMaintenance,
+        onOpenDiagnostics: () => handleOpenSettings(developerMode ? "/settings/debug" : "/settings/advanced/agent-access"),
       }}
       notFoundMessage={activityRouteActive ? null : gatedRouteNotFoundMessage}
       mainContentTakeover={
@@ -4125,7 +4364,6 @@ export function SessionRoute() {
         setCreateWorkspaceError(null);
       }}
       onConfirm={handleCreateWorkspace}
-      onConfirmRemote={handleCreateRemoteWorkspace}
       onPickFolder={async () => singlePickedDirectory(await pickDirectory({ title: t("onboarding.authorize_folder") }))}
       submitting={createWorkspaceBusy}
       localError={createWorkspaceError}
@@ -4135,19 +4373,6 @@ export function SessionRoute() {
           ? undefined
           : t("app.local_disabled_reason")
       }
-      remoteSubmitting={createWorkspaceRemoteBusy}
-      remoteError={createWorkspaceRemoteError}
-    />
-    <CreateRemoteWorkspaceModal
-      open={remoteWorkspaceConnectionEditor.workspace !== null}
-      onClose={remoteWorkspaceConnectionEditor.close}
-      onConfirm={(input) => void remoteWorkspaceConnectionEditor.save(input)}
-      initialValues={remoteWorkspaceConnectionEditor.initialValues}
-      submitting={remoteWorkspaceConnectionEditor.busy}
-      error={remoteWorkspaceConnectionEditor.error}
-      title={t("dashboard.edit_remote_workspace_title")}
-      subtitle={t("dashboard.edit_remote_workspace_subtitle")}
-      confirmLabel={t("dashboard.edit_remote_workspace_confirm")}
     />
     <RenameWorkspaceModal
       open={renameWorkspaceId !== null}
@@ -4167,18 +4392,20 @@ export function SessionRoute() {
       open={commandPaletteOpen}
       onClose={() => setCommandPaletteOpen(false)}
       developerMode={developerMode}
-      onCreateNewSession={() => {
-        if (selectedWorkspaceId) {
-          void handleCreateTaskInWorkspace(selectedWorkspaceId);
-        }
-      }}
+      onCreateNewSession={createNewSessionInSelectedWorkspace}
       onCreateNewSplitSession={() => {
+        if (sideQuestionsEnabled && selectedSessionId) {
+          showSideChatTab(selectedSessionId);
+          return;
+        }
         if (selectedWorkspaceId) {
           void handleCreateSplitTaskInWorkspace(selectedWorkspaceId);
         }
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
       currentSession={selectedSessionId ? { workspaceId: selectedWorkspaceId, sessionId: selectedSessionId } : null}
+      secondarySession={paletteSecondarySession}
+      onCloseSplitSession={paletteSecondarySession ? () => useWorkbenchStore.getState().setSplit(null) : undefined}
       onOpenSessionInSplit={(workspaceId, sessionId) => {
         const option = paletteSessionOptions.find((candidate) => (
           candidate.workspaceId === workspaceId && candidate.sessionId === sessionId
@@ -4198,8 +4425,9 @@ export function SessionRoute() {
       onToggleSidebar={toggleSidebar}
       onOpenAutomations={() => navigate(automationsRoute())}
       onOpenDashboard={() => navigate(dashboardRoute())}
+      dashboardLabel={artifactsLabel}
       onCreateWorkspace={handleOpenCreateWorkspace}
-      modelOptions={paletteModelCatalog ? [...paletteModelCatalog] : paletteTargetSessionId === selectedSessionId ? modelPicker.actionOptions : []}
+      modelOptions={commandPaletteModelOptions(paletteModelCatalog, modelPicker.actionOptions)}
       selectedModel={paletteSelectedModel}
       selectedModelBehavior={paletteSelectedModelBehavior}
       onSelectModel={(next, behavior) => {
@@ -4222,9 +4450,10 @@ export function SessionRoute() {
       }}
       sessions={paletteSessionOptions}
       sessionGroups={paletteSessionGroups}
-      currentSessionForGroupMove={currentSessionForGroupMove}
+      currentSessionForGroupMove={paletteDraftGroupMove ? { title: "this new task" } : currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
+      onCreateGroup={selectedWorkspaceId ? () => requestSessionDialog({ action: "create-group", workspaceId: selectedWorkspaceId }) : undefined}
       extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
@@ -4235,7 +4464,6 @@ export function SessionRoute() {
       open={sessionSearchOpen}
       onClose={() => setSessionSearchOpen(false)}
       sessions={paletteSessionOptions}
-      fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
     <ModelPickerModal
@@ -4259,7 +4487,7 @@ export function SessionRoute() {
       target={modelPickerSessionId ? "session" : "default"}
       currentBehaviorValue={modelPickerSelection
         ? modelPickerSelection.variant
-        : modelPickerSessionId ? local.prefs.modelVariant ?? null : newTaskVariant}
+        : modelPickerSessionId ? modelVariantValue : newTaskVariant}
       current={
         modelPickerSelection?.model
           ?? (modelPickerSessionId ? local.prefs.defaultModel : newTaskModel)

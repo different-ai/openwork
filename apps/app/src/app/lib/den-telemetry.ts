@@ -3,7 +3,8 @@
  *
  * Activates lazily when the user is signed into Den.
  * Sends lightweight usage signals to POST /v1/telemetry/ingest.
- * Fire-and-forget: no retries, no queue, no local storage.
+ * Fire-and-forget: no retries and no local storage; a short in-memory batch
+ * is sent only under the account and organization that recorded it.
  * If the request fails, the error is swallowed silently.
  *
  * The server extracts org_id and user_id from the auth session.
@@ -38,6 +39,8 @@ type TelemetryEvent = TelemetryEventFields & {
 };
 
 let pendingEvents: TelemetryEvent[] = [];
+/** The account, organization and server the queued events were recorded under. */
+let pendingContext: string | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 10_000;
 const MAX_BATCH_SIZE = 50;
@@ -53,22 +56,40 @@ export function resolveDenTelemetryIngestUrl(settings: DenSettings): string | nu
   return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;
 }
 
+/**
+ * The ingest route attributes events to the caller's token and active
+ * organization, so a batch may only be sent under the context that recorded it.
+ */
+export function telemetryContextKey(settings: DenSettings): string | null {
+  if (!settings.authToken) return null;
+  return JSON.stringify([settings.baseUrl, settings.apiBaseUrl ?? null, settings.authToken, settings.activeOrgId ?? null]);
+}
+
+function discardPending(): void {
+  pendingEvents = [];
+  pendingContext = null;
+}
+
 async function flushEvents(): Promise<void> {
   if (pendingEvents.length === 0) return;
 
   const settings = readDenSettings();
-  if (!settings.authToken) {
-    pendingEvents = [];
+  const context = telemetryContextKey(settings);
+  // Signed out, or switched account or organization since these were recorded:
+  // drop them rather than attribute them to the new context.
+  if (!context || context !== pendingContext) {
+    discardPending();
     return;
   }
 
   const url = resolveDenTelemetryIngestUrl(settings);
   if (!url) {
-    pendingEvents = [];
+    discardPending();
     return;
   }
 
   const batch = pendingEvents.splice(0, MAX_BATCH_SIZE);
+  if (pendingEvents.length === 0) pendingContext = null;
 
   try {
     const controller = new AbortController();
@@ -109,8 +130,10 @@ function scheduleFlush(): void {
  * If the user is not signed into Den, the event is silently dropped.
  */
 export function trackTelemetryEvent(type: string, fields: TelemetryEventFields = {}): void {
-  const settings = readDenSettings();
-  if (!settings.authToken) return;
+  const context = telemetryContextKey(readDenSettings());
+  if (!context) return;
+  if (pendingContext !== null && pendingContext !== context) discardPending();
+  pendingContext = context;
 
   pendingEvents.push({
     type,

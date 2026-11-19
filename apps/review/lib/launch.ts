@@ -1,17 +1,13 @@
-import { previewWorld, PreviewLaunchError, type PreviewSession, type PreviewWorld } from "@openwork/freestyle";
-import type { BuildProgress } from "@openwork/freestyle/progress";
+import { isEvidenceProvider, type EvidenceProviderId } from "@openwork/evidence-provider";
+import { previewWorld, type PreviewWorld, type ReviewPreviewProvider } from "@openwork/evidence-provider/review";
+import type { PreviewProviderOption } from "./preview-options.ts";
 
 export interface LaunchDependencies {
   readReview(id: string): Promise<{ gitSha: string } | null>;
-  /** Resolves when this commit already has a snapshot for the world. */
-  hasSnapshot(gitSha: string, world: PreviewWorld): Promise<boolean>;
-  launchPreview(input: { gitSha: string; reportId: string; world: PreviewWorld }): Promise<PreviewSession>;
-  buildSnapshot(gitSha: string, world: PreviewWorld): Promise<unknown>;
-  /** What a first build of this commit/world is doing right now. */
-  buildProgress(gitSha: string, world: PreviewWorld): Promise<BuildProgress>;
-  /** Runs work after the response has been sent (Next's `after`). */
+  provider(id?: EvidenceProviderId): ReviewPreviewProvider;
+  /** Fresh server-side provider configuration and capabilities on every request/allocation. */
+  options: () => Promise<readonly PreviewProviderOption[]>;
   schedule(task: () => Promise<void>): void;
-  connected(): boolean;
 }
 
 const headers = { "cache-control": "private, no-store" };
@@ -19,83 +15,100 @@ type Context = { params: Promise<{ id: string }> };
 
 function sameOrigin(request: Request): boolean {
   const url = new URL(request.url);
-  // Next's local server may normalize request.url to localhost even when the
-  // browser requested 127.0.0.1. Host is the actual request authority.
   const authority = request.headers.get("host") ?? url.host;
   const protocol = request.headers.get("x-forwarded-proto") ?? url.protocol.slice(0, -1);
   return ["http", "https"].includes(protocol) && request.headers.get("origin") === `${protocol}://${authority}`;
 }
 
-/**
- * A launch never builds inside the request. A missing snapshot is built after the
- * response (bounded by the function's maxDuration) while the page polls GET; the
- * reviewer launches once it is ready. Builders share a provider-side lock, so a
- * second reviewer clicking during a build waits for the same snapshot.
- */
+function requestedProvider(value: unknown): EvidenceProviderId | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isEvidenceProvider(value)) throw new Error("Unsupported sandbox provider");
+  return value;
+}
+
 export function launchHandlers(deps: LaunchDependencies) {
-  async function POST(request: Request, { params }: Context): Promise<Response> {
-    // Vercel Authentication remains the hosted identity boundary. Require a same-origin
-    // browser action so a third-party page cannot spend sandbox quota through that session.
-    if (!sameOrigin(request)) return Response.json({ error: "Launch the sandbox from its review page." }, { status: 403, headers });
-    if (!deps.connected()) return Response.json({ error: "Freestyle is not connected. The review app owner can configure it." }, { status: 503, headers });
-    const { id } = await params;
-    const report = await deps.readReview(id);
-    if (!report) return Response.json({ error: "Review not found." }, { status: 404, headers });
-    let world: PreviewWorld;
+  async function resolveProvider(requested?: EvidenceProviderId, world?: PreviewWorld): Promise<ReviewPreviewProvider | Response> {
     try {
-      const body: unknown = await request.text().then((text) => text ? JSON.parse(text) : {});
-      world = previewWorld(typeof body === "object" && body !== null && "world" in body ? body.world : "app-web");
-    } catch { return Response.json({ error: "Choose OpenWork web, Desktop only, or an ACME full-stack preview." }, { status: 400, headers }); }
-    // The immutable stored report, never request input, chooses the source commit.
-    const gitSha = report.gitSha;
-    try {
-      if (!await deps.hasSnapshot(gitSha, world)) {
-        deps.schedule(async () => {
-          const started = Date.now();
-          try {
-            await deps.buildSnapshot(gitSha, world);
-            console.log("Freestyle preview built", { reportId: id, world, durationMs: Date.now() - started });
-          } catch (error) {
-            // Build errors come from the source-tree reader, the builder and the provider;
-            // none carries an access link. Redact token-like values anyway.
-            const reason = error instanceof Error ? error.message.replace(/(token|key|secret)=[^&\s]+/gi, "$1=[redacted]").slice(0, 300) : undefined;
-            console.error("Freestyle preview build failed", { reportId: id, world, durationMs: Date.now() - started, error: error instanceof Error ? error.name : "UnknownError", reason });
-          }
-        });
-        return Response.json({ state: "building" }, { status: 202, headers });
+      const choices = await deps.options();
+      const choice = choices && (requested ? choices.find((option) => option.id === requested)
+        : choices.find((option) => option.connected) ?? choices[0]);
+      if (choices && !choice?.connected) return Response.json({ error: choice?.reason ?? "Sandbox launches are unavailable. The review app owner can configure a provider." }, { status: 503, headers });
+      if (choice && world && !choice.worlds.includes(world)) return Response.json({ error: `${choice.label} does not support this preview world. Choose an available world.` }, { status: 400, headers });
+      const provider = deps.provider(choice?.id ?? requested);
+      if ((requested && provider.id !== requested) || !provider.configured() || !provider.supportsPreviews) {
+        return Response.json({ error: `${provider.label} is not connected. The review app owner can configure it.` }, { status: 503, headers });
       }
-      const started = Date.now();
-      const preview = await deps.launchPreview({ gitSha, reportId: id, world });
-      console.log("Freestyle review launch", { reportId: id, world, vmId: preview.id, durationMs: Date.now() - started });
-      return Response.json(preview, { status: 201, headers });
-    } catch (error) {
-      // Do not serialize provider responses, logs, environment, or access links.
-      console.error("Freestyle review launch failed", {
-        reportId: id, world, error: error instanceof Error ? error.name : "UnknownError",
-        ...(error instanceof PreviewLaunchError ? { stage: error.stage, vmId: error.vmId,
-          // Only these locally constructed errors have messages safe for logs.
-          reason: error.cause instanceof Error && /^(?:Public sandbox readiness failed \(HTTP |Freestyle guest command failed \()/.test(error.cause.message) ? error.cause.message : undefined,
-        } : {}),
-      });
-      return Response.json({ error: "The sandbox could not launch. Try again; if it continues, ask the review app owner to check Freestyle." }, { status: 502, headers });
+      return provider;
+    } catch {
+      return Response.json({ error: "Sandbox launches could not be authorized. Reload or ask the review app owner to check configuration." }, { status: 503, headers });
     }
   }
 
-  /** Read-only readiness for the page to poll while a first build runs. */
-  async function GET(request: Request, { params }: Context): Promise<Response> {
-    if (!deps.connected()) return Response.json({ error: "Freestyle is not connected." }, { status: 503, headers });
+  async function POST(request: Request, { params }: Context): Promise<Response> {
+    // Vercel Authentication is unchanged. Cross-site requests cannot spend sandbox quota.
+    if (!sameOrigin(request)) return Response.json({ error: "Launch the sandbox from its review page." }, { status: 403, headers });
+    let world: PreviewWorld;
+    let requested: EvidenceProviderId | undefined;
+    try {
+      const body: unknown = await request.text().then((text) => text ? JSON.parse(text) : {});
+      world = previewWorld(typeof body === "object" && body !== null && "world" in body ? body.world : "app-web");
+      requested = requestedProvider(typeof body === "object" && body !== null && "provider" in body ? body.provider : undefined);
+    } catch { return Response.json({ error: "Choose an available sandbox provider and preview world." }, { status: 400, headers }); }
     const { id } = await params;
     const report = await deps.readReview(id);
     if (!report) return Response.json({ error: "Review not found." }, { status: 404, headers });
-    let world: PreviewWorld;
-    try { world = previewWorld(new URL(request.url).searchParams.get("world") ?? "app-web"); }
-    catch { return Response.json({ error: "Unknown preview world." }, { status: 400, headers }); }
+    if (!/^[a-f0-9]{40}$/.test(report.gitSha)) return Response.json({ error: "This report has no launchable source commit." }, { status: 409, headers });
+    let provider = await resolveProvider(requested, world);
+    if (provider instanceof Response) return provider;
+    const providerId = provider.id;
+    // Neither the source revision nor the report association is accepted from browser input.
+    const gitSha = report.gitSha;
     try {
-      if (await deps.hasSnapshot(report.gitSha, world)) return Response.json({ ready: true, building: false }, { status: 200, headers });
-      const progress = await deps.buildProgress(report.gitSha, world);
-      return Response.json({ ready: false, building: progress.building, progress }, { status: 200, headers });
+      if (!await provider.hasSnapshot(gitSha, world)) {
+        deps.schedule(async () => {
+          const current = await resolveProvider(providerId, world);
+          if (current instanceof Response) return; // provider configuration was removed: do not allocate a builder
+          const started = Date.now();
+          try {
+            await current.buildSnapshot(gitSha, world);
+            console.log(`${current.label} preview built`, { reportId: id, world, durationMs: Date.now() - started });
+          } catch (error) {
+            console.error("Review preview build failed", { reportId: id, world, provider: providerId, error: error instanceof Error ? error.name : "UnknownError" });
+          }
+        });
+        return Response.json({ state: "building", provider: providerId }, { status: 202, headers });
+      }
+      // Recheck configuration immediately before spend; existing access expires independently.
+      provider = await resolveProvider(providerId, world);
+      if (provider instanceof Response) return provider;
+      const preview = await provider.launchPreview({ gitSha, reportId: id, world });
+      if (preview.gitSha !== gitSha || preview.world !== world) throw new Error("Preview source mismatch");
+      return Response.json({ ...preview, provider: providerId }, { status: 201, headers });
+    } catch (error) {
+      console.error("Review preview launch failed", { reportId: id, world, provider: providerId, error: error instanceof Error ? error.name : "UnknownError",
+        ...(provider instanceof Response ? {} : provider.launchFailureDetails(error)) });
+      return Response.json({ error: "The sandbox could not launch. Try again; if it continues, ask the review app owner to check the provider." }, { status: 502, headers });
     }
-    catch { return Response.json({ error: "Freestyle could not be reached." }, { status: 502, headers }); }
+  }
+
+  async function GET(request: Request, { params }: Context): Promise<Response> {
+    let world: PreviewWorld;
+    let requested: EvidenceProviderId | undefined;
+    try {
+      const url = new URL(request.url);
+      world = previewWorld(url.searchParams.get("world") ?? "app-web");
+      requested = requestedProvider(url.searchParams.get("provider"));
+    } catch { return Response.json({ error: "Unknown sandbox provider or preview world." }, { status: 400, headers }); }
+    const provider = await resolveProvider(requested, world);
+    if (provider instanceof Response) return provider;
+    const { id } = await params;
+    const report = await deps.readReview(id);
+    if (!report) return Response.json({ error: "Review not found." }, { status: 404, headers });
+    try {
+      if (await provider.hasSnapshot(report.gitSha, world)) return Response.json({ ready: true, building: false, provider: provider.id }, { status: 200, headers });
+      const progress = await provider.buildProgress(report.gitSha, world);
+      return Response.json({ ready: false, building: progress.building, progress, provider: provider.id }, { status: 200, headers });
+    } catch { return Response.json({ error: "The sandbox provider could not be reached. Try again." }, { status: 502, headers }); }
   }
 
   return { POST, GET };

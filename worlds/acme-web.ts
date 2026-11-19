@@ -19,6 +19,7 @@ import type { AcmeStreamCheckpoint } from "./lib/acme-gateway.ts";
 import { probeAcmeGateway } from "./lib/acme-gateway-probe.ts";
 import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./lib/demo-workspace.ts";
 import type { DemoWorkspace } from "./lib/demo-workspace.ts";
+import { OPEN_WORKPLACE_APPS, startOpenWorkplace, type OpenWorkplace } from "./lib/open-workplace.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 // A preview's Den sends its template origins to OAuth providers directly (client
@@ -35,10 +36,12 @@ export interface AcmeWebWorld {
   upstream: Awaited<ReturnType<typeof startAcmeUpstream>>;
   /** In-memory demo Slack, Notion, Linear, Google Calendar and Gmail, added to the Acme org. */
   demo: DemoWorkspace;
+  /** Open Outlook, Open Calendar, Open Drive, Open Jira and Open Confluence, when asked for. */
+  openWorkplace: OpenWorkplace | null;
 }
 
 /** Seeded Acme Den + real AI Gateway + isolated web runtime; only the upstream model is fake. */
-export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint): Promise<AcmeWebWorld> {
+export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: string; den: string; api: string }, checkpoint?: AcmeStreamCheckpoint, options: { openWorkplace?: boolean; v2Only?: boolean } = {}): Promise<AcmeWebWorld> {
   const place = resolvePlace();
   if (place.kind !== "local") {
     throw new Error("Run acme-web co-located with MySQL (--place local), including inside a prepared Daytona sandbox.");
@@ -64,6 +67,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
   // Same demo apps as preview-full; Alex Chen is both the seeded owner and the demo apps' signed-in person.
   const demo = await bootDemoWorkspace(stack, den);
   await connectDemoWorkspace(den, demo);
+  const openWorkplace = options.openWorkplace ? await startOpenWorkplace(stack, den) : null;
   const name = `${receiptName(ACME_WEB_NAME, resolveStage(process.env))}-${randomUUID().slice(0, 8)}`;
   const workspace = join(REPO_ROOT, "tmp", "worlds", name, "workspace");
   await mkdir(workspace, { recursive: true });
@@ -73,6 +77,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     workspace,
     state: "isolated",
     browserHostSuffix: preview ? `.${new URL(preview.app).hostname.split(".").slice(1).join(".")}` : undefined,
+    v2Only: options.v2Only,
     env: {
       ...process.env,
       OPENWORK_WEB_PORT: String(webPort),
@@ -90,7 +95,7 @@ export async function bootAcmeWeb(stack: AsyncDisposableStack, preview?: { app: 
     signal: AbortSignal.timeout(30_000),
   });
   if (!synced.ok) throw new Error(`Acme runtime sign-in failed: HTTP ${synced.status}`);
-  return { den, web, model, upstream, demo, gatewayUrl: gateway.baseUrl };
+  return { den, web, model, upstream, demo, openWorkplace, gatewayUrl: gateway.baseUrl };
 }
 
 export function acmeWebOutputs(world: AcmeWebWorld) {
@@ -115,8 +120,13 @@ export function acmeWebOutputs(world: AcmeWebWorld) {
       upstreamKey: secret(world.upstream.key, { group: "AI Gateway", note: "Synthetic upstream; no paid credentials" }),
       alexPassword: secret(den.admin.password, { group: "Accounts" }),
       dashboards: output("enabled", { group: "Org", note: "DEN_DASHBOARDS_ENABLED=true" }),
-      demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+      demoApps: output([...DEMO_WORKSPACE_SERVICES, ...(world.openWorkplace ? OPEN_WORKPLACE_APPS : [])].map((service) => service.name).join(", "), { group: "Demo apps",
         note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
+      ...(world.openWorkplace ? {
+        openOutlook: output(world.openWorkplace.urls.outlook, { group: "Open Workplace", note: "Also /calendar and /drive" }),
+        openJira: output(world.openWorkplace.urls.jira, { group: "Open Workplace", note: "Also /confluence" }),
+        openWorkplaceState: output([world.openWorkplace.microsoft365.stateUrl, world.openWorkplace.atlassian.stateUrl].filter(Boolean).join(" "), { group: "Open Workplace", note: "Live data; POST /reset restores the seed" }),
+      } : {}),
     };
 }
 
@@ -142,7 +152,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     await hold({ name: ACME_WEB_NAME, outputs: await bootAcmeWebOnDaytona(stack, place) });
     return;
   }
-  const world = await bootAcmeWeb(stack);
+  const world = await bootAcmeWeb(stack, undefined, undefined, { openWorkplace: argv.includes("--open-workplace") });
   await probeAcmeGateway(world);
   await hold({
     name: ACME_WEB_NAME,

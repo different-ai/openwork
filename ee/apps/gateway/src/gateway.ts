@@ -2,23 +2,33 @@
 // (plan §5.2). Forwards the desktop's native provider request to the org's
 // configured upstream with the org/member credential, logging one row per
 // request. Never translates protocols and never returns raw credentials.
+import { isDeepStrictEqual } from "node:util"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { isLiteLlmProviderId, liteLlmEntraScope, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { isTrueFoundryProviderId, trueFoundryTracksUsageCosts } from "@openwork-ee/utils/truefoundry-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
+import { fixedModelPricing, readModelPrice, type PricingCatalog } from "./pricing.js"
 import { GATEWAY_REQUEST_MODEL_HEADER, GATEWAY_GRANT_HEADER, type GatewayRequestOutcome, type GatewayRequestProtocol } from "@openwork/types/den/gateway"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import type { Context, Hono } from "hono"
 import { sanitizeIncomingHeaders } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
+import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
 import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
 import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
 import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
-import { createDbGoogleOauthRefreshStore, createGoogleOauthRefresher } from "./credentials/google-oauth-refresh.js"
-import type { RefreshGoogleOauthToken } from "./credentials/google-oauth-refresh.js"
+import { createAwsSsoRoleCredentialMinter } from "./credentials/aws-sso-role-credentials.js"
+import type { MintAwsRoleCredentials } from "./credentials/aws-sso-role-credentials.js"
+import { createDbOauthRefreshStore, createOauthRefresher } from "./credentials/oauth-refresh.js"
+import type { RefreshMemberToken } from "./credentials/oauth-refresh.js"
 import {
   buildAuthHeader,
   classifyProtocolFamily,
@@ -35,13 +45,19 @@ import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, loadMemberGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
+import { applyClaudePromptCache } from "./prompt-cache.js"
+import { createLearnedOutputLimits, fitOutputCap, knownOutputLimit, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap } from "./output-limit.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential, ResolvedUpstreamCredential } from "./provider-credentials.js"
-import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime } from "./relay.js"
+import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
-import { createRequestLogRecorder } from "./request-log.js"
+import { checkLiteLlmEntraFeature, type CheckLiteLlmEntraFeature } from "./litellm-entra-feature.js"
+import { gatewayLog } from "./log.js"
+import { respondBeforeUpstream } from "./early-response.js"
+import type { EarlyStreamProtocol } from "./early-response.js"
+import { createRequestLogRecorder, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
@@ -58,6 +74,15 @@ import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usag
 import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } from "./usage/openai-responses.js"
 import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
 import type { ParsedUsage, UsageParser } from "./usage/shared.js"
+import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
+import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
+import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
+import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
+import { createJevClient, type AskJev } from "./auto-router/jev.js"
+import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
+import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
+import { codexModelsPath, codexPathPrefix, codexResponsesPath, handleCodexResponses, listCodexModels } from "./codex.js"
+import { claudeCodeCountTokens, claudeCodeCountTokensPath, claudeCodeError, claudeCodeMessagesPath, claudeCodeModelsPath, claudeCodePathPrefix, handleClaudeCodeMessages, listClaudeCodeModels } from "./claude-code.js"
 
 export type { GatewayCredential, GatewayProvider } from "./provider-credentials.js"
 
@@ -67,6 +92,7 @@ type JsonObject = Record<string, unknown>
 export type LoadGatewayProvider = (input: {
   inferenceProviderId: string
   organizationId: string
+  consistency?: "primary"
 }) => Promise<GatewayProvider | null>
 
 export type GatewayDependencies = {
@@ -76,14 +102,24 @@ export type GatewayDependencies = {
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
   loadGatewayProvider: LoadGatewayProvider
+  checkLiteLlmEntraFeature: CheckLiteLlmEntraFeature
   loadGatewayAccess: LoadGatewayAccess
   loadMemberGatewayAccess: LoadMemberGatewayAccess
   resolveGatewayModelProvider: ResolveGatewayModelProvider
   loadProviderCredential: LoadProviderCredential
-  refreshGoogleOauthToken: RefreshGoogleOauthToken
+  refreshMemberToken: RefreshMemberToken
   mintGcpAccessToken: MintGcpAccessToken
+  mintAwsRoleCredentials: MintAwsRoleCredentials
   catalog: ProviderCatalog
   now: () => Date
+  /** Smart Model Router: a member's router, and Jev. */
+  loadAutoRouterConfig: LoadAutoRouterConfig
+  /** The Smart Routers that apply to a member, for the 3rd party tool endpoints' model lists. */
+  loadMemberAutoRouters: LoadMemberAutoRouters
+  askJev: AskJev
+  autoRouterReasoning: ReasoningStore
+  /** Whether a TypeSafe key is configured; without one Smart is off. */
+  autoRouterRoutingConfigured: boolean
 }
 
 export type GatewayRouteDependencies =
@@ -127,7 +163,8 @@ export const loadGatewayProviderFromDb: LoadGatewayProvider = async (input) => {
     return null
   }
   const { db } = await import("./db.js")
-  const [row] = await db
+  const database = input.consistency === "primary" ? db.$primary : db
+  const [row] = await database
     .select({
       id: GatewayProviderTable.id,
       organization_id: GatewayProviderTable.organization_id,
@@ -150,8 +187,60 @@ function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function usesLiteLlmEntra(provider: GatewayProvider) {
+  const settings = provider.settings
+  return isLiteLlmProviderId(provider.provider_id) && isJsonObject(settings)
+    && isJsonObject(settings.litellm) && settings.litellm.keySource === "entra"
+}
+
 function gatewayError(status: number, code: string, message: string, extra: JsonObject = {}) {
   return Response.json({ error: { message, type: status >= 500 ? "api_error" : "invalid_request_error", code, ...extra } }, { status })
+}
+
+/** A sanitized, actionable response for generic upstream credential rejection. */
+export function genericProviderAuthError(input: {
+  status: 401 | 403
+  providerId: string
+  providerName: string
+  credentialMode: "org" | "member"
+  requestId: string
+}) {
+  const denied = input.status === 403
+  const message = input.credentialMode === "member"
+    ? denied
+      ? `${input.providerName} denied access for your credential. Ask your administrator to check provider permissions, or replace your credential if it has changed.`
+      : `${input.providerName} rejected your credential. Sign in again or replace your credential in AI Gateway.`
+    : denied
+      ? `${input.providerName} denied access for your organization's provider credential. Ask your administrator to check the ${input.providerName} connection in AI Gateway.`
+      : `${input.providerName} rejected your organization's API credential. Ask your administrator to check the ${input.providerName} connection in AI Gateway.`
+  const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+  const response = Response.json({ error: {
+    source: "openwork_gateway",
+    message,
+    type: "invalid_request_error",
+    code: errorCode,
+    provider_id: input.providerId,
+  } }, { status: input.status })
+  response.headers.set("x-openwork-request-id", input.requestId)
+  return { response, errorCode }
+}
+
+function displayProviderName(providerId: string) {
+  const knownNames: Record<string, string> = {
+    openrouter: "OpenRouter",
+    openai: "OpenAI",
+    anthropic: "Anthropic",
+    deepseek: "DeepSeek",
+    google: "Google",
+    mistral: "Mistral",
+  }
+  return knownNames[providerId.toLowerCase()] ?? providerId.replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function providerDisplayName(provider: GatewayProvider) {
+  const name = provider.provider_config.name
+  if (isGatewayCustomProviderId(provider.provider_id) && typeof name === "string" && name.trim()) return name.trim()
+  return displayProviderName(provider.provider_id)
 }
 
 function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
@@ -159,6 +248,9 @@ function readBaseUrl(provider: GatewayProvider, catalog: CatalogProvider | null,
   // explicit operator allowlist even when den-api accepted the configuration.
   const override = provider.settings.upstreamBaseUrl
   if (typeof override === "string" && override) return override
+  // A custom provider's only address is its saved one, checked on every request
+  // by resolveUpstream and the egress transport (public HTTPS or allowlisted).
+  if (isGatewayCustomProviderId(provider.provider_id)) return null
   const config = provider.provider_config
   const options = isJsonObject(config.options) ? config.options : null
   if (options && typeof options.baseURL === "string" && options.baseURL) return options.baseURL
@@ -188,10 +280,21 @@ function awsUpstreamBase(family: "bedrock" | "bedrock_mantle", settings: Record<
   return override === undefined ? defaultBaseUrl(family, settings) : override
 }
 
+// Microsoft Foundry egress is <resource>.services.ai.azure.com. The request can
+// carry a member's own Entra ID token, so catalog URLs and admin-entered hosts
+// never choose it: a saved override is used only on that same origin or on an
+// operator-allowlisted one, and any other saved override is refused.
+function foundryUpstreamBase(settings: Record<string, unknown>) {
+  const override = settings.upstreamBaseUrl
+  if (typeof override !== "string" || !override) return defaultBaseUrl("microsoft_foundry", settings)
+  return isMicrosoftFoundryOverrideAllowed(settings.resourceName, override, inferenceEgressAllowedOrigins()) ? override : null
+}
+
 function upstreamBase(provider: GatewayProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
   if (family === "google_vertex") return vertexPublisherBase(provider.settings, "google")
   if (family === "google_vertex_anthropic") return vertexPublisherBase(provider.settings, "anthropic")
   if (isAwsFamily(family)) return awsUpstreamBase(family, provider.settings)
+  if (family === "microsoft_foundry") return foundryUpstreamBase(provider.settings)
   return readBaseUrl(provider, catalog, family)
 }
 
@@ -203,7 +306,9 @@ function resolveUpstream(provider: GatewayProvider, catalog: CatalogProvider | n
     return {
       error: family === "google_vertex" || family === "google_vertex_anthropic"
         ? "Vertex providers require settings.project and settings.location."
-        : `Provider ${provider.provider_id} has no upstream base URL.`,
+        : family === "microsoft_foundry"
+          ? "Microsoft Foundry providers reach their own resource; settings.resourceName is required and a custom upstream URL must be an operator-approved origin."
+          : `Provider ${provider.provider_id} has no upstream base URL.`,
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" || family === "bedrock_mantle" ? stripApiVersionPrefix(rest) : rest
@@ -236,7 +341,8 @@ function isStreamingPath(protocol: GatewayRequestProtocol, pathname: string) {
 function materializeAuth(credential: UsableCredential, provider: GatewayProvider, family: ProtocolFamily, now: Date): UpstreamAuth | { error: string } {
   if (!isAwsFamily(family)) {
     if (credential.kind === "aws_keys") return { error: `AWS credentials are only supported for Amazon Bedrock providers, not ${provider.provider_id}.` }
-    return { kind: "header", header: buildAuthHeader(family, credential.secret) }
+    // A member's Entra ID token goes as a bearer; a Foundry resource key as api-key.
+    return { kind: "header", header: buildAuthHeader(family, credential.secret, credential.credentialKind === "oauth_azure") }
   }
   const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
   const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
@@ -282,7 +388,7 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
     if ((value !== body && Object.hasOwn(value, "model")) || hasAlternateModelSelection(value, providerId)) return "model"
     if (value.type === "item_reference") return "resource"
     for (const [key, child] of Object.entries(value)) {
-      if (value !== body && ((value.type === "tool_use" && key === "input" && ["anthropic", "google_vertex_anthropic", "bedrock"].includes(family)) || (value.type === "function_call" && key === "arguments"))) continue
+      if (value !== body && ((value.type === "tool_use" && key === "input" && ["anthropic", "google_vertex_anthropic", "microsoft_foundry", "bedrock"].includes(family)) || (value.type === "function_call" && key === "arguments"))) continue
       if (resourceFields.has(key.replace(/_/g, "").toLowerCase())) return "resource"
       if (key === "prompt" && isJsonObject(child)) return "resource" // Saved OpenAI prompt templates.
       if (key === "audio" && isJsonObject(child) && Object.hasOwn(child, "id")) return "resource"
@@ -303,10 +409,13 @@ function unsupportedGatewayPayload(body: JsonObject, family: ProtocolFamily, pro
               // Bedrock InvokeModel also accepts Anthropic's native client tools.
             case "anthropic":
             case "google_vertex_anthropic":
+            case "microsoft_foundry":
               if (tool.type !== undefined && tool.type !== "custom") return "resource"
               if (typeof tool.name !== "string" || !isJsonObject(tool.input_schema)) return "resource"
               break
             default:
+              // A Responses namespace only groups client-executed tools.
+              if (tool.type === "namespace" && Array.isArray(tool.tools) && tool.tools.every((inner) => isJsonObject(inner) && (inner.type === "function" || inner.type === "custom"))) break
               if (tool.type !== "function" && tool.type !== "custom") return "resource"
           }
         }
@@ -349,6 +458,7 @@ async function prepareRequest(request: Request, upstream: ResolvedUpstream, prov
       case "bedrock":
         return /^model\/[^/]+\/(?:converse|converse-stream|invoke|invoke-with-response-stream)$/.test(operation)
       case "anthropic":
+      case "microsoft_foundry":
         return /^messages(?:\/count_tokens)?$/.test(operation)
       case "google_vertex_anthropic":
         return operation === "messages"
@@ -426,6 +536,8 @@ function rewriteSelectedModel(prepared: PreparedRequest, upstream: ResolvedUpstr
     }
     modified = true
   }
+  // The same aliases stop clients from marking Claude prompt-cache breakpoints.
+  if (applyClaudePromptCache(json, upstream.protocol, model)) modified = true
   if (upstream.protocol === "openai_chat" && upstream.family !== "mistral" && json.stream === true) {
     json.stream_options = { ...(isJsonObject(json.stream_options) ? json.stream_options : {}), include_usage: true }
     modified = true
@@ -483,6 +595,24 @@ async function relayErrorResponse(upstream: Response, protocol: GatewayRequestPr
     void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: "upstream_error_body_unavailable" })
     return gatewayError(upstream.status, "upstream_error", "The provider rejected this request.")
   } finally { lifetime.dispose() }
+}
+
+/** Streaming requests whose wire protocol is SSE can commit their response before the provider answers. */
+function earlyStreamProtocol(protocol: GatewayRequestProtocol, prepared: PreparedRequest): EarlyStreamProtocol | null {
+  if (!prepared.stream) return null
+  switch (protocol) {
+    case "openai_chat":
+    case "openai_responses":
+    case "anthropic_messages":
+      return protocol
+    // Without alt=sse Google streams a JSON array, which has no comment syntax.
+    case "google_generate_content":
+      return prepared.url.searchParams.get("alt") === "sse" ? protocol : null
+    // Bedrock streams binary AWS event frames; passthrough has no known framing.
+    case "bedrock_converse":
+    case "passthrough":
+      return null
+  }
 }
 
 function upstreamRequestId(headers: Headers) {
@@ -590,16 +720,21 @@ function relayStreamResponse(upstream: Response, protocol: GatewayRequestProtoco
       finish(upstreamOutcome(upstream))
     },
     fail() {
-      finish(lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error")
+      const outcome = lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_error"
+      if (outcome === "client_aborted") gatewayLog.debug("inference response cancelled", {
+        component: "relay", request_id: headers.get("x-openwork-request-id") ?? undefined, http_status_code: upstream.status,
+      })
+      finish(outcome)
     },
   }, lifetime)
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers })
 }
 
-function refreshGoogleOauthTokenWithDb(): RefreshGoogleOauthToken {
-  let refresher: Promise<RefreshGoogleOauthToken> | null = null
+function refreshMemberTokenWithDb(): RefreshMemberToken {
+  let refresher: Promise<RefreshMemberToken> | null = null
   return (input) => {
-    refresher ??= import("./db.js").then(({ db }) => createGoogleOauthRefresher({ store: createDbGoogleOauthRefreshStore(db) }))
+    // primary: each step re-reads the row it just compare-and-set; a lagging replica would fail every refresh.
+    refresher ??= import("./db.js").then(({ db }) => createOauthRefresher({ store: createDbOauthRefreshStore(db.$primary) }))
     return refresher.then((refresh) => refresh(input))
   }
 }
@@ -620,6 +755,8 @@ type ModelRouteTarget = {
   request: Request
   model: string
   rest: string
+  /** Query string for the upstream (with `?`); provider-less routes otherwise forward the caller's. */
+  search?: string
   protocol: GatewayRequestProtocol
 }
 
@@ -669,12 +806,31 @@ async function routeByModel(raw: Request, organizationId: string, resolveProvide
   return { inferenceProviderId, request, model }
 }
 
+/**
+ * Reads a provider-less chat request once. Smart requests (model
+ * `openwork-smart-<router id>`) come back with their parsed body and router
+ * id; others with a rebuilt request for routeByModel.
+ */
+async function readAutoBody(raw: Request): Promise<{ request: Request; body: JsonObject | null; routerId: string | null } | { error: Response }> {
+  let bytes: Uint8Array<ArrayBuffer>
+  try { bytes = await readBoundedBody(raw) } catch (error) {
+    const limited = error instanceof RequestBodyLimitError
+    return { error: gatewayError(limited ? 413 : 400, limited ? "request_too_large" : "request_body_failed", "Could not read the request body within gateway limits.") }
+  }
+  const request = new Request(raw.url, { method: raw.method, headers: raw.headers, body: bytes, signal: raw.signal })
+  let body: unknown = null
+  try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return { request, body: null, routerId: null } }
+  const routerId = isJsonObject(body) ? autoRouterIdFromModel(body.model) : null
+  return isJsonObject(body) && routerId ? { request, body, routerId } : { request, body: null, routerId: null }
+}
+
 function restOfPath(pathname: string, inferenceProviderId: string) {
   const prefix = `${gatewayPathPrefix}/${inferenceProviderId}`
   return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length + 1) : ""
 }
 
 export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRouteDependencies) {
+  const learnedOutputLimits = createLearnedOutputLimits()
   const dependencies: GatewayDependencies = {
     checkUsage: input.checkUsage ?? checkGatewayUsage,
     fetch: input.fetch,
@@ -682,14 +838,27 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
     loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
+    checkLiteLlmEntraFeature: input.checkLiteLlmEntraFeature ?? checkLiteLlmEntraFeature,
     loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
     loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
     resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
-    refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(),
+    refreshMemberToken: input.refreshMemberToken ?? refreshMemberTokenWithDb(),
     mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
+    mintAwsRoleCredentials: input.mintAwsRoleCredentials ?? createAwsSsoRoleCredentialMinter(),
     catalog: input.catalog ?? loadProviderCatalogFromFile(),
     now: input.now ?? (() => new Date()),
+    loadAutoRouterConfig: input.loadAutoRouterConfig ?? loadAutoRouterConfigFromDb,
+    loadMemberAutoRouters: input.loadMemberAutoRouters ?? loadMemberAutoRoutersFromDb,
+    askJev: input.askJev ?? createJevClient({
+      apiKey: env.autoRouter.typesafeApiKey ?? null,
+      baseUrl: env.autoRouter.typesafeBaseUrl,
+      model: env.autoRouter.jevModel,
+      timeoutMs: env.autoRouter.jevTimeoutMs,
+      fetch: input.fetch,
+    }),
+    autoRouterReasoning: input.autoRouterReasoning ?? createDbReasoningStore(),
+    autoRouterRoutingConfigured: input.autoRouterRoutingConfigured ?? Boolean(env.autoRouter.typesafeApiKey),
   }
 
   // `target` is set by the provider-less routes, which pick the provider from the model alias.
@@ -708,15 +877,34 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const request = target?.request ?? c.req.raw
     const incomingHeaders = sanitizeIncomingHeaders(request.headers)
 
-    const provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
+    let provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
     if (!provider) {
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
+    }
+    const entraMode = usesLiteLlmEntra(provider)
+    const featureDisabled = () => gatewayError(403, "feature_disabled", "Microsoft sign-in for this provider is turned off.")
+    const entraEnabled = async () => {
+      try {
+        return await dependencies.checkLiteLlmEntraFeature(identity)
+      } catch {
+        return false
+      }
+    }
+    if (entraMode) {
+      if (!await entraEnabled()) return featureDisabled()
+      // Discover via the existing read path; only the new mode opts in to primary fences.
+      const current = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
+      if (!current || !usesLiteLlmEntra(current) || liteLlmEntraScope(current) === null) {
+        return gatewayError(503, "provider_configuration_changed", "The inference provider changed. Retry the same selection.")
+      }
+      provider = current
     }
 
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
     const rest = target?.rest ?? restOfPath(requestUrl.pathname, inferenceProviderId)
     const scope = { ...identity, gatewayProviderId: provider.id }
-    const accessRows = await dependencies.loadGatewayAccess(scope)
+    const consistency = entraMode ? "primary" : undefined
+    const accessRows = await dependencies.loadGatewayAccess(scope, consistency)
     if (method === "GET" && /^(?:v1(?:beta|alpha)?\/)?models\/?$/.test(rest)) {
       if (!accessRows.length) return gatewayError(403, "provider_access_denied", "No current Gateway access grants.")
       const grantId = c.req.header(GATEWAY_GRANT_HEADER)
@@ -726,11 +914,14 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       c.header("cache-control", "no-store")
       return c.json({ object: "list", data: accessibleGatewayModels(grantId === undefined ? accessRows : accessRows.filter((row) => row.grant.id === grantId)) })
     }
-    const resolved = resolveUpstream(provider, catalog, rest, requestUrl.search)
+    const resolved = resolveUpstream(provider, catalog, rest, target?.search ?? requestUrl.search)
     let selection: GatewayGrantSelection | null = null
     const headerModel = c.req.header(GATEWAY_REQUEST_MODEL_HEADER)
     const modelHint = parseGatewayModelAlias(headerModel) ? headerModel ?? null : null
     let gatewayUsage: import("@openwork-ee/den-db/gateway-usage-limits").GatewayUsageSnapshot | undefined
+    // LiteLLM: org keys are priced from the synced model row; per-user keys are not tracked.
+    let requestPricing: PricingCatalog | undefined
+    let spendTracking = true
     const recorder = createRequestLogRecorder({ insertRequestLog: dependencies.insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter: dependencies.reporter, now: dependencies.now })
     const startRecorder = (state: {
       protocol: GatewayRequestProtocol
@@ -765,8 +956,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         gatewayUsage,
+        headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)),
         signal: request.signal,
         startedAt,
+        pricing: requestPricing,
+        spendTracking,
       })
     }
     const reject = (response: Response, errorCode: string, reason: string) => {
@@ -830,7 +1024,26 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (isLiteLlmProviderId(provider.provider_id)) {
+      spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
+      const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    } else if (isTrueFoundryProviderId(provider.provider_id)) {
+      // Each person's own TrueFoundry token: TrueFoundry budgets it, so record tokens only, unless the
+      // provider tracks usage costs in OpenWork and the model has a public price: then price it and apply limits.
+      const price = trueFoundryTracksUsageCosts(provider.settings) && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      spendTracking = price !== null
+      requestPricing = spendTracking && price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    } else if (isGatewayCustomProviderId(provider.provider_id)) {
+      // Custom models are not in the models.dev snapshot: price from the saved model's cost, else record usage unpriced.
+      const price = selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
+      requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
+    }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
+    // Never ask for more output than the model is known to allow: the provider would refuse the whole request.
+    const outputLimitKey = selection.row.model ? `${selection.row.model.id}\u001f${selection.upstreamModel ?? ""}` : null
+    const outputLimit = knownOutputLimit(modelOutputLimit(selection.row.model?.model_config), outputLimitKey ? learnedOutputLimits.get(outputLimitKey, dependencies.now().getTime()) : null)
+    if (prepared.json && fitOutputCap(prepared.json, resolved.protocol, outputLimit)) prepared.body = JSON.stringify(prepared.json)
     if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
       // Mantle serves some models under /openai/v1; the path comes from the trusted catalog, never the request.
       const apiPath = (selection.upstreamModel === null ? undefined : catalog?.modelApiPaths?.get(selection.upstreamModel)) ?? BEDROCK_MANTLE_DEFAULT_API_PATH
@@ -843,8 +1056,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
-      refreshGoogleOauthToken: dependencies.refreshGoogleOauthToken,
+      checkLiteLlmEntraFeature: entraMode ? entraEnabled : undefined,
+      refreshMemberToken: dependencies.refreshMemberToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
+      mintAwsRoleCredentials: dependencies.mintAwsRoleCredentials,
       clock: dependencies.now,
     })
     if (credential.kind !== "secret" && credential.kind !== "aws_keys") {
@@ -856,6 +1071,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
+        case "feature_disabled":
+          return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
         case "retry": {
           const response = gatewayError(503, "provider_credential_retry", "The provider credential is temporarily unavailable. Retry shortly.", { provider_id: provider.id })
           response.headers.set("retry-after", "5")
@@ -871,11 +1088,19 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           response.headers.set("x-openwork-auth-required", "1")
           return reject(response, "member_auth_required", "Member credential required")
         }
-        case "configuration_required":
+        case "configuration_required": {
+          const client = resolved.family === "microsoft_foundry" || liteLlmEntraScope(provider) !== null ? "Microsoft Entra ID app registration (check that its client secret has not expired)" : "Google OAuth client"
           return reject(
-            gatewayError(502, "provider_misconfigured", "The Google OAuth client requires administrator repair. Contact your organization administrator.", { provider_id: provider.id }),
+            gatewayError(502, "provider_misconfigured", `The ${client} requires administrator repair. Contact your organization administrator.`, { provider_id: provider.id }),
             "provider_misconfigured",
-            "Google OAuth client configuration requires repair",
+            "Member sign-in client configuration requires repair",
+          )
+        }
+        case "access_denied":
+          return reject(
+            gatewayError(403, "provider_permission_denied", credential.message, { provider_id: provider.id }),
+            "provider_permission_denied",
+            "Member identity denied upstream access",
           )
         case "org_credential_missing":
           return reject(
@@ -911,7 +1136,9 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     if (auth.kind === "signer") prepared.url.host = auth.host
-    const usageRejection = await dependencies.checkUsage({
+    // Per-user LiteLLM keys and TrueFoundry tokens are budgeted upstream, so they skip OpenWork admission and limits
+    // (a TrueFoundry provider tracking usage costs in OpenWork keeps them for models with a public price).
+    const usageRejection = !spendTracking ? null : await dependencies.checkUsage({
       organizationId: identity.organizationId,
       memberId: identity.orgMembershipId,
       requestId: openworkRequestId,
@@ -923,6 +1150,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       upstreamOrigin: prepared.url.origin,
       upstreamPath: prepared.url.pathname,
       deferred: prepared.json?.background === true || prepared.json?.async === true || prepared.json?.deferred === true,
+      priced: requestPricing !== undefined,
+      inferenceProviderId: provider.id,
     })
     startRecorder({
       protocol: resolved.protocol,
@@ -938,13 +1167,20 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 
     if (await recorder.whenStarted?.() === false) {
-      return reject(gatewayError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable", "Request log unavailable")
+      return reject(gatewayError(503, "request_log_unavailable", REQUEST_LOG_UNAVAILABLE_MESSAGE), "request_log_unavailable", "Request log unavailable")
     }
 
     if (usageRejection) return reject(usageRejection, usageRejection.headers.get("x-openwork-error-code") ?? "openwork_gateway_accounting_unavailable", "Gateway usage admission rejected")
 
+    if (entraMode) {
+      // Routing and token scope are provider-owned, not part of the grant or credential version.
+      const currentProvider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
+      if (!currentProvider || !isDeepStrictEqual(provider, currentProvider)) {
+        return reject(gatewayError(503, "provider_configuration_changed", "The inference provider changed before dispatch. Retry the same selection."), "credential_changed", "Gateway provider changed")
+      }
+    }
     // Recheck after accounting awaits. Never reselect or materialize a fallback.
-    const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope), prepared.requestedModel, selection.row.grant.id)
+    const currentSelection = selectGatewayGrant(await dependencies.loadGatewayAccess(scope, consistency), prepared.requestedModel, selection.row.grant.id)
     if (currentSelection.kind !== "selected" || !sameGatewaySelection(selection, currentSelection.selection)) {
       return reject(gatewayError(403, "gateway_selection_revoked", "The selected Gateway access is no longer available."), "gateway_selection_revoked", "Gateway selection revoked")
     }
@@ -953,84 +1189,206 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
-    let upstream: Response
+    const dispatch = async (): Promise<Response> => {
+      if (entraMode && !await entraEnabled()) {
+        lifetime.dispose()
+        return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
+      }
+      let upstream: Response
+      try {
+        validateInferenceUrl(prepared.url)
+        lifetime.signal.throwIfAborted()
+        upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+        const requestedCap = prepared.json ? requestedOutputCap(prepared.json, resolved.protocol) : null
+        if (prepared.json && requestedCap !== null && (upstream.status === 400 || upstream.status === 422)) {
+          // The provider refused before generating anything. When it refused the output cap, send the
+          // same request once more with the limit it named, or with no cap, instead of failing the turn.
+          const refusal = new TextDecoder().decode(await readBoundedBody({ body: upstream.body, signal: lifetime.signal }, 1_048_576).catch(() => new Uint8Array()))
+          const rejection = rejectedOutputCap(upstream.status, refusal, requestedCap)
+          if (rejection && relaxOutputCap(prepared.json, resolved.protocol, rejection.limit)) {
+            if (rejection.limit !== null && outputLimitKey) learnedOutputLimits.learn(outputLimitKey, rejection.limit, dependencies.now().getTime())
+            gatewayLog.info("provider refused the output cap, retrying", {
+              request_id: openworkRequestId,
+              organization_id: identity.organizationId,
+              inference_provider_id: provider.id,
+              requested_output_cap: requestedCap,
+              provider_output_limit: rejection.limit,
+            })
+            prepared.body = JSON.stringify(prepared.json)
+            const retryHeaders = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
+            if (auth.kind === "header") retryHeaders.set(auth.header.name, auth.header.value)
+            else auth.sign({ method, url: prepared.url, headers: retryHeaders, body: prepared.body })
+            lifetime.signal.throwIfAborted()
+            upstream = await dependencies.fetch(prepared.url, { method, headers: retryHeaders, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+          } else {
+            upstream = new Response(refusal, { status: upstream.status, statusText: upstream.statusText, headers: upstream.headers })
+          }
+        }
+      } catch (error) {
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: request.signal.aborted,
+          timedOut: lifetime.timedOut,
+          target: `the model provider at ${prepared.url.hostname}`,
+        })
+        lifetime.dispose()
+        // An unreachable provider is answered to the caller, not reported as a Gateway error.
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("provider upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: identity.organizationId,
+          inference_provider_id: provider.id,
+          upstream_url: `${prepared.url.origin}${prepared.url.pathname}`,
+          error_code: failure.code,
+          network_error: failure.cause,
+        })
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        const response = gatewayError(failure.status, failure.code, failure.message, { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        return response
+      }
+
+      if (!upstream.ok) {
+        console.error("[gateway] Upstream provider request failed", {
+          openworkRequestId,
+          organizationId: identity.organizationId,
+          inferenceProviderId: provider.id,
+          upstreamProviderId: provider.provider_id,
+          upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
+          status: upstream.status,
+        })
+      }
+
+      if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
+        const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+        const message = upstream.status === 401
+          ? selection.row.credentialSet.credential_mode === "member"
+            ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
+            : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
+          : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
+        const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
+
+      if (resolved.family === "microsoft_foundry" && (upstream.status === 401 || upstream.status === 403)) {
+        const member = selection.row.credentialSet.credential_mode === "member"
+        const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
+        const message = upstream.status === 401
+          ? member
+            ? "Microsoft Foundry rejected your sign-in. Sign in again; if the problem persists, contact your organization administrator."
+            : "Microsoft Foundry rejected the provider key. Ask your organization administrator to check or replace it."
+          : member
+            ? "Microsoft Foundry denied access. Ask your administrator to give you a role on the Foundry resource that allows inference, such as Cognitive Services User."
+            : "Microsoft Foundry denied access. Ask your administrator to check the Foundry resource and model deployment."
+        const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
+
+      if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
+        // AWS signature errors can echo the canonical request, including the
+        // session token header. Never relay them; keep a message both Bedrock SDKs read.
+        const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
+        const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
+        const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
+        const member = credential.credentialKind === "aws_sso"
+        const message = denied
+          ? member
+            ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the permission set's policy and Bedrock model access in this region."
+            : "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
+          : member
+            ? "AWS rejected your sign-in. Sign in to AWS again in OpenWork."
+            : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
+        const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
+        response.headers.set("x-openwork-request-id", openworkRequestId)
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return response
+      }
+
+      if (upstream.status === 401 || upstream.status === 403) {
+        const result = genericProviderAuthError({
+          status: upstream.status,
+          providerId: provider.id,
+          providerName: providerDisplayName(provider),
+          credentialMode: selection.row.credentialSet.credential_mode,
+          requestId: openworkRequestId,
+        })
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: result.errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        lifetime.dispose()
+        await upstream.body?.cancel().catch(() => {})
+        return result.response
+      }
+
+      const responseHeaders = relayHeaders(upstream, openworkRequestId)
+      if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+      return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
+    }
+    const pending = dispatch()
+    const earlyProtocol = earlyStreamProtocol(resolved.protocol, prepared)
+    if (!earlyProtocol) return pending
+    return respondBeforeUpstream({
+      pending,
+      protocol: earlyProtocol,
+      commitAfterMs: env.responseStartMs,
+      heartbeatMs: env.responseHeartbeatMs,
+      headers: { "x-openwork-request-id": openworkRequestId },
+      onCommit() {
+        console.info("[gateway] Committed stream before upstream headers", {
+          openworkRequestId,
+          organizationId: identity.organizationId,
+          inferenceProviderId: provider.id,
+          upstreamProviderId: provider.provider_id,
+        })
+      },
+      onCancel: () => lifetime.abort(),
+    })
+  }
+
+  const loadEnabledMemberGatewayAccess: LoadMemberGatewayAccess = async (identity) => {
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
+    const isEntraRow = (row: typeof rows[number]) => isLiteLlmProviderId(row.provider.provider_id) && row.provider.litellmKeySource === "entra"
+    if (!rows.some(isEntraRow)) return rows
+    let enabled = false
     try {
-      validateInferenceUrl(prepared.url)
-      lifetime.signal.throwIfAborted()
-      upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+      enabled = await dependencies.checkLiteLlmEntraFeature(identity)
     } catch {
-      lifetime.dispose()
-      console.error("[gateway] Failed to reach provider upstream", {
-        openworkRequestId,
+      // Only the new mode fails closed; existing providers remain discoverable.
+    }
+    return enabled ? rows : rows.filter((row) => !isEntraRow(row))
+  }
+
+  /** What the Smart Model Router needs for one request. */
+  function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
+    return {
+      loadConfig: dependencies.loadAutoRouterConfig,
+      loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+      catalog: dependencies.catalog,
+      askJev: dependencies.askJev,
+      reasoningStore: dependencies.autoRouterReasoning,
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      forward: (target) => handleGatewayRequest(c, target),
+      onJevError: (error) => console.warn("[gateway] Smart Model Router could not ask Jev; using the fallback model", {
+        openworkRequestId: c.get("openworkRequestId"),
         organizationId: identity.organizationId,
-        inferenceProviderId: provider.id,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-      })
-      dependencies.reporter.handledError({
-        reason: "upstream_unreachable",
-        organizationId: identity.organizationId,
-        orgMembershipId: identity.orgMembershipId,
-        gatewayKeyId: identity.gatewayKeyId,
-        openworkRequestId,
-        route: c.req.path,
-        method,
-        headers: incomingHeaders,
-        incomingModel: prepared.requestedModel,
-        status: 502,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-      })
-      void recorder.finish({ status: 502, outcome: lifetime.signal.aborted && !lifetime.timedOut ? "client_aborted" : "upstream_unreachable", errorCode: lifetime.timedOut ? "upstream_timeout" : "upstream_unreachable" })
-      const response = gatewayError(502, "upstream_unreachable", "Failed to reach the inference provider upstream.", { provider_id: provider.id })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      return response
+        error: error instanceof Error ? error.message : String(error),
+      }),
     }
+  }
 
-    if (!upstream.ok) {
-      console.error("[gateway] Upstream provider request failed", {
-        openworkRequestId,
-        organizationId: identity.organizationId,
-        inferenceProviderId: provider.id,
-        upstreamProviderId: provider.provider_id,
-        upstreamUrl: `${prepared.url.origin}${prepared.url.pathname}`,
-        status: upstream.status,
-      })
+  /** Smart Routers on the 3rd party tool endpoints: listed, and run through the Smart Model Router. */
+  function smartTools(c: Context<GatewayEnv>, identity: GatewayContext): SmartToolDependencies {
+    return {
+      routingConfigured: dependencies.autoRouterRoutingConfigured,
+      loadMemberAutoRouters: dependencies.loadMemberAutoRouters,
+      route: ({ request, body, routerId }) => handleAutoRequest({ request, body, routerId, identity, dependencies: autoDependencies(c, identity) }),
     }
-
-    if ((resolved.family === "google_vertex" || resolved.family === "google_vertex_anthropic") && (upstream.status === 401 || upstream.status === 403)) {
-      const errorCode = upstream.status === 401 ? "provider_authentication_failed" : "provider_permission_denied"
-      const message = upstream.status === 401
-        ? selection.row.credentialSet.credential_mode === "member"
-          ? "Google rejected the provider credential. Sign in again; if the problem persists, contact your organization administrator."
-          : "Google rejected the provider credential. Ask your organization administrator to check provider authentication."
-        : "Google Cloud denied access. Ask your administrator to check project IAM and model access."
-      const response = gatewayError(upstream.status, errorCode, message, { provider_id: provider.id })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode })
-      lifetime.dispose()
-      await upstream.body?.cancel().catch(() => {})
-      return response
-    }
-
-    if (isAwsFamily(resolved.family) && (upstream.status === 401 || upstream.status === 403)) {
-      // AWS signature errors can echo the canonical request, including the
-      // session token header. Never relay them; keep a message both Bedrock SDKs read.
-      const errorType = upstream.headers.get("x-amzn-errortype")?.split(":")[0]
-      const denied = errorType === "AccessDeniedException" || (!errorType && upstream.status === 403)
-      const errorCode = denied ? "provider_permission_denied" : "provider_authentication_failed"
-      const message = denied
-        ? "AWS denied access to this Bedrock model. Ask your organization administrator to check the IAM policy and Bedrock model access in this region."
-        : "AWS rejected the Bedrock provider credential. Ask your organization administrator to check or replace the access keys."
-      const response = Response.json({ message, error: { message, type: "invalid_request_error", code: errorCode, provider_id: provider.id } }, { status: upstream.status })
-      response.headers.set("x-openwork-request-id", openworkRequestId)
-      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode, upstreamRequestId: upstreamRequestId(upstream.headers) })
-      lifetime.dispose()
-      await upstream.body?.cancel().catch(() => {})
-      return response
-    }
-
-    const responseHeaders = relayHeaders(upstream, openworkRequestId)
-    if (!upstream.ok) return relayErrorResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
-    return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
   }
 
   // Models keys fall through to the OpenWork Models handler registered after this one.
@@ -1038,13 +1396,157 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
+    const rows = await loadEnabledMemberGatewayAccess(identity)
+    // Smart Routers are listed for the API keys members paste into tools; the desktop and other
+    // OpenWork clients learn them from Den. Either key can call them on POST /api/v1/chat/completions.
+    const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
+    return c.json(listGatewayModels(rows, routers))
   })
+  // Cursor: every model as Chat Completions under names a person can type.
+  api.get(cursorModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    c.header("cache-control", "no-store")
+    const rows = await loadEnabledMemberGatewayAccess(identity)
+    return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return finish(gatewayError(413, "request_too_large", "Could not read the request body within gateway limits."))
+      return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    }
+    if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    return finish(await handleCursorChat({
+      request: c.req.raw,
+      body,
+      api,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  }
+  for (const [path, cursorApi] of Object.entries(cursorApiPaths)) api.post(path, (c) => cursorChat(c, cursorApi))
+  api.all(`${cursorPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Cursor route: ${c.req.method} ${c.req.path}.`))
+  // Claude Code: every model as Anthropic Messages, under names a person can set.
+  api.get(claudeCodeModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    c.header("cache-control", "no-store")
+    const rows = await loadEnabledMemberGatewayAccess(identity)
+    return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
+    try {
+      const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+      return isJsonObject(body) ? body : claudeCodeError(400, "invalid_request_error", "The request body must be a JSON object.")
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return claudeCodeError(413, "request_too_large", "The request is larger than the gateway accepts.")
+      return claudeCodeError(400, "invalid_request_error", "The request body must be JSON.")
+    }
+  }
+  api.post(claudeCodeCountTokensPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    const body = await claudeCodeBody(c)
+    return body instanceof Response ? body : c.json(claudeCodeCountTokens(body))
+  })
+  api.post(claudeCodeMessagesPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    const body = await claudeCodeBody(c)
+    if (body instanceof Response) return finish(body)
+    return finish(await handleClaudeCodeMessages({
+      request: c.req.raw,
+      body,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  })
+  api.all(`${claudeCodePathPrefix}/*`, (c) => claudeCodeError(404, "not_found_error", `Unsupported Claude Code route: ${c.req.method} ${c.req.path}.`))
+  // Codex CLI: every model as the Responses API, with Codex's own model catalog.
+  api.get(codexModelsPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    c.header("cache-control", "no-store")
+    const rows = await loadEnabledMemberGatewayAccess(identity)
+    return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
+  })
+  api.post(codexResponsesPath, async (c) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
+    const requestId = c.get("openworkRequestId")
+    const finish = (response: Response) => { response.headers.set("x-openwork-request-id", requestId); return response }
+    let body: unknown
+    try {
+      body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(await readBoundedBody(c.req.raw)))
+    } catch (error) {
+      if (error instanceof RequestBodyLimitError) return finish(gatewayError(413, "request_too_large", "Could not read the request body within gateway limits."))
+      return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    }
+    if (!isJsonObject(body)) return finish(gatewayError(400, "invalid_json", "The request body must be JSON with a model field."))
+    return finish(await handleCodexResponses({
+      request: c.req.raw,
+      body,
+      identity,
+      dependencies: {
+        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        catalog: dependencies.catalog,
+        reasoningStore: dependencies.autoRouterReasoning,
+        forward: (target) => handleGatewayRequest(c, target),
+        smart: smartTools(c, identity),
+      },
+    }))
+  })
+  api.all(`${codexPathPrefix}/*`, (c) => gatewayError(404, "not_found", `Unsupported Codex route: ${c.req.method} ${c.req.path}.`))
   // Provider-less invocation: the body's gwm_ alias names the provider. Models keys fall through.
   for (const [path, endpoint] of Object.entries(gatewayModelEndpoints)) {
     api.post(path, async (c, next) => {
       const identity = c.get("inference")
       if (identity.kind !== "gateway") return next()
+      if (endpoint.protocol === "openai_chat") {
+        const auto = await readAutoBody(c.req.raw)
+        if ("error" in auto) {
+          auto.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return auto.error
+        }
+        if (auto.body && auto.routerId) {
+          const response = await handleAutoRequest({
+            request: auto.request,
+            body: auto.body,
+            routerId: auto.routerId,
+            identity,
+            dependencies: autoDependencies(c, identity),
+          })
+          response.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return response
+        }
+        const routed = await routeByModel(auto.request, identity.organizationId, dependencies.resolveGatewayModelProvider)
+        if ("error" in routed) {
+          routed.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+          return routed.error
+        }
+        return handleGatewayRequest(c, { ...routed, rest: endpoint.rest, protocol: endpoint.protocol })
+      }
       const routed = await routeByModel(c.req.raw, identity.organizationId, dependencies.resolveGatewayModelProvider)
       if ("error" in routed) {
         routed.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))

@@ -21,7 +21,7 @@ const pricingSchema = {
       url: "https://app.openworklabs.com?mode=sign-up",
       availability: "https://schema.org/InStock",
       description:
-        "First 5 seats free on OpenWork Cloud. Open source desktop app with bring-your-own-keys; self-host the full platform free for organizations up to 5 users."
+        "Free plan on OpenWork Cloud, limited to 5 users. Open source desktop app with bring-your-own-keys; self-host the full platform free for organizations up to 5 users."
     },
     {
       "@type": "Offer",
@@ -34,18 +34,18 @@ const pricingSchema = {
         "@type": "UnitPriceSpecification",
         price: "10",
         priceCurrency: "USD",
-        unitText: "seat per month"
+        unitText: "user per month"
       },
       description:
-        "$10 per seat per month, unlimited users. SSO/SAML, Extension Marketplace, distributed keys, cloud automations, basic analytics, standard support included."
+        "$10 per user per month, unlimited users. SSO/SAML, Extension Marketplace, distributed keys, cloud automations, basic analytics, standard support included."
     }
   ]
 };
 
 export const metadata = withSocialMetadata({
-  title: "OpenWork Pricing — First 5 Cloud seats free, $10 Team with SSO",
+  title: "OpenWork Pricing — Free for up to 5 users, Team $10 per user with SSO",
   description:
-    "First 5 seats free on OpenWork Cloud, then Team $10 per seat/month with SSO; self-hosting is free for organizations up to 5 users. Enterprise adds SCIM and desktop policies on an annual contract.",
+    "OpenWork Cloud Free plan for up to 5 users; Team is $10 per user/month with SSO; self-hosting is free for organizations up to 5 users. Enterprise adds SCIM and desktop policies on an annual contract.",
   alternates: {
     canonical: "/pricing"
   },

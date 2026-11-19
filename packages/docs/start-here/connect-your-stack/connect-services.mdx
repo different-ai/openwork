@@ -23,9 +23,6 @@ such as ChatGPT.
 3. Complete sign-in in your browser and return to OpenWork.
 4. Choose the OpenWork organization you want to use if prompted.
 
-If Connect is not available for your organization, ask an organization admin
-to enable it.
-
 ## Connect an account
 
 1. Open **Settings › Library** and choose the **Connectors** filter.
@@ -57,7 +54,33 @@ because the local integration was removed.
 Google and Gemini under **AI Providers** are separate model-provider integrations
 and are unchanged. Custom MCP servers and other connectors are also unchanged.
 
+### Enable the Google APIs your permissions use
+
+The Google Workspace connector uses your organization's own Google Cloud OAuth
+client. In the Google Cloud project that owns that client, open **APIs &
+Services › Library** and enable the API for each permission you turn on:
+
+| Permission | Google APIs to enable |
+|---|---|
+| Calendar | Google Calendar API |
+| Gmail | Gmail API |
+| Drive | Google Drive API, Google Docs API, Google Sheets API |
+| Sheets | Google Sheets API |
+| Chat | Google Chat API |
+
+Drive permissions need the Docs and Sheets APIs because Documents opens Google
+Docs and Sheets through them. Until an API is enabled, its actions fail with a
+message such as “Google Sheets API has not been used in project … or it is
+disabled”, and reconnecting does not help.
+
+To check, open the connector's **Settings** and select **Check APIs** under
+**Google APIs**. It uses your own sign-in on the connector and lists each API
+the saved permissions need, with a **Turn on** link for any that are off.
+
 ## Ask your agent to use it
+
+For Microsoft 365 administrator setup, client secrets, and consent, see
+[Connect Microsoft 365](/cloud/share-with-your-team/microsoft-365).
 
 You do not need to know an MCP server name or tool name. Ask for the outcome
 you want, for example:
@@ -89,6 +112,47 @@ support return `file_input_requires_host` and create no draft. Do not retry
 without the requested attachments. If an upload's result is uncertain, check
 Gmail Drafts before attempting creation again.
 
+### Work on whole Drive files
+
+Ask for the outcome, for example: “Fill in row 12 of the supplier workbook in
+Drive and save it.” In OpenWork Desktop the agent pulls the file into your
+workspace (by default `drive/<file name>`), works on that copy with shell tools
+such as Python, and saves it back only when you ask. OpenWork asks you to
+approve each save to Drive, following your allow, ask and deny rules. Desktop
+also confirms saves, pulls that discard local edits and pulls into any folder
+other than `drive/` before changing any files. The file's content never passes through the
+conversation, so Excel, Word, PowerPoint, PDF, large CSV, and image files work
+the same way.
+
+- Google Docs, Sheets, and Slides are pulled as Word, Excel, and PowerPoint
+  files unless you ask for another format (CSV, which holds only a sheet's first
+  tab, Markdown, text, or PDF). Saving one back creates a new Google file next to
+  the original instead of replacing it; to change a few cells in a Google Sheet
+  in place, ask for that directly.
+- Other files are replaced in place: same link and sharing, with the previous
+  version kept in Drive's version history for 30 days.
+- If someone changed the file in Drive after it was pulled, saving stops instead
+  of overwriting their change. The agent pulls the newer version and reapplies
+  your edits, or saves your edits as a copy.
+- Pulls support files up to 250 MB. Google exports Docs, Sheets, and Slides files
+  up to about 10 MB.
+
+Pulling needs **Read all Drive files**; replacing a file OpenWork did not create
+needs **Full Drive access**. Agents with a shell but without OpenWork Desktop,
+such as a coding agent connected to OpenWork Cloud, get a five-minute download
+link for one file and save edits back through an upload session, following the
+**drive-files** Cloud skill.
+
+OneDrive and SharePoint files work the same way. Ask for a file by name, or
+paste its OneDrive, SharePoint or Teams link. Word, Excel and PowerPoint files
+are ordinary files there, so saving replaces them in place, with the previous
+version in the file's version history; ask for a PDF and it is saved back as a
+new file instead. Saves from OpenWork Desktop pass through OpenWork Cloud and
+support files up to 250 MB. Files outside your own OneDrive, including SharePoint
+libraries and files shared with you, need **Read all files the member can access**
+(and **Full access** to save them); finding SharePoint sites needs **SharePoint
+sites**. See [Connect Microsoft 365](/cloud/share-with-your-team/microsoft-365).
+
 ## Manage connected services
 
 Google Workspace and Microsoft 365 connections can perform service actions, not
@@ -101,11 +165,11 @@ access does not automatically enable sending.
 | --- | --- |
 | Gmail | Search/read messages and attachments; create/read/update drafts; send an existing draft, including its reply threading and attachments; archive/unarchive, mark read/unread, star, trash/restore, and manage user labels. |
 | Google Calendar | List/create events; read, edit/reschedule, and cancel events in a selected calendar; add Meet to an existing event. |
-| Drive | Search/list with date, folder, and pagination controls; read files, upload/share, create folders, rename/move, and trash/restore. |
+| Drive | Search/list with date, folder, and pagination controls; read files, pull files into the workspace and save edits back, upload/share, create folders, rename/move, and trash/restore. |
 | Sheets | Create spreadsheets, inspect their tabs, read cell ranges, write cells, and append rows. Writes default to literal values; formula parsing requires explicit approval. |
 | Outlook | Read mail, create drafts and reply drafts, send existing drafts, change read status/categories, and move messages between inbox/archive/deleted items. |
 | Outlook Calendar | List/create, edit/reschedule, cancel, and delete events. |
-| OneDrive | Search/read, write text files, create folders, and rename/move items. |
+| OneDrive and SharePoint | Search every file the member can open (or their own OneDrive); browse folders and SharePoint libraries; open file links; read files, pull them into the workspace and save edits back; write text files, create folders, and rename/move items. |
 
 For Gmail mailbox management enable **Manage Gmail: send, archive, read status, labels, and trash**; for sending without mailbox
 management enable **Send email drafts after confirmation**. Google uses the same

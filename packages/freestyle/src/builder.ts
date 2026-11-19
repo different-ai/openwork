@@ -103,7 +103,7 @@ ${dependencies}`, options);
     parent: async () => deps.id,
     prepare: async (vm) => runScript(vm, "compiled", `${checkoutRecipe(sha)}\n${compile}`, options),
   }, api);
-  const controllerFiles: ControllerAsset[] = ["builder.ts", "cache.ts", "build-recipes.ts", "browser-recipe.ts", "browser-health.mjs", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs"];
+  const controllerFiles: ControllerAsset[] = ["builder.ts", "cache.ts", "build-recipes.ts", "browser-recipe.ts", "browser-health.mjs", "gateway.mjs", "runtime.mjs", "acme-runtime.mjs", "health.mjs", "origins.mjs", "resume.mjs", "desktop.mjs", "refresh.mjs", "desktop-runtime.mjs", "desktop-state.mjs", "desktop-health.mjs", "desktop-refresh.mjs", "workbot-runtime.mjs", "workbot-health.mjs", "workbot-refresh.mjs"];
   const controller = (await Promise.all(controllerFiles.map(readAsset))).join("\n");
   const runningSlug = `ow-warm-v1-${world}-${digest(compiledSlug + controller + runningFingerprint(entries, world))}`;
   const running = await ensureLayer({ slug: runningSlug, stage: "running-template", observe, metadata: buildLabel(sha, world), ttlSeconds: 86400,
@@ -111,9 +111,10 @@ ${dependencies}`, options);
     prepare: async (vm) => {
       log(`Preparing ${world} at ${sha} from cached dependencies`);
       const files: [string, ControllerAsset][] = [
-        ["browser-health.mjs", "browser-health.mjs"], ["gateway.mjs", "gateway.mjs"], ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : "runtime.mjs"],
-        ["health.mjs", world === "desktop" ? "desktop-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
-        ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
+        ["browser-health.mjs", "browser-health.mjs"], ["gateway.mjs", "gateway.mjs"],
+        ["runtime.mjs", world === "desktop" ? "desktop-runtime.mjs" : world === "acme-web" ? "acme-runtime.mjs" : world === "workbot" ? "workbot-runtime.mjs" : "runtime.mjs"],
+        ["health.mjs", world === "desktop" ? "desktop-health.mjs" : world === "workbot" ? "workbot-health.mjs" : "health.mjs"], ["origins.mjs", "origins.mjs"], ["resume.mjs", "resume.mjs"], ["desktop.mjs", "desktop.mjs"],
+        ["refresh.mjs", world === "desktop" ? "desktop-refresh.mjs" : world === "workbot" ? "workbot-refresh.mjs" : "refresh.mjs"], ["desktop-state.mjs", "desktop-state.mjs"],
       ];
       for (const [target, source] of files) {
         await vm.fs.writeTextFile(`/opt/openwork-preview/${target}`, await readAsset(source));
@@ -135,7 +136,8 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 `);
-      if (world === "acme-web") await vm.fs.writeTextFile("/opt/openwork-preview/template-hosts", templateHostsEntries());
+      const templated = world === "acme-web" || world === "workbot";
+      if (templated) await vm.fs.writeTextFile("/opt/openwork-preview/template-hosts", templateHostsEntries());
       await runScript(vm, "world", `
 stage_start=$(date +%s%3N)
 mark() { now=$(date +%s%3N); printf '{"stage":"%s","durationMs":%s}\\n' "$1" "$((now-stage_start))" >> /opt/openwork-preview/build-stages.jsonl; stage_start=$now; }
@@ -144,7 +146,7 @@ mark checkout
 tar -xf /opt/openwork-preview/compiled.tar -C /workspace
 mark compile
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
-${world === "acme-web" ? "grep -qxF -f /opt/openwork-preview/template-hosts /etc/hosts || cat /opt/openwork-preview/template-hosts >> /etc/hosts" : ""}
+${templated ? "grep -qxF -f /opt/openwork-preview/template-hosts /etc/hosts || cat /opt/openwork-preview/template-hosts >> /etc/hosts" : ""}
 systemctl daemon-reload
 systemctl start openwork-preview-runtime
 ${world === "app-web" ? "curl --retry 180 --retry-delay 1 --retry-max-time 180 --retry-all-errors -fsS http://127.0.0.1:5178/ >/dev/null" : `for attempt in $(seq 1 480); do
@@ -159,11 +161,11 @@ systemctl enable --now openwork-preview-gateway
 mark boot-and-verify
 `, options);
       const timings = await vm.fs.readTextFile("/opt/openwork-preview/build-stages.jsonl")
-        + (world === "acme-web" ? await vm.fs.readTextFile("/opt/openwork-preview/runtime-stages.jsonl") : "");
+        + (templated ? await vm.fs.readTextFile("/opt/openwork-preview/runtime-stages.jsonl") : "");
       for (const line of timings.trim().split("\n")) {
         const value: unknown = JSON.parse(line);
         if (!value || typeof value !== "object" || !("stage" in value) || typeof value.stage !== "string"
-          || !["checkout", "compile", "boot-and-verify", "world-services", "gateway-probe", "den-pages", "app-modules", "desktop"].includes(value.stage) || !("durationMs" in value)
+          || !["checkout", "compile", "boot-and-verify", "world-services", "gateway-probe", "den-pages", "app-modules", "desktop", "workbot-probe"].includes(value.stage) || !("durationMs" in value)
           || typeof value.durationMs !== "number" || !Number.isFinite(value.durationMs) || value.durationMs < 0) throw new Error("Invalid build timing");
         observe({ stage: value.stage, durationMs: value.durationMs });
       }

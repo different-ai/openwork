@@ -78,9 +78,12 @@ export function directoryAccess(providers: GatewayAccessProvider[], subject: Dir
   });
 }
 
-/** The allowance the gateway enforces for the subject: the highest limit per timeframe across every policy that applies. */
+/**
+ * The default allowance the gateway enforces for the subject: the highest limit per timeframe
+ * across every default policy that applies. Provider limits are shown on the person screen.
+ */
 export function directoryLimit(policies: GatewayUsageLimitPolicy[], subject: DirectorySubject): DirectoryLimit {
-  const applicable = policies.filter((policy) => !policy.archivedAt && policy.assignments.some((assignment) => assignmentSource(subject, assignment)));
+  const applicable = policies.filter((policy) => !policy.archivedAt && !policy.providerId && policy.assignments.some((assignment) => assignmentSource(subject, assignment)));
   const winners = gatewayWinningPolicies(applicable);
   const sources = winners.flatMap(({ policy }) => {
     const [source] = uniqueSources(policy.assignments.map((assignment) => assignmentSource(subject, assignment)).filter(isSource));

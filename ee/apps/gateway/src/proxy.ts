@@ -7,6 +7,7 @@ import { Hono } from "hono"
 import type { Context } from "hono"
 import { createMiddleware } from "hono/factory"
 import { env } from "./env.js"
+import { gatewayLog } from "./log.js"
 import type { assertOrganizationManagedModelsAllowed as assertOrganizationManagedModelsAllowedFn, findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
 import {
@@ -26,11 +27,20 @@ import { loadOrganizationFromDb, orgContext } from "./middleware/org-context.js"
 import type { LoadOrganization, OrganizationVariables } from "./middleware/org-context.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
+import { respondBeforeUpstream } from "./early-response.js"
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from "./gateway.js"
+import { cursorPathPrefix } from "./cursor.js"
+import { claudeCodePathPrefix } from "./claude-code.js"
+import { codexPathPrefix } from "./codex.js"
+import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
+import { loadProviderCatalogFromFile } from "./provider-catalog.js"
+import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
-import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
-import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
+import { describeUpstreamFetchFailure, isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
+import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
+import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
+import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
 import type { FreeMemberHandler } from "./free/member/handler.js"
@@ -74,8 +84,9 @@ function isSharedGatewayRequest(request: Request, path: string) {
 }
 
 /**
- * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a chat request for the
- * Auto model. Those go to the free handler, which bills the member's free allowance, never the organization.
+ * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a request for the Auto
+ * model that OpenWork Models do not serve. Those go to the free handler, which bills the member's free allowance,
+ * never the organization.
  */
 async function isFreeAutoRequest(request: Request): Promise<boolean> {
   const path = new URL(request.url).pathname
@@ -83,7 +94,10 @@ async function isFreeAutoRequest(request: Request): Promise<boolean> {
   if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
   try {
     const body: unknown = await request.clone().json()
+    // Once OpenWork Models list Auto's model, chat completions for it use the organization's own usage;
+    // free Auto still reaches it through the Responses API.
     return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
+      && (path === MEMBER_FREE_RESPONSES_PATH || !resolveModelAlias(INFERENCE_FREE_MODEL_ID))
   } catch { return false }
 }
 const topLevelModelSelectorFields = ["models", "fallbacks", "preset", "route"]
@@ -264,10 +278,6 @@ async function logUpstreamError(input: {
     status: input.upstream.status,
     upstreamUrl: safeAccessUrl(input.upstreamUrl.toString()),
   })
-}
-
-function secondsUntil(date: Date) {
-  return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
 }
 
 function upstreamRequestId(headers: Headers) {
@@ -591,6 +601,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         stream: input.stream,
         requestBytes: input.requestBytes,
         startedAt,
+        headlessSession: parseHeadlessSessionHeader(c.req.header(HEADLESS_SESSION_HEADER)),
+        signal: c.req.raw.signal,
       })
     }
     const reject = (response: Response, errorCode: string) => {
@@ -653,30 +665,11 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
     startRecorder({ ...prepared, requestBytes: Buffer.byteLength(JSON.stringify(prepared.body)) })
     if (await recorder.whenStarted?.() === false) {
-      return reject(openAiError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable."), "request_log_unavailable")
+      return reject(openAiError(503, "request_log_unavailable", REQUEST_LOG_UNAVAILABLE_MESSAGE), "request_log_unavailable")
     }
 
     const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
-    if (!limits.ok) {
-      c.header("x-openwork-limit-bucket-id", limits.limitedBy)
-      c.header("x-openwork-limit-window-type", limits.windowType)
-      const limitedBucket = "limitedBucket" in limits ? limits.limitedBucket : null
-      if (limitedBucket) {
-        const retryAfter = secondsUntil(limitedBucket.windowEndAt)
-        c.header("retry-after", String(retryAfter))
-        c.header("x-ratelimit-limit-tokens", String(limitedBucket.limitAmount))
-        c.header("x-ratelimit-remaining-tokens", "0")
-        c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
-      }
-      return reject(c.json({
-        error: {
-          message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
-          type: "tokens",
-          param: null,
-          code: "rate_limit_exceeded",
-        },
-      }, 429), "rate_limit_exceeded")
-    }
+    if (!limits.ok) return reject(openWorkModelsAllowanceResponse(limits), "rate_limit_exceeded")
 
     const providerKey = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
     if (!providerKey) {
@@ -719,180 +712,198 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     const observeChunk = (bytes: Uint8Array) => {
       try { analytics?.chunk(bytes) } catch { /* Optional analytics cannot interrupt inference. */ }
     }
+    // Set when the client leaves a response committed before the provider answered.
+    let clientGone = false
+    const clientAborted = () => c.req.raw.signal.aborted || clientGone
     const finishAnalytics = (status: Parameters<AnalyticsObserver["finish"]>[0]) => {
-      try { analytics?.finish(c.req.raw.signal.aborted ? "cancelled" : status) } catch { /* Optional analytics cannot interrupt inference. */ }
+      try { analytics?.finish(clientAborted() ? "cancelled" : status) } catch { /* Optional analytics cannot interrupt inference. */ }
     }
-    let upstream: Response
     const abort = new AbortController()
-    const abortError = () => c.req.raw.signal.aborted
+    const abortError = () => clientAborted()
       ? inferenceError("request_cancelled", "Request cancelled.")
       : abort.signal.aborted ? upstreamError(504) : null
     const cancel = () => abort.abort()
     c.req.raw.signal.addEventListener("abort", cancel, { once: true })
-    if (c.req.raw.signal.aborted) abort.abort()
-    const headerTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
-    try {
-      validateInferenceUrl(env.openRouterUpstreamUrl, { base: true })
-      abort.signal.throwIfAborted()
-      const upstreamInit: ProxyRequestInit = {
-        method: c.req.method,
-        headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
-        body: JSON.stringify({ ...prepared.body, trace: { ...prepared.body.trace, usage_started_at: limits.admittedAt.toISOString() } }),
-        duplex: "half",
-        signal: abort.signal,
-        redirect: "error",
-      }
-      // Re-read after every preparation await, immediately before the only dispatch.
-      const dispatchRejection = await managedModelsRejection(inferenceKey.organization_id)
-      if (dispatchRejection) {
+    if (clientAborted()) abort.abort()
+    const dispatch = async (): Promise<Response> => {
+      let upstream: Response
+      const headerTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
+      try {
+        validateInferenceUrl(env.openRouterUpstreamUrl, { base: true })
+        abort.signal.throwIfAborted()
+        const upstreamInit: ProxyRequestInit = {
+          method: c.req.method,
+          headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
+          body: JSON.stringify({ ...prepared.body, trace: { ...prepared.body.trace, usage_started_at: limits.admittedAt.toISOString() } }),
+          duplex: "half",
+          signal: abort.signal,
+          redirect: "error",
+        }
+        // Re-read after every preparation await, immediately before the only dispatch.
+        const dispatchRejection = await managedModelsRejection(inferenceKey.organization_id)
+        if (dispatchRejection) {
+          clearTimeout(headerTimeout)
+          c.req.raw.signal.removeEventListener("abort", cancel)
+          abort.abort()
+          finishAnalytics("failed")
+          return reject(dispatchRejection, "managed_models_policy_rejected")
+        }
+        upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
+      } catch (error) {
         clearTimeout(headerTimeout)
         c.req.raw.signal.removeEventListener("abort", cancel)
-        abort.abort()
         finishAnalytics("failed")
-        return reject(dispatchRejection, "managed_models_policy_rejected")
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: clientAborted(),
+          timedOut: abort.signal.aborted && !clientAborted(),
+          target: "the selected model's provider",
+        })
+        // An unreachable provider is answered to the caller, not reported as a Gateway error.
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("OpenRouter upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: inferenceKey.organization_id,
+          upstream_url: safeAccessUrl(upstreamUrl.toString()),
+          upstream_model: prepared.upstreamModel,
+          error_code: failure.code,
+          network_error: failure.cause,
+        })
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        return c.json(inferenceError(failure.code, failure.message), failure.status)
       }
-      upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
-    } catch {
       clearTimeout(headerTimeout)
-      c.req.raw.signal.removeEventListener("abort", cancel)
-      finishAnalytics("failed")
-      const error = abortError() ?? inferenceError("upstream_unreachable", "The selected model could not be reached. Your work is preserved; retry when the provider recovers.")
-      logProxyError("Failed to reach OpenRouter upstream", {
-        openworkRequestId,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
-        modelAlias: prepared.modelAlias,
-        upstreamModel: prepared.upstreamModel,
-      })
-      reporter.handledError({
-        reason: error.error.code,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        openworkRequestId,
-        route: c.req.path,
-        method: c.req.method,
-        headers: incomingHeaders,
-        incomingModel: prepared.incomingModel,
-        resolvedUpstreamModel: prepared.upstreamModel,
-        status: 502,
-        upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
-      })
-      void recorder.finish({ status: 502, outcome: c.req.raw.signal.aborted ? "client_aborted" : "upstream_unreachable", errorCode: error.error.code })
-      return c.json(error, 502)
-    }
-    clearTimeout(headerTimeout)
 
-    if (!upstream.ok) {
-      finishAnalytics("failed")
-      await logUpstreamError({
-        upstream,
-        upstreamUrl,
-        openworkRequestId,
-        organizationId: inferenceKey.organization_id,
-        orgMembershipId: inferenceKey.org_membership_id,
-        inferenceKeyId: inferenceKey.id,
-        route: c.req.path,
-        method: c.req.method,
-        headers: incomingHeaders,
-        modelAlias: prepared.modelAlias,
-        incomingModel: prepared.incomingModel,
-        upstreamModel: prepared.upstreamModel,
-        reporter,
-      })
-    }
-
-    const headers = new Headers({ "x-openwork-request-id": openworkRequestId, "cache-control": "no-store" })
-    const retryAfter = upstream.headers.get("retry-after")
-    if (retryAfter && (/^\d+$/.test(retryAfter) || Number.isFinite(Date.parse(retryAfter)))) headers.set("retry-after", retryAfter)
-    if (!upstream.ok) {
-      let error = upstreamError(upstream.status)
-      // Read only a bounded error envelope to classify context overflow. The
-      // provider's message and metadata never leave this scope or enter logs.
-      if (upstream.status === 400) {
-        const timeout = setTimeout(() => abort.abort(), Math.min(env.managedUpstreamTimeoutMs, 5000))
-        try {
-          const payload = await readResponseJson(upstream.body, abort.signal, 65536)
-          if (isJsonObject(payload) && isJsonObject(payload.error) && (
-            payload.error.code === "context_length_exceeded" ||
-            (typeof payload.error.message === "string" && /maximum context length|context length.*exceed|too many tokens/i.test(payload.error.message))
-          )) error = upstreamError(413)
-        } catch { /* The safe status category remains sufficient. */ }
-        finally { clearTimeout(timeout) }
-      }
-      c.req.raw.signal.removeEventListener("abort", cancel)
-      abort.abort()
-      await upstream.body?.cancel().catch(() => {})
-      void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: error.error.code, upstreamRequestId: upstreamRequestId(upstream.headers) })
-      return Response.json(error, { status: upstream.status, headers })
-    }
-    const contentType = upstream.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
-    if (prepared.stream) {
-      if (contentType !== "text/event-stream" || !upstream.body) {
+      if (!upstream.ok) {
         finishAnalytics("failed")
+        await logUpstreamError({
+          upstream,
+          upstreamUrl,
+          openworkRequestId,
+          organizationId: inferenceKey.organization_id,
+          orgMembershipId: inferenceKey.org_membership_id,
+          inferenceKeyId: inferenceKey.id,
+          route: c.req.path,
+          method: c.req.method,
+          headers: incomingHeaders,
+          modelAlias: prepared.modelAlias,
+          incomingModel: prepared.incomingModel,
+          upstreamModel: prepared.upstreamModel,
+          reporter,
+        })
+      }
+
+      const headers = new Headers({ "x-openwork-request-id": openworkRequestId, "cache-control": "no-store" })
+      const retryAfter = upstream.headers.get("retry-after")
+      if (retryAfter && (/^\d+$/.test(retryAfter) || Number.isFinite(Date.parse(retryAfter)))) headers.set("retry-after", retryAfter)
+      if (!upstream.ok) {
+        let error = upstreamError(upstream.status)
+        // Read only a bounded error envelope to classify context overflow. The
+        // provider's message and metadata never leave this scope or enter logs.
+        if (upstream.status === 400) {
+          const timeout = setTimeout(() => abort.abort(), Math.min(env.managedUpstreamTimeoutMs, 5000))
+          try {
+            const payload = await readResponseJson(upstream.body, abort.signal, 65536)
+            if (isJsonObject(payload) && isJsonObject(payload.error) && (
+              payload.error.code === "context_length_exceeded" ||
+              (typeof payload.error.message === "string" && /maximum context length|context length.*exceed|too many tokens/i.test(payload.error.message))
+            )) error = upstreamError(413)
+          } catch { /* The safe status category remains sufficient. */ }
+          finally { clearTimeout(timeout) }
+        }
         c.req.raw.signal.removeEventListener("abort", cancel)
         abort.abort()
         await upstream.body?.cancel().catch(() => {})
-        void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_malformed_stream" })
-        return Response.json(inferenceError("upstream_malformed_stream", "The model did not return a response stream. Retry the selected model."), { status: 502, headers })
+        void recorder.finish({ status: upstream.status, outcome: "upstream_error", errorCode: error.error.code, upstreamRequestId: upstreamRequestId(upstream.headers) })
+        return Response.json(error, { status: upstream.status, headers })
       }
-      headers.set("content-type", "text/event-stream; charset=utf-8")
-      headers.set("x-accel-buffering", "no")
-      const usageParser = createOpenAiChatSseUsageParser()
-      const usageDecoder = new TextDecoder()
-      return new Response(relayChatStream({
-        body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
-        onChunk: observeChunk,
-        onRawChunk(bytes) {
-          recorder.markFirstByte()
-          usageParser.push(usageDecoder.decode(bytes, { stream: true }))
-        },
-        onFinish(result) {
+      const contentType = upstream.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
+      if (prepared.stream) {
+        if (contentType !== "text/event-stream" || !upstream.body) {
+          finishAnalytics("failed")
           c.req.raw.signal.removeEventListener("abort", cancel)
-          finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
-          recordUsage(recorder, usageParser.result(), "stream")
-          void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
-          try {
-            reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
-          } catch { /* Completion reporting must not interrupt stream cleanup. */ }
-        },
-      }), { headers })
-    }
-    // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
-    // not a completed inference response.
-    const bodyTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
-    try {
-      const value = await readResponseJson(upstream.body, abort.signal)
-      recorder.markFirstByte()
-      recordUsage(recorder, parseOpenAiChatJsonUsage(value), "json")
-      if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
-      if (!completeChatResponse(value, choiceCount)) {
-        finishAnalytics("failed")
-        void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_incomplete" })
-        return Response.json(inferenceError("upstream_incomplete", "The model returned an incomplete response. Review your work before retrying."), { status: 502, headers })
+          abort.abort()
+          await upstream.body?.cancel().catch(() => {})
+          void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_malformed_stream" })
+          return Response.json(inferenceError("upstream_malformed_stream", "The model did not return a response stream. Retry the selected model."), { status: 502, headers })
+        }
+        headers.set("content-type", "text/event-stream; charset=utf-8")
+        headers.set("x-accel-buffering", "no")
+        const usageParser = createOpenAiChatSseUsageParser()
+        const usageDecoder = new TextDecoder()
+        return new Response(relayChatStream({
+          body: upstream.body, abort, startedAt: analyticsStartedAt, idleMs: env.streamIdleMs, choiceCount,
+          onChunk: observeChunk,
+          onRawChunk(bytes) {
+            recorder.markFirstByte()
+            usageParser.push(usageDecoder.decode(bytes, { stream: true }))
+          },
+          onFinish(result) {
+            c.req.raw.signal.removeEventListener("abort", cancel)
+            finishAnalytics(result.outcome === "completed" ? "completed" : result.outcome === "cancelled" ? "cancelled" : "failed")
+            recordUsage(recorder, usageParser.result(), "stream")
+            void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
+            try {
+              reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
+            } catch { /* Completion reporting must not interrupt stream cleanup. */ }
+          },
+        }), { headers })
       }
-      const response = Response.json(value, { headers })
-      finishAnalytics("completed")
-      void recorder.finish({ status: upstream.status, outcome: "ok", responseBytes: Buffer.byteLength(JSON.stringify(value)), upstreamRequestId: upstreamRequestId(upstream.headers) })
-      return response
-    } catch {
-      finishAnalytics("failed")
-      void recorder.finish({ status: 502, outcome: c.req.raw.signal.aborted ? "client_aborted" : "upstream_error", errorCode: abortError()?.error.code ?? "upstream_malformed_response" })
-      return Response.json(abortError() ?? inferenceError("upstream_malformed_response", "The model response was interrupted or malformed. Review your work before retrying."), { status: 502, headers })
-    } finally {
-      clearTimeout(bodyTimeout)
-      c.req.raw.signal.removeEventListener("abort", cancel)
-      abort.abort()
+      // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
+      // not a completed inference response.
+      const bodyTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
+      try {
+        const value = await readResponseJson(upstream.body, abort.signal)
+        recorder.markFirstByte()
+        recordUsage(recorder, parseOpenAiChatJsonUsage(value), "json")
+        if (analytics) observeChunk(new TextEncoder().encode(JSON.stringify(value)))
+        if (!completeChatResponse(value, choiceCount)) {
+          finishAnalytics("failed")
+          void recorder.finish({ status: 502, outcome: "upstream_error", errorCode: "upstream_incomplete" })
+          return Response.json(inferenceError("upstream_incomplete", "The model returned an incomplete response. Review your work before retrying."), { status: 502, headers })
+        }
+        const response = Response.json(value, { headers })
+        finishAnalytics("completed")
+        void recorder.finish({ status: upstream.status, outcome: "ok", responseBytes: Buffer.byteLength(JSON.stringify(value)), upstreamRequestId: upstreamRequestId(upstream.headers) })
+        return response
+      } catch {
+        finishAnalytics("failed")
+        void recorder.finish({ status: 502, outcome: clientAborted() ? "client_aborted" : "upstream_error", errorCode: abortError()?.error.code ?? "upstream_malformed_response" })
+        return Response.json(abortError() ?? inferenceError("upstream_malformed_response", "The model response was interrupted or malformed. Review your work before retrying."), { status: 502, headers })
+      } finally {
+        clearTimeout(bodyTimeout)
+        c.req.raw.signal.removeEventListener("abort", cancel)
+        abort.abort()
+      }
     }
+    const pending = dispatch()
+    if (!prepared.stream) return pending
+    return respondBeforeUpstream({
+      pending,
+      protocol: "openai_chat",
+      commitAfterMs: env.responseStartMs,
+      heartbeatMs: env.responseHeartbeatMs,
+      headers: { "x-openwork-request-id": openworkRequestId },
+      onCommit() {
+        console.info("[gateway-proxy] Committed stream before upstream headers", { openworkRequestId, organizationId: inferenceKey.organization_id, modelAlias: prepared.modelAlias })
+      },
+      onCancel() {
+        clientGone = true
+        abort.abort()
+      },
+    })
   }
 
   const authenticateModels = inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey })
   const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
-  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || isSharedGatewayRequest(c.req.raw, c.req.path)
+  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || c.req.path.startsWith(`${cursorPathPrefix}/`) || c.req.path.startsWith(`${claudeCodePathPrefix}/`) || c.req.path.startsWith(`${codexPathPrefix}/`) || c.req.path === gatewayProviderTestPath || isSharedGatewayRequest(c.req.raw, c.req.path)
     ? authenticateGateway(c, next) : authenticateModels(c, next)))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
+  registerProviderTestRoute(api, {
+    fetch: dependencies.fetch,
+    signingSecret: env.dbEncryptionKey,
+    catalog: dependencies.gateway?.catalog ?? loadProviderCatalogFromFile(),
+    mintGcpAccessToken: dependencies.gateway?.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
+    now: dependencies.gateway?.now ?? (() => new Date()),
+  })
   registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {
     api.all(path, handleApiRequest)

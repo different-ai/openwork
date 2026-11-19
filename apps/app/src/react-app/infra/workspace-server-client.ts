@@ -1,9 +1,7 @@
 import { useMemo } from "react";
 
 import {
-  isRemoteWorkspace,
   resolveWorkspaceEndpoint,
-  workspaceServerId,
   type LocalServerHandle,
   type ResolvedWorkspaceEndpoint,
 } from "@/app/lib/workspace-endpoint";
@@ -29,18 +27,6 @@ function normalizeLocalServer(localServer: LocalServerHandle): NormalizedLocalSe
   };
 }
 
-function remoteBaseUrl(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
-  return trim(workspace.baseUrl) || trim(workspace.openworkHostUrl);
-}
-
-function remoteToken(workspace: NonNullable<WorkspaceServerClientWorkspace>): string {
-  return (
-    trim(workspace.openworkToken) ||
-    trim(workspace.openworkClientToken) ||
-    trim(workspace.openworkHostToken)
-  );
-}
-
 function cacheKey(parts: string[]): string {
   return parts.join("\u001f");
 }
@@ -50,15 +36,6 @@ export function createWorkspaceServerClientCacheKey(
   localServer: LocalServerHandle,
 ): string {
   if (!workspace) return "workspace:none";
-
-  if (isRemoteWorkspace(workspace)) {
-    return cacheKey([
-      "workspace:remote",
-      workspaceServerId(workspace),
-      remoteBaseUrl(workspace),
-      remoteToken(workspace),
-    ]);
-  }
 
   const normalizedLocalServer = normalizeLocalServer(localServer);
   return cacheKey([
@@ -126,7 +103,7 @@ export function useWorkspaceServerClient(
   });
 
   // `workspaceKey` intentionally includes only fields that change endpoint
-  // behavior; remote workspaces do not churn when the local server reconnects.
+  // behavior.
   return useMemo(
     () => createWorkspaceServerClientResolver({ baseUrl: localBaseUrl, token: localToken })(workspace),
     [workspaceKey],

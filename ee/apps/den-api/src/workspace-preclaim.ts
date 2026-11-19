@@ -18,9 +18,11 @@ import {
   DEN_MCP_RESOURCE_CLAIM,
   DEN_MCP_TOKEN_USE_CLAIM,
 } from "./auth.js"
+import { recordUserSessionsRevokedBySystem } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { sessionTokenDigest } from "./session-token.js"
 import { getDenAuthIssuer } from "./mcp/jwt-policy.js"
 
 /**
@@ -142,7 +144,8 @@ export async function verifyPreclaimAssertion(assertion: string, now = new Date(
   } catch {
     return { ok: false, error: "invalid_grant", description: "The assertion is missing its workspace." }
   }
-  const [bootstrap] = await db
+  // primary: agents exchange the assertion right after bootstrap, and a claim must revoke it at once.
+  const [bootstrap] = await db.$primary
     .select()
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", normalizedBootstrapId)))
@@ -186,7 +189,8 @@ export async function exchangePreclaimAssertion(assertion: string, now = new Dat
     id: sessionId,
     userId: agentUserId,
     activeOrganizationId: bootstrap.organizationId,
-    token: randomBytes(32).toString("base64url"),
+    // Never presented by anyone (the JWT names the session id), so it is stored hashed from the start.
+    token: sessionTokenDigest(randomBytes(32).toString("base64url")),
     expiresAt,
     ipAddress: null,
     userAgent: "openwork-preclaim",
@@ -225,7 +229,8 @@ export async function findPreclaimWorkspaceForUser(input: { userId: string; emai
   } catch {
     return null
   }
-  const [row] = await db
+  // primary: only setup agents reach this; a lagging row would skip the pre-claim limits right after bootstrap or claim.
+  const [row] = await db.$primary
     .select({ id: WorkspaceBootstrapTable.id, organizationId: WorkspaceBootstrapTable.organizationId, status: WorkspaceBootstrapTable.status })
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.agentUserId, normalizeDenTypeId("user", userId)))
@@ -376,8 +381,9 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     .where(and(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", bootstrapId)), isNull(WorkspaceBootstrapTable.credentialsRevokedAt)))
   if (!bootstrap?.agentUserId) return
   const agentUserId = normalizeDenTypeId("user", bootstrap.agentUserId)
-  const sessions = await db
-    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
+  // primary: a session minted moments ago must have its cache entries revoked too.
+  const sessions = await db.$primary
+    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, agentUserId))
   await db.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, agentUserId))
@@ -385,6 +391,9 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     await cache.auth.revokeSession(session.token)
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
   }
+  // Direct delete of the setup agent's sessions: session.revoked in the agent's
+  // active memberships (system actor; never fails the cleanup).
+  await recordUserSessionsRevokedBySystem({ userId: agentUserId, sessions, reasonCode: "bootstrap_credentials_revoked", system: "den-api.workspace-bootstrap" })
 }
 
 /**

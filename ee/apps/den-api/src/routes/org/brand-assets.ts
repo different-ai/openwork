@@ -12,15 +12,15 @@ import {
   type BrandAssetStorage,
   type BrandAssetStorageKey,
 } from "../../brand-assets.js"
+import { attributeAuditRequest } from "../../audit/request-capture.js"
 import { databaseBrandAssetStorage } from "../../brand-asset-storage.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { binaryResponse, forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationSettings } from "../../orgs.js"
 import type { ManagedBrandAssetMetadata } from "../../organization-limits.js"
-import { orgRoleRoute, publicRoute } from "../../middleware/index.js"
+import { orgPermissionRoute, publicRoute } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const managedBrandAssetSchema = z.object({
   kind: z.enum(["logo", "icon"]),
@@ -49,7 +49,8 @@ const invalidAssetSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidManagedBrandAssetError" })
 
-function publicBaseUrl() {
+/** Base URL of signed brand asset links (also used by config-blob imports). */
+export function brandAssetPublicBaseUrl() {
   return env.apiPublicUrl ?? `http://127.0.0.1:${env.port}`
 }
 
@@ -75,7 +76,8 @@ function normalizeAssetRoute(input: {
   }
 }
 
-async function uploadedAsset(input: {
+/** Validates, normalizes and stores one upload (also used by config-blob imports, src/config-blobs/areas/settings-brand.ts). */
+export async function uploadedAsset(input: {
   file: File
   kind: BrandAssetKind
   organizationId: BrandAssetStorageKey["organizationId"]
@@ -112,7 +114,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
   options: { storage?: BrandAssetStorage; publicBaseUrl?: string; signingSecret?: string } = {},
 ) {
   const storage = options.storage ?? databaseBrandAssetStorage
-  const assetPublicBaseUrl = options.publicBaseUrl ?? publicBaseUrl()
+  const assetPublicBaseUrl = options.publicBaseUrl ?? brandAssetPublicBaseUrl()
   const signingSecret = options.signingSecret ?? env.betterAuthSecret
 
   app.get(
@@ -142,6 +144,12 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       if (!verifyBrandAssetSignature(key, signature, signingSecret)) {
         return c.json({ error: "not_found" }, 404)
       }
+      // The HMAC binds the organization in the path: attribute the download to
+      // it; the holder of a capability URL is anonymous.
+      const audited = await attributeAuditRequest(c, {
+        organizationId: key.organizationId, actor: { type: "unknown", id: null }, principalKey: "anonymous:signed_brand_asset_url",
+      })
+      if (!audited.ok) return audited.response
 
       const bytes = await storage.read(key)
       if (!bytes) return c.json({ error: "not_found" }, 404)
@@ -165,11 +173,11 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
         200: jsonResponse("Managed brand assets were saved.", uploadResponseSchema),
         400: jsonResponse("A supplied brand asset was invalid.", invalidAssetSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and super-admins can upload brand assets.", forbiddenSchema),
+        403: jsonResponse("The caller needs the Change branding permission and a recent sign-in.", forbiddenSchema),
         413: jsonResponse("The upload exceeded the request size limit.", invalidAssetSchema),
       },
     }),
-    orgRoleRoute(["super-admin"]),
+    orgPermissionRoute("branding.update"),
     bodyLimit({
       maxSize: BRAND_ASSET_REQUEST_MAX_BYTES,
       onError: (c) => c.json({
@@ -180,9 +188,6 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       }, 413),
     }),
     async (c) => {
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can upload brand assets.")
-      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
-
       const payload = c.get("organizationContext")
       const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
       if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)

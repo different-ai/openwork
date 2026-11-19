@@ -128,11 +128,11 @@ function extractQuery(input: unknown, max = 80): string | null {
   if (!isRecord(input)) return null
   const direct = input.query ?? input.q ?? input.search ?? input.prompt
   if (typeof direct === "string" && direct.trim()) return truncate(direct.trim(), max)
-  // Bodies arrive as objects or as a JSON string, depending on how the
-  // capability was invoked.
-  const body = parseRecord(input.body)
-  if (body) {
-    const nested = body.query ?? body.q ?? body.search ?? body.prompt ?? body.question ?? body.message ?? body.text
+  // Arguments and bodies arrive as objects or as a JSON string, depending on
+  // how the capability was invoked; an API operation nests its body.
+  const args = parseRecord(input.arguments)
+  for (const body of [args, parseRecord(args?.body), parseRecord(input.body)]) {
+    const nested = body?.query ?? body?.q ?? body?.search ?? body?.prompt ?? body?.question ?? body?.message ?? body?.text
     if (typeof nested === "string" && nested.trim()) return truncate(nested.trim(), max)
   }
   return null
@@ -183,6 +183,160 @@ function skillReference(part: DynamicToolUIPart): string | null {
   return (asked.startsWith("plugin:") ? name.replace(/-[a-z0-9]{8}$/, "") : name) || null
 }
 
+/** Den keeps marketplace skill names unique with an 8-character id suffix. */
+function plainSkillName(name: string): string {
+  return name.replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "")
+}
+
+function sentence(service: string | null, present: string, past: string, failure: string): CapabilityCallSentence {
+  return { service, present, past, failure }
+}
+
+/**
+ * Code Mode's own engine tools (`tools.opencode.*`) arrive as
+ * "opencode_<tool>". They are the agent working inside OpenWork, so they never
+ * name the engine as a service (T2): a skill read names the skill, anything
+ * else names the connection it read from.
+ */
+function engineToolSentence(action: string, input: Record<string, unknown> | null): CapabilityCallSentence {
+  const server = typeof input?.server === "string" && input.server.trim() ? serviceNameFromSlug(input.server.trim()) : null
+  if (action === "read_mcp_resource") {
+    const uri = typeof input?.uri === "string" ? input.uri : ""
+    if (uri === "skill://index.json") {
+      return sentence(null, "Looking through your skills", "Looked through your skills", "Couldn't look through your skills")
+    }
+    const skill = /^skill:\/\/([^/]+)\/SKILL\.md$/.exec(uri)?.[1]
+    if (skill) {
+      const target = `your ${plainSkillName(skill)} skill`
+      return sentence(null, `Using ${target}…`, `Used ${target}`, `Couldn't use ${target}`)
+    }
+    const from = server ? ` from ${server}` : ""
+    return sentence(server, `Reading a document${from}`, `Read a document${from}`, `Couldn't read a document${from}`)
+  }
+  if (action === "list_mcp_resources") {
+    const from = server ? ` from ${server}` : ""
+    return sentence(server, `Listing available documents${from}`, `Listed available documents${from}`, `Couldn't list documents${from}`)
+  }
+  if (action === "models") return sentence(null, "Looking up models", "Looked up models", "Couldn't look up models")
+  if (action === "session_rename") {
+    const title = typeof input?.title === "string" && input.title.trim() ? ` to “${truncate(input.title.trim(), 60)}”` : ""
+    return sentence(null, `Renaming this chat${title}`, `Renamed this chat${title}`, "Couldn't rename this chat")
+  }
+  if (action === "session_move") {
+    const folder = typeof input?.directory === "string" ? input.directory.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) : undefined
+    const to = folder ? ` to ${folder}` : ""
+    return sentence(null, `Moving this chat${to}`, `Moved this chat${to}`, "Couldn't move this chat")
+  }
+  return sentence(null, verbPhrase(action, "present"), verbPhrase(action, "past"), `Couldn't ${baseVerbPhrase(action)}`)
+}
+
+/** The engine names an MCP tool `<server>_<tool>`; OpenWork Connect's server is `openwork-cloud`. */
+const CONNECT_TOOL_PREFIX = "openwork-cloud_"
+
+/** Shows the sign-in card of the connection its input names. */
+export const CONNECT_STATUS_TOOL = `${CONNECT_TOOL_PREFIX}connection_status`
+
+/**
+ * Connect's fixed tools. Every other tool on its server is one action of a
+ * connection, Workflow, App or remote session, or one of OpenWork's operations.
+ */
+const CONNECT_OWN_TOOLS = new Set([
+  "search_capabilities",
+  "execute_capability",
+  "execute_capability_script",
+  "list_skills",
+  "get_skill",
+  "create_skill",
+  "update_skill",
+  "prepare_app",
+  "create_app",
+  "update_app",
+  "read_app",
+  "connection_status",
+  "connection_action",
+  "render_workflow_artifact",
+  "read_artifact_view",
+  "save_artifact_view",
+  "activate_artifact_view_revision",
+  "retire_artifact_view",
+])
+
+/** `<namespace>_<tool>` when Connect lists this tool for one action, e.g. "linear_list_issues". */
+export function connectActionToolName(toolName: string): string | null {
+  if (!toolName.startsWith(CONNECT_TOOL_PREFIX)) return null
+  const action = toolName.slice(CONNECT_TOOL_PREFIX.length)
+  return !action || CONNECT_OWN_TOOLS.has(action) || action.startsWith("run_artifact_") ? null : action
+}
+
+/** The first part of a connection's tool names, as Connect derives it from the connection's name. */
+export function connectToolNamespace(connectionName: string): string {
+  const namespace = connectionName.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
+  if (!namespace) return "_"
+  return /^[a-z_]/.test(namespace) ? namespace : `_${namespace}`
+}
+
+/** The connection's own tool name inside a Connect action tool, or null when the tool is not this connection's. */
+export function connectActionForConnection(action: string, connectionName: string): string | null {
+  const namespace = connectToolNamespace(connectionName)
+  if (!action.startsWith(`${namespace}_`)) return null
+  // Connect numbers a second connection of the same name ("linear_2").
+  return action.slice(namespace.length + 1).replace(/^\d+_(?=.)/, "") || null
+}
+
+/** "create" for Connect's `remote-session.create` tool, and so on. */
+export function connectRemoteSessionAction(toolName: string): string | null {
+  return /^openwork-cloud_remote-session_([a-z]+)$/.exec(toolName)?.[1] ?? null
+}
+
+/** One of OpenWork's own operations listed as a tool: `den.<operation>`, a namespace no connection can take. */
+export function connectDenOperation(toolName: string): string | null {
+  return /^openwork-cloud_den_([A-Za-z0-9]+)$/.exec(toolName)?.[1] ?? null
+}
+
+/** A camelCase operation name's verb, its remaining words, and the native service those words name. */
+function operationParts(name: string): { verb: string | undefined; rest: string[]; service: string | null } {
+  const words = name.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
+  let rest = words.slice(1)
+  if (/^capabilit(y|ies)$/i.test(rest[0] ?? "")) rest = rest.slice(1)
+  // "GoogleWorkspaceCalendarEvents" → service "Google Workspace", "calendar events".
+  const service = /^GoogleWorkspace/.test(rest.join("")) ? "Google Workspace"
+    : /^Microsoft365/.test(rest.join("")) ? "Microsoft 365" : null
+  if (service) rest = rest.slice(service === "Google Workspace" ? 2 : 1)
+  return { verb: words[0]?.toLowerCase(), rest, service }
+}
+
+const HTTP_VERBS: Record<string, string> = { post: "create", put: "update", patch: "update" }
+
+/** "getCapabilitiesGoogleWorkspaceCalendarEvents" → "get_calendar_events"; other tool names are unchanged. */
+function operationAction(name: string): string {
+  if (!/^[a-z]+[A-Z]/.test(name) || /[-_.\s]/.test(name)) return name
+  const { verb, rest } = operationParts(name)
+  return [verb ? HTTP_VERBS[verb] ?? verb : "", ...rest].filter(Boolean).join("_").toLowerCase() || name
+}
+
+/** A connection's own tool, named by the service the resolved connector gives it. */
+function connectionActionSentence(rawAction: string, service: string | null, quoted: string): CapabilityCallSentence {
+  const action = normalizeAction(rawAction, service ?? "")
+  if (service && /^(?:search|find|query)(?:_|$)/i.test(action)) {
+    const verb = action.split("_")[0]!.toLowerCase()
+    return {
+      service,
+      present: `${PRESENT_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+      past: `${PAST_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+      failure: `Couldn't ${verb} ${service}`,
+    }
+  }
+  const suffix = quoted ? `:${quoted}` : ""
+  const tail = service ? ` · ${service}` : ""
+  return {
+    service,
+    present: `${verbPhrase(action, "present")}${tail}${suffix}`,
+    past: `${verbPhrase(action, "past")}${tail}${suffix}`,
+    // Without a known service there is nothing specific to say.
+    ...(service ? { failure: `Couldn't ${baseVerbPhrase(action)}${tail}` } : {}),
+  }
+}
+
 export function getConnectionStatusProbeId(part: DynamicToolUIPart): string | null {
   if (part.toolName !== "openwork_execute_capability" && part.toolName !== "openwork-cloud_execute_capability") return null
   const input = parseRecord(part.input)
@@ -194,7 +348,18 @@ export function getCapabilityCallSentence(
   options?: { includeQuery?: boolean; connectionName?: string | null },
 ): CapabilityCallSentence {
   const toolName = part.toolName
-  if (getConnectionStatusProbeId(part)) {
+  if (toolName === "openwork_drive_upload") {
+    const input = parseRecord(part.input)
+    const name = typeof input?.path === "string" ? input.path.split(/[\\/]/).filter(Boolean).at(-1) : null
+    const file = name ? `“${name}”` : "a file"
+    return {
+      service: "Google Drive",
+      present: `Uploading ${file} to Google Drive`,
+      past: `Uploaded ${file} to Google Drive`,
+      failure: `Couldn't upload ${file} to Google Drive`,
+    }
+  }
+  if (getConnectionStatusProbeId(part) || toolName === CONNECT_STATUS_TOOL) {
     const service = options?.connectionName?.trim() || null
     const target = service ? `${service} connection` : "connection"
     return {
@@ -253,8 +418,20 @@ export function getCapabilityCallSentence(
     }
   }
 
-  if (toolName.endsWith("execute_capability")) {
-    const name = isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null
+  // One of OpenWork's operations reads the same whether execute_capability
+  // ran it or Connect listed it as its own tool.
+  const denOperation = connectDenOperation(toolName)
+  if (toolName.endsWith("execute_capability") || denOperation) {
+    const name = denOperation ?? (isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null)
+    // Reading the organization directory to find a person or team by name.
+    if (name && /(?:^|:)getOrg$/.test(name)) {
+      return {
+        service: null,
+        present: "Looking up people in your organization",
+        past: "Looked up people in your organization",
+        failure: "Couldn't look up people in your organization",
+      }
+    }
     const split = name ? splitCapabilityName(name) : null
     if (split) {
       const suffix = quoted ? `:${quoted}` : ""
@@ -271,29 +448,8 @@ export function getCapabilityCallSentence(
     // ("query_granola_meetings" → "Queried granola meetings").
     if (name?.startsWith("mcp:")) {
       const rawAction = name.split(":").filter(Boolean).at(-1)
-      if (rawAction) {
-        // The connection id is opaque; the resolved connector names the service.
-        const service = options?.connectionName?.trim() || null
-        const action = normalizeAction(rawAction, service ?? "")
-        if (service && /^(?:search|find|query)(?:_|$)/i.test(action)) {
-          const verb = action.split("_")[0]!.toLowerCase()
-          return {
-            service,
-            present: `${PRESENT_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
-            past: `${PAST_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
-            failure: `Couldn't ${verb} ${service}`,
-          }
-        }
-        const suffix = quoted ? `:${quoted}` : ""
-        const tail = service ? ` · ${service}` : ""
-        return {
-          service,
-          present: `${verbPhrase(action, "present")}${tail}${suffix}`,
-          past: `${verbPhrase(action, "past")}${tail}${suffix}`,
-          // Without a known service there is nothing specific to say.
-          ...(service ? { failure: `Couldn't ${baseVerbPhrase(action)}${tail}` } : {}),
-        }
-      }
+      // The connection id is opaque; the resolved connector names the service.
+      if (rawAction) return connectionActionSentence(rawAction, options?.connectionName?.trim() || null, quoted)
     }
 
     // "plugin:plg_…:cob_…" refs are opaque; the human name only exists in
@@ -317,17 +473,9 @@ export function getCapabilityCallSentence(
     // Native camelCase capabilities, e.g.
     // "native:<connection>:getCapabilitiesGoogleWorkspaceCalendarEvents".
     if (name) {
-      const nativeName = name.replace(/^native:[^:]+:/, "")
-      const words = nativeName.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
-      const first = words[0]?.toLowerCase()
+      const { verb: first, rest, service: nativeService } = operationParts(name.replace(/^native:[^:]+:/, ""))
       const verbPast = first ? PAST_TENSE[first] : undefined
       const verbPresent = first ? PRESENT_TENSE[first] : undefined
-      let rest = words.slice(1)
-      if (/^capabilit(y|ies)$/i.test(rest[0] ?? "")) rest = rest.slice(1)
-      // "GoogleWorkspaceCalendarEvents" → service "Google Workspace", "calendar events".
-      const nativeService = /^GoogleWorkspace/.test(rest.join("")) ? "Google Workspace"
-        : /^Microsoft365/.test(rest.join("")) ? "Microsoft 365" : null
-      if (nativeService) rest = rest.slice(nativeService === "Google Workspace" ? 2 : 1)
       if (verbPast && verbPresent && rest.length > 0) {
         const phrase = rest.join(" ").toLowerCase()
         const suffix = nativeService ? ` · ${nativeService}` : ""
@@ -345,6 +493,18 @@ export function getCapabilityCallSentence(
       present: `Running a capability${quoted ? ` for${quoted}` : ""}`,
       past: `Ran a capability${quoted ? ` for${quoted}` : ""}`,
     }
+  }
+
+  // A connection's action listed as its own Connect tool
+  // ("openwork-cloud_linear_list_issues") reads like the same action run
+  // through execute_capability, once the connector that owns it is known.
+  const connectAction = connectActionToolName(toolName)
+  const connection = options?.connectionName?.trim()
+  const ownAction = connectAction && connection ? connectActionForConnection(connectAction, connection) : null
+  if (ownAction) return connectionActionSentence(operationAction(ownAction), connection ?? null, quoted)
+
+  if (toolName.startsWith("opencode_")) {
+    return engineToolSentence(toolName.slice("opencode_".length), parseRecord(part.input))
   }
 
   // Generic "{connection}_{tool}" MCP tools.

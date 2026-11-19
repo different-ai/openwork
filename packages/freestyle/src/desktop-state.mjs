@@ -85,7 +85,7 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
     const info = await desktop.openworkServerInfo();
     const bootstrap = await desktop.getDesktopBootstrapConfig();
     const base = new URL(info.baseUrl);
-    flags.nativeLocalOnly = info.running === true && info.remoteAccessEnabled === false && localUrl(info.baseUrl)
+    flags.nativeLocalOnly = info.running === true && info.remoteAccessEnabled !== true && localUrl(info.baseUrl)
       && bootstrap.fromFile === false && !bootstrap.handoff && !bootstrap.prepared && !bootstrap.enterpriseActivation;
     if (!flags.nativeLocalOnly || !info.clientToken || !info.hostToken) return flags;
     async function get(endpoint, host = false) {

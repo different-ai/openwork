@@ -16,14 +16,14 @@ assert_contains() {
 
 default_rendered="$tmp_dir/default.yaml"
 helm template openwork-ee "$chart_dir" > "$default_rendered"
-assert_contains "$default_rendered" 'DEN_AUTOMATIONS_ENABLED: "false"'
+assert_contains "$default_rendered" 'DEN_AUTOMATIONS_ENABLED: "true"'
 assert_contains "$default_rendered" 'DEN_AUTOMATIONS_RUNTIME_ENABLED: "true"'
 
-enabled_values="$tmp_dir/enabled-values.yaml"
-enabled_rendered="$tmp_dir/enabled.yaml"
-printf '%s\n' 'config:' '  public:' '    automationsEnabled: "true"' > "$enabled_values"
-helm template openwork-ee "$chart_dir" -f "$enabled_values" > "$enabled_rendered"
-assert_contains "$enabled_rendered" 'DEN_AUTOMATIONS_ENABLED: "true"'
+off_values="$tmp_dir/off-values.yaml"
+off_rendered="$tmp_dir/off.yaml"
+printf '%s\n' 'config:' '  public:' '    automationsEnabled: "false"' > "$off_values"
+helm template openwork-ee "$chart_dir" -f "$off_values" > "$off_rendered"
+assert_contains "$off_rendered" 'DEN_AUTOMATIONS_ENABLED: "false"'
 
 disabled_values="$tmp_dir/disabled-values.yaml"
 disabled_rendered="$tmp_dir/disabled.yaml"

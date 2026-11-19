@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { parseLocalPathReference } from "./local-path";
 
 type OpenTargetKind = "url" | "file";
 export type OpenTargetPreview = "browser" | "markdown" | "code" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
@@ -24,6 +25,12 @@ export type OpenTarget = {
   confidence: number;
   reason: string;
   exists?: boolean;
+  /** Unverified exact candidates from a directory preceding this reference. */
+  pathHints?: string[];
+  /** Absolute path on the owning server, not necessarily this computer. */
+  resolvedPath?: string;
+  /** Pins subsequent file operations to the root that resolved this target. */
+  fileScope?: "workspace" | "conversation";
   size?: number;
   updatedAt?: number;
 };
@@ -54,6 +61,8 @@ export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolea
       && target.confidence === other.confidence
       && target.reason === other.reason
       && target.exists === other.exists
+      && target.resolvedPath === other.resolvedPath
+      && target.fileScope === other.fileScope
       && target.size === other.size
       && target.updatedAt === other.updatedAt;
   });
@@ -147,8 +156,19 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   return text.replace(MARKDOWN_LINK_PATTERN, (match, label: string, href: string) => {
     const cleanLabel = label.trim();
     const cleanHref = href.trim();
-    return cleanLabel === basename(cleanHref) ? `[](${cleanHref})` : match;
+    return cleanLabel === basename(filePathFromLinkHref(cleanHref)) ? `[](${cleanHref})` : match;
   });
+}
+
+/**
+ * Markdown link destinations are URLs, so a reply that links `Acme%20Quote.pdf`
+ * or `file:///…/Acme%20Quote.pdf` names the file `Acme Quote.pdf`. Decode the
+ * destination once so it matches the file on disk. A `file://` URL with a host
+ * stays as written (network shares are never opened), and a name that is not
+ * valid percent-encoding stays literal.
+ */
+export function filePathFromLinkHref(href: string): string {
+  return parseLocalPathReference(href, { decode: true })?.path ?? href.trim();
 }
 
 /**
@@ -158,18 +178,14 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
  * because attachment filenames often contain spaces).
  */
 export function filePathFromFileUrl(url: string): string | null {
-  if (!url.startsWith("file://")) return null;
-  try {
-    const pathname = decodeURIComponent(new URL(url).pathname);
-    if (!pathname) return null;
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
-  } catch {
-    return null;
-  }
+  if (!/^file:\/\//i.test(url)) return null;
+  return parseLocalPathReference(url)?.path ?? null;
 }
 
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
-  const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
+  const reference = parseLocalPathReference(path);
+  if (!reference) return null;
+  const normalized = normalizePath(reference.path);
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
   return {
     id: `file:${normalized.toLowerCase()}`,
@@ -247,7 +263,7 @@ function scanText(
     if (/^(?:https?|wss?):\/\//i.test(href)) {
       addTarget(map, targetFromUrl(href, confidence, reason));
     } else if (options.includeFiles) {
-      addTarget(map, targetFromFile(href, confidence, reason));
+      addTarget(map, targetFromFile(filePathFromLinkHref(href), confidence, reason));
     }
   }
 
@@ -407,6 +423,35 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
   }
   variants.set(key, extracted);
   return extracted;
+}
+
+/** Exact structured paths touched by completed tools, including reads. These are
+ * resolution hints, not sidebar artifacts or proof that the files still exist. */
+export function deriveSessionFileEvidence(messages: UIMessage[]): OpenTarget[] {
+  const targets = new Map<string, OpenTarget>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool" || part.state !== "output-available" || isDiscoveryTool(part.toolName)) continue;
+      const metadata = part.callProviderMetadata?.openwork;
+      const mcpResult = metadata?.mcpResult;
+      const failed = (isObject(part.output) && (part.output.error || part.output.isError === true || part.output.ok === false))
+        || (isObject(mcpResult) && mcpResult.isError === true);
+      if (failed) continue;
+      const destinations = Array.isArray(metadata?.workspacePaths)
+        ? metadata.workspacePaths.flatMap((entry) => isObject(entry) && typeof entry.resolved === "string" ? [entry.resolved] : [])
+        : typeof metadata?.fileDestination === "string" ? [metadata.fileDestination] : [];
+      const values = destinations.length ? destinations
+        : [...[part.input, part.output].flatMap(collectNestedFileMetadataValues), ...collectPatchFileValues(part.input)];
+      for (const value of values) {
+        const reference = parseLocalPathReference(value);
+        const target = reference && targetFromFile(reference.path, 95, "session tool metadata");
+        // Unlike legacy artifact discovery, evidence must keep literal prefixes
+        // and case: workspaces/foo/report.md can be a real filesystem location.
+        if (target && reference) addTarget(targets, { ...target, id: `file:${reference.path}`, value: reference.path });
+      }
+    }
+  }
+  return Array.from(targets.values());
 }
 
 export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTargetsOptions = {}): OpenTarget[] {

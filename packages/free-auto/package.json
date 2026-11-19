@@ -5,17 +5,26 @@
   "description": "Free Auto: the contract between the OpenWork desktop app, its local relay, the Gateway and Den. Pure protocol, proof-of-work, version policy and accounting rules shared by every runtime.",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
     "./accounting": {
-      "types": "./src/accounting.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/accounting.d.ts",
+        "default": "./src/accounting.ts"
+      },
       "development": "./src/accounting.ts",
       "default": "./dist/accounting.js"
     },
     "./node": {
-      "types": "./src/node.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/node.d.ts",
+        "default": "./src/node.ts"
+      },
       "development": "./src/node.ts",
       "default": "./dist/node.js"
     }
@@ -25,7 +34,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

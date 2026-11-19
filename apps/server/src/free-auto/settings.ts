@@ -4,7 +4,8 @@ export const ANONYMOUS_INFERENCE_PROVIDER_ID = DESKTOP_FREE_PROVIDER_ID;
 export const ANONYMOUS_INFERENCE_MODEL_ID = DESKTOP_FREE_MODEL_ID;
 export const ANONYMOUS_INFERENCE_PROVIDER_NAME = "OpenWork Models (Free)";
 export const LOCAL_ROUTE_PREFIX = "/anonymous-inference/v1";
-export const REQUEST_BODY_LIMIT = 2 * 1024 * 1024;
+// Images make requests large; the Gateway accepts up to 32 MiB.
+export const REQUEST_BODY_LIMIT = 24 * 1024 * 1024;
 export const ERROR_BODY_LIMIT = 64 * 1024;
 export const SESSION_TIMEOUT_MS = 10_000;
 export const REQUEST_LIFETIME_MS = 5 * 60_000;

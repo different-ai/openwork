@@ -1,10 +1,9 @@
-import { peopleMemberCondition } from "./setup-agent-members.js"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
+import { countBillingUsers } from "./billing-users.js"
 import { cache } from "./cache.js"
-import { db } from "./db.js"
 import { syncInferenceAfterMemberChange } from "./inference.js"
-import { syncInferenceSubscriptionQuantityAfterMemberChange, syncSeatSubscriptionQuantityAfterMemberChange, syncWebSubscriptionQuantityAfterMemberChange } from "./stripe-billing.js"
+import { syncOrganizationBillingQuantities } from "./stripe-billing.js"
+import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -14,26 +13,24 @@ export type OrganizationMemberChange = "added" | "removed"
 type OrganizationMemberChangeHookInput = {
   organizationId: OrgId
   memberId: MemberId
+  /** Members plus unexpired pending invitations: the same users billing counts. */
   memberCount: number
   change: OrganizationMemberChange
 }
 
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
+/** Someone who was removed keeps no cloud computer. */
+const removeWorkbotComputersAfterRemoval: OrganizationMemberChangeHook = async (input) => {
+  if (input.change === "removed") removeMemberWorkbotComputersInBackground(input)
+}
+
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
   syncInferenceAfterMemberChange,
-  syncSeatSubscriptionQuantityAfterMemberChange,
-  syncInferenceSubscriptionQuantityAfterMemberChange,
-  syncWebSubscriptionQuantityAfterMemberChange,
+  // Team seats, OpenWork Models and OpenWork Web follow the same user count.
+  syncOrganizationBillingQuantities,
+  removeWorkbotComputersAfterRemoval,
 ]
-
-async function countOrganizationMembers(organizationId: OrgId) {
-  const [row] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
-  return Math.max(0, Number(row?.count ?? 0))
-}
 
 export async function runPostOrganizationMemberChangeHooks(input: {
   organizationId: OrgId
@@ -42,7 +39,7 @@ export async function runPostOrganizationMemberChangeHooks(input: {
 }) {
   // Member add/remove changes both list rendering and membership auth decisions.
   await cache.org.deleteMembers(input.organizationId)
-  const memberCount = await countOrganizationMembers(input.organizationId)
+  const memberCount = await countBillingUsers(input.organizationId)
   for (const hook of organizationMemberChangeHooks) {
     await hook({ ...input, memberCount })
   }

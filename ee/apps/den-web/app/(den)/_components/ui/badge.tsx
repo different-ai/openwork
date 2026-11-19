@@ -1,6 +1,7 @@
 import type { ElementType, ReactNode } from "react";
 
 export type DenBadgeTone = "neutral" | "info" | "success" | "warning" | "danger";
+export type DenBadgeSize = "md" | "sm";
 
 const toneClasses: Record<DenBadgeTone, string> = {
   neutral: "bg-gray-100 text-gray-600",
@@ -10,19 +11,26 @@ const toneClasses: Record<DenBadgeTone, string> = {
   danger: "bg-red-50 text-red-600",
 };
 
+const sizeClasses: Record<DenBadgeSize, string> = {
+  md: "gap-1.5 px-2.5 py-1 text-[12px]",
+  // The compact pill beside a name or label, e.g. Admin / Invited in Members.
+  sm: "gap-1 px-2 py-0.5 text-[11px]",
+};
+
 export type DenBadgeProps = {
   children: ReactNode;
   tone?: DenBadgeTone;
+  size?: DenBadgeSize;
   icon?: ElementType;
   className?: string;
 };
 
-export function DenBadge({ children, tone = "neutral", icon: Icon, className = "" }: DenBadgeProps) {
+export function DenBadge({ children, tone = "neutral", size = "md", icon: Icon, className = "" }: DenBadgeProps) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium ${toneClasses[tone]} ${className}`}
+      className={`inline-flex items-center rounded-full font-medium ${sizeClasses[size]} ${toneClasses[tone]} ${className}`}
     >
-      {Icon ? <Icon className="h-3.5 w-3.5" aria-hidden /> : null}
+      {Icon ? <Icon className={size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5"} aria-hidden /> : null}
       {children}
     </span>
   );

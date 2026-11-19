@@ -21,10 +21,10 @@ export type ConnectCapabilityClient = {
     organizationId: string,
     marketplaceId: string,
   ) => Promise<DenOrgMarketplaceResolved>;
-  getOrgPluginResolved: (
+  getOrgPluginsResolved: (
     organizationId: string,
-    plugin: DenOrgPlugin,
-  ) => Promise<DenOrgPluginResolved>;
+    plugins: DenOrgPlugin[],
+  ) => Promise<DenOrgPluginResolved[]>;
 };
 
 export type ConnectPluginFile = {
@@ -265,11 +265,15 @@ export async function listAssignedConnectCapabilities(input: {
   const marketplaceIds = input.requireComplete
     ? [...assignedMarketplaceIds]
     : marketplaces.map((marketplace) => marketplace.id);
-  const resolvedMarketplaces = await Promise.all(
+  const resolvedMarketplaces = (await Promise.all(
     marketplaceIds.map((marketplaceId) =>
       input.client.getOrgMarketplaceResolved(input.organizationId, marketplaceId)
     ),
-  );
+  ))
+    // Both paths return the same inventory, so a complete pass can also serve
+    // the Connect views: active marketplaces only, in name order.
+    .filter((resolved) => resolved.marketplace.status === "active")
+    .sort((left, right) => left.marketplace.name.localeCompare(right.marketplace.name));
 
   const plugins = new Map<string, MarketplacePlugin>();
   for (const resolved of resolvedMarketplaces) {
@@ -291,12 +295,11 @@ export async function listAssignedConnectCapabilities(input: {
   }
   if (plugins.size === 0) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
 
-  const resolvedPlugins = await Promise.all(
-    [...plugins.values()].map(async ({ marketplace, plugin }) => ({
-      marketplace,
-      resolved: await input.client.getOrgPluginResolved(input.organizationId, plugin),
-    })),
-  );
+  const pluginEntries = [...plugins.values()];
+  const resolvedPlugins = (await input.client.getOrgPluginsResolved(
+    input.organizationId,
+    pluginEntries.map(({ plugin }) => plugin),
+  )).map((resolved, index) => ({ marketplace: pluginEntries[index]!.marketplace, resolved }));
 
   const skills: SkillCard[] = [];
   const pluginsById = new Map<string, ConnectPluginCard>();

@@ -1,0 +1,157 @@
+"use client";
+
+import {
+  AGENT_SANDBOX_ONLY_CAPABILITY_HEADER,
+  normalizeAgentPermissionSettings,
+  type AgentPermissionSettings,
+} from "@openwork/types/den/agent-permissions";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
+import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+
+const AGENT_PERMISSIONS_PATH = "/v1/agent-permissions";
+
+/** "everyone" or a team's id. */
+export type AgentPermissionScopeId = string;
+export const EVERYONE_SCOPE: AgentPermissionScopeId = "everyone";
+
+export type AgentPermissionPolicy = {
+  scopeId: AgentPermissionScopeId;
+  teamId: string | null;
+  name: string;
+  memberCount: number | null;
+  settings: AgentPermissionSettings;
+  updatedAt: string | null;
+};
+
+export type AgentPermissionPolicies = {
+  everyone: AgentPermissionPolicy;
+  teams: AgentPermissionPolicy[];
+  canEdit: boolean;
+};
+
+const policySchema = z.object({
+  teamId: z.string().nullable(),
+  name: z.string(),
+  memberCount: z.number().int().nullable(),
+  settings: z.unknown(),
+  updatedAt: z.string().nullable(),
+});
+
+const listSchema = z.object({
+  everyone: policySchema,
+  teams: z.array(policySchema),
+  canEdit: z.boolean(),
+});
+
+function toPolicy(policy: z.infer<typeof policySchema>): AgentPermissionPolicy {
+  return {
+    scopeId: policy.teamId ?? EVERYONE_SCOPE,
+    teamId: policy.teamId,
+    name: policy.name,
+    memberCount: policy.memberCount,
+    // Stored settings are already valid; normalizing keeps an older server's
+    // unknown permissions out of the editor instead of failing the page.
+    settings: normalizeAgentPermissionSettings(policy.settings),
+    updatedAt: policy.updatedAt,
+  };
+}
+
+export function agentPermissionsQueryKey(orgId: string): string[] {
+  return ["agent-permissions", orgId];
+}
+
+export function useAgentPermissions(orgId: string, enabled = true) {
+  return useQuery({
+    queryKey: agentPermissionsQueryKey(orgId),
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    queryFn: async ({ signal }): Promise<AgentPermissionPolicies> => {
+      const { response, payload } = await requestJson(
+        AGENT_PERMISSIONS_PATH,
+        { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" }, cache: "no-store", signal },
+        15000,
+      );
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Couldn't load agent permissions (${response.status}).`));
+      }
+      const parsed = listSchema.safeParse(payload);
+      if (!parsed.success) throw new Error("Agent permissions returned an unexpected response.");
+      return {
+        everyone: toPolicy(parsed.data.everyone),
+        teams: parsed.data.teams.map(toPolicy),
+        canEdit: parsed.data.canEdit,
+      };
+    },
+  });
+}
+
+function scopePath(scopeId: AgentPermissionScopeId): string {
+  return scopeId === EVERYONE_SCOPE
+    ? `${AGENT_PERMISSIONS_PATH}/everyone`
+    : `${AGENT_PERMISSIONS_PATH}/teams/${encodeURIComponent(scopeId)}`;
+}
+
+/** Saves each scope's settings in turn; the first failure stops and is thrown. */
+export function useSaveAgentPermissions(orgId: string) {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationKey: [...agentPermissionsQueryKey(orgId), "save"],
+    retry: false,
+    mutationFn: async (changes: { scopeId: AgentPermissionScopeId; settings: AgentPermissionSettings }[]) => {
+      await runReauthableAction("save-agent-permissions", async () => {
+        for (const change of changes) {
+          const { response, payload } = await requestJson(
+            scopePath(change.scopeId),
+            {
+              method: "PUT",
+              headers: { [ORG_SCOPE_HEADER]: orgId, "content-type": "application/json", "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" },
+              body: JSON.stringify({ settings: change.settings }),
+            },
+            15000,
+          );
+          if (!response.ok) throw getRequestError(payload, response, `Couldn't save agent permissions (${response.status}).`);
+        }
+      });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: agentPermissionsQueryKey(orgId) }),
+  });
+}
+
+/** Removes a team's agent permissions, so its members get Everyone's again. */
+export function useRemoveTeamAgentPermissions(orgId: string, teamId: string) {
+  const queryClient = useQueryClient();
+  const { runReauthableAction } = useOrgDashboard();
+  return useMutation({
+    mutationKey: [...agentPermissionsQueryKey(orgId), "remove", teamId],
+    retry: false,
+    mutationFn: async () => {
+      await runReauthableAction("remove-team-agent-permissions", async () => {
+        const { response, payload } = await requestJson(
+          scopePath(teamId),
+          { method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId, "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", [AGENT_SANDBOX_ONLY_CAPABILITY_HEADER]: "1" } },
+          15000,
+        );
+        if (!response.ok) throw getRequestError(payload, response, `Couldn't remove these agent permissions (${response.status}).`);
+      });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: agentPermissionsQueryKey(orgId) }),
+  });
+}
+
+/** Whether a team has its own agent permissions: a saved record, not Everyone's. */
+export function hasTeamRecord(policy: AgentPermissionPolicy): boolean {
+  return policy.scopeId !== EVERYONE_SCOPE && policy.updatedAt !== null;
+}
+
+/** A team's own agent permissions, counted for lists: "1 change", or null while it follows Everyone. */
+export function teamOverrideSummary(policy: AgentPermissionPolicy | undefined): string | null {
+  if (!policy || !hasTeamRecord(policy)) return null;
+  const count = Object.keys(normalizeAgentPermissionSettings(policy.settings)).length;
+  if (count === 0) return null;
+  return `${count} ${count === 1 ? "change" : "changes"}`;
+}

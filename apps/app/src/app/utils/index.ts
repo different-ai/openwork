@@ -5,7 +5,6 @@ import type {
   ModelRef,
   OpencodeEvent,
 } from "../types";
-import type { WorkspaceInfo } from "../lib/desktop";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -336,57 +335,6 @@ export function addOpencodeCacheHint(message: string) {
   return message;
 }
 
-const SANDBOX_DOCKER_OFFLINE_HINTS = [
-  "cannot connect to the docker daemon",
-  "is the docker daemon running",
-  "docker daemon",
-  "docker desktop",
-  "docker engine",
-  "error during connect",
-  "docker.sock",
-  "docker_socket",
-  "open //./pipe/docker_engine",
-];
-
-const SANDBOX_NETWORK_HINTS = [
-  "failed to fetch",
-  "fetch failed",
-  "networkerror",
-  "request timed out",
-  "timeout",
-  "connection refused",
-  "econnrefused",
-  "connection reset",
-  "socket hang up",
-  "enotfound",
-  "getaddrinfo",
-  "could not connect",
-];
-
-export function isSandboxWorkspace(workspace: WorkspaceInfo) {
-  return (
-    workspace.workspaceType === "remote" &&
-    (workspace.sandboxBackend === "docker" ||
-      workspace.sandboxBackend === "microsandbox" ||
-      Boolean(workspace.sandboxRunId?.trim()) ||
-      Boolean(workspace.sandboxContainerName?.trim()))
-  );
-}
-
-export function isRemoteConnectionWorkspace(workspace: WorkspaceInfo) {
-  return workspace.id.trim().startsWith("rem_");
-}
-
-export function isRemoteConnectionErrorMessage(message?: string | null) {
-  const value = message?.trim().toLowerCase() ?? "";
-  return (
-    value.includes("remote worker") ||
-    value.includes("cannot reach ") ||
-    value.includes("health check failed") ||
-    value.includes("worker connection failed")
-  );
-}
-
 export function redactTokenLikeText(value: string): string {
   return value
     .replace(/([?&](?:access_token|api_key|key|password|token)=)[^&\s]+/gi, "$1[redacted]")
@@ -395,39 +343,13 @@ export function redactTokenLikeText(value: string): string {
     .replace(/\bowt_[a-z0-9_-]+\b/gi, "owt_[redacted]");
 }
 
-export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error?: string | null) {
+export function getWorkspaceTaskLoadErrorDisplay(error?: string | null) {
   const raw = redactTokenLikeText(error?.trim() ?? "");
-  const fallbackTitle = raw || "Failed to load tasks";
-  if (!raw || !isSandboxWorkspace(workspace)) {
-    return {
-      tone: "error" as const,
-      label: "Error",
-      message: raw && workspace.workspaceType === "remote" ? raw : "Failed to load tasks",
-      title: fallbackTitle,
-    };
-  }
-
-  const normalized = raw.toLowerCase();
-  const hasDockerHint = SANDBOX_DOCKER_OFFLINE_HINTS.some((hint) => normalized.includes(hint));
-  const hasNetworkHint = SANDBOX_NETWORK_HINTS.some((hint) => normalized.includes(hint));
-  const host = `${workspace.baseUrl ?? ""} ${workspace.openworkHostUrl ?? ""}`.toLowerCase();
-  const localHost = host.includes("localhost") || host.includes("127.0.0.1");
-
-  if (!hasDockerHint && !(localHost && hasNetworkHint)) {
-    return {
-      tone: "error" as const,
-      label: "Error",
-      message: "Failed to load tasks",
-      title: fallbackTitle,
-    };
-  }
-
-  const message = "Sandbox is offline. Start Docker Desktop, then test connection.";
   return {
-    tone: "offline" as const,
-    label: "Offline",
-    message,
-    title: `${message}\n\n${raw}`,
+    tone: "error" as const,
+    label: "Error",
+    message: "Failed to load tasks",
+    title: raw || "Failed to load tasks",
   };
 }
 

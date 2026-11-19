@@ -14,5 +14,10 @@ export default async function DevicePage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  return <DeviceApprovalScreen initialUserCode={firstParamValue(params.user_code)} />;
+  return (
+    <DeviceApprovalScreen
+      initialUserCode={firstParamValue(params.user_code)}
+      returnTo={firstParamValue(params.return_to)}
+    />
+  );
 }

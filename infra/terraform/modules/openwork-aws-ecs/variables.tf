@@ -3,8 +3,13 @@
 # ---------------------------------------------------------------------------
 
 variable "openwork_version" {
-  description = "Published OpenWork release, for example \"0.18.54\". Used as the tag for both images unless den_api_image / den_web_image are set."
+  description = "Release label. 0.18.57 and 0.18.58 have built-in digest pins; other releases require den_api_image and den_web_image digest overrides."
   type        = string
+
+  validation {
+    condition     = contains(["0.18.57", "0.18.58"], var.openwork_version) || (var.den_api_image != "" && var.den_web_image != "")
+    error_message = "For versions other than 0.18.57/0.18.58, supply both den_api_image and den_web_image pinned by @sha256 digest."
+  }
 }
 
 variable "vpc_id" {
@@ -12,20 +17,9 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "alb_subnet_ids" {
-  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs."
-  type        = list(string)
-}
-
 variable "service_subnet_ids" {
   description = "Subnets for the Fargate tasks. Private subnets need a NAT gateway or VPC endpoints to pull images from ghcr.io; public subnets need assign_public_ip = true."
   type        = list(string)
-}
-
-variable "database_subnet_ids" {
-  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
-  type        = list(string)
-  default     = []
 }
 
 variable "owner_emails" {
@@ -36,6 +30,68 @@ variable "owner_emails" {
     condition     = length(var.owner_emails) > 0
     error_message = "Set at least one owner email so the first administrator can be created."
   }
+}
+
+# ---------------------------------------------------------------------------
+# Load Balancer
+# ---------------------------------------------------------------------------
+
+variable "load_balancer_arn" {
+  description = "ARN of an existing Application Load Balancer. The module adds its HTTPS (443) and HTTP (80) listeners to it, so the ALB must not already listen on those ports; for a shared ALB, use alb_listener_arn instead. Requires alb_security_group_id. Empty creates an ALB (<name>-den) in alb_subnet_ids."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.load_balancer_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:loadbalancer/app/.+$", var.load_balancer_arn))
+    error_message = "load_balancer_arn must be a full Application Load Balancer ARN (arn:aws:elasticloadbalancing:<region>:<account>:loadbalancer/app/<name>/<id>) or empty."
+  }
+}
+
+variable "alb_subnet_ids" {
+  description = "Subnets for the load balancer (public subnets for an internet-facing ALB). At least two AZs. Required when creating an ALB (load_balancer_arn is empty)."
+  type        = list(string)
+  default     = []
+}
+
+variable "internal_alb" {
+  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments). Used when creating an ALB."
+  type        = bool
+  default     = false
+}
+
+variable "alb_listener_arn" {
+  description = "ARN of an existing ALB HTTPS listener (for example on a shared ALB). The module adds host-header rules for domain_name and the API host to it instead of creating listeners, and creates no DNS records. Takes precedence over load_balancer_arn. Requires alb_security_group_id."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.alb_listener_arn == "" || can(regex("^arn:aws[a-z-]*:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:listener/app/.+$", var.alb_listener_arn))
+    error_message = "alb_listener_arn must be a full ALB listener ARN (arn:aws:elasticloadbalancing:<region>:<account>:listener/app/<name>/<id>/<id>) or empty."
+  }
+}
+
+variable "alb_security_group_id" {
+  description = "Security group of the load balancer. Required with load_balancer_arn or alb_listener_arn so the tasks accept traffic from it. When the module creates the ALB, empty creates a security group allowing 80/443 from allowed_ingress_cidrs; set it to attach your own instead."
+  type        = string
+  default     = ""
+}
+
+variable "api_listener_rule_priority" {
+  description = "Priority of the den-api host rule on the HTTPS listener. Must be unique on that listener; change it when using alb_listener_arn on a listener that already has rules."
+  type        = number
+  default     = 10
+}
+
+variable "web_listener_rule_priority" {
+  description = "Priority of the den-web host rule, created only with alb_listener_arn. Must be unique on that listener."
+  type        = number
+  default     = 20
+}
+
+variable "attach_listener_certificate" {
+  description = "With alb_listener_arn, also add the certificate (certificate_arn, or the one the module creates) to that listener. Leave false when the listener's certificates already cover both hostnames."
+  type        = bool
+  default     = false
 }
 
 # ---------------------------------------------------------------------------
@@ -60,13 +116,19 @@ variable "tags" {
 }
 
 variable "den_api_image" {
-  description = "Full den-api image reference. Empty uses ghcr.io/different-ai/openwork-den-api:<openwork_version>. Set this to an ECR mirror if tasks cannot reach ghcr.io."
+  description = "Full den-api image pinned with @sha256 digest (including ECR mirrors). Empty uses the built-in digest for 0.18.57/0.18.58."
+  type        = string
+  default     = ""
+}
+
+variable "den_gateway_image" {
+  description = "Full den-gateway image reference. Empty uses ghcr.io/different-ai/openwork-den-gateway:<openwork_version>."
   type        = string
   default     = ""
 }
 
 variable "den_web_image" {
-  description = "Full den-web image reference. Empty uses ghcr.io/different-ai/openwork-den-web:<openwork_version>."
+  description = "Full den-web image pinned with @sha256 digest. Empty uses the built-in digest for 0.18.57/0.18.58."
   type        = string
   default     = ""
 }
@@ -79,6 +141,17 @@ variable "ecs_cluster_arn" {
   validation {
     condition     = var.ecs_cluster_arn == "" || can(regex("^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:cluster/.+$", var.ecs_cluster_arn))
     error_message = "ecs_cluster_arn must be a full ECS cluster ARN (arn:aws:ecs:<region>:<account>:cluster/<name>) or empty."
+  }
+}
+
+variable "service_name_prefix" {
+  description = "Prefix for the ECS service names (den-api, den-web, ...). ECS service names must be unique in a cluster, so set it (for example \"openwork-\") when sharing ecs_cluster_arn with other services or another OpenWork deployment. Changing it on an existing deployment replaces the services."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = can(regex("^([A-Za-z][A-Za-z0-9_-]{0,31})?$", var.service_name_prefix))
+    error_message = "service_name_prefix must be empty or up to 32 letters, digits, hyphens or underscores, starting with a letter."
   }
 }
 
@@ -114,7 +187,7 @@ variable "api_domain_name" {
 }
 
 variable "certificate_arn" {
-  description = "ACM certificate (same region) covering domain_name and api_domain_name. Empty creates and DNS-validates one in route53_zone_id."
+  description = "ACM certificate (same region) covering Den and all enabled optional hosts, including ai_gateway_domain_name. Empty creates and DNS-validates one in route53_zone_id."
   type        = string
   default     = ""
 }
@@ -123,12 +196,6 @@ variable "route53_zone_id" {
   description = "Route 53 hosted zone for both hostnames. When set, the module creates alias records and, if certificate_arn is empty, the ACM certificate. Leave empty when DNS is elsewhere; point both names at the alb_dns_name output."
   type        = string
   default     = ""
-}
-
-variable "internal_alb" {
-  description = "Create an internal ALB, reachable only inside the VPC (VPN/private network deployments)."
-  type        = bool
-  default     = false
 }
 
 variable "allowed_ingress_cidrs" {
@@ -160,7 +227,7 @@ variable "org_slug" {
 }
 
 variable "initial_admin_bootstrap_code" {
-  description = "One-time /setup code. Empty generates one (see the bootstrap_code output)."
+  description = "Legacy compatibility /setup code. Empty generates one only with write_only_secrets = false. Write-only mode uses secret_values_wo.bootstrap_code and never exports this legacy input."
   type        = string
   default     = ""
   sensitive   = true
@@ -179,9 +246,9 @@ variable "require_email_verification" {
 }
 
 variable "automations_enabled" {
-  description = "Enable Automations."
+  description = "Automations for the whole install (on by default; organization admins can turn Desktop or Cloud Automations off in Settings)."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "dashboards_enabled" {
@@ -191,21 +258,205 @@ variable "dashboards_enabled" {
 }
 
 variable "openwork_web_enabled" {
-  description = "Enable OpenWork Web (cloud chat sessions). Needs a sandbox provider: set provisioner_mode = \"daytona\" and pass DAYTONA_API_KEY through extra_secrets."
+  description = "Run OpenWork Web (chat in the browser, one Daytona sandbox per member) on this deployment: adds the den-gateway service at openwork_web_domain_name and points the dashboard's OpenWork Web button at it. Requires daytona_api_key and daytona.snapshot."
   type        = bool
   default     = false
 }
 
-variable "openwork_web_url" {
-  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty keeps den-web's default, which is the hosted https://web.openworklabs.com, not your deployment."
+variable "openwork_web_domain_name" {
+  description = "Public hostname for OpenWork Web (den-gateway). Empty uses web.<domain_name>. Must be covered by certificate_arn; a module-created certificate includes it."
   type        = string
   default     = ""
 }
 
-variable "provisioner_mode" {
-  description = "Sandbox provider for OpenWork Web: stub (none), daytona or render."
+variable "openwork_web_url" {
+  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty uses this deployment's gateway when openwork_web_enabled, otherwise den-web's default (the hosted https://web.openworklabs.com)."
   type        = string
-  default     = "stub"
+  default     = ""
+}
+
+variable "openwork_web_listener_rule_priority" {
+  description = "Priority of the den-gateway host rule on the HTTPS listener (created with openwork_web_enabled). Must be unique on that listener."
+  type        = number
+  default     = 30
+}
+
+variable "provisioner_mode" {
+  description = "Sandbox provider (PROVISIONER_MODE): stub (none) or daytona. Empty picks daytona when openwork_web_enabled, otherwise stub."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = contains(["", "stub", "daytona"], var.provisioner_mode)
+    error_message = "provisioner_mode must be empty, stub or daytona."
+  }
+}
+
+variable "daytona_api_key" {
+  description = "Daytona API key for OpenWork Web sandboxes. Required with openwork_web_enabled; stored in Secrets Manager."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "daytona" {
+  description = <<-EOT
+    Daytona settings for OpenWork Web sandboxes (daytona.io or a self-hosted Daytona).
+    snapshot: required with openwork_web_enabled; a snapshot in the API key's Daytona
+    organization built from the OpenWork sandbox image for openwork_version (see the
+    README). name_prefix: prefix for sandbox and volume names; empty uses <name>, so
+    deployments sharing one Daytona organization stay apart.
+  EOT
+  type = object({
+    api_url     = optional(string, "https://app.daytona.io/api")
+    snapshot    = optional(string, "")
+    target      = optional(string, "")
+    name_prefix = optional(string, "")
+  })
+  default = {}
+}
+
+variable "headless_runner" {
+  description = <<-EOT
+    The headless runner: Den's private agent service for Slack replies, headless
+    Automations and Workbot. It calls the model directly (any Anthropic- or
+    OpenAI-compatible endpoint; key via headless_model_secret_arn or the legacy
+    headless_model_api_key input) and reaches tools
+    through Den's /mcp/agent. Runs as one task with its SQLite database on EFS
+    (one mount target per service subnet, so service_subnet_ids must be in
+    different availability zones). Set external_url to use an already deployed
+    celld/S3 fleet instead; this module then creates no Node runner or EFS.
+    Configure that fleet's model, computer and file storage separately.
+  EOT
+  type = object({
+    enabled        = optional(bool, false)
+    external_url   = optional(string, "")
+    model_protocol = optional(string, "anthropic")
+    model_base_url = optional(string, "https://api.anthropic.com/v1")
+    model          = optional(string, "")
+    cpu            = optional(number, 512)
+    memory         = optional(number, 1024)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["anthropic", "openai", "openai-responses"], var.headless_runner.model_protocol)
+    error_message = "headless_runner.model_protocol must be anthropic, openai or openai-responses."
+  }
+
+  validation {
+    condition = var.headless_runner.external_url == "" || can(regex(
+      "^(https://[A-Za-z0-9.-]+|http://[A-Za-z0-9-]+)(:[0-9]+)?$",
+      var.headless_runner.external_url
+    ))
+    error_message = "headless_runner.external_url must be an HTTPS origin, or an HTTP origin with a single-label private hostname, without a path or trailing slash."
+  }
+}
+
+variable "headless_runner_token" {
+  description = "Existing fleet's HEADLESS_API_TOKEN (at least 32 characters), required with headless_runner.external_url. Stored in Secrets Manager; only den-api and Workbot receive it. Ignored for the managed Node runner."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "headless_computer" {
+  description = "Optional computer tools for Workbot/headless turns. Off by default; no sandbox is provisioned during installation. Daytona uses daytona.api_url/target and its own computer snapshot. Use headless_computer_secret_arn for either provider, or the matching legacy raw-key input."
+  type = object({
+    provider      = optional(string, "off")
+    snapshot      = optional(string, "")
+    pause_seconds = optional(number, 300)
+    keep_days     = optional(number, 14)
+  })
+  default = {}
+
+  validation {
+    condition     = contains(["off", "freestyle", "daytona"], var.headless_computer.provider)
+    error_message = "headless_computer.provider must be off, freestyle or daytona."
+  }
+}
+
+variable "headless_computer_api_key" {
+  description = "Freestyle key for headless_computer.provider = freestyle; stored in the runner secret. Daytona uses daytona_api_key instead."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "headless_model_api_key" {
+  description = "API key for headless_runner's model endpoint. Stored in Secrets Manager; only the runner receives it."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "headless_model_secret_arn" {
+  description = "Full ARN of an existing plain-string model API key secret. ECS reads it directly; Terraform never reads or copies its value. Mutually exclusive with headless_model_api_key. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_model_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_model_secret_arn))
+    error_message = "headless_model_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_model_secret_arn == "" || var.headless_model_api_key == ""
+    error_message = "Supply only one of headless_model_secret_arn and headless_model_api_key."
+  }
+}
+
+variable "headless_computer_secret_arn" {
+  description = "Full ARN of an existing plain-string Daytona or Freestyle API key secret, read directly by ECS. Mutually exclusive with the matching raw-key input. Uses the AWS-managed Secrets Manager key."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$", var.headless_computer_secret_arn))
+    error_message = "headless_computer_secret_arn must be a full plain-string Secrets Manager ARN, without a JSON-key or version suffix."
+  }
+  validation {
+    condition     = var.headless_computer_secret_arn == "" || (var.headless_computer.provider == "daytona" ? var.daytona_api_key == "" : var.headless_computer_api_key == "")
+    error_message = "Supply only one computer secret reference or matching raw API key."
+  }
+}
+
+variable "headless_runner_image" {
+  description = "Full headless runner image reference. Empty uses ghcr.io/different-ai/openwork-headless-runner:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
+variable "workbot" {
+  description = "Workbot: a chat app at domain_name (default chat.<domain_name>) whose turns run on the headless runner. Requires headless_runner.enabled."
+  type = object({
+    enabled       = optional(bool, false)
+    domain_name   = optional(string, "")
+    cpu           = optional(number, 256)
+    memory        = optional(number, 512)
+    desired_count = optional(number, 1)
+  })
+  default = {}
+
+  validation {
+    condition     = var.workbot.desired_count >= 1 && floor(var.workbot.desired_count) == var.workbot.desired_count
+    error_message = "workbot.desired_count must be a positive integer."
+  }
+}
+
+variable "workbot_image" {
+  description = "Full Workbot image reference. Empty uses ghcr.io/different-ai/openwork-workbot:<openwork_version>."
+  type        = string
+  default     = ""
+}
+
+variable "workbot_listener_rule_priority" {
+  description = "Priority of the Workbot host rule on the HTTPS listener (created with workbot.enabled). Must be unique on that listener."
+  type        = number
+  default     = 40
+}
+
+variable "slack_assistant_enabled" {
+  description = "Turn on the Slack assistant (members mention OpenWork in Slack and get replies in the thread). Replies run on the headless runner, so enable it too. You still create the Slack app in Den's connector settings."
+  type        = bool
+  default     = false
 }
 
 variable "extra_environment" {
@@ -260,6 +511,12 @@ variable "create_database" {
   default     = true
 }
 
+variable "database_subnet_ids" {
+  description = "Subnets for RDS and ElastiCache. At least two AZs. Ignored when create_database = false and create_redis = false."
+  type        = list(string)
+  default     = []
+}
+
 variable "database_url" {
   description = "mysql:// URL of an existing database. Used only when create_database = false."
   type        = string
@@ -270,16 +527,16 @@ variable "database_url" {
 variable "database" {
   description = "RDS settings."
   type = object({
-    instance_class        = optional(string, "db.t4g.micro")
+    instance_class        = optional(string, "db.t4g.small")
     engine_version        = optional(string, "8.4")
     allocated_storage_gb  = optional(number, 20)
     max_allocated_storage = optional(number, 100)
     multi_az              = optional(bool, false)
     backup_retention_days = optional(number, 7)
-    deletion_protection   = optional(bool, true)
+    deletion_protection   = optional(bool) # deprecated alias for top-level deletion_protection
     skip_final_snapshot   = optional(bool, false)
     apply_immediately     = optional(bool, false)
-    tls_query             = optional(string, "sslaccept=accept")
+    tls_query             = optional(string, "sslaccept=strict")
   })
   default = {}
 }
@@ -301,10 +558,20 @@ variable "redis_node_type" {
 # ---------------------------------------------------------------------------
 
 variable "den_api" {
-  description = "den-api task size and count. Keep desired_count = 1 until you have confirmed migrations: each task runs them on start."
+  description = "API-only task size and count. A dedicated migration task gates rollout regardless of replica count."
   type = object({
     cpu           = optional(number, 1024)
     memory        = optional(number, 2048)
+    desired_count = optional(number, 1)
+  })
+  default = {}
+}
+
+variable "den_gateway" {
+  description = "den-gateway (OpenWork Web) task size and count. Created only with openwork_web_enabled."
+  type = object({
+    cpu           = optional(number, 256)
+    memory        = optional(number, 512)
     desired_count = optional(number, 1)
   })
   default = {}
@@ -318,6 +585,12 @@ variable "den_web" {
     desired_count = optional(number, 1)
   })
   default = {}
+}
+
+variable "wait_for_steady_state" {
+  description = "Whether to wait for the ECS services to reach a steady state before completing terraform apply. When true, terraform blocks until tasks pass health checks and old tasks drain."
+  type        = bool
+  default     = false
 }
 
 variable "log_retention_days" {

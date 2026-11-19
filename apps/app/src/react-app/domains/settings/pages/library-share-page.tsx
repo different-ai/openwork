@@ -126,9 +126,14 @@ export function LibrarySharePage(props: {
       actions={(
         <>
           <Button variant="outline" disabled={busy} onClick={props.onCancel}>{t("common.cancel")}</Button>
-          <Button disabled={busy || unchanged || (!shared && !wasShared)} onClick={() => void submit()}>
+          <Button
+            className="min-w-0 shrink"
+            title={primaryLabel}
+            disabled={busy || unchanged || (!shared && !wasShared)}
+            onClick={() => void submit()}
+          >
             {busy ? <Loader2 size={14} className="animate-spin" /> : null}
-            {primaryLabel}
+            <span className="truncate">{primaryLabel}</span>
           </Button>
         </>
       )}
@@ -162,46 +167,50 @@ export function LibrarySharePage(props: {
           hint={t("extensions.share_owner_hint")}
           trailing={<span className="text-xs text-dls-secondary">{t("extensions.share_owner_role")}</span>}
         />
-        {audience.teams.map((team) => (
-          <AudienceRow
-            key={team.id}
-            avatar={<Avatar name={team.name} tone="team" />}
-            title={team.name}
-            hint={t("extensions.share_team_hint", { count: String(team.peopleCount), team: team.name })}
-            trailing={(
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-red-11 hover:text-red-11"
-                disabled={busy}
-                aria-label={t("extensions.share_remove", { name: team.name })}
-                onClick={() => setAudience((current) => ({ ...current, teams: current.teams.filter((entry) => entry.id !== team.id) }))}
-              >
-                {t("extensions.share_remove_short")}
-              </Button>
-            )}
-          />
-        ))}
-        {audience.people.map((person) => (
-          <AudienceRow
-            key={person.id}
-            avatar={<Avatar name={person.name} tone="person" />}
-            title={person.name}
-            hint={t("extensions.share_person_hint")}
-            trailing={(
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-red-11 hover:text-red-11"
-                disabled={busy}
-                aria-label={t("extensions.share_remove", { name: person.name })}
-                onClick={() => setAudience((current) => ({ ...current, people: current.people.filter((entry) => entry.id !== person.id) }))}
-              >
-                {t("extensions.share_remove_short")}
-              </Button>
-            )}
-          />
-        ))}
+        {audience.teams.length + audience.people.length > 0 ? (
+          <div data-testid="library-share-recipients" className="max-h-64 min-w-0 overflow-y-auto overscroll-contain">
+            {audience.teams.map((team) => (
+              <AudienceRow
+                key={team.id}
+                avatar={<Avatar name={team.name} tone="team" />}
+                title={team.name}
+                hint={t("extensions.share_team_hint", { count: String(team.peopleCount), team: team.name })}
+                trailing={(
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-11 hover:text-red-11"
+                    disabled={busy}
+                    aria-label={t("extensions.share_remove", { name: team.name })}
+                    onClick={() => setAudience((current) => ({ ...current, teams: current.teams.filter((entry) => entry.id !== team.id) }))}
+                  >
+                    {t("extensions.share_remove_short")}
+                  </Button>
+                )}
+              />
+            ))}
+            {audience.people.map((person) => (
+              <AudienceRow
+                key={person.id}
+                avatar={<Avatar name={person.name} tone="person" />}
+                title={person.name}
+                hint={t("extensions.share_person_hint")}
+                trailing={(
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-red-11 hover:text-red-11"
+                    disabled={busy}
+                    aria-label={t("extensions.share_remove", { name: person.name })}
+                    onClick={() => setAudience((current) => ({ ...current, people: current.people.filter((entry) => entry.id !== person.id) }))}
+                  >
+                    {t("extensions.share_remove_short")}
+                  </Button>
+                )}
+              />
+            ))}
+          </div>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <AddAudienceMenu
             label={t("extensions.share_add_person")}

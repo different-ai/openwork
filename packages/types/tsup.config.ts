@@ -1,35 +1,24 @@
+import { readFileSync } from "node:fs"
 import { defineConfig } from "tsup"
 
+// Every export gets JavaScript, read from package.json so the two cannot drift.
+// The packaged desktop loads this package from node_modules, where Node refuses
+// to run TypeScript, so its copy serves every export from these files
+// (apps/desktop/scripts/prepare-runtime-node-modules.mjs).
+const manifest: { exports: Record<string, { development: string }> } = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+)
+const entry: Record<string, string> = {}
+for (const target of Object.values(manifest.exports)) {
+  const source = target.development.replace(/^\.\//, "")
+  entry[source.replace(/^src\//, "").replace(/\.ts$/, "")] = source
+}
+
 export default defineConfig({
-  entry: {
-    index: "src/index.ts",
-    "cloud-model-fast": "src/cloud-model-fast.ts",
-    "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
-    "openwork-affordance": "src/openwork-affordance.ts",
-    "openwork-context": "src/openwork-context.ts",
-    "openwork-provider": "src/openwork-provider.ts",
-    "automations": "src/automations.ts",
-    workflows: "src/workflows.ts",
-    "mcp-app-timing": "src/mcp-app-timing.ts",
-    "mcp-app": "src/mcp-app.ts",
-    "skill-created-app": "src/skill-created-app.ts",
-    "connection-action-app": "src/connection-action-app.ts",
-    "den/desktop-app-restrictions": "src/den/desktop-app-restrictions.ts",
-    "den/desktop-policies": "src/den/desktop-policies.ts",
-    "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
-    "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
-    "den/gateway": "src/den/gateway.ts",
-    "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",
-    "den/inference": "src/den/inference.ts",
-    "den/managed-models-policy": "src/den/managed-models-policy.ts",
-    "den/mcp-connection-action": "src/den/mcp-connection-action.ts",
-    "den/microsoft-365": "src/den/microsoft-365.ts",
-  },
+  entry,
   tsconfig: "./tsconfig.json",
   format: ["esm"],
-  dts: {
-    tsconfig: "./tsconfig.json",
-  },
+  dts: false,
   clean: true,
   target: "es2022",
   platform: "neutral",
@@ -37,4 +26,11 @@ export default defineConfig({
   splitting: false,
   treeshake: true,
   external: ["zod"],
+  // Workspace packages are served from TypeScript too, so they are compiled in.
+  noExternal: [/^@openwork\//],
+  // An export that imports another through the package's own name must bundle
+  // its source, not the dist this build is about to replace.
+  esbuildOptions(options) {
+    options.conditions = ["development"]
+  },
 })

@@ -64,6 +64,7 @@ HEADLESS_MODEL_BASE_URL="${HEADLESS_MODEL_BASE_URL:-https://api.anthropic.com/v1
 HEADLESS_MODEL="${HEADLESS_MODEL:-claude-sonnet-5-5}" \
 HEADLESS_MODEL_API_KEY="$key" \
 HEADLESS_MCP_URL="http://127.0.0.1:${API_PORT}/mcp/agent" \
+HEADLESS_WORKBOT_DEN_API_URL="http://127.0.0.1:${API_PORT}" \
 HEADLESS_FILES="${HEADLESS_FILES:-disk}" \
 HEADLESS_FILES_DIR="${HEADLESS_FILES_DIR:-$DATA_DIR/workbot-files}" \
   pnpm --filter @openwork-ee/headless-runner dev &
@@ -76,7 +77,6 @@ WORKBOT_DEN_WEB_URL="http://localhost:${WEB_PORT}" \
 WORKBOT_RUNNER_URL="http://127.0.0.1:${RUNNER_PORT}" \
 WORKBOT_RUNNER_TOKEN="$RUNNER_TOKEN" \
 WORKBOT_SESSION_SECRET="$SESSION_SECRET" \
-WORKBOT_DB_PATH="$DATA_DIR/workbot.sqlite" \
   pnpm --filter @openwork-ee/workbot dev &
 pids+=($!)
 

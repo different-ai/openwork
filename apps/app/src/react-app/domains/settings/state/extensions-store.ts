@@ -1,4 +1,5 @@
 import * as React from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../../app/cloud/desktop-app-restrictions";
 
@@ -174,7 +175,7 @@ export function createExtensionsStore(options: {
   projectDir: () => string;
   selectedWorkspaceId: () => string;
   selectedWorkspaceRoot: () => string;
-  workspaceType: () => "local" | "remote";
+  workspaceType: () => "local";
   openworkServer: OpenworkServerStore;
   openworkServerConnection?: () => {
     openworkServerClient: OpenworkServerClient | null;
@@ -444,7 +445,6 @@ export function createExtensionsStore(options: {
   };
 
   const deleteWorkspaceSkill = async (name: string) => {
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const root = options.selectedWorkspaceRoot().trim();
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
@@ -462,9 +462,6 @@ export function createExtensionsStore(options: {
       throw new Error("OpenWork server cannot remove skills for this workspace.");
     }
 
-    if (isRemoteWorkspace) {
-      throw new Error("OpenWork server unavailable. Connect to remove skills.");
-    }
 
     if (!isDesktopRuntime()) {
       throw new Error(t("skills.desktop_required"));
@@ -865,7 +862,6 @@ export function createExtensionsStore(options: {
   }
 
   async function refreshPlugins(scopeOverride?: PluginScope) {
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
       await resolveWorkspaceServerTarget();
@@ -896,7 +892,7 @@ export function createExtensionsStore(options: {
       mutateState((current) => ({
         ...current,
         pluginConfig: null,
-        pluginConfigPath: `opencode.json (${isRemoteWorkspace ? "remote" : "openwork"} server)`,
+        pluginConfigPath: "opencode.json (openwork server)",
       }));
 
       try {
@@ -1245,6 +1241,7 @@ export function createExtensionsStore(options: {
       if (!result.ok) {
         setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
+        featureAnalytics.skillInstalled({ skill_source: "local" });
         setStateField("skillsStatus", result.stdout || t("skills.imported"));
         options.markReloadRequired?.("skills", { type: "skill", name: inferredName, action: "added" });
       }
@@ -1259,7 +1256,6 @@ export function createExtensionsStore(options: {
 
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
     if (extensionMutationDenied()) return { ok: false, message: desktopRestrictionNotice("allowManageExtensions") };
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
       await resolveWorkspaceServerTarget();
@@ -1273,6 +1269,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", t("skills.installing_skill_creator"));
       try {
         await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
+        featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
         const message = t("skills.skill_creator_installed");
         setStateField("skillsStatus", message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1295,11 +1292,6 @@ export function createExtensionsStore(options: {
       return { ok: false, message };
     }
 
-    if (isRemoteWorkspace) {
-      const message = "OpenWork server unavailable. Connect to install skills.";
-      setStateField("skillsStatus", message);
-      return { ok: false, message };
-    }
     if (!isDesktopRuntime()) {
       const message = t("skills.desktop_required");
       setStateField("skillsStatus", message);
@@ -1336,6 +1328,7 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         return { ok: false, message };
       }
+      featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
       const message = result.stdout || t("skills.skill_creator_installed");
       setStateField("skillsStatus", message);
       options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1412,7 +1405,6 @@ export function createExtensionsStore(options: {
     const trimmed = name.trim();
     if (!trimmed) return null;
     const root = options.selectedWorkspaceRoot().trim();
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
       await resolveWorkspaceServerTarget();
@@ -1441,10 +1433,6 @@ export function createExtensionsStore(options: {
       return null;
     }
 
-    if (isRemoteWorkspace) {
-      setStateField("skillsStatus", "OpenWork server unavailable. Connect to view skills.");
-      return null;
-    }
     if (!isDesktopRuntime()) {
       setStateField("skillsStatus", t("skills.desktop_required"));
       return null;
@@ -1469,7 +1457,6 @@ export function createExtensionsStore(options: {
     const trimmed = input.name.trim();
     if (!trimmed) return;
     const root = options.selectedWorkspaceRoot().trim();
-    const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
       await resolveWorkspaceServerTarget();
@@ -1509,10 +1496,6 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (isRemoteWorkspace) {
-      setStateField("skillsStatus", "OpenWork server unavailable. Connect to edit skills.");
-      return;
-    }
     if (!isDesktopRuntime()) {
       setStateField("skillsStatus", t("skills.desktop_required"));
       return;
@@ -1585,6 +1568,8 @@ export function createExtensionsStore(options: {
     try {
       await client.setActiveOrganization({ organizationId: orgId });
       const pluginId = await client.createOrgPlugin(orgId, body);
+      if (kind === "skill") featureAnalytics.skillCreated({ skill_source: "organization" });
+      if (kind === "mcp") featureAnalytics.connectionAdded({ connector_kind: "custom" });
       await waitForListedLibraryPlugin(
         () => client.listMeLibraryPlugins(orgId),
         pluginId,

@@ -6,7 +6,7 @@ import { createServer, request } from "node:http";
 import { bootAcmeWeb } from "/workspace/worlds/acme-web.ts";
 import { chrome, localHost } from "/workspace/evals/packages/hosts/src/index.ts";
 import { signInDesktopAs, waitFor, waitUntilInteractive, evalIn } from "/workspace/evals/packages/behaviors/src/index.ts";
-import { browserScript } from "/workspace/evals/packages/cdp/src/index.ts";
+import { browserScript, navigate } from "/workspace/evals/packages/cdp/src/index.ts";
 
 const root = "/opt/openwork-preview";
 process.env.OPENWORK_WORLD_PLACE = "local";
@@ -44,8 +44,12 @@ try {
     prefix: "This response is paused at the saved checkpoint. ",
     suffix: "The same response continued from the saved browser.",
     async hold() { streamCount++; held = true; await new Promise((resolve) => { release = resolve; }); held = false; complete = true; },
-  });
-  const browser = stack.use(await chrome({ host: localHost({ repoRoot: "/workspace", log: () => {} }), name: "evidence-web", startUrl: world.web.manifest.webUrl, headless: false }));
+  }, { v2Only: true });
+  const browser = stack.use(await chrome({ host: localHost({ repoRoot: "/workspace", log: () => {} }), name: "evidence-web", startUrl: "about:blank", headless: false }));
+  // CDP may attach before Chrome's startup tab exists and create its own blank
+  // target. Navigate the attached target, as the regular app-web launcher does,
+  // instead of relying on Chrome's command-line URL to select the right tab.
+  await navigate(browser.client, world.web.manifest.webUrl);
   await waitUntilInteractive(browser);
   await signInDesktopAs(browser, world.den.ref, world.den.admin);
   // bootAcmeWeb already owns a fresh workspace. The desktop workspace helper

@@ -1,3 +1,4 @@
+import { GatewayDashboardCapabilityGuard } from "../../../../_components/gateway-dashboard-capability-guard";
 import { GatewayLimitEditorScreen } from "../../../../_components/gateway-limit-editor-screen";
 
 export default async function NewAiGatewayLimitPage({
@@ -9,5 +10,9 @@ export default async function NewAiGatewayLimitPage({
   const member = typeof memberId === "string" && memberId ? memberId : undefined;
   const team = typeof teamId === "string" && teamId ? teamId : undefined;
   const target = member ? { memberId: member } : team ? { teamId: team } : undefined;
-  return <GatewayLimitEditorScreen key={member ?? team ?? "new"} target={target} />;
+  return (
+    <GatewayDashboardCapabilityGuard area="manage-limits">
+      <GatewayLimitEditorScreen key={member ?? team ?? "new"} target={target} />
+    </GatewayDashboardCapabilityGuard>
+  );
 }

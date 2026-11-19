@@ -24,6 +24,21 @@ export interface ComputerFiles {
   replace(sessionId: string, id: string, input: { bytes: Uint8Array<ArrayBuffer> }): Promise<ComputerFile | null>
   /** Page images of a slide deck, document or PDF, for previews. */
   putPreview(sessionId: string, id: string, pages: Array<Uint8Array<ArrayBuffer>>, size: { width: number; height: number }): Promise<boolean>
+  /**
+   * A link the computer fetches a kept file from; null when there is none to give. This and `receive` exist only
+   * with a store that can hand out links: bytes then go between the store and the computer directly and never pass
+   * through the runner. A link reaches one file and stops working after `expiresSeconds`. Without them, or when a
+   * transfer doesn't arrive, files go through `read`, `add` and `replace`.
+   */
+  downloadUrl?(sessionId: string, id: string, expiresSeconds: number): Promise<string | null>
+  /**
+   * A link the computer sends a file to. `finish` checks what arrived and keeps it as a new file, or as the new
+   * version of `replaces`; null when nothing arrived. Both throw like `add` when the file doesn't fit.
+   */
+  receive?(
+    sessionId: string,
+    input: { name: string; size: number; source: "agent"; replaces?: string; expiresSeconds: number },
+  ): Promise<{ url: string; finish(): Promise<ComputerFile | null> } | null>
 }
 
 /**

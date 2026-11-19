@@ -265,7 +265,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         code: "provider_tool_projection_unverified",
         stage: "provider_projection",
         message: "OpenWork could not read tool capability information for the selected provider and model.",
-        recommendedAction: "Retry, or check Settings → Advanced → Agent access diagnostics if the problem continues.",
+        recommendedAction: "Retry, or check Settings → Advanced → Diagnostics if the problem continues.",
       }),
     };
   }
@@ -286,8 +286,8 @@ export function assessCloudMcpSubmissionReadiness(input: {
             ? "The selected model does not support tool calling."
             : "OpenWork could not confirm that the selected model supports tool calling.",
         recommendedAction: modelMissing
-          ? "Choose a model available from this provider, or check Settings → Advanced → Agent access diagnostics."
-          : "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+          ? "Choose a model available from this provider, or check Settings → Advanced → Diagnostics."
+          : "Choose a model with tool calling, or check Settings → Advanced → Diagnostics.",
       }),
     };
   }
@@ -300,7 +300,7 @@ export function assessCloudMcpSubmissionReadiness(input: {
         stage: "provider_projection",
         retryable: false,
         message: "OpenWork received an unsupported tool capability result for the selected provider and model.",
-        recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Agent access diagnostics.",
+        recommendedAction: "Choose a model with tool calling, or check Settings → Advanced → Diagnostics.",
       }),
     };
   }

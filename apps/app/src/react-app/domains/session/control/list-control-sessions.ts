@@ -1,3 +1,4 @@
+import type { SessionLink } from "@openwork/types/session-link";
 import { labelOpenworkSessionModel, type OpenworkCatalogModel, type OpenworkSessionActivityInventory, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
@@ -33,6 +34,8 @@ export type ControlSessionLike = {
     archived?: number;
   };
   model?: ControlSessionEngineModel | null;
+  /** The session this one was started from, as a side chat or by its agent. */
+  openworkSessionLink?: SessionLink | null;
 };
 
 export type ListedControlSession = OpenworkSessionActivityInventory & {

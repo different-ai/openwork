@@ -5,13 +5,46 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
       "bun": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
     },
+    "./proactive": {
+      "types": {
+        "openwork-build": "./dist/types/src/proactive.d.ts",
+        "default": "./src/proactive.ts"
+      },
+      "bun": "./src/proactive.ts",
+      "development": "./src/proactive.ts",
+      "default": "./dist/proactive.js"
+    },
+    "./proactive-brief": {
+      "types": {
+        "openwork-build": "./dist/types/src/proactive-brief.d.ts",
+        "default": "./src/proactive-brief.ts"
+      },
+      "bun": "./src/proactive-brief.ts",
+      "development": "./src/proactive-brief.ts",
+      "default": "./dist/proactive-brief.js"
+    },
+    "./agent-read-tools": {
+      "types": {
+        "openwork-build": "./dist/types/src/agent-read-tools.d.ts",
+        "default": "./src/agent-read-tools.ts"
+      },
+      "bun": "./src/agent-read-tools.ts",
+      "development": "./src/agent-read-tools.ts",
+      "default": "./dist/agent-read-tools.js"
+    },
     "./testing": {
-      "types": "./src/testing.ts",
+      "types": {
+        "openwork-build": "./dist/types/src/testing.d.ts",
+        "default": "./src/testing.ts"
+      },
       "bun": "./src/testing.ts",
       "development": "./src/testing.ts",
       "default": "./dist/testing.js"
@@ -23,12 +56,12 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && tsc -p tsconfig.build.json && node --test test/production-exports.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@openwork/types": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "bun-types": "^1.3.6",

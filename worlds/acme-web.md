@@ -29,7 +29,7 @@ reply through the gateway. The verification conversation is retained for
 inspection. This is runtime-path verification, not proof of browser sign-in.
 
 Open `webUrl`, sign in to `denWeb` as `alex@acme.test`, and select **Acme AI
-Gateway / Claude Haiku 4.5**. Retrieve the fixture password privately:
+Gateway / Claude Haiku 5.5**. Retrieve the fixture password privately:
 
 ```sh
 pnpm world outputs acme-web --stage gateway-demo --reveal
@@ -38,6 +38,24 @@ pnpm world outputs acme-web --stage gateway-demo --reveal
 Send a message and expect the fixed reply. Reload or switch workspaces to
 inspect the composer model title; the `gwm_*` routing alias must not flash as
 the label. Gateway access can be managed in Den's AI Gateway screen.
+
+## Open Workplace (opt-in)
+
+`-- --open-workplace` adds five more connections for the same Acme team:
+**Open Outlook**, **Open Calendar**, **Open Drive**, **Open Jira** and **Open Confluence**
+(`evals/packages/open-workplace`). Each has a web UI and its own MCP endpoint;
+the Jira and Confluence tools are `mcp-atlassian`'s. Outputs include their URLs
+and `/state` (live data; `POST /reset` restores the seed). Off by default so
+other worlds keep their tool lists.
+
+```sh
+pnpm world up acme-web --stage open-workplace -- --open-workplace
+```
+
+Worlds can start them directly with `startOpenWorkplace(stack, den, { person, now, domain })`
+from `worlds/lib/open-workplace.ts`. With `domain: "acmerobotics.internal"` (a reserved private name; public domains are refused), links read
+`http://office.acmerobotics.internal/drive?item=…`; pass the returned `hostRules` to
+`chrome({ hostRules })` so the browser reaches them.
 
 ## Automated regression
 

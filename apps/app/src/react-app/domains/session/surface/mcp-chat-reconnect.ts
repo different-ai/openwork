@@ -33,8 +33,14 @@ export function isCurrentChatConnectionDecision(
   if (!owner || request.owner !== owner || request.sessionId !== sessionId || !request.requestId) return false
   const turnIndex = messages.findLastIndex(message => message.role === "user")
   if (turnIndex < 0 || messages[turnIndex].id !== request.turnId) return false
-  return messages.slice(turnIndex + 1).some(message => message.role === "assistant"
-    && message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === request.toolCallId))
+  return isLatestTurnToolCall(messages, request.toolCallId)
+}
+
+/** Whether a tool call ran in the conversation's latest turn, after the last user message. */
+export function isLatestTurnToolCall(messages: readonly UIMessage[], toolCallId: string): boolean {
+  const turnIndex = messages.findLastIndex(message => message.role === "user")
+  return turnIndex >= 0 && messages.slice(turnIndex + 1).some(message => message.role === "assistant"
+    && message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === toolCallId))
 }
 
 const reservedConnectionQuestionItemSchema = z.object({
@@ -129,6 +135,7 @@ export async function authenticateChatConnection(input: {
   isCurrent: () => boolean
   listConnections: () => Promise<DenExternalMcpConnection[]>
   startConnect: () => Promise<DenMcpConnectionConnectStart>
+  connectPersonalKey?: () => Promise<boolean>
   openUrl: (url: string) => Promise<void>
   onProgress: (progress: { phase: "opening" } | { phase: "authorization_opened"; authorizeUrl: string }) => void
 }): Promise<"connected"> {
@@ -139,6 +146,13 @@ export async function authenticateChatConnection(input: {
   const connections = await input.listConnections()
   assertCurrent()
   const connection = connections.find(entry => entry.id === input.connectionId)
+  if (connection?.authType === "apikey" && connection.credentialMode === "per_member" && input.connectPersonalKey) {
+    input.onProgress({ phase: "opening" })
+    const connected = await input.connectPersonalKey()
+    assertCurrent()
+    if (!connected) throw new Error("Credential connection was not confirmed. Check its status before trying again.")
+    return "connected"
+  }
   if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
     throw new Error(`${input.connectionName} is no longer available as your reconnectable account.`)
   }
@@ -161,8 +175,11 @@ export async function authenticateChatConnection(input: {
   return "connected"
 }
 
+/** Sent for the person once a Connect card's sign-in lands. Fixed text: a connection's name is org-supplied and must not reach the agent as their words. */
+export const CHAT_CONNECTION_CONTINUE_PROMPT = "I've connected it. Go ahead."
+
 export const CHAT_MCP_RECONNECT_POLL_INTERVAL_MS = 2_000
-export const CHAT_MCP_RECONNECT_TIMEOUT_MS = 90_000
+export const CHAT_MCP_RECONNECT_TIMEOUT_MS = 3 * 60_000
 
 export type ChatMcpReconnectScope = {
   baseUrl: string

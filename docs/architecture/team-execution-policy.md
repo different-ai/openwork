@@ -20,7 +20,7 @@ remain unchanged.
 | Use OpenCode models | Existing provider policy | Model dispatch rejects the built-in provider when blocked |
 | Manage extensions | Existing Library restrictions | Local extension, skill and MCP mutation routes |
 | Change app settings | Existing settings visibility | Server configuration mutation routes |
-| Create more workspaces | Existing workspace visibility | Local and remote workspace creation routes |
+| Create more workspaces | Existing workspace visibility | Local workspace creation routes |
 | Alpha updates / welcome page | Existing desktop controls | UI behavior, not engine permissions |
 | Token accounting | Existing inference usage records and engine message usage | No new budget or spending policy |
 

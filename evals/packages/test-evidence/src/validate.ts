@@ -1,6 +1,6 @@
 import { timed } from "@openwork/timeline";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -206,11 +206,33 @@ function failureSummary(results: VisualExpectationResult[]): string {
     .join("; ")}`;
 }
 
-function visionModel(): string {
+export function visionModel(): string {
   const openAiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
   const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
   return process.env.OPENWORK_EVAL_VISION_MODEL?.trim()
     || (anthropicKey && !openAiKey ? ANTHROPIC_DEFAULT_MODEL : OPENAI_DEFAULT_MODEL);
+}
+
+/**
+ * The configured provider as a plain ask function (OpenAI first, then
+ * Anthropic), with one retry on timeout; null when no key is set.
+ */
+export function defaultVisionAsk(): ((req: VisionRequest) => Promise<string>) | null {
+  const openAiKey = process.env.OPENAI_API_KEY?.trim() ?? "";
+  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() ?? "";
+  const askOnce = openAiKey
+    ? (req: VisionRequest) => askOpenAi(req, openAiKey)
+    : anthropicKey ? (req: VisionRequest) => askAnthropic(req, anthropicKey) : null;
+  if (!askOnce) return null;
+  return async (req) => {
+    try {
+      return await askOnce(req);
+    } catch (error) {
+      if (!isTimeoutError(error)) throw error;
+      await delay(10_000);
+      return askOnce(req);
+    }
+  };
 }
 
 export async function judgeVision(
@@ -295,7 +317,15 @@ export async function judgeVision(
       cached: false,
     };
     await mkdir(CACHE_DIR, { recursive: true });
-    await writeFile(cachePath, `${JSON.stringify(visualEvidence, null, 2)}\n`, "utf8");
+    // Publish only complete JSON, even when separate judge processes share a key.
+    const temporaryPath = `${cachePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporaryPath, `${JSON.stringify(visualEvidence, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+      await rename(temporaryPath, cachePath);
+    } catch (error) {
+      await rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
   }
   return visualEvidence;
 }

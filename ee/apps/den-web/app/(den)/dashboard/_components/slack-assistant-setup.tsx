@@ -1,11 +1,17 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
+import { getEveryoneRoute, getWorkbotSettingsRoute } from "../../_lib/den-org";
+import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
 import { DenSwitch } from "../../_components/ui/switch";
+import { DenInput } from "../../_components/ui/input";
+import { DenSecretInput } from "../../_components/ui/secret-input";
+import { auditSummaryClass, AuditChevron } from "./audit-logs-details";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 
 const setupSchema = z.object({
@@ -13,11 +19,11 @@ const setupSchema = z.object({
   installed: z.boolean(),
   hasSigningSecret: z.boolean(),
   eligible: z.boolean(),
-  rolloutEnabled: z.boolean(),
-  webAccess: z.boolean(),
+  runnerAvailable: z.boolean(),
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
   model: z.string().nullable().default(null),
+  modelManagedByOrganization: z.boolean().default(false),
   defaultModel: z.string().nullable().default(null),
   progressUpdates: z.boolean().default(false),
   models: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
@@ -34,8 +40,28 @@ const setupSchema = z.object({
   }),
   manifest: z.unknown(),
 });
+export const slackAssistantQueryKey = (orgId: string | null | undefined, connectionId: string) => ["slack-assistant", orgId, connectionId];
+
+/** The connection's OpenWork in Slack setup: eligibility, runner, install state. */
+export function useSlackAssistantSetupQuery(connectionId: string | null, enabled: boolean) {
+  const { orgContext } = useOrgDashboard();
+  const orgId = orgContext?.organization.id;
+  return useQuery({
+    queryKey: slackAssistantQueryKey(orgId, connectionId ?? ""),
+    enabled: enabled && Boolean(orgId) && Boolean(connectionId),
+    queryFn: async () => {
+      const { response, payload } = await requestJson(`/v1/mcp-connections/${connectionId}/slack-assistant`, { headers: { "x-openwork-org-id": orgId ?? "" } });
+      if (!response.ok) throw getRequestError(payload, response, "Slack setup request failed.");
+      return setupSchema.parse(payload);
+    },
+  });
+}
+
+/** Deep link into this section from Slack connector setup. */
+export const SLACK_ASSISTANT_SECTION_ID = "slack-assistant";
+
 export function SlackAssistantSetup({ connection }: { connection: ExternalMcpConnection }) {
-  const { orgContext, runReauthableAction } = useOrgDashboard();
+  const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const client = useQueryClient();
   const [secret, setSecret] = useState("");
   const [channels, setChannels] = useState<string | null>(null);
@@ -51,13 +77,15 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
     }
   })();
   const path = `/v1/mcp-connections/${connection.id}/slack-assistant`;
-  const queryKey = ["slack-assistant", orgId, connection.id];
+  const queryKey = slackAssistantQueryKey(orgId, connection.id);
   const headers = { "x-openwork-org-id": orgId ?? "" };
-  const query = useQuery({
-    queryKey,
-    enabled: isSlack && Boolean(orgId),
-    queryFn: async () => setupSchema.parse(await request(path, { headers })),
-  });
+  const query = useSlackAssistantSetupQuery(connection.id, isSlack);
+  const loaded = Boolean(query.data);
+  useEffect(() => {
+    // Arriving from Slack setup's "Set up @openwork next": bring this section into view once it has loaded.
+    if (!loaded || window.location.hash !== `#${SLACK_ASSISTANT_SECTION_ID}`) return;
+    document.getElementById(SLACK_ASSISTANT_SECTION_ID)?.scrollIntoView({ block: "start" });
+  }, [loaded]);
   async function request(url: string, init: RequestInit) {
     const { response, payload } = await requestJson(url, init);
     if (!response.ok) throw getRequestError(payload, response, "Slack setup request failed.");
@@ -114,23 +142,23 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
     }
   }
   return (
-    <section className="mt-10 space-y-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack">
+    <section id={SLACK_ASSISTANT_SECTION_ID} className="mt-10 flex scroll-mt-6 flex-col gap-4 rounded-2xl border border-gray-100 bg-white p-5" aria-label="OpenWork in Slack" data-testid="slack-assistant-setup">
       <div>
         <h2 className="text-base font-semibold">OpenWork in Slack</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Mention @openwork to use your own workspace, connections, and permissions. Each member connects their own
-          Slack account.
+          Mention @openwork to work as yourself, with your own connections and permissions. Each member connects their
+          own Slack account.
         </p>
       </div>
       {query.isPending ? <p role="status">Loading Slack setup…</p> : null}
       {query.error ? <p role="alert">Could not load Slack setup.</p> : null}
       {data && !data.eligible ? <p>Choose Individual accounts mode before enabling the assistant.</p> : null}
-      {data && !data.rolloutEnabled ? (
-        <p className="text-sm text-gray-500">
-          Ask a platform admin to enable Slack Assistant for this workspace in /admin.
+      {data && !data.runnerAvailable ? (
+        <p className="text-sm text-gray-500" role="status">
+          Not available on this deployment: the Slack assistant runs on OpenWork&apos;s cloud runner, which isn&apos;t set up
+          here. Whoever runs this OpenWork deployment can turn it on.
         </p>
       ) : null}
-      {data && !data.webAccess ? <p>OpenWork Web access is required for this workspace.</p> : null}
       {data ? (
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4" aria-label="Last 24 hours">
           {[
@@ -155,44 +183,48 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
       ) : null}
       {data?.eligible ? (
         <>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
+            <span>Enable @openwork in Slack</span>
+            <DenSwitch
               checked={data.enabled}
-              disabled={busy || (!data.enabled && (!data.rolloutEnabled || !data.webAccess || (!data.hasSigningSecret && !secret)))}
-              onChange={(e) => void save(e.target.checked)}
+              disabled={busy || (!data.enabled && (!data.runnerAvailable || (!data.hasSigningSecret && !secret)))}
+              aria-label="Enable @openwork in Slack"
+              testId="slack-assistant-enabled"
+              onChange={(checked) => void save(checked)}
             />
-            Enable @openwork in Slack
-          </label>
-          <label className="block text-sm">
+          </div>
+          <label className="flex flex-col gap-1 text-sm">
             Slack app signing secret
-            <input
-              type="password"
+            <DenSecretInput
               autoComplete="off"
+              data-ph-no-capture
+              data-testid="slack-assistant-signing-secret"
               value={secret}
-              onChange={(e) => setSecret(e.target.value)}
-              placeholder={data.hasSigningSecret ? "Saved securely" : "Paste from Slack app settings"}
-              className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
+              onChange={setSecret}
+              saved={data.hasSigningSecret}
+              placeholder="Paste from Slack app settings"
+              replaceTestId="slack-assistant-replace-signing-secret"
             />
           </label>
           <div className="flex flex-wrap gap-2">
             <DenButton variant="secondary" disabled={busy || !secret} onClick={() => void save(data.enabled)}>
               Save secret
             </DenButton>
-            <DenButton disabled={busy || !data.hasSigningSecret || !data.webAccess} onClick={() => void install()}>
+            <DenButton disabled={busy || !data.hasSigningSecret || !data.runnerAvailable} onClick={() => void install()}>
               {data.installed ? "Reinstall in Slack" : "Add to Slack"}
             </DenButton>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
+            <span>Send replies privately during rollout</span>
+            <DenSwitch
               checked={data.shadowMode}
               disabled={busy || !data.hasSigningSecret}
-              onChange={(e) => void save(data.enabled, { shadowMode: e.target.checked })}
+              aria-label="Send replies privately during rollout"
+              testId="slack-assistant-shadow"
+              onChange={(checked) => void save(data.enabled, { shadowMode: checked })}
             />
-            Send replies privately during rollout
-          </label>
-          <div className="flex items-center justify-between gap-3 text-sm">
+          </div>
+          <div className="flex min-h-12 items-center justify-between gap-3 border-b border-gray-100 text-sm">
             <span>Show progress while working</span>
             <DenSwitch
               checked={data.progressUpdates}
@@ -206,10 +238,19 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             Access follows this connector’s workspace, team, and member grants. Turning the assistant off stops
             accepting new requests.
           </p>
-          {data.models.length > 0 ? (
+          {data.models.length > 0 && data.modelManagedByOrganization ? (
+            <p className="text-sm" data-testid="slack-assistant-model">
+              Model: {data.models.find((m) => m.id === data.model)?.name ?? data.model ?? `Default${data.defaultModel ? ` (${data.models.find((m) => m.id === data.defaultModel)?.name ?? data.defaultModel})` : ""}`}{" "}
+              <Link href={workbotSettingsInTeams(orgContext) ? `${getEveryoneRoute(orgSlug)}?tab=workbot` : getWorkbotSettingsRoute(orgSlug)} className="text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline">
+                {workbotSettingsInTeams(orgContext) ? "Change in Members › Teams › Everyone" : "Change in Manage › Workbot"}
+              </Link>
+            </p>
+          ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
+              {/* Name the control explicitly; the implicit label would also read out the selected model. */}
               <select
+                aria-label="Model"
                 value={data.model ?? ""}
                 disabled={busy || !data.hasSigningSecret}
                 onChange={(e) => void save(data.enabled, { model: e.target.value || null })}
@@ -226,41 +267,41 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               </select>
             </label>
           ) : null}
-          <details className="space-y-3">
-            <summary className="cursor-pointer text-sm">Rollout limits</summary>
-            <label className="block text-sm">
-              Allowed channel IDs
-              <input
-                value={channels ?? data.channelIds.join(", ")}
-                onChange={(e) => setChannels(e.target.value)}
-                placeholder="All channels"
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
-              />
-            </label>
-            <p className="text-xs text-gray-500">
-              Separate IDs with commas. Direct messages remain available to eligible members.
-            </p>
-            <label className="block text-sm">
-              Requests per member per day
-              <input
-                type="number"
-                min={1}
-                max={1000}
-                value={limit ?? data.dailyLimit}
-                onChange={(e) => setLimit(Number(e.target.value))}
-                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
-              />
-            </label>
-            <DenButton
-              variant="secondary"
-              disabled={busy || !data.hasSigningSecret || (channels === null && limit === null)}
-              onClick={() => void save(data.enabled)}
-            >
-              Save limits
-            </DenButton>
+          <details className="group text-sm" data-testid="slack-assistant-limits">
+            <summary className={auditSummaryClass} data-testid="slack-assistant-limits-toggle"><AuditChevron />Rollout limits</summary>
+            <div className="flex flex-col items-start gap-3 pb-3">
+              <label className="flex w-full flex-col gap-1">
+                Allowed channel IDs
+                <DenInput
+                  value={channels ?? data.channelIds.join(", ")}
+                  onChange={(e) => setChannels(e.target.value)}
+                  placeholder="All channels"
+                />
+              </label>
+              <p className="text-xs text-gray-500">
+                Separate IDs with commas. Direct messages remain available to eligible members.
+              </p>
+              <label className="flex w-full flex-col gap-1">
+                Requests per member per day
+                <DenInput
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={limit ?? data.dailyLimit}
+                  onChange={(e) => setLimit(Number(e.target.value))}
+                />
+              </label>
+              <DenButton
+                variant="secondary"
+                disabled={busy || !data.hasSigningSecret || (channels === null && limit === null)}
+                onClick={() => void save(data.enabled)}
+              >
+                Save limits
+              </DenButton>
+            </div>
           </details>
-          <details>
-            <summary className="cursor-pointer text-sm">Slack app manifest</summary>
+          <details className="group text-sm" data-testid="slack-assistant-manifest">
+            <summary className={auditSummaryClass} data-testid="slack-assistant-manifest-toggle"><AuditChevron />Slack app manifest</summary>
             <p className="my-2 text-xs text-gray-500">
               Merge these settings into the Slack app registered for this connection. Keep its existing user OAuth and
               MCP settings.
