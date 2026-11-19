@@ -8,7 +8,15 @@ import { immutableInstallerUrl, inferInstallerSource, installerSourceBaseUrl, In
 
 type Config = typeof ManagedInstallerConfigTable.$inferSelect
 type ValidationRow = typeof ManagedInstallerValidationTable.$inferSelect
-const approvalMode = (row?: Config): ManagedInstallerApprovalMode => row?.approval_mode === "platform_admin" ? "platform_admin" : "independent_admin"
+/**
+ * Single-administrator approval removes the second-administrator check on the default installer
+ * for every new install, so one administrator session must not be able to turn it on by itself.
+ * Only the deployment operator can allow it; without that, a saved `platform_admin` policy is inactive.
+ */
+const SINGLE_ADMIN_APPROVAL_ENV = "DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL"
+const singleAdminApprovalAllowed = () => process.env[SINGLE_ADMIN_APPROVAL_ENV] === "true"
+const savedApprovalMode = (row?: Config): ManagedInstallerApprovalMode => row?.approval_mode === "platform_admin" ? "platform_admin" : "independent_admin"
+const approvalMode = (row?: Config): ManagedInstallerApprovalMode => savedApprovalMode(row) === "platform_admin" && singleAdminApprovalAllowed() ? "platform_admin" : "independent_admin"
 function validationForCaller(row: ValidationRow, mode: ManagedInstallerApprovalMode, actor?: string): ManagedInstallerValidation | null {
   const parsed = managedInstallerValidationSchema.safeParse({ ...row.validation, verifiedBy: row.actor, canPin: Boolean(actor && (mode === "platform_admin" || row.actor !== actor)) })
   return parsed.success ? parsed.data : null
@@ -33,6 +41,36 @@ function compareReleaseVersions(next: string, current: string) {
 }
 const environmentRelease = (provider: ManagedInstallerProvider) => provider === "aws" ? awsRelease() : gcpRelease()
 
+/** The release prefix the deployment's environment release came from, if any. */
+function environmentSourceBaseUrl(provider: ManagedInstallerProvider) {
+  const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
+  const template = environmentRelease(provider)?.templateUrl ?? (process.env[`${prefix}_RELEASE`] === undefined ? process.env[`${prefix}_TEMPLATE_URL`] : undefined)
+  return inferInstallerSource(provider, template)
+}
+
+/** The bucket a normalized release source is in: the regional S3 host, or the Google Cloud Storage bucket path. */
+function bucketRoot(provider: ManagedInstallerProvider, base: string) {
+  const url = new URL(base)
+  return provider === "aws" ? `${url.origin}/` : `${url.origin}/${url.pathname.split("/")[1]}/`
+}
+
+/**
+ * The pinned template becomes every new install's CloudFormation stack or Cloud Shell tutorial, so an
+ * administrator may only choose sources the operator trusts: the environment release's bucket, plus the
+ * prefixes listed in DEN_MANAGED_DEPLOYMENT_<PROVIDER>_SOURCE_ALLOWLIST (comma-separated).
+ */
+function requireAllowedSource(provider: ManagedInstallerProvider, base: string) {
+  const variable = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}_SOURCE_ALLOWLIST`
+  const environment = environmentSourceBaseUrl(provider)
+  const listed = (process.env[variable] ?? "").split(",").map((entry) => entry.trim()).filter(Boolean).flatMap((entry) => {
+    try { return [installerSourceBaseUrl(provider, entry)] } catch { return [] }
+  })
+  const allowed = [...(environment ? [bucketRoot(provider, environment)] : []), ...listed]
+  if (!allowed.some((prefix) => base.startsWith(prefix))) {
+    throw new InstallerReleaseError("source_not_allowed", `Choose a release source in this deployment's own release bucket. The deployment operator can allow other release prefixes with ${variable}.`, 400)
+  }
+}
+
 const emptyRevision = (provider: ManagedInstallerProvider) => provider === "aws" ? "00000000-0000-4000-8000-000000000001" : "00000000-0000-4000-8000-000000000002"
 export function installerProviderState(provider: ManagedInstallerProvider, row?: Config): ManagedInstallerProviderState {
   if (row?.revision === emptyRevision(provider) && !row.source_base_url && !row.release && approvalMode(row) === "independent_admin") row = undefined
@@ -42,8 +80,7 @@ export function installerProviderState(provider: ManagedInstallerProvider, row?:
   let release = parsed ? parsed.success ? parsed.data : null : environment ? { version: environment.version, templateUrl: environment.templateUrl, bundleUrl: environment.bundleUrl, bundleSha256: environment.bundleSha256 } : null
   let source: ManagedInstallerProviderState["source"] = row?.release != null ? parsed?.success ? "admin" : "invalid_configuration" : environment ? "environment" : readiness.reason === "invalid_configuration" ? "invalid_configuration" : "unconfigured"
   const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
-  const template = environment?.templateUrl ?? (process.env[`${prefix}_RELEASE`] === undefined ? process.env[`${prefix}_TEMPLATE_URL`] : undefined)
-  let sourceBaseUrl = row?.source_base_url ?? inferInstallerSource(provider, template)
+  let sourceBaseUrl = row?.source_base_url ?? environmentSourceBaseUrl(provider)
   if (sourceBaseUrl) {
     try { sourceBaseUrl = installerSourceBaseUrl(provider, sourceBaseUrl) } catch { sourceBaseUrl = null; release = null; source = "invalid_configuration" }
   }
@@ -132,7 +169,8 @@ async function changeSetting(input: { provider: ManagedInstallerProvider, expect
       }
     }
     if (input.action === "source_saved" && row.source_base_url === input.sourceBaseUrl) return
-    if (input.action === "approval_saved" && approvalMode(row) === input.approvalMode) return
+    // Compare the saved policy: choosing a second administrator also clears a saved policy the operator no longer allows.
+    if (input.action === "approval_saved" && savedApprovalMode(row) === input.approvalMode) return
     if (input.action === "reset" && !row.release && initial) return
     const updated = { ...row, ...(input.action === "approval_saved" && input.approvalMode ? { approval_mode: input.approvalMode } : {}), ...(input.action === "source_saved" ? { source_base_url: input.sourceBaseUrl ?? null } : {}), ...(input.action === "pinned" && candidate ? { release: candidate.validation.release } : {}), ...(input.action === "reset" ? { release: null } : {}), revision: randomUUID(), updated_at: new Date() }
     await tx.update(ManagedInstallerConfigTable).set(updated).where(eq(ManagedInstallerConfigTable.provider, input.provider))
@@ -143,9 +181,14 @@ async function changeSetting(input: { provider: ManagedInstallerProvider, expect
 }
 
 export async function saveInstallerSource(provider: ManagedInstallerProvider, source: string, expectedRevision: string, actor: string) {
-  return changeSetting({ provider, sourceBaseUrl: installerSourceBaseUrl(provider, source), expectedRevision, actor, action: "source_saved" })
+  const sourceBaseUrl = installerSourceBaseUrl(provider, source)
+  requireAllowedSource(provider, sourceBaseUrl)
+  return changeSetting({ provider, sourceBaseUrl, expectedRevision, actor, action: "source_saved" })
 }
 export async function saveInstallerApproval(provider: ManagedInstallerProvider, mode: ManagedInstallerApprovalMode, expectedRevision: string, actor: string) {
+  if (mode === "platform_admin" && !singleAdminApprovalAllowed()) {
+    throw new InstallerReleaseError("single_admin_approval_disabled", `A second platform administrator must pin installer releases on this deployment. The deployment operator can allow single-administrator approval with ${SINGLE_ADMIN_APPROVAL_ENV}=true.`, 400)
+  }
   return changeSetting({ provider, approvalMode: mode, expectedRevision, actor, action: "approval_saved" })
 }
 export async function resetInstallerRelease(provider: ManagedInstallerProvider, expectedRevision: string, actor: string) {
@@ -159,6 +202,7 @@ export async function validateInstallerRelease(input: { provider: ManagedInstall
   const state = installerProviderState(input.provider, row)
   requireRevision(state, input.expectedRevision)
   if (!state.sourceBaseUrl) throw new InstallerReleaseError("source_required", "Save a public release source before validating.")
+  requireAllowedSource(input.provider, state.sourceBaseUrl)
   const verified = await verifier(input.provider, state.sourceBaseUrl, input.version)
   const now = new Date()
   const validation = { id: randomUUID(), provider: input.provider, release: verified.release, manifestSha256: verified.manifestSha256, services: verified.services, verifiedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() }
