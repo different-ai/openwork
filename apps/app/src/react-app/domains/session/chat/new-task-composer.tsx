@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
@@ -98,6 +98,7 @@ export type NewTaskComposerProps = {
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
+  sandboxModeControl?: ReactNode;
 };
 
 export type NewTaskComposerHandoff = {
@@ -537,7 +538,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
         }}
       /> : null}
       runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
-      sandboxModeControl={<WorkspaceSandboxModePill client={workspaceClient} workspaceId={workspaceId} onOpenPermissions={() => context?.onOpenSettingsSection?.("permissions")} />}
+      sandboxModeControl={props.sandboxModeControl ?? <WorkspaceSandboxModePill client={workspaceClient} workspaceId={workspaceId} onOpenPermissions={() => context?.onOpenSettingsSection?.("permissions")} />}
       draft={props.draft}
       mentions={mentions}
       onDraftChange={handleDraftChange}

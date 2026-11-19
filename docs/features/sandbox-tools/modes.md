@@ -75,7 +75,9 @@ type SandboxSettingsResponse = {
   managedUse: boolean;            // organization requires Use (or Force)
   managedForce: boolean;          // organization requires Force
   pending: boolean;               // a Force change is saved and waits for current tasks
-  verification: "verified" | "checking" | "unavailable"; // organization/rollout check; refreshed in the background
+  // Organization/rollout check, refreshed in the background. "checking": no answer yet (or retrying after a
+  // failure); "refreshing": a verified answer is being checked again, shown without any notice.
+  verification: "verified" | "refreshing" | "checking" | "unavailable";
   // Compatibility with the first release:
   allowHostExecution: boolean;            // !forceSandbox
   effectiveAllowHostExecution: boolean;   // !effectiveForceSandbox

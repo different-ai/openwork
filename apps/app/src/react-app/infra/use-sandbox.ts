@@ -7,7 +7,7 @@ import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwo
 type SandboxConnection = { client: OpenworkServerClient | null; workspaceId: string | null };
 
 export function sandboxSettingsPollInterval(settings: Pick<OpenworkSandboxSettingsResponse, "verification" | "pending"> | null | undefined, mountedMs: number): number | false {
-  if (settings?.verification === "checking") return 1_000;
+  if (settings?.verification === "checking" || settings?.verification === "refreshing") return 1_000;
   if (settings?.verification === "unavailable") return mountedMs < 120_000 ? 5_000 : false;
   return settings?.pending ? 1_000 : false;
 }

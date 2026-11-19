@@ -496,7 +496,7 @@ export async function packagedSandboxWorld(options: Options) {
     } else await enable(direction === "force-off" ? "force" : "use");
     const tool = direction === "use-off" ? "sandbox_shell" : "shell";
     const expected = direction === "force-on" ? "Darwin" : "Linux";
-    const command = "sleep 30; uname -s";
+    const command = "sleep 30 && uname -s";
     state.phase = direction;
     await send(`Run exactly \`${command}\` using ${tool}. This deliberately lasts 30 seconds. Wait for it to finish and quote its output.`);
     await poll("the session's long tool is already running", async () => {
@@ -532,6 +532,7 @@ export async function packagedSandboxWorld(options: Options) {
         pendingFailure = JSON.stringify({ notice: notice.note, destructive: notice.destructive, editor: notice.editor, body: notice.body });
       }
       check("pending send has neutral copy, no raw error, and retains the draft", !pendingFailure, pendingFailure, false);
+      check("the composer holding the unsent text still shows the current mode", notice.pill.includes("Sandbox"), notice.pill);
       sessionId = ongoing;
       await control(surface(), "session.open", { sessionId });
     }
@@ -549,7 +550,7 @@ export async function packagedSandboxWorld(options: Options) {
     if (target) {
       if (!pendingFailure) {
         // The unsent message stays in its own chat in the sidebar; reopen that chat, as a person would.
-        await clickTarget(surface(), { role: "button", text: /^Run exactly/ });
+        await clickTarget(surface(), { text: /^Run exactly `uname/ });
         await waitForLocated(surface(), "composer", { timeoutMs: 30_000 });
         sessionId = "";
         const retained = await poll("the unsent chat still holds the typed text", dom, value => value.editor.some(text => text?.includes(UNAME)), 10_000);
@@ -614,8 +615,14 @@ export async function packagedSandboxWorld(options: Options) {
         const parts = await turn("use-dual", "Use sandbox_shell to run uname -s, then use the normal shell tool to run uname -s; report both.");
         os(parts, "sandbox_shell", "Linux");
         os(parts, "shell", "Darwin");
-        check("both normal and all six additive tools offered", phaseRequests().length > 0 && phaseRequests().every(entry => ADDITIVE.every(tool => entry.offeredTools.includes(tool)) && GUEST_TOOLS.every(tool => [...entry.offeredTools, ...entry.codeModeTools].includes(tool))), phaseRequests());
+        // The engine gives GPT models one `patch` tool in place of `edit` and `write`.
+        const offersNormal = (tools: string[]) => GUEST_TOOLS.every(tool => tools.includes(tool) || ((tool === "edit" || tool === "write") && tools.includes("patch")));
+        check("both normal and all six additive tools offered", phaseRequests().length > 0 && phaseRequests().every(entry => ADDITIVE.every(tool => entry.offeredTools.includes(tool)) && offersNormal([...entry.offeredTools, ...entry.codeModeTools])), phaseRequests());
         await clickTarget(surface(), { role: "button", label: /^Worked for/ });
+        const group = await waitForLocated(surface(), { testId: "sandbox-group-tag" }, { timeoutMs: 5000 });
+        check("the folded group of two commands says one ran in the sandbox", /^1 in sandbox$/.test(group.name.trim()), group.name);
+        await screenshot("use-dual-group-tag");
+        await clickTarget(surface(), { testId: "sandbox-group-tag" });
         const tags = await poll("expanded tool list shows the Sandbox tag", dom, view => view.tags.length > 0, 5000);
         check("only the sandbox execution line is tagged", tags.tags.length === 1 && tags.tags[0] === "Sandbox", tags.taggedLines);
         await screenshot("use-dual-expanded-tools");
@@ -724,6 +731,9 @@ export async function packagedSandboxWorld(options: Options) {
         }
         const retry = Date.now();
         await clickTarget(surface(), { testId: "sandbox-retry" });
+        const cleared = await poll("Retry replaces the old error with progress", dom, value => value.error.length === 0, 1_000, 20).catch(() => dom());
+        timings["retry: click to error cleared"] = Date.now() - retry;
+        check("Retry replaces the old error with progress within a second", cleared.error.length === 0, cleared.error);
         await ready("retry", retry);
         await returnToChat();
         os(await turn("after-retry", guarded), "shell", "Linux");

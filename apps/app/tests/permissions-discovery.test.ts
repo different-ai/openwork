@@ -17,6 +17,7 @@ test("verification polls quickly in flight and retries an outage for two minutes
   expect(sandboxSettingsPollInterval({ verification: "checking", pending: false }, 120_000)).toBe(1_000);
   expect(sandboxSettingsPollInterval({ verification: "unavailable", pending: false }, 119_999)).toBe(5_000);
   expect(sandboxSettingsPollInterval({ verification: "unavailable", pending: false }, 120_000)).toBe(false);
+  expect(sandboxSettingsPollInterval({ verification: "refreshing", pending: false }, 120_000)).toBe(1_000);
   expect(sandboxSettingsPollInterval({ verification: "verified", pending: false }, 10_000)).toBe(false);
   expect(sandboxSettingsPollInterval({ verification: "verified", pending: true }, 120_000)).toBe(1_000);
 });

@@ -654,6 +654,17 @@ test("sandbox settings GET backs off failed rollout verification and recovers wi
     await finish();
     expect(await read()).toMatchObject({ verification: "verified", featureEnabled: true, ...restrictive });
     expect(reads).toBe(3);
+    offset += 2_000;
+    expect(await read()).toMatchObject({ verification: "refreshing", featureEnabled: true, ...restrictive });
+    // The answer took longer than the freshness window to arrive. The next read still
+    // reports it as settled instead of starting another round.
+    const slow = policy.localSandboxAccess();
+    offset += 5_000;
+    release.resolve();
+    await slow;
+    release = Promise.withResolvers<void>();
+    expect(await read()).toMatchObject({ verification: "verified", featureEnabled: true, ...restrictive });
+    expect(reads).toBe(4);
   } finally { release.resolve(); clock.mockRestore(); await app.stop(); await den.stop(); await f.cleanup(); }
 });
 

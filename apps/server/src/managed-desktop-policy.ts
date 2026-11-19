@@ -68,7 +68,7 @@ function transientTransportReason(error: unknown): DenRetryReason | null {
 
 const SANDBOX_FRESHNESS_MS = 2_000;
 type SandboxAccess = { enabled: boolean; featureEnabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean; useRequired: boolean };
-type SandboxVerification = "verified" | "checking" | "unavailable";
+type SandboxVerification = "verified" | "refreshing" | "checking" | "unavailable";
 export type SandboxSettingsSnapshot = SandboxSettings & {
   featureEnabled: boolean;
   effectiveUseSandbox: boolean;
@@ -412,8 +412,10 @@ class ManagedDesktopPolicy {
   private sandboxDesktopSentAt = -Infinity;
   private sandboxRead: { generation: number; revision: number; promise: Promise<SandboxAccess> } | undefined;
   private sandboxFresh: { revision: number; until: number; access: SandboxAccess } | undefined;
+  private sandboxSettledAt = -Infinity;
 
   private resetSandboxAuthority(): void {
+    this.sandboxSettledAt = -Infinity;
     this.sandboxOrgForce = false;
     this.sandboxOrgUse = false;
     this.sandboxOrgVerified = false;
@@ -490,14 +492,24 @@ class ManagedDesktopPolicy {
     return this.settingsResponse(local, applied, access, this.sandboxVerification);
   }
   refreshSandboxSettingsInBackground(): void {
-    if (performance.now() < this.sandboxRetryAt) return;
+    if (performance.now() < this.sandboxRetryAt || this.settledForSettings()) return;
     void this.localSandboxAccess().catch(() => undefined);
+  }
+  /** Settings counts freshness from when the answer arrived, so a slow
+   * organization service cannot keep an open page re-checking forever.
+   * Admission keeps its stricter clock, counted from when the read was sent. */
+  private settledForSettings(): boolean {
+    return this.sandboxVerification === "verified" && this.sandboxFresh?.revision === sandboxSettingsRevision(this.config)
+      && performance.now() - this.sandboxSettledAt < this.sandboxFreshnessMs;
   }
   /** For Settings UI only. Report the last rollout, never using it as admission authority. */
   sandboxSettingsSnapshot(local: SandboxSettings, applied: SandboxSettings): SandboxSettingsSnapshot {
-    const checking = this.sandboxRead?.generation === this.generation
-      || (this.sandboxVerification === "verified" && !this.freshSandboxAccess(sandboxSettingsRevision(this.config)));
-    const verification = checking ? "checking" : this.sandboxVerification;
+    const inFlight = this.sandboxRead?.generation === this.generation;
+    // A verified answer being checked again stays quiet in Settings; only a
+    // first check or a retry after a failure is reported as "checking".
+    const verification: SandboxVerification = this.sandboxVerification === "verified"
+      ? (inFlight || !this.settledForSettings() ? "refreshing" : "verified")
+      : inFlight ? "checking" : this.sandboxVerification;
     return this.settingsResponse(local, applied, {
       ...this.sandboxAuthority(), scope: "unverified", featureEnabled: this.lastSandboxFeatureEnabled,
       enabled: this.lastSandboxFeatureEnabled && this.sandboxVerification !== "unavailable" && !this.sandboxRulesRestrictive,
@@ -565,6 +577,7 @@ class ManagedDesktopPolicy {
       this.sandboxRetryDelayMs = 0;
       this.sandboxRetryAt = 0;
       this.sandboxFresh = { revision, until: rolloutSentAt + this.sandboxFreshnessMs, access };
+      this.sandboxSettledAt = performance.now();
       return access;
     } catch {
       this.identityChanged(generation);

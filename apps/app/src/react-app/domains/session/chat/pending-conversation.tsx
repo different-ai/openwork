@@ -6,6 +6,7 @@ import { persistableComposerDraftText } from "../surface/composer-state-store";
 import { resolvePastedTextPlaceholders } from "../surface/composer/pasted-text";
 import { retryPendingConversation, type PendingConversation } from "./pending-conversation-store";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
+import { WorkspaceSandboxModePill } from "../surface/composer/sandbox-mode-pill";
 
 const noop = () => {};
 
@@ -54,6 +55,8 @@ function DeferredConversationComposer({ conversation, composer }: { conversation
     <NewTaskComposer draft={draft} onDraftChange={setDraft} initialComposer={conversation.submitted} busy={false} flush={false}
       context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
         draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null}
+      sandboxModeControl={<WorkspaceSandboxModePill client={composer?.client ?? null} workspaceId={composer?.workspaceId ?? null}
+        onOpenPermissions={() => composer?.onOpenSettingsSection?.("permissions")} />}
       onRunTask={(_text, _attachments, handoff) => {
         handoff?.consume?.();
         return retryPendingConversation(conversation.id, handoff?.submitted);

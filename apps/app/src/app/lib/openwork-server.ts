@@ -480,7 +480,7 @@ export type OpenworkSandboxSettingsResponse = {
   managedUse: boolean;
   managedForce: boolean;
   pending: boolean;
-  verification: "verified" | "checking" | "unavailable";
+  verification: "verified" | "refreshing" | "checking" | "unavailable";
   allowHostExecution: boolean;
   effectiveAllowHostExecution: boolean;
   managed: boolean;
