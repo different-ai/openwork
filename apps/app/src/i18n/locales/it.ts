@@ -492,6 +492,7 @@ export default {
   "sandbox.can_edit": "Modificabile",
   "sandbox.view_only": "Sola lettura",
   "sandbox.tag": "Sandbox",
+  "sandbox.tag_some": "{count} nella sandbox",
   "sandbox.only": "Solo sandbox",
   "sandbox.starting": "Avvio della sandbox…",
   "sandbox.attention": "La sandbox richiede attenzione",

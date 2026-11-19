@@ -281,6 +281,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
         scopeId={policy.scopeId}
         team={team}
         settings={settings}
+        saved={policy.settings}
         everyone={data.everyone.settings}
         area={area}
         editable={editable}
@@ -389,11 +390,13 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
   /** The team's name, or null when editing Everyone's. */
   team: string | null;
   settings: AgentPermissionSettings;
+  /** What is stored, so a row being edited stays on screen until it is saved. */
+  saved: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
   area?: AgentPermissionsArea;
   editable: boolean;
@@ -402,7 +405,10 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
   const { orgContext } = useOrgDashboard();
   const features = { sandboxTools: orgFeatureEnabled(orgContext, "sandboxTools") };
-  const sandboxRows = sandboxRequirementVisibility(features, settings, team === null ? null : everyone);
+  const inherited = team === null ? null : everyone;
+  const draftRows = sandboxRequirementVisibility(features, settings, inherited);
+  const savedRows = sandboxRequirementVisibility(features, saved, inherited);
+  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut };
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}

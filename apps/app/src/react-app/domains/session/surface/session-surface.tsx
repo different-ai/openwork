@@ -17,6 +17,7 @@ import { SandboxActivityContext } from "@/components/chat/current-tool-lifecycle
 import { Badge } from "@/components/ui/badge";
 import { sandboxSendDisposition } from "@/react-app/kernel/sandbox-transition";
 import { useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
+import { SandboxModePill } from "@/react-app/domains/session/surface/composer/sandbox-mode-pill";
 import { sandboxCurrentStepText, sandboxEffectiveMode, sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -4190,16 +4191,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         {sandboxSendNotice?.owner === sessionOwner ? <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{sandboxSendNotice.message}</p> : null}
         <ReactSessionComposer
-          sandboxModeControl={!sandboxPill ? null : sandboxPill.attention ? (
-            <Button data-testid="sandbox-mode-pill" variant="ghost" size="xs" className="rounded-full bg-muted text-muted-foreground" title={t("sandbox.attention")} onClick={() => props.onOpenSettingsSection?.("permissions")}>
-              <CircleAlert aria-hidden="true" />{sandboxPill.label}<span className="sr-only">{t("sandbox.attention")}</span>
-            </Button>
-          ) : (
-            <Badge data-testid="sandbox-mode-pill" variant="secondary" title={sandboxPill.step ?? undefined}>
-              {sandboxPill.step ? <><LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /><span className="sr-only">{sandboxPill.step}</span></> : null}
-              {sandboxPill.label}
-            </Badge>
-          )}
+          sandboxModeControl={<SandboxModePill pill={sandboxPill} onOpenPermissions={() => props.onOpenSettingsSection?.("permissions")} />}
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
           mentions={mentions}

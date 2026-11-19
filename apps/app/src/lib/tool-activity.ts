@@ -103,3 +103,9 @@ export function getToolActivityLabel(part: AnyToolPart): string {
   }
   return "Working"
 }
+
+export function sandboxGroupTag(ranInSandbox: readonly boolean[]): { kind: "all" } | { kind: "some"; count: number } | null {
+  const count = ranInSandbox.filter(Boolean).length;
+  if (count === 0) return null;
+  return count === ranInSandbox.length ? { kind: "all" } : { kind: "some", count };
+}

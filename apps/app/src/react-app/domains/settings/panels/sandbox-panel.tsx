@@ -3,7 +3,7 @@ import { useCallback, useId, useRef } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Folder, Lock } from "lucide-react";
 
-import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { OpenworkServerError, type OpenworkSandboxStatusResponse, type OpenworkServerClient } from "@/app/lib/openwork-server";
 import { Button } from "@/components/ui/button";
 import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,7 +12,7 @@ import { t } from "@/i18n";
 import { sandboxEffectiveMode } from "@/react-app/kernel/sandbox-chat";
 import { sandboxSettingsQuery, useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
 import { LayoutSectionItem, LayoutSectionItemDescription, LayoutSectionItemFootnote, LayoutSectionItemHeader, LayoutSectionItemHeaderActions, LayoutSectionItemTitle, LayoutSectionTitle } from "../settings-layout";
-import { sandboxEditableToggleUpdate, sandboxPanelState, sandboxPanelVisibility, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate, type SandboxToggle } from "./sandbox-panel-state";
+import { sandboxEditableToggleUpdate, sandboxPanelState, sandboxPanelVisibility, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate, type SandboxToggle } from "./sandbox-panel-state";
 
 import type { SettingsWorkspaceState } from "../state/workspace-discovery";
 
@@ -68,7 +68,7 @@ export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceSt
   const { visible, ready: settled } = sandboxPanelVisibility(rollout, settings.isError ? "error" : loading ? "loading" : "settled", settings.data);
   const ready = workspaceState === "connected" && settled && (!visible || Boolean(settings.data));
   const observeStatus = visible && (settings.data?.pending === true || sandboxEffectiveMode(settings.data) !== "off");
-  const { status, queryKey: statusKey } = useSandboxStatus(connection, observeStatus);
+  const { status, queryKey: statusKey } = useSandboxStatus(connection, observeStatus, 2_000);
   const settingsSaved = (reconciled: boolean) => {
     void queryClient.invalidateQueries({ queryKey, refetchType: reconciled ? "none" : "active" });
     void queryClient.invalidateQueries({ queryKey: statusKey });
@@ -118,8 +118,12 @@ export function SandboxPanel({ client: workspaceClient, workspaceId, workspaceSt
       if (!client || !workspaceId) throw new Error(t("context_panel.no_server_workspace"));
       return client.prepareSandbox(workspaceId);
     },
-    onMutate: () => queryClient.cancelQueries({ queryKey: statusKey }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: statusKey });
+      queryClient.setQueryData<OpenworkSandboxStatusResponse | null>(statusKey, sandboxRetryStarted);
+    },
     onSuccess: (next) => queryClient.setQueryData(statusKey, next),
+    onError: () => { void queryClient.invalidateQueries({ queryKey: statusKey }); },
   });
   const optimistic = save.isPending ? sandboxToggleUpdate(save.variables.setting, save.variables.checked) : undefined;
   const row = settings.data ? sandboxPanelState(settings.data, optimistic) : null;

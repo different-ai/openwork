@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { OpenworkSandboxSettingsResponse } from "@/app/lib/openwork-server";
+import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
@@ -43,8 +43,20 @@ export function useSandboxSettings(connection: SandboxConnection) {
   return { settings, queryKey: options.queryKey };
 }
 
-export function useSandboxStatus({ client, workspaceId }: SandboxConnection, observe: boolean) {
-  const queryKey = ["openwork-server", client?.baseUrl, workspaceId, "sandbox-status"];
+export function sandboxStatusQueryKey({ client, workspaceId }: SandboxConnection) {
+  return ["openwork-server", client?.baseUrl, workspaceId, "sandbox-status"];
+}
+
+export function sandboxStatusPollInterval(status: Pick<OpenworkSandboxStatusResponse, "state"> | null | undefined, settledMs: number): number | false {
+  if (!status) return false;
+  if (status.state === "preparing") return 500;
+  if (status.state === "idle" || status.state === "off") return 2_000;
+  return settledMs;
+}
+
+export function useSandboxStatus(connection: SandboxConnection, observe: boolean, settledMs = 10_000) {
+  const { client, workspaceId } = connection;
+  const queryKey = sandboxStatusQueryKey(connection);
   const status = useQuery({
     queryKey,
     queryFn: async () => {
@@ -59,12 +71,7 @@ export function useSandboxStatus({ client, workspaceId }: SandboxConnection, obs
     enabled: observe && Boolean(client && workspaceId),
     retry: false,
     refetchIntervalInBackground: false,
-    refetchInterval: ({ state }) => {
-      if (state.status === "error" || !state.data) return false;
-      if (state.data.state === "preparing") return 500;
-      if (state.data.state === "idle" || state.data.state === "off") return 2_000;
-      return 10_000;
-    },
+    refetchInterval: ({ state }) => state.status === "error" ? false : sandboxStatusPollInterval(state.data, settledMs),
   });
   return { status, queryKey };
 }

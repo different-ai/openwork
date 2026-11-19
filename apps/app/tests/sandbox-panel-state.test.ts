@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
-import { sandboxEditableToggleUpdate, sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxPanelVisibility, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
+import { sandboxEditableToggleUpdate, sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxPanelVisibility, sandboxRetryStarted, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
 
 const off: OpenworkSandboxSettingsResponse = {
   featureEnabled: false, useSandbox: false, forceSandbox: false,
@@ -75,4 +75,18 @@ test("ready reports folder access; failure offers only applicable retry", () => 
   expect(sandboxStatusView({ ...status, state: "failed", error }, true)).toEqual({ kind: "failed", error, retry: true });
   expect(sandboxStatusView({ ...status, state: "failed", error: { ...error, retryable: false } }, true)).toMatchObject({ retry: false });
   expect(sandboxStatusView({ ...status, state: "unsupported", error }, true)).toEqual({ kind: "unsupported", error, retry: false });
+});
+
+test("Retry shows setup starting again at once instead of the old error", () => {
+  const failed: OpenworkSandboxStatusResponse = {
+    mode: "force", state: "failed", imageSource: "bundled", imageBytes: 4_134_912, estimatedRemainingMs: null,
+    startedAt: 1, readyAt: null, lastPrepareMs: 900, folders: [],
+    steps: [{ id: "download", state: "done" }, { id: "start", state: "active" }, { id: "folders", state: "waiting" }],
+    error: { code: "start_failed", message: "The sandbox couldn't start. Nothing ran.", action: "Try again.", retryable: true },
+  };
+  const retried = sandboxRetryStarted(failed);
+  expect(retried).toMatchObject({ mode: "force", state: "preparing", error: null, imageBytes: 4_134_912 });
+  expect(retried?.steps.map((step) => step.state)).toEqual(["active", "waiting", "waiting"]);
+  expect(sandboxStatusView(retried, true).kind).toBe("progress");
+  expect(sandboxRetryStarted(null)).toBeNull();
 });

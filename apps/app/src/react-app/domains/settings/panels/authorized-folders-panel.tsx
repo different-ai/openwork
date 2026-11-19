@@ -1,6 +1,8 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type SetStateAction } from "react";
 import { Folder, Info, Plus, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { sandboxStatusQueryKey } from "@/react-app/infra/use-sandbox";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -203,6 +205,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     };
   }, [canReadConfig, loadAttempt, props.openworkServerClient, props.runtimeWorkspaceId]);
 
+  const queryClient = useQueryClient();
   const persistAuthorizedFolders = useCallback(async (nextFolders: string[]) => {
     const openworkClient = props.openworkServerClient;
     const openworkWorkspaceId = props.runtimeWorkspaceId;
@@ -218,6 +221,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     try {
       const response = await openworkClient.setAuthorizedFolders(openworkWorkspaceId, nextFolders);
       setAuthorizedFolders(response.folders);
+      void queryClient.invalidateQueries({ queryKey: sandboxStatusQueryKey({ client: openworkClient, workspaceId: openworkWorkspaceId }) });
       setAuthorizedFoldersStatus(
         buildAuthorizedFoldersStatus(
           response.hiddenCount,
@@ -234,7 +238,7 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
     } finally {
       setAuthorizedFoldersSaving(false);
     }
-  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId]);
+  }, [canWriteConfig, props.onConfigUpdated, props.openworkServerClient, props.runtimeWorkspaceId, queryClient]);
 
   const removeAuthorizedFolder = useCallback(async (folder: string) => {
     const nextFolders = authorizedFolders.filter((entry) => entry !== folder);

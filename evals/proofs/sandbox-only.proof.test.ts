@@ -117,6 +117,8 @@ live("a member adds sandbox tools, then limits the agent to the sandbox and auth
     expect(guest?.output).toContain("Linux");
     expect(host?.status).toBe("completed");
     expect(host?.output).toContain("Darwin");
+    await user.see({ testId: "sandbox-group-tag" }, { text: /^1 in sandbox$/ });
+    await user.click({ testId: "sandbox-group-tag" });
     await user.see({ testId: "sandbox-tag" }, { text: /^Sandbox$/ });
     const tagged = (await probe.dom('[data-tool-aggregate-row]:has([data-testid="sandbox-tag"])')).elements;
     const mac = (await probe.dom('[data-tool-aggregate-row]:has(button[aria-label*="Identify the Mac system"])')).elements;
@@ -265,7 +267,7 @@ unavailable("a member whose sandbox cannot start gets an error and never silentl
   await step("when the member asks the agent to save a file outside every mount", async () => {
     await user.click("Back to app");
     await agent.run("session.open", { sessionId: world.session.sessionId });
-    await user.see({ testId: "sandbox-mode-pill" }, { text: /^Sandbox only$/ });
+    await user.see({ testId: "sandbox-mode-pill" }, { text: /^Sandbox only\s+Sandbox needs attention$/ });
     await runToolTurn({ user }, world, "Save a note while the sandbox service is unavailable.", [{ tool: "shell", arguments: { command } }]);
     await revealLatestWork(user, probe);
     const call = await probe.eventually(() => world.toolCall("shell", input => input.command === command), { within: 150_000, label: "the unavailable sandbox reports its error", until: value => value !== null });

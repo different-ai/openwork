@@ -4,7 +4,7 @@ import * as React from "react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 import { Badge } from "@/components/ui/badge"
 import { t } from "@/i18n"
-import { sandboxRunningToolStep } from "@/lib/tool-activity"
+import { sandboxGroupTag, sandboxRunningToolStep } from "@/lib/tool-activity"
 
 import type { SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import {
@@ -74,6 +74,12 @@ export function toolRanInSandbox(part: DynamicToolUIPart | ToolUIPart) {
 export function useSandboxToolStep(part: DynamicToolUIPart | ToolUIPart | undefined, running: boolean) {
   const step = React.useContext(SandboxActivityContext);
   return sandboxRunningToolStep(part, running, step);
+}
+
+export function SandboxGroupTag({ parts }: { parts: readonly (DynamicToolUIPart | ToolUIPart)[] }) {
+  const tag = sandboxGroupTag(parts.map(toolRanInSandbox));
+  if (!tag) return null;
+  return <Badge variant="secondary" data-testid="sandbox-group-tag">{tag.kind === "all" ? t("sandbox.tag") : t("sandbox.tag_some", { count: tag.count })}</Badge>;
 }
 
 export function SandboxToolTag({ part }: { part: DynamicToolUIPart | ToolUIPart }) {

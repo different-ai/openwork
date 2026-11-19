@@ -101,3 +101,14 @@ export function sandboxStatusView(status: OpenworkSandboxStatusResponse | null |
     default: return { kind: "none" };
   }
 }
+
+export function sandboxRetryStarted(previous: OpenworkSandboxStatusResponse | null | undefined): OpenworkSandboxStatusResponse | null {
+  if (!previous) return null;
+  return {
+    ...previous,
+    state: "preparing",
+    error: null,
+    estimatedRemainingMs: null,
+    steps: previous.steps.map((step, index) => ({ id: step.id, state: index === 0 ? "active" : "waiting" })),
+  };
+}

@@ -548,9 +548,12 @@ export async function packagedSandboxWorld(options: Options) {
     await returnToChat();
     if (target) {
       if (!pendingFailure) {
-        await newChat();
-        const retained = await dom();
-        check("pending text remains in the original draft after Force applies", retained.editor.some(text => text?.includes(UNAME)), retained.editor);
+        // The unsent message stays in its own chat in the sidebar; reopen that chat, as a person would.
+        await clickTarget(surface(), { role: "button", text: /^Run exactly/ });
+        await waitForLocated(surface(), "composer", { timeoutMs: 30_000 });
+        sessionId = "";
+        const retained = await poll("the unsent chat still holds the typed text", dom, value => value.editor.some(text => text?.includes(UNAME)), 10_000);
+        check("pending text remains in the unsent chat after Force applies", retained.editor.some(text => text?.includes(UNAME)), retained.editor);
       }
       const next = await turn("after-force-applies", UNAME, !pendingFailure);
       os(next, "shell", "Linux");
@@ -691,12 +694,15 @@ export async function packagedSandboxWorld(options: Options) {
       case "g": {
         await enable("force");
         await uname("before-crash", "shell", "Linux");
-        const guarded = `${UNAME} Then in the same shell call also run \`test ! -e '${files.private}' || printf HOST_WAS_HERE > '${files.private}'\`. Do not retry a tool error.`;
+        // A command that leaves a marker in /tmp shows where it ran: inside the sandbox the Mac's /tmp never sees it.
+        const marker = `/tmp/openwork-ran-${randomUUID()}.txt`;
+        const guarded = `${UNAME} In the same shell call also run \`echo ran > ${marker}\`. Do not retry a tool error.`;
+        const untouched = async () => await readFile(files.private, "utf8") === hostSecret && await access(marker).then(() => false, () => true);
         await killOwnedVm();
         const crashed = await turn("crash-recovery", guarded);
         const shell = crashed.filter(part => part.tool === "shell");
         const plain = (error: string) => /Nothing ran/i.test(error) && !/\b503\b|bridge request|fallback|\{/.test(error);
-        check("crash recovers in Linux or fails plainly without running on the host", shell.length > 0 && shell.every(part => !/Darwin/.test(part.output)) && (shell.some(part => part.status === "completed" && /Linux/.test(part.output)) || shell.some(part => plain(part.error || part.output))) && await readFile(files.private, "utf8") === hostSecret, shell);
+        check("crash recovers in Linux or fails plainly without running on the host", shell.length > 0 && shell.every(part => !/Darwin/.test(part.output)) && (shell.some(part => part.status === "completed" && /Linux/.test(part.output)) || shell.some(part => plain(part.error || part.output))) && await untouched(), shell);
         const remaining = (await ownedProcesses()).some(row => /(?:^|\/)msb machine\b/.test(row.command));
         const msb = join(root, "msb");
         if (remaining) await killOwnedVm();
@@ -711,7 +717,7 @@ export async function packagedSandboxWorld(options: Options) {
           notices["startup failure settings"] = failure.error.join("\n");
           await screenshot("startup-error");
           await waitForLocated(surface(), { testId: "sandbox-retry" }, { timeoutMs: 5000 });
-          check("startup failure never runs on the host and error uses plain copy", brokenShell.length > 0 && brokenShell.every(part => !/Darwin|Linux/.test(part.output)) && brokenShell.some(part => plain(part.error || part.output)) && plain(failure.error.join(" ")) && await readFile(files.private, "utf8") === hostSecret, brokenShell);
+          check("startup failure never runs on the host and error uses plain copy", brokenShell.length > 0 && brokenShell.every(part => !/Darwin|Linux/.test(part.output)) && brokenShell.some(part => plain(part.error || part.output)) && plain(failure.error.join(" ")) && await untouched(), brokenShell);
         } finally {
           await rm(msb, { force: true });
           await rename(`${msb}-restore`, msb);
@@ -721,7 +727,7 @@ export async function packagedSandboxWorld(options: Options) {
         await ready("retry", retry);
         await returnToChat();
         os(await turn("after-retry", guarded), "shell", "Linux");
-        check("host sentinel remains untouched after Retry", await readFile(files.private, "utf8") === hostSecret);
+        check("nothing the commands wrote reached the Mac after Retry", await untouched());
         break;
       }
       case "i":

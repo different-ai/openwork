@@ -27,6 +27,15 @@ test("stored and inherited requirements remain visible while rollout is off", ()
   assert.equal(commands?.definitions.some((definition) => definition.key === "hostExecution" || definition.key === "sandboxOptOut"), false);
 });
 
+test("a requirement that was turned back off leaves the editor once the rollout is off", () => {
+  const released: AgentPermissionSettings = { sandboxOptOut: { decision: "allow" }, hostExecution: { decision: "allow" } };
+  assert.deepEqual(sandboxRequirementVisibility(off, released, null), { hostExecution: false, sandboxOptOut: false });
+  assert.deepEqual(sandboxRequirementVisibility(off, released, {}), { hostExecution: false, sandboxOptOut: false });
+  // A team's own exception stays visible while Everyone still requires the mode.
+  assert.deepEqual(sandboxRequirementVisibility(off, released, { ...use, ...force }), { hostExecution: true, sandboxOptOut: true });
+  assert.deepEqual(sandboxRequirementVisibility(on, released, null), { hostExecution: true, sandboxOptOut: true });
+});
+
 test("Force shows Use checked and locked without changing its stored decision", () => {
   const definition = agentPermissionDefinition("sandboxOptOut");
   const included = agentPermissionBlockedBy("sandboxOptOut", {}, force, on);

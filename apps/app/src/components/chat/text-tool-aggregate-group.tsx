@@ -4,7 +4,7 @@ import { Fragment } from "react"
 
 import { RAIL_LINE, RAIL_ROW, RailMeta, TextSentenceLine, TrailingChevron } from "@/components/chat/activity-rail"
 import { useCurrentToolLifecycleResolver } from "@/components/chat/current-tool-lifecycle-context"
-import { SandboxToolTag, toolRanInSandbox, useSandboxToolStep } from "@/components/chat/current-tool-lifecycle-context"
+import { SandboxGroupTag, SandboxToolTag, toolRanInSandbox, useSandboxToolStep } from "@/components/chat/current-tool-lifecycle-context"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { TextCommandCard, TextDiffCard, TextDiffStats, TextTechnicalDetails } from "@/components/chat/text-activity-details"
 import { t } from "@/i18n"
@@ -196,6 +196,7 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
             </Fragment>
           ))}
         </span>
+        <SandboxGroupTag parts={parts} />
         {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}
         {failedCount > 0 ? <RailMeta>{t("text_activity.failed_count", { count: failedCount })}</RailMeta> : null}
         <TrailingChevron open={expanded} />

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
 import type { DynamicToolUIPart } from "ai";
 import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
-import { sandboxRunningToolStep } from "@/lib/tool-activity";
+import { sandboxGroupTag, sandboxRunningToolStep } from "@/lib/tool-activity";
 import { sandboxPillView } from "@/react-app/kernel/sandbox-chat";
+import { sandboxStatusPollInterval } from "@/react-app/infra/use-sandbox";
 import { sandboxToolRenderer } from "@/lib/build-in-tools";
 import { sandboxSendDisposition, sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
 import { parseDynamicToolUIPart } from "@/react-app/domains/session/sync/parse-tool-parts";
@@ -70,4 +71,20 @@ test("keeps the plain server message and only defers recognized transition error
   expect(sandboxSendDisposition({ status: 409, code: "sandbox_engine_policy_pending", message })).toEqual({ kind: "deferred", note: message });
   expect(sandboxSendDisposition({ status: 409, code: "unrelated" })).toEqual({ kind: "failed" });
   expect(sandboxTransitionNote({ status: 503, error: "unrelated" }, true)).toBeNull();
+});
+
+test("a collapsed group of steps says whether all, some or none of them ran in the sandbox", () => {
+  expect(sandboxGroupTag([false, false])).toBeNull();
+  expect(sandboxGroupTag([true, true])).toEqual({ kind: "all" });
+  expect(sandboxGroupTag([true, false, false])).toEqual({ kind: "some", count: 1 });
+  expect(sandboxGroupTag([])).toBeNull();
+});
+
+test("sandbox status is polled quickly while it gets ready and at the caller's pace once settled", () => {
+  expect(sandboxStatusPollInterval(null, 2_000)).toBe(false);
+  expect(sandboxStatusPollInterval({ state: "preparing" }, 10_000)).toBe(500);
+  expect(sandboxStatusPollInterval({ state: "idle" }, 10_000)).toBe(2_000);
+  expect(sandboxStatusPollInterval({ state: "ready" }, 2_000)).toBe(2_000);
+  expect(sandboxStatusPollInterval({ state: "ready" }, 10_000)).toBe(10_000);
+  expect(sandboxStatusPollInterval({ state: "failed" }, 10_000)).toBe(10_000);
 });

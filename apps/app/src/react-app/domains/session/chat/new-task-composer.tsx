@@ -12,6 +12,7 @@ import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } fr
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
+import { WorkspaceSandboxModePill } from "@/react-app/domains/session/surface/composer/sandbox-mode-pill";
 import {
   snapshotComposerSessionState,
   persistableComposerDraftText,
@@ -536,6 +537,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
         }}
       /> : null}
       runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
+      sandboxModeControl={<WorkspaceSandboxModePill client={workspaceClient} workspaceId={workspaceId} onOpenPermissions={() => context?.onOpenSettingsSection?.("permissions")} />}
       draft={props.draft}
       mentions={mentions}
       onDraftChange={handleDraftChange}

@@ -493,6 +493,7 @@ export default {
   "sandbox.can_edit": "Can edit",
   "sandbox.view_only": "View only",
   "sandbox.tag": "Sandbox",
+  "sandbox.tag_some": "{count} in sandbox",
   "sandbox.only": "Sandbox only",
   "sandbox.starting": "Starting sandbox…",
   "sandbox.attention": "Sandbox needs attention",

@@ -3,9 +3,12 @@ import { expect } from "vitest";
 import { desktopRules, sandboxControls, sandboxControlsFlagOff, sandboxHeaders, sandboxSignedOutSettings } from "../worlds/sandbox-only.ts";
 
 // Native policy handoff, but no guest execution or virtualization dependency.
-const controls = spec.world(sandboxControls, { timeout: 600_000,
+// A cold Daytona run spent 665s provisioning Den alone, and another world
+// spent 160s on Den plus 796s installing one desktop's dependencies. The
+// provisioning budget is separate from the individual assertion deadlines.
+const controls = spec.world(sandboxControls, { timeout: 1_500_000,
   resources: { surfaces: ["web", "desktop"], services: ["den"], nativeReason: "The embedded desktop server receives the signed-in member's verified Den policy." } });
-const flagOff = spec.world(sandboxControlsFlagOff, { timeout: 600_000,
+const flagOff = spec.world(sandboxControlsFlagOff, { timeout: 1_500_000,
   resources: { surfaces: ["web", "desktop"], services: ["den"], nativeReason: "The embedded desktop server receives the signed-in member's verified Den policy." } });
 const signedOut = spec.world(sandboxSignedOutSettings, { timeout: 600_000, resources: { surfaces: ["appWeb"], services: [] } });
 const configPath = "/v1/me/desktop-config";
@@ -25,7 +28,7 @@ async function switches(person: User, probe: Probe, use: boolean, force: boolean
   return `Use ${use ? "on" : "off"} (${lockUse ? "locked" : "editable"}); Force ${force ? "on" : "off"} (${lockForce ? "locked" : "editable"})`;
 }
 
-controls("an owner requires a sandbox for Contractors without removing another member's choice", async ({ world, user, agent, probe, step, evidence }) => {
+controls("an owner requires a sandbox for Contractors without removing another member's choice", { timeout: 1_650_000 }, async ({ world, user, agent, probe, step, evidence }) => {
   const admin = user.on(world.web);
   const member = user.on(world.member);
   const memberProbe = probe.on(world.member);
@@ -143,7 +146,7 @@ controls("an owner requires a sandbox for Contractors without removing another m
   });
 });
 
-flagOff("an owner outside the rollout can remove an old requirement but cannot add a new one", async ({ world, user, agent, probe, step, evidence }) => {
+flagOff("an owner outside the rollout can remove an old requirement but cannot add a new one", { timeout: 1_650_000 }, async ({ world, user, agent, probe, step, evidence }) => {
   const admin = user.on(world.web);
   const member = user.on(world.member);
   await step("before: the old Use requirement is visible but Force is not offered", async () => {

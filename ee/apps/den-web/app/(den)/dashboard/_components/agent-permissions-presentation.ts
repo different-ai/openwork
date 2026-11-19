@@ -30,11 +30,19 @@ function forceRequired(settings: AgentPermissionSettings, everyone: AgentPermiss
   return (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";
 }
 
-/** Stored and inherited requirements stay visible even after the rollout ends (P4). */
+function requires(setting: AgentPermissionSettings[keyof AgentPermissionSettings]): boolean {
+  return setting?.decision === "deny";
+}
+
+/**
+ * Stored and inherited requirements stay visible even after the rollout ends
+ * (P4). A switch that was turned back off is not a requirement: once the
+ * rollout is off it leaves the editor again.
+ */
 export function sandboxRequirementVisibility(features: AgentPermissionEditorFeatures, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null) {
   return {
-    hostExecution: features.sandboxTools || settings.hostExecution !== undefined || everyone?.hostExecution !== undefined,
-    sandboxOptOut: features.sandboxTools || settings.sandboxOptOut !== undefined || everyone?.sandboxOptOut !== undefined || forceRequired(settings, everyone),
+    hostExecution: features.sandboxTools || requires(settings.hostExecution) || requires(everyone?.hostExecution),
+    sandboxOptOut: features.sandboxTools || requires(settings.sandboxOptOut) || requires(everyone?.sandboxOptOut) || forceRequired(settings, everyone),
   };
 }
 
