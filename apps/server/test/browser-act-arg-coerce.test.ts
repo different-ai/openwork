@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   coerceJsonValue,
   coerceNestedJsonArgs,
-} from "../src/opencode-plugins/openwork-chrome-devtools.js";
+} from "../src/opencode-plugins/browser-tool-args.js";
 
 const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("click"), ref: z.string().optional() }),
