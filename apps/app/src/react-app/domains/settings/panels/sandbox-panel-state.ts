@@ -2,6 +2,21 @@ import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse, Sa
 import { t } from "@/i18n";
 
 export type SandboxSwitchNote = "managed" | "included" | null;
+export type SandboxToggle = { setting: "use" | "force"; checked: boolean };
+
+export function sandboxPanelVisibility(
+  rollout: boolean | undefined,
+  read: "loading" | "error" | "settled",
+  settings?: OpenworkSandboxSettingsResponse | null,
+) {
+  const visible = rollout === true || (read !== "error" && Boolean(settings && (
+    settings.useSandbox || settings.forceSandbox || settings.managedUse || settings.managedForce || settings.pending
+  )));
+  return {
+    visible,
+    ready: read !== "loading" && (visible || rollout !== undefined),
+  };
+}
 
 export function sandboxPanelState(settings: OpenworkSandboxSettingsResponse, update?: SandboxSettingsUpdate) {
   const managedForce = settings.managedForce;
@@ -11,7 +26,6 @@ export function sandboxPanelState(settings: OpenworkSandboxSettingsResponse, upd
   const useNote: SandboxSwitchNote = managedUse ? "managed" : force ? "included" : null;
   const forceNote: SandboxSwitchNote = managedForce ? "managed" : null;
   return {
-    visible: settings.featureEnabled || use || settings.pending,
     use,
     force,
     useNote,
@@ -24,7 +38,19 @@ export function sandboxPanelState(settings: OpenworkSandboxSettingsResponse, upd
 
 export function sandboxToggleUpdate(setting: "use" | "force", checked: boolean): SandboxSettingsUpdate {
   if (setting === "use") return checked ? { useSandbox: true } : { useSandbox: false, forceSandbox: false };
-  return checked ? { useSandbox: true, forceSandbox: true } : { forceSandbox: false };
+  return { forceSandbox: checked };
+}
+
+export function sandboxEditableToggleUpdate(settings: OpenworkSandboxSettingsResponse, toggle: SandboxToggle): SandboxSettingsUpdate | null {
+  const { useNote, forceNote } = sandboxPanelState(settings);
+  if (toggle.setting === "use" ? useNote : forceNote) return null;
+  return sandboxToggleUpdate(toggle.setting, toggle.checked);
+}
+
+export function sandboxSavedChoiceMatches(settings: OpenworkSandboxSettingsResponse | null, update: SandboxSettingsUpdate): boolean {
+  return settings !== null
+    && (update.useSandbox === undefined || settings.useSandbox === update.useSandbox)
+    && (update.forceSandbox === undefined || settings.forceSandbox === update.forceSandbox);
 }
 
 export function sandboxImageSize(bytes: number | null) {

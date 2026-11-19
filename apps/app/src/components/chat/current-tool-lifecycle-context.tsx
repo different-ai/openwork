@@ -4,7 +4,7 @@ import * as React from "react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 import { Badge } from "@/components/ui/badge"
 import { t } from "@/i18n"
-import { isSandboxCapableTool } from "@/lib/build-in-tools"
+import { sandboxRunningToolStep } from "@/lib/tool-activity"
 
 import type { SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import {
@@ -65,17 +65,15 @@ export function useCurrentSessionActivityStatus(): SessionActivityStatus | null 
   return React.useContext(CurrentToolLifecycleContext)?.activityStatus ?? null
 }
 
-export const SandboxActivityContext = React.createContext<{ step: string; force: boolean } | null>(null);
+export const SandboxActivityContext = React.createContext<string | null>(null);
 
 export function toolRanInSandbox(part: DynamicToolUIPart | ToolUIPart) {
   return part.callProviderMetadata?.openwork?.sandbox === true;
 }
 
 export function useSandboxToolStep(part: DynamicToolUIPart | ToolUIPart | undefined, running: boolean) {
-  const preparation = React.useContext(SandboxActivityContext);
-  if (!running || !preparation || part?.type !== "dynamic-tool") return null;
-  const sandbox = toolRanInSandbox(part) || part.callProviderMetadata?.openwork?.sandboxTool === true;
-  return sandbox || (preparation.force && isSandboxCapableTool(part.toolName)) ? preparation.step : null;
+  const step = React.useContext(SandboxActivityContext);
+  return sandboxRunningToolStep(part, running, step);
 }
 
 export function SandboxToolTag({ part }: { part: DynamicToolUIPart | ToolUIPart }) {

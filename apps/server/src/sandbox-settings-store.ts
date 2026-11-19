@@ -47,7 +47,7 @@ export function updateSandboxSettings(config: ServerConfig, update: Partial<Sand
     const previous = await readSandboxSettings(config);
     const forceSandbox = update.forceSandbox ?? (update.useSandbox !== false && previous.forceSandbox);
     const settings = normalize({ useSandbox: update.useSandbox ?? previous.useSandbox, forceSandbox });
-    await writeSandboxSettings(config, settings);
+    if (settings.useSandbox !== previous.useSandbox || settings.forceSandbox !== previous.forceSandbox) await writeSandboxSettings(config, settings);
     return { previous, settings };
   });
   updates.set(config, pending);

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync, statSync } from "node:fs";
 import { realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, resolve } from "node:path";
 import type { MicrosandboxMount } from "@openwork/sandbox-microsandbox";
@@ -66,24 +67,51 @@ export class SandboxFolderError extends Error {
   }
 }
 
+function restrictionPaths(externalDirectory: Readonly<Record<string, unknown>>): string[] {
+  return Object.entries(externalDirectory)
+    .filter(([path, value]) => value !== "allow" && path.startsWith("/") && path.endsWith("/*"))
+    .map(([path]) => path.slice(0, -2));
+}
+
+function validateMount(mount: MicrosandboxMount, hostPath: string, directory: boolean, protectedPaths: string[], restrictions: string[]): MicrosandboxMount {
+  if (!directory) throw new SandboxFolderError(mount.guestPath);
+  if (hostPath === "/" || protectedPaths.some(path => inside(path, hostPath) || inside(hostPath, path))) {
+    throw new Error("A sandbox mount would expose protected runtime state. Remove that Authorized Folder.");
+  }
+  if (restrictions.some(path => inside(path, hostPath) || inside(hostPath, path))) {
+    throw new Error("A sandbox bind aliases a restricted Authorized Folder subtree.");
+  }
+  return { ...mount, hostPath };
+}
+
+function canonicalCandidateSync(path: string): string {
+  try { return realpathSync(path); }
+  catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(canonicalCandidateSync(parent), basename(path));
+  }
+}
+
+export function sandboxMountFingerprintForWrite(directory: string, grants: Record<string, unknown>, readOnly: boolean, excluded: readonly string[]): string {
+  const mounts = sandboxMountGrants(directory, grants, readOnly);
+  const protectedPaths = excluded.map(path => canonicalCandidateSync(resolve(path)));
+  const restrictions = restrictionPaths(grants).map(canonicalCandidateSync);
+  return sandboxMountFingerprint(mounts.map(mount => {
+    const path = realpathSync(mount.hostPath);
+    return validateMount(mount, path, statSync(path).isDirectory(), protectedPaths, restrictions);
+  }));
+}
+
 export async function resolveSandboxMounts(mounts: readonly MicrosandboxMount[], excluded: readonly string[], externalDirectory: Readonly<Record<string, unknown>> = {}): Promise<MicrosandboxMount[]> {
   const protectedPaths = await Promise.all(excluded.map(path => canonicalCandidate(resolve(path))));
-  const restrictions = await Promise.all(Object.entries(externalDirectory)
-    .filter(([path, value]) => value !== "allow" && path.startsWith("/") && path.endsWith("/*"))
-    .map(([path]) => canonicalCandidate(path.slice(0, -2))));
+  const restrictions = await Promise.all(restrictionPaths(externalDirectory).map(canonicalCandidate));
   const resolved: MicrosandboxMount[] = [];
   for (const mount of mounts) {
     const hostPath = await realpath(mount.hostPath).catch(error => { throw new SandboxFolderError(mount.guestPath, error); });
     const metadata = await stat(hostPath).catch(error => { throw new SandboxFolderError(mount.guestPath, error); });
-    if (!metadata.isDirectory()) throw new SandboxFolderError(mount.guestPath);
-    if (hostPath === "/" || protectedPaths.some(path => inside(path, hostPath) || inside(hostPath, path))) {
-      throw new Error("A sandbox mount would expose protected runtime state. Remove that Authorized Folder.");
-    }
-    if (restrictions.some(path => inside(path, hostPath) || inside(hostPath, path))) {
-      throw new Error("A sandbox bind aliases a restricted Authorized Folder subtree.");
-    }
-    // Preserve the path the model uses even when macOS canonicalizes /var to /private/var on the host.
-    resolved.push({ ...mount, hostPath });
+    resolved.push(validateMount(mount, hostPath, metadata.isDirectory(), protectedPaths, restrictions));
   }
   return resolved;
 }

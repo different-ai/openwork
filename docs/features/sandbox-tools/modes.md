@@ -17,6 +17,9 @@ security boundary of Force (formerly "sandbox only"); nothing here loosens it.
 - The organization can require Use and/or Force. A requirement locks that switch on the desktop with
   "Managed by your organization". The stricter of the local and organization choice wins.
 - No jargon in the product: never "microVM", "bridge", "host", "fallback", "engine", "guest" in user-facing copy.
+- Each switch shows its label and the one sentence above, on the desktop and in Den. This is a product decision for
+  these two rows: people must be able to tell the two modes apart without opening help. It is the one place this
+  feature departs from DESIGN.md P2 ("title or description, never both").
 
 ## Local storage (server-owned, engine-global)
 

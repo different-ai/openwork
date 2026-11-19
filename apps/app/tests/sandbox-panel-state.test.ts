@@ -1,23 +1,23 @@
 import { expect, test } from "bun:test";
 import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
-import { sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
+import { sandboxEditableToggleUpdate, sandboxEstimateText, sandboxImageSize, sandboxPanelState, sandboxPanelVisibility, sandboxSavedChoiceMatches, sandboxStatusView, sandboxToggleUpdate } from "@/react-app/domains/settings/panels/sandbox-panel-state";
 
 const off: OpenworkSandboxSettingsResponse = {
   featureEnabled: false, useSandbox: false, forceSandbox: false,
   effectiveUseSandbox: false, effectiveForceSandbox: false, managedUse: false, managedForce: false,
   pending: false, verification: "verified", allowHostExecution: true, effectiveAllowHostExecution: true, managed: false,
 };
-const statuses: OpenworkSandboxSettingsResponse["verification"][] = ["checking", "verified", "unavailable"];
-
-test("visibility depends on the rollout, saved choice, policy and pending state, not verification", () => {
-  for (const verification of statuses)
-    for (const featureEnabled of [false, true])
-      for (const local of [{}, { useSandbox: true }, { forceSandbox: true }])
-        for (const org of [{}, { managedUse: true }, { managedForce: true }])
-          for (const pending of [false, true]) {
-            const settings = { ...off, ...local, ...org, verification, featureEnabled, pending };
-            expect(sandboxPanelState(settings).visible).toBe(Boolean(featureEnabled || Object.keys(local).length || Object.keys(org).length || pending));
-          }
+test("visibility and readiness for unknown, off and on rollouts", () => {
+  const render = (visible: boolean, ready: boolean) => ({ visible, ready });
+  for (const rollout of [undefined, false, true]) {
+    expect(sandboxPanelVisibility(rollout, "loading")).toEqual(render(rollout === true, false));
+    expect(sandboxPanelVisibility(rollout, "error")).toEqual(render(rollout === true, rollout !== undefined));
+    expect(sandboxPanelVisibility(rollout, "settled", null)).toEqual(render(rollout === true, rollout !== undefined));
+    expect(sandboxPanelVisibility(rollout, "settled", { ...off, featureEnabled: true, verification: "checking" })).toEqual(render(rollout === true, rollout !== undefined));
+    for (const reason of [{ managedUse: true }, { managedForce: true }, { useSandbox: true }, { forceSandbox: true }, { pending: true }]) {
+      expect(sandboxPanelVisibility(rollout, "settled", { ...off, ...reason })).toEqual(render(true, true));
+    }
+  }
 });
 
 test("Force includes Use; organization locks leave stricter choices editable", () => {
@@ -27,6 +27,26 @@ test("Force includes Use; organization locks leave stricter choices editable", (
   expect(sandboxToggleUpdate("use", false)).toEqual({ useSandbox: false, forceSandbox: false });
   expect(sandboxPanelState({ ...off, pending: true, effectiveForceSandbox: true })).toMatchObject({ use: false, force: false, pending: "sandbox" });
   expect(sandboxPanelState({ ...off, pending: true, forceSandbox: true })).toMatchObject({ use: true, force: true, pending: "computer" });
+});
+
+test("toggle payloads only write editable choices", () => {
+  const toggleUseOff = { setting: "use", checked: false } satisfies Parameters<typeof sandboxEditableToggleUpdate>[1];
+  const toggleForceOn = { setting: "force", checked: true } satisfies Parameters<typeof sandboxEditableToggleUpdate>[1];
+  expect(sandboxEditableToggleUpdate(off, toggleUseOff)).toEqual({ useSandbox: false, forceSandbox: false });
+  expect(sandboxEditableToggleUpdate({ ...off, managedUse: true }, toggleUseOff)).toBeNull();
+  expect(sandboxEditableToggleUpdate({ ...off, managedForce: true }, toggleUseOff)).toBeNull();
+  expect(sandboxEditableToggleUpdate({ ...off, managedForce: true }, toggleForceOn)).toBeNull();
+  expect(sandboxEditableToggleUpdate({ ...off, managedUse: true }, toggleForceOn)).toEqual({ forceSandbox: true });
+  expect(sandboxToggleUpdate("force", false)).toEqual({ forceSandbox: false });
+});
+
+test("an uncertain save succeeds only when the saved fields match", () => {
+  expect(sandboxSavedChoiceMatches(null, { forceSandbox: true })).toBe(false);
+  expect(sandboxSavedChoiceMatches({ ...off, managedForce: true, effectiveForceSandbox: true }, { forceSandbox: true })).toBe(false);
+  expect(sandboxSavedChoiceMatches({ ...off, useSandbox: true, forceSandbox: true, pending: true }, { forceSandbox: true })).toBe(true);
+  expect(sandboxSavedChoiceMatches({ ...off, useSandbox: true }, { forceSandbox: false })).toBe(true);
+  expect(sandboxSavedChoiceMatches({ ...off, useSandbox: true }, { useSandbox: false, forceSandbox: false })).toBe(false);
+  expect(sandboxSavedChoiceMatches({ ...off, effectiveForceSandbox: true, pending: true }, { useSandbox: false, forceSandbox: false })).toBe(true);
 });
 
 const status: OpenworkSandboxStatusResponse = {

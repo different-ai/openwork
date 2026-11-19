@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import type { DynamicToolUIPart } from "ai";
+import type { OpenworkSandboxSettingsResponse, OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
+import { sandboxRunningToolStep } from "@/lib/tool-activity";
+import { sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { sandboxToolRenderer } from "@/lib/build-in-tools";
 import { sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
 import { parseDynamicToolUIPart } from "@/react-app/domains/session/sync/parse-tool-parts";
@@ -13,6 +17,41 @@ for (const [source, renderer] of Object.entries({ sandbox_shell: "bash", sandbox
     expect(part).toMatchObject({ toolName: renderer, callProviderMetadata: { openwork: { sandbox: true } } });
   });
 }
+
+const off: OpenworkSandboxSettingsResponse = {
+  featureEnabled: true, useSandbox: false, forceSandbox: false,
+  effectiveUseSandbox: false, effectiveForceSandbox: false, managedUse: false, managedForce: false,
+  pending: false, verification: "verified", allowHostExecution: true, effectiveAllowHostExecution: true, managed: false,
+};
+const status: OpenworkSandboxStatusResponse = {
+  mode: "use", state: "ready", steps: [], imageBytes: null, imageSource: "bundled", estimatedRemainingMs: null,
+  startedAt: null, readyAt: null, lastPrepareMs: null, folders: [], error: null,
+};
+
+test("the pill uses effective settings even when status mode is stale", () => {
+  expect(sandboxPillView(off, status)).toBeNull();
+  expect(sandboxPillView({ ...off, pending: true, forceSandbox: true }, status)).toBeNull();
+  const use = { ...off, effectiveUseSandbox: true };
+  const force = { ...off, effectiveForceSandbox: true };
+  expect(sandboxPillView(use, { ...status, mode: "off", state: "off" })).toEqual({ label: "Sandbox", step: null, attention: false });
+  expect(sandboxPillView(force, undefined)).toEqual({ label: "Sandbox only", step: null, attention: false });
+  expect(sandboxPillView(force, { ...status, state: "preparing" })).toEqual({ label: "Sandbox only", step: "Starting the sandbox…", attention: false });
+  expect(sandboxPillView(use, { ...status, state: "unsupported" })).toEqual({ label: "Sandbox", step: null, attention: true });
+});
+
+test("preparation is only shown on running, structured sandbox calls", () => {
+  const part: DynamicToolUIPart = { type: "dynamic-tool", toolCallId: "c", toolName: "bash", state: "input-available", input: {} };
+  const step = "Starting the sandbox…";
+  expect(sandboxRunningToolStep(part, true, step)).toBeNull();
+  const sandbox = { ...part, toolName: "sandbox_shell" };
+  expect(sandboxRunningToolStep(sandbox, false, step)).toBeNull();
+  expect(sandboxRunningToolStep(sandbox, true, null)).toBeNull();
+  expect(sandboxRunningToolStep(sandbox, true, step)).toBe(step);
+  expect(sandboxRunningToolStep({ ...part, callProviderMetadata: { openwork: { sandbox: true } } }, true, step)).toBe(step);
+  expect(sandboxRunningToolStep({ ...part, state: "output-error", errorText: "sandbox is restarting" }, true, step)).toBeNull();
+  expect(sandboxRunningToolStep({ ...sandbox, state: "output-error", errorText: "sandbox updating" }, true, step)).toBeNull();
+  expect(sandboxRunningToolStep({ ...sandbox, state: "output-available", output: "Done" }, true, step)).toBeNull();
+});
 
 test("task creation toast unwraps unrelated JSON proxy errors", () => {
   expect(describeTaskCreateFailure(new Error('{"code":"permission_denied","message":"Choose a different project."}'), 1).description).toBe("Choose a different project.");

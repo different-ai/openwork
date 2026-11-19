@@ -84,6 +84,7 @@ export type SandboxPluginContext = {
 };
 export type SandboxPluginDependencies = {
   status(): Promise<SandboxToolMode>;
+  prewarm?(): Promise<void>;
   assertHostExecution?(): Promise<void>;
   /** Process-start fact supplied by the trusted native entrypoint. */
   projectConfigDisabled?: boolean;
@@ -187,6 +188,7 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   try {
     prompt = await context.session.hook("prompt", async () => {
       const next = await offeredMode();
+      if (next !== "off") void dependencies.prewarm?.().catch(() => undefined);
       if (next === "only") assertProjectIsolation();
       if (next === "only" && !hooksAvailable) throw new Error("Restart OpenWork to apply your sandbox setting, then send your message again.");
       if (next !== mcpMode && (next === "only" || mcpMode === "only")) {
@@ -261,6 +263,7 @@ export default {
     return setupSandboxTools(context, {
       projectConfigDisabled: ["1", "true"].includes(process.env.OPENCODE_CONFIG_PROJECT_DISABLE?.toLowerCase() ?? ""),
       async status() { return z.object({ mode: modeSchema }).strict().parse(await request({ operation: "status" })).mode; },
+      async prewarm() { await request({ operation: "prompt" }); },
       async assertHostExecution() { z.object({ allowed: z.literal(true) }).strict().parse(await request({ operation: "host" })); },
       async execute(name, input, call) {
         return resultSchema.parse(await request({ operation: "execute", name, input, sessionId: call.sessionID, ...(call.id ? { callId: call.id } : {}) }, call.signal));

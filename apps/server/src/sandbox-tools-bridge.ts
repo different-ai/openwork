@@ -6,7 +6,7 @@ import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 const requestSchema = z.object({
-  operation: z.enum(["status", "execute", "host"]), directory: z.string().min(1).max(4096),
+  operation: z.enum(["status", "prompt", "execute", "host"]), directory: z.string().min(1).max(4096),
   name: z.string().min(1).max(80).optional(), input: z.unknown().optional(),
   sessionId: z.string().min(1).max(256).optional(), callId: z.string().min(1).max(256).optional(),
 }).strict();
@@ -24,11 +24,10 @@ export async function createSandboxToolsBridge(config: ServerConfig, runtime: Re
       const text = await request.text();
       if (Buffer.byteLength(text) > 256_000) return new Response(null, { status: 413 });
       const call = requestSchema.parse(JSON.parse(text));
-      if (call.operation === "status") {
-        const result = await runtime.status(call.directory);
-        if (result.mode !== "off") void runtime.prepare(call.directory, "prompt");
-        else runtime.noteOff(call.directory);
-        return Response.json(result);
+      if (call.operation === "status") return Response.json(await runtime.status(call.directory));
+      if (call.operation === "prompt") {
+        void runtime.prepare(call.directory, "prompt");
+        return Response.json({ accepted: true });
       }
       if (call.operation === "host") {
         await managedDesktopPolicy(config).assertHostExecution();

@@ -15,7 +15,7 @@ export function registerSandboxStatusRoutes(options: {
     const started = performance.now();
     const workspace = await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     const workspaceMs = performance.now() - started;
-    const status = runtime.snapshot(workspace.path);
+    const status = await runtime.settingsSnapshot(workspace.path);
     return Response.json(status, { headers: { "Cache-Control": "no-store", "Server-Timing": `workspace;dur=${workspaceMs.toFixed(2)}, snapshot;dur=${(performance.now() - started - workspaceMs).toFixed(2)}` } });
   });
   addRoute(routes, "POST", "/workspace/:id/sandbox-status/prepare", "client", async ctx => {

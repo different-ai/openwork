@@ -159,7 +159,7 @@ class ManagedDesktopPolicy {
   private identityChanged(generation: number): void {
     if (generation !== this.generation) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed. Retry the action.");
   }
-  private async readDenJson(session: CloudProviderDenSession, path: string, generation: number, allowNotFound = false): Promise<unknown> {
+  private async readDenJson(session: CloudProviderDenSession, path: string, generation: number, allowNotFound = false, onSend?: () => void): Promise<unknown> {
     const deadline = performance.now() + DEN_READ_DEADLINE_MS;
     for (let attempt = 1; attempt <= DEN_READ_MAX_ATTEMPTS; attempt += 1) {
       this.identityChanged(generation);
@@ -174,6 +174,7 @@ class ManagedDesktopPolicy {
       const remainingMs = Math.floor(deadline - performance.now());
       if (remainingMs <= 0) throw new Error("Den read deadline exceeded");
       try {
+        onSend?.();
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
             ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1" } : {}),
@@ -265,7 +266,7 @@ class ManagedDesktopPolicy {
     if (request.method === "POST" && /\/session\/[^/]+\/abort\/?$/.test(decoded)) return;
     // Even a v1 read can initialize a workspace and start its local MCPs.
     // Only v2 has the replacement catalog and MCP pre-spawn guards.
-    await this.assertHostExecution((await readSandboxSettings(this.config)).forceSandbox);
+    await this.assertLegacyHostExecution();
     if (["GET", "HEAD", "OPTIONS"].includes(request.method) && !terminal) return;
     const generation = this.generation;
     const rules = await this.agentPermissionRulesFor(["external_directory"], true);
@@ -384,6 +385,21 @@ class ManagedDesktopPolicy {
     const denial = agentPermissionDenial(rules, action, [name]);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
   }
+  private isolationTransition = false;
+
+  projectIsolationTransition(): boolean { return this.isolationTransition; }
+  setProjectIsolationTransition(active: boolean): void { this.isolationTransition = active; }
+
+  async assertLegacyHostExecution(): Promise<void> {
+    if ((await readSandboxSettings(this.config)).forceSandbox || this.isolationTransition) throw this.sandboxOnly();
+    await this.assertHostExecution();
+    if ((await readSandboxSettings(this.config)).forceSandbox || (await readAppliedSandboxSettings(this.config)).forceSandbox || this.isolationTransition) throw this.sandboxOnly();
+  }
+
+  private sandboxOnly() {
+    return new ApiError(403, "sandbox_only", "This action can only run in the sandbox. Use the sandbox tools instead.");
+  }
+
   private sandboxOrgForce = false;
   private sandboxOrgUse = false;
   private sandboxOrgVerified = false;
@@ -391,6 +407,7 @@ class ManagedDesktopPolicy {
   private lastSandboxFeatureEnabled = false;
   private sandboxVerification: SandboxVerification = "checking";
   private sandboxDesktopRead: { generation: number; promise: Promise<DesktopConfig> } | undefined;
+  private sandboxDesktopSentAt = -Infinity;
   private sandboxRead: { generation: number; revision: number; promise: Promise<SandboxAccess> } | undefined;
   private sandboxFresh: { revision: number; until: number; access: SandboxAccess } | undefined;
 
@@ -402,13 +419,15 @@ class ManagedDesktopPolicy {
     this.lastSandboxFeatureEnabled = false;
     this.sandboxVerification = "checking";
     this.sandboxFresh = undefined;
+    this.sandboxDesktopSentAt = -Infinity;
   }
 
   // Share the desktop-config request with sign-in and other current-policy readers.
   private readSandboxDesktopConfig(session: CloudProviderDenSession, generation: number): Promise<DesktopConfig> {
     if (this.sandboxDesktopRead?.generation === generation) return this.sandboxDesktopRead.promise;
+    let sentAt = performance.now();
     const promise = (async () => {
-      const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+      const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation, false, () => { sentAt = performance.now(); }));
       this.identityChanged(generation);
       const rules = agentPermissionRulesOf(policy);
       const requirement = resolveSandboxRequirement(rules);
@@ -422,6 +441,7 @@ class ManagedDesktopPolicy {
       this.sandboxOrgUse = requirement.use;
       this.sandboxOrgVerified = true;
       this.sandboxRulesRestrictive = restrictive;
+      this.sandboxDesktopSentAt = sentAt;
       await writeSandboxRequirement(this.config, session.baseUrl, session.orgId, requirement.force);
       this.identityChanged(generation);
       return policy;
@@ -447,7 +467,7 @@ class ManagedDesktopPolicy {
     return force || hostDenied || !hostPolicyVerified;
   }
   private settingsResponse(local: SandboxSettings, applied: SandboxSettings, access: SandboxAccess, verification: SandboxVerification): SandboxSettingsSnapshot {
-    const effectiveForceSandbox = applied.forceSandbox || access.hostDenied || !access.hostPolicyVerified;
+    const effectiveForceSandbox = this.isolationTransition || applied.forceSandbox || access.hostDenied || !access.hostPolicyVerified;
     return {
       ...local,
       featureEnabled: access.featureEnabled,
@@ -469,7 +489,6 @@ class ManagedDesktopPolicy {
   sandboxSettingsSnapshot(local: SandboxSettings, applied: SandboxSettings): SandboxSettingsSnapshot {
     const verification = this.sandboxVerification === "verified" && !this.freshSandboxAccess(sandboxSettingsRevision(this.config))
       ? "checking" : this.sandboxVerification;
-    void this.localSandboxAccess().catch(() => undefined);
     return this.settingsResponse(local, applied, {
       ...this.sandboxAuthority(), scope: "unverified", featureEnabled: this.lastSandboxFeatureEnabled,
       enabled: this.lastSandboxFeatureEnabled && this.sandboxVerification !== "unavailable" && !this.sandboxRulesRestrictive,
@@ -477,7 +496,8 @@ class ManagedDesktopPolicy {
   }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
     const fresh = this.sandboxFresh;
-    return fresh && fresh.revision === revision && performance.now() < fresh.until ? fresh.access : undefined;
+    return fresh && fresh.revision === revision && performance.now() < fresh.until
+      && (!this.session || this.desktopFresh()) ? fresh.access : undefined;
   }
   /** Verified authority, shared per identity. A failed read never enables the rollout
    * or replaces the last verified organization requirement with an allow. */
@@ -503,11 +523,13 @@ class ManagedDesktopPolicy {
     try {
       let featureEnabled: boolean;
       let scope: string;
+      let rolloutSentAt: number;
       if (session) {
         // Wait for both, even on failure, so current-policy reads can keep
         // independently verified Force knowledge and a slow read stays shared.
+        rolloutSentAt = performance.now();
         const [policy, org] = await Promise.allSettled([
-          this.readSandboxDesktopConfig(session, generation), this.readDenJson(session, "/v1/org", generation),
+          this.readSandboxDesktopConfig(session, generation), this.readDenJson(session, "/v1/org", generation, false, () => { rolloutSentAt = performance.now(); }),
         ]);
         this.identityChanged(generation);
         if (policy.status !== "fulfilled" || org.status !== "fulfilled") throw new Error("Sandbox verification failed");
@@ -519,6 +541,7 @@ class ManagedDesktopPolicy {
         const url = new URL(origin);
         if (url.username || url.password || url.search || url.hash || url.pathname !== "/"
           || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Untrusted Den origin");
+        rolloutSentAt = performance.now();
         const response = await externalFetch(new URL("/v1/features", url).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
         if (!response.ok) throw new Error("Feature verification failed");
         const payload: unknown = await response.json();
@@ -530,7 +553,7 @@ class ManagedDesktopPolicy {
       const access = { ...this.sandboxAuthority(), featureEnabled, enabled: featureEnabled && !this.sandboxRulesRestrictive, scope };
       this.lastSandboxFeatureEnabled = featureEnabled;
       this.sandboxVerification = "verified";
-      this.sandboxFresh = { revision, until: performance.now() + this.sandboxFreshnessMs, access };
+      this.sandboxFresh = { revision, until: rolloutSentAt + this.sandboxFreshnessMs, access };
       return access;
     } catch {
       this.identityChanged(generation);
@@ -538,18 +561,44 @@ class ManagedDesktopPolicy {
       return { ...this.sandboxAuthority(), enabled: false, featureEnabled: this.lastSandboxFeatureEnabled, scope: "unverified" };
     }
   }
-  async assertHostExecution(localForceSandbox?: boolean): Promise<void> {
+  private desktopFresh(): boolean {
+    return performance.now() - this.sandboxDesktopSentAt < this.sandboxFreshnessMs;
+  }
+
+  async verifySandboxHostAuthority(): Promise<void> {
+    const session = this.session;
     const generation = this.generation;
-    const force = localForceSandbox ?? (await readAppliedSandboxSettings(this.config)).forceSandbox;
-    this.identityChanged(generation);
-    // A local denial does not need a network round trip to be authoritative.
-    if (force) throw new ApiError(403, "sandbox_only", "This action can only run in the sandbox. Use the sandbox tools instead.");
-    if (!this.session) return;
-    await this.localSandboxAccess();
-    this.identityChanged(generation);
+    if (!session) return;
+    if (!this.desktopFresh()) {
+      // An already old in-flight response cannot establish an Allow. If it
+      // completes, read again independently of the rollout request.
+      const joined = this.sandboxDesktopRead?.generation === generation;
+      let verified = false;
+      try {
+        await this.readSandboxDesktopConfig(session, generation);
+        verified = true;
+        if (joined && !this.desktopFresh() && this.sandboxFreshnessMs > 0 && !this.sandboxOrgForce) {
+          await this.readSandboxDesktopConfig(session, generation);
+        }
+      } catch { this.identityChanged(generation); }
+      this.identityChanged(generation);
+      if (!this.sandboxOrgForce && verified && this.sandboxFreshnessMs > 0 && !this.desktopFresh()) {
+        throw new ApiError(503, "policy_unavailable", "OpenWork couldn't check your permissions. Reconnect and try again. Nothing ran.");
+      }
+    }
     const access = this.sandboxAuthority();
     if (!access.hostPolicyVerified) throw new ApiError(503, "policy_unavailable", "OpenWork couldn't check your permissions. Reconnect and try again. Nothing ran.");
     if (access.hostDenied) throw new ApiError(403, "sandbox_only", "Your organization requires the sandbox. Use the sandbox tools instead.");
+  }
+
+  async assertHostExecution(): Promise<void> {
+    const generation = this.generation;
+    if (this.isolationTransition || (await readAppliedSandboxSettings(this.config)).forceSandbox || this.isolationTransition) throw this.sandboxOnly();
+    this.identityChanged(generation);
+    if (!this.session) return;
+    await this.verifySandboxHostAuthority();
+    if (this.isolationTransition || (await readAppliedSandboxSettings(this.config)).forceSandbox || this.isolationTransition || this.sandboxOrgForce) throw this.sandboxOnly();
+    this.identityChanged(generation);
   }
 
   /** Remote computers require the signed-in organization's verified rollout. */

@@ -79,9 +79,7 @@ function TextStepRow({ row, status, disclosureKey }: {
   const part = row.part
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
   const sentence = textStepSentence(part, status)
-  const sandboxStep = useSandboxToolStep(part, status === "running")
-  const sandboxUpdating = part.state === "output-error" && /\bsandbox (?:is )?(?:restarting|updating)\b/i.test(part.errorText)
-  const stepNote = sandboxUpdating ? t("sandbox.applying") : sandboxStep
+  const stepNote = useSandboxToolStep(part, status === "running")
   const command = commandOf(part)
   const output = outputOf(part)
   const edit = status === "failed" ? null : editTexts(part)
@@ -91,7 +89,7 @@ function TextStepRow({ row, status, disclosureKey }: {
   const tone = status === "failed" ? "failed" : status === "waiting" ? "waiting" : status === "running" ? "running" : "normal"
   const line = (
     <>
-      <TextSentenceLine verb={stepNote ?? sentence.verb} object={stepNote ? undefined : sentence.object} title={stepNote ? undefined : sentence.title} tone={sandboxUpdating ? "normal" : tone} />
+      <TextSentenceLine verb={stepNote ?? sentence.verb} object={stepNote ? undefined : sentence.object} title={stepNote ? undefined : sentence.title} tone={tone} />
       <SandboxToolTag part={part} />
       {row.repeat > 1 ? <RailMeta><span data-tool-aggregate-repeat>×{row.repeat}</span></RailMeta> : null}
       {stats ? <TextDiffStats added={stats.added} removed={stats.removed} /> : null}

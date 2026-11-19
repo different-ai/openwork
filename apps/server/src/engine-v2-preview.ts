@@ -993,9 +993,9 @@ export function createEngineV2Preview(options: {
     const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
     const required = await policy.requiresSandbox(desired.forceSandbox);
     return {
-      pending: isolationRefreshing || desired.forceSandbox !== applied.forceSandbox
+      pending: isolationRefreshing || policy.projectIsolationTransition() || desired.forceSandbox !== applied.forceSandbox
         || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
-      effectiveAllowHostExecution: sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox,
+      effectiveAllowHostExecution: !policy.projectIsolationTransition() && (sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox),
     };
   }
   function sandboxPolicyPending() {
@@ -1026,7 +1026,7 @@ export function createEngineV2Preview(options: {
       // Do not override the embedding host's deferred startup/history handoff.
       // A process that is not running will read the preference when it starts.
       const policy = managedDesktopPolicy(config);
-      if (!sidecar) { await applySandboxSettings(config); return; }
+      if (!sidecar) { if (!policy.projectIsolationTransition()) await applySandboxSettings(config); return; }
       const needsChange = async () => sidecar !== undefined && (sidecar.projectConfigDisabled !== await policy.requiresSandbox() || await localSandboxSettingsPending());
       if (!await needsChange()) return;
       await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
@@ -1035,7 +1035,7 @@ export function createEngineV2Preview(options: {
         // Never restart into project-enabled mode on unknown authority. A fresh
         // denial may update the desired mode and eliminate the transition.
         if (!await policy.requiresSandbox()) {
-          try { await policy.assertHostExecution(false); }
+          try { await policy.verifySandboxHostAuthority(); }
           catch (error) { if (!await policy.requiresSandbox()) throw error; }
         }
         if (!await needsChange()) return;
@@ -1043,7 +1043,7 @@ export function createEngineV2Preview(options: {
         // this process intact; fresh admissions cannot cross its policy mismatch.
         await assertSandboxEngineIdle(active);
         isolationRefreshing = true;
-        await applySandboxSettings(config);
+        policy.setProjectIsolationTransition(true);
         const resume = allowRunning;
         await stopRuntime();
         if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped while applying your sandbox setting. Start it and try again.");
@@ -1300,7 +1300,14 @@ export function createEngineV2Preview(options: {
       options.providerSession?.() ?? null) : undefined;
     const globalSkills = globalSkillDirectories();
     const historyDatabase = await selectHistoryDatabase();
+    const policy = managedDesktopPolicy(config);
     const managed = await createManagedOpencodeV2Server({
+      ...(policy.projectIsolationTransition() && contextBridge?.sandbox ? {
+        isolateProjectConfig: async () => {
+          try { await policy.verifySandboxHostAuthority(); } catch { return true; }
+          return policy.requiresSandbox();
+        },
+      } : {}),
       historyDatabase,
       contextTools: contextBridge,
       ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
@@ -1366,6 +1373,10 @@ export function createEngineV2Preview(options: {
       if (!enabled || !allowRunning) {
         await closeSidecar();
         return;
+      }
+      if (policy.projectIsolationTransition() && running && managed === sidecar
+        && managed.projectConfigDisabled === await policy.requiresSandbox() && managed === sidecar) {
+        policy.setProjectIsolationTransition(false);
       }
     } catch (error) {
       await closeSidecar();
@@ -1438,7 +1449,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
-    await managedDesktopPolicy(config).assertHostExecution((await readSandboxSettings(config)).forceSandbox);
+    await managedDesktopPolicy(config).assertLegacyHostExecution();
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1502,7 +1513,6 @@ export function createEngineV2Preview(options: {
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
     await assertProjectConfigReady();
-    void localSandboxRuntime(config).prepare(directory, "workspace-ready");
     // Read local inventory first so mixed local/Gateway startup keeps local
     // readiness. This is not the provider push or catalog confirmation join.
     if (ownsGateway() && providerDiscovery) await providerDiscovery;
@@ -1539,6 +1549,7 @@ export function createEngineV2Preview(options: {
 
   function warmWorkspace(workspaceId: string, directory: string): void {
     if (!sidecar || mcpLocations.has(directory)) return;
+    void localSandboxRuntime(config).prepare(directory, "workspace-ready");
     void ensureWorkspaceReady(directory).catch(() => undefined);
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
   }

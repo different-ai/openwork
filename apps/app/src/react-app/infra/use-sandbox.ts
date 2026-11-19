@@ -1,14 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { queryOptions, useQuery } from "@tanstack/react-query";
 
-import { OpenworkServerError, type OpenworkServerClient, type OpenworkSandboxStatusResponse } from "@/app/lib/openwork-server";
-import { t } from "@/i18n";
+import { OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
 
 type SandboxConnection = { client: OpenworkServerClient | null; workspaceId: string | null };
 
-export function useSandboxSettings({ client, workspaceId }: SandboxConnection) {
-  const queryKey = ["openwork-server", client?.baseUrl, workspaceId, "sandbox-settings"];
-  const settings = useQuery({
-    queryKey,
+export function sandboxSettingsQuery({ client, workspaceId }: SandboxConnection) {
+  return queryOptions({
+    queryKey: ["openwork-server", client?.baseUrl, workspaceId, "sandbox-settings"],
     queryFn: async () => {
       if (!client || !workspaceId) return null;
       try {
@@ -20,12 +18,20 @@ export function useSandboxSettings({ client, workspaceId }: SandboxConnection) {
     },
     enabled: Boolean(client && workspaceId),
     retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchIntervalInBackground: false,
     refetchInterval: ({ state }) => state.data?.verification === "checking" || state.data?.pending ? 1_000 : false,
   });
-  return { settings, queryKey };
 }
 
-export function useSandboxStatus({ client, workspaceId }: SandboxConnection, observeChanges = false) {
+export function useSandboxSettings(connection: SandboxConnection) {
+  const options = sandboxSettingsQuery(connection);
+  return { settings: useQuery(options), queryKey: options.queryKey };
+}
+
+export function useSandboxStatus({ client, workspaceId }: SandboxConnection, observe: boolean) {
   const queryKey = ["openwork-server", client?.baseUrl, workspaceId, "sandbox-status"];
   const status = useQuery({
     queryKey,
@@ -38,22 +44,15 @@ export function useSandboxStatus({ client, workspaceId }: SandboxConnection, obs
         throw error;
       }
     },
-    enabled: Boolean(client && workspaceId),
+    enabled: observe && Boolean(client && workspaceId),
     retry: false,
+    refetchIntervalInBackground: false,
     refetchInterval: ({ state }) => {
-      if (state.status === "error" || state.data === null) return false;
-      if (state.data?.state === "preparing") return 500;
-      if (state.data?.state === "idle" || (observeChanges && state.data?.state === "off")) return 2_000;
-      return state.data?.mode && state.data.mode !== "off" ? 10_000 : false;
+      if (state.status === "error" || !state.data) return false;
+      if (state.data.state === "preparing") return 500;
+      if (state.data.state === "idle" || state.data.state === "off") return 2_000;
+      return 10_000;
     },
   });
   return { status, queryKey };
-}
-
-export function sandboxCurrentStepText(status: OpenworkSandboxStatusResponse) {
-  switch (status.steps.find((step) => step.state === "active")?.id) {
-    case "download": return status.imageSource === "bundled" ? t("sandbox.preparing") : t("sandbox.downloading");
-    case "folders": return t("sandbox.connecting_folders");
-    default: return t("sandbox.starting_tool");
-  }
 }

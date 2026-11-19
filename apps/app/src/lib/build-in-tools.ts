@@ -306,11 +306,6 @@ export function sandboxToolRenderer(name: string) {
   }
 }
 
-export function isSandboxCapableTool(name: string) {
-  return name === "bash" || name === "shell" || name === "read" || name === "write"
-    || name === "edit" || name === "glob" || name === "grep";
-}
-
 export type BashToolPart = BuiltInDynamicToolPart<"bash", BashInput>;
 
 export function isBashToolPart(part: ToolUIPart | DynamicToolUIPart): part is BashToolPart {

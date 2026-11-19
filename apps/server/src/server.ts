@@ -2067,7 +2067,7 @@ export async function proxyOpencodeRequest(input: Parameters<typeof forwardOpenc
     if (chatMutation && !hasExternalOpencode(input.config) && await originalHistoryUsesV2(input.config)) {
       throw new ApiError(409, "engine_v1_history_adopted", "This history is owned by OpenCode v2. Continue the chat on v2 so new messages stay readable.");
     }
-    return await forwardOpencodeRequest(input);
+    return await forwardOpencodeRequest(input, () => managedDesktopPolicy(input.config).assertLegacyExecutionRequest(input.request, input.proxyPath ?? input.url.pathname));
   } finally { await release(); }
 }
 
@@ -2078,7 +2078,7 @@ async function forwardOpencodeRequest(input: {
   workspace?: WorkspaceInfo;
   proxyPath?: string;
   recoverySignal?: AbortSignal;
-}) {
+}, beforeForward?: () => Promise<void>) {
   const workspace = input.workspace;
   const proxyPath = input.proxyPath ?? input.url.pathname;
   const method = input.request.method.toUpperCase();
@@ -2132,6 +2132,7 @@ async function forwardOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  if (beforeForward) await beforeForward();
   if (pool && method === "GET" && isEngineEventPath(proxyPath)) {
     // An open engine event stream means this workspace is visible somewhere in
     // the UI; hold its instance so the idle reaper leaves it alone until the
@@ -3417,17 +3418,12 @@ function createRoutes(
       },
     };
   }
-  async function sandboxSettingsResponse(timing: ReturnType<typeof settingsTiming>, forceChanged?: boolean) {
+  async function sandboxSettingsResponse(timing: ReturnType<typeof settingsTiming>) {
     const policy = managedDesktopPolicy(config);
     const [local, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
     timing.mark("db");
-    if (forceChanged !== undefined) await policy.localSandboxAccess();
-    let settings = policy.sandboxSettingsSnapshot(local, applied);
+    const settings = policy.sandboxSettingsSnapshot(local, applied);
     timing.mark("policy");
-    if (forceChanged) {
-      await engineV2Preview.ensureProjectIsolation({ deferBusy: true });
-      settings = policy.sandboxSettingsSnapshot(await readSandboxSettings(config), await readAppliedSandboxSettings(config));
-    }
     const processPolicy = await engineV2Preview.projectIsolationStatus();
     timing.mark("process");
     const effectiveForceSandbox = settings.effectiveForceSandbox || !processPolicy.effectiveAllowHostExecution;
@@ -3442,6 +3438,7 @@ function createRoutes(
     const timing = settingsTiming();
     await resolveWorkspaceWithoutBootstrap(config, ctx.params.id);
     timing.mark("workspace");
+    void managedDesktopPolicy(config).localSandboxAccess().catch(() => undefined);
     return sandboxSettingsResponse(timing);
   });
   addRoute(routes, "PUT", "/workspace/:id/sandbox-settings", "client", async (ctx) => {
@@ -3461,10 +3458,20 @@ function createRoutes(
       id: shortId(), workspaceId: workspace.id, actor: ctx.actor ?? { type: "remote" },
       action: "config.sandbox_settings.write", summary: "Updated sandbox settings", target: runtimeDbPath(config), timestamp: Date.now(),
     });
+    const response = await sandboxSettingsResponse(timing);
+    const runtime = localSandboxRuntime(config);
+    const policy = managedDesktopPolicy(config);
+    const applied = await readAppliedSandboxSettings(config);
+    const snapshot = policy.sandboxSettingsSnapshot({ useSandbox, forceSandbox }, applied);
+    runtime.setMode(workspace.path, snapshot.effectiveForceSandbox ? "force" : snapshot.effectiveUseSandbox ? "use" : "off");
     if ((useSandbox && !previous.useSandbox) || (forceSandbox && !previous.forceSandbox)) {
-      void localSandboxRuntime(config).prepare(workspace.path, "setting-enabled");
+      void runtime.prepare(workspace.path, "setting-enabled");
     }
-    return sandboxSettingsResponse(timing, forceSandbox !== previous.forceSandbox);
+    void policy.localSandboxAccess().catch(() => undefined);
+    if (forceSandbox !== previous.forceSandbox) {
+      void engineV2Preview.ensureProjectIsolation({ deferBusy: true }).catch(error => console.warn("[openwork:sandbox] Couldn't apply the saved setting", error));
+    }
+    return response;
   });
 
   addRoute(routes, "GET", "/workspace/:id/authorized-folders", "client", async (ctx) => {

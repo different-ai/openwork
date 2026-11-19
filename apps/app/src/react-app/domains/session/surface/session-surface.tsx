@@ -11,12 +11,13 @@ import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRe
 import type { UIMessage } from "ai";
 import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
-import { Check, Minimize2 } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { SandboxActivityContext } from "@/components/chat/current-tool-lifecycle-context";
 import { Badge } from "@/components/ui/badge";
 import { sandboxTransitionNote } from "@/react-app/kernel/sandbox-transition";
-import { sandboxCurrentStepText, useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
+import { useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
+import { sandboxCurrentStepText, sandboxEffectiveMode, sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -1408,11 +1409,12 @@ export function SessionSurface(props: SessionSurfaceProps) {
   };
   const sandboxConnection = { client: props.client, workspaceId: props.workspaceId };
   const { settings: sandboxSettings } = useSandboxSettings(sandboxConnection);
-  const { status: sandboxStatus } = useSandboxStatus(sandboxConnection, Boolean(sandboxSettings.data?.pending));
   const sandboxPending = sandboxSettings.data?.pending === true;
-  const sandboxMode = sandboxStatus.data?.mode ?? "off";
-  const sandboxStep = sandboxStatus.data?.state === "preparing" ? sandboxCurrentStepText(sandboxStatus.data) : null;
-  const sandboxActivity = useMemo(() => sandboxStep ? { step: sandboxStep, force: sandboxMode === "force" } : null, [sandboxStep, sandboxMode]);
+  const sandboxMode = sandboxEffectiveMode(sandboxSettings.data);
+  const observeSandbox = sandboxPending || sandboxMode !== "off";
+  const { status: sandboxStatus } = useSandboxStatus(sandboxConnection, observeSandbox);
+  const sandboxPill = sandboxPillView(sandboxSettings.data, sandboxStatus.data);
+  const sandboxActivity = observeSandbox && sandboxStatus.data?.state === "preparing" ? sandboxCurrentStepText(sandboxStatus.data) : null;
   const [sandboxSendNotice, setSandboxSendNotice] = useState<{ owner: string; message: string } | null>(null);
   const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
   const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
@@ -4176,13 +4178,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         {sandboxSendNotice?.owner === sessionOwner ? <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{sandboxSendNotice.message}</p> : null}
         <ReactSessionComposer
-          sandboxModeControl={sandboxMode === "off" ? null : sandboxStatus.data?.state === "failed" || sandboxStatus.data?.state === "unsupported" ? (
-            <Button data-testid="sandbox-mode-pill" variant="ghost" size="xs" className="rounded-full bg-muted text-muted-foreground" onClick={() => props.onOpenSettingsSection?.("permissions")}>
-              {t("sandbox.attention")}
+          sandboxModeControl={!sandboxPill ? null : sandboxPill.attention ? (
+            <Button data-testid="sandbox-mode-pill" variant="ghost" size="xs" className="rounded-full bg-muted text-muted-foreground" title={t("sandbox.attention")} onClick={() => props.onOpenSettingsSection?.("permissions")}>
+              <CircleAlert aria-hidden="true" />{sandboxPill.label}<span className="sr-only">{t("sandbox.attention")}</span>
             </Button>
           ) : (
-            <Badge data-testid="sandbox-mode-pill" variant="secondary" title={sandboxStep ?? undefined}>
-              {sandboxStep ? t("sandbox.starting") : sandboxMode === "force" ? t("sandbox.only") : t("sandbox.tag")}
+            <Badge data-testid="sandbox-mode-pill" variant="secondary" title={sandboxPill.step ?? undefined}>
+              {sandboxPill.step ? <><LoaderCircle aria-hidden="true" className="motion-safe:animate-spin" /><span className="sr-only">{sandboxPill.step}</span></> : null}
+              {sandboxPill.label}
             </Badge>
           )}
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}

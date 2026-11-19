@@ -10,7 +10,7 @@ import { sandboxName } from "@openwork/sandbox";
 import { runtimeDbPath } from "../src/runtime-db.js";
 import { tmpdir } from "node:os";
 import { createSandboxToolsBridge } from "../src/sandbox-tools-bridge.js";
-import { closeLocalSandboxRuntime, localSandboxRuntime } from "../src/local-sandbox-runtime.js";
+import { createLocalSandboxRuntime } from "../src/local-sandbox-runtime.js";
 import { writeSandboxSettings } from "../src/sandbox-settings-store.js";
 import { managedDesktopPolicy } from "../src/managed-desktop-policy.js";
 import { writeGlobalRuntimeOpencodeConfig } from "../src/runtime-opencode-config-store.js";
@@ -42,12 +42,18 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
   await policy.current();
   await writeSandboxSettings(config, { useSandbox: true, forceSandbox: false });
   await writeGlobalRuntimeOpencodeConfig(config, current => ({ ...current, permission: { external_directory: { [`${external}/*`]: "allow" } } }));
-  let bridge = await createSandboxToolsBridge(config);
+  const makeRuntime = () => createLocalSandboxRuntime(config, {
+    onTiming: (reason, operations) => console.info("[openwork:sandbox] awaited ms", reason, JSON.stringify(operations)),
+  });
+  let runtime = makeRuntime();
+  let bridge = await createSandboxToolsBridge(config, runtime);
   const request = (name: string, input: unknown) => fetch(bridge.url, {
     method: "POST", headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
     body: JSON.stringify({ operation: "execute", directory: workspace, name, input, sessionId: "session-fixture" }),
   });
-  const runtime = localSandboxRuntime(config);
+  const oldHome = process.env.MSB_HOME;
+  const home = await mkdtemp("/tmp/ow-msb-");
+  process.env.MSB_HOME = home;
   const require = createRequire(import.meta.url);
   const entry = createRequire(require.resolve("@openwork/sandbox-microsandbox")).resolve("microsandbox");
   type Instance = { id: string; status: string; kill(): Promise<void>; stopWithTimeout(ms: number): Promise<void>; destroy(options: { force: boolean }): Promise<void> };
@@ -67,15 +73,18 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
     expect(await response.text()).toContain("Linux");
   };
   try {
-    const pending = runtime.prepare(workspace, "live-cold");
+    let settled = false;
+    const pending = runtime.prepare(workspace, "live-cold").finally(() => { settled = true; });
+    const deadline = performance.now() + 60_000;
     let downloadBytes = 0;
     let startObserved = false;
-    while (!["ready", "failed", "unsupported"].includes(runtime.snapshot(workspace).state)) {
+    while (!settled && performance.now() < deadline) {
       const status = runtime.snapshot(workspace);
       downloadBytes = Math.max(downloadBytes, status.steps[0].completedBytes ?? 0);
       startObserved ||= status.steps[1].state === "active";
       await delay(10);
     }
+    expect(settled, "Cold preparation did not settle within 60 seconds").toBe(true);
     await pending;
     expect(runtime.snapshot(workspace).state).toBe("ready");
     expect(downloadBytes).toBeGreaterThan(0);
@@ -96,10 +105,11 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
     const crashRecoveryMs = await elapsed(shell);
     expect((await sdk.Sandbox.get(key)).id).not.toBe(first.id);
     await bridge.close();
-    await closeLocalSandboxRuntime(config);
-    bridge = await createSandboxToolsBridge(config);
+    await runtime.close();
+    runtime = makeRuntime();
+    bridge = await createSandboxToolsBridge(config, runtime);
     const old = await sdk.Sandbox.get(key);
-    const destroyRecreateMs = await elapsed(() => localSandboxRuntime(config).prepare(workspace, "live-app-restart"));
+    const destroyRecreateMs = await elapsed(() => runtime.prepare(workspace, "live-app-restart"));
     expect((await sdk.Sandbox.get(key)).id).not.toBe(old.id);
     console.info("[openwork:sandbox] live timings", { downloadBytes, firstCommandMs, roundTripMs, stoppedToStartMs, crashRecoveryMs, destroyRecreateMs });
     const read = await request("read", { path: join(external, "reference.txt") });
@@ -120,11 +130,14 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
     await expect(readFile(join(workspace, "forbidden.txt"))).rejects.toThrow();
   } finally {
     await bridge.close();
-    await closeLocalSandboxRuntime(config);
+    await runtime.close();
     const instance = await sdk.Sandbox.get(key).catch(() => undefined);
     await instance?.destroy({ force: true });
     await policy.clearSession();
     await den.stop();
+    if (oldHome === undefined) delete process.env.MSB_HOME;
+    else process.env.MSB_HOME = oldHome;
+    await rm(home, { recursive: true, force: true });
     await rm(temp, { recursive: true, force: true });
   }
 }, 120_000);

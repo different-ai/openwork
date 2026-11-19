@@ -1,5 +1,5 @@
 import { browserScript } from "@openwork/cdp";
-import { engineSessionProbe, evalIn, go } from "@openwork/behaviors";
+import { denFetch, engineSessionProbe, evalIn, go } from "@openwork/behaviors";
 import { resolveEvalEngine, type Place, type Seed } from "@openwork/env";
 import type { MockAgentToolStep } from "@openwork/labs";
 import { randomUUID } from "node:crypto";
@@ -35,18 +35,31 @@ async function organization(seed: Seed, enabled: boolean, web = true) {
 }
 
 async function controlsWorld(seed: Seed, enabled: boolean) {
-  const world = await organization(seed, enabled);
-  if (enabled) {
-    const saved = await seed.api(world.den.admin, world.teamPath, {
-      method: "PUT", headers: { "X-OpenWork-Sandbox-Only": "1" }, body: JSON.stringify({ settings: { hostExecution: { decision: "deny" } } }),
+  const world = await organization(seed, true);
+  if (!enabled) {
+    const stored = await seed.api(world.den.admin, world.teamPath, {
+      method: "PUT", headers: sandboxHeaders, body: JSON.stringify({ settings: { sandboxOptOut: { decision: "deny" } } }),
     });
-    if (!saved.response.ok) throw new Error(`Arranging the team's existing restriction failed: ${saved.text}`);
+    const disabled = await seed.api(world.den.admin, `/v1/admin/organizations/${world.organizationId}/capabilities`, {
+      method: "PUT", body: JSON.stringify({ capabilities: { sandboxTools: false } }),
+    });
+    if (!stored.response.ok || !disabled.response.ok) throw new Error(`Arranging rollout loss failed: HTTP ${stored.response.status} / ${disabled.response.status}`);
   }
+  // The native renderer supplies the real managed-policy host handoff. A
+  // non-directory runtime home prevents preparation from launching a microVM.
+  const member = await seed.desktop({ name: "sandbox-controls-member", den: world.den, as: "riley", env: { MSB_HOME: "/dev/null" } });
+  const staff = enabled ? await seed.desktop({ name: "sandbox-controls-staff", den: world.den, as: "morgan", env: { MSB_HOME: "/dev/null" } }) : null;
   const web = await seed.web({ den: world.den, signedInAs: world.den.admin,
     startPath: `/dashboard/members/teams/${world.teamId}?tab=agents`,
     headless: true, viewport: { width: 1440, height: 1200 },
   });
-  return { ...world, web,
+  return { ...world, web, member, staff,
+    memberSettings: `/workspace/${encodeURIComponent(member.workspaceId)}/sandbox-settings`,
+    // A member's actual HTTP request is the witness; probe.api only permits reads.
+    tryMemberPolicyWrite: () => denFetch(world.riley, world.teamPath, {
+      method: "PUT", headers: { ...sandboxHeaders, authorization: `Bearer ${world.riley.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ settings: {} }),
+    }),
     everyoneUrl: `${world.den.ref.webUrl}/dashboard/members/teams/everyone?tab=agents`,
     teamUrl: `${world.den.ref.webUrl}/dashboard/members/teams/${world.teamId}?tab=agents`,
   };
@@ -129,12 +142,12 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
     const runtimeHome = await ownedSandboxHome(stack);
     const sandboxHome = runtimeHome.path;
     const env: Record<string, string> = { MSB_HOME: sandboxHome };
+    const runtimePath = brokenRuntime ? join(sandboxHome, "unavailable") : sandboxHome;
     if (brokenRuntime) {
-      // A regular file cannot contain the SDK's sockets/database. This is a real
-      // unavailable runtime, not a fake provider or simulated tool response.
-      const unavailableHome = join(sandboxHome, "unavailable");
-      await writeFile(unavailableHome, "This isolated proof intentionally makes the runtime unavailable.");
-      env.MSB_HOME = unavailableHome;
+      // A regular file cannot contain the SDK's sockets/database. Restore the
+      // same path to a directory after observing the failure, without restarting.
+      await writeFile(runtimePath, "This isolated proof intentionally makes the runtime unavailable.");
+      env.MSB_HOME = runtimePath;
     }
     const providerConfig = { provider: { "sandbox-proof": {
       npm: "@ai-sdk/openai-compatible", name: "Sandbox proof witness",
@@ -166,6 +179,12 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
     return { ...world, app, appUrl, session, sandboxHome, workspacePath, authorizedPath, privateFile, sentinel, nonce,
       sharedFile, initialText, updatedText, guestText,
       settingsPath: `/workspace/${encodeURIComponent(app.workspaceId)}/sandbox-settings`,
+      statusPath: `/workspace/${encodeURIComponent(app.workspaceId)}/sandbox-status`,
+      async restoreRuntime() {
+        if (!brokenRuntime) throw new Error("This fixture did not disable the runtime");
+        await rm(runtimePath);
+        await mkdir(runtimePath);
+      },
       foldersPath: `/workspace/${encodeURIComponent(app.workspaceId)}/authorized-folders`,
       async prepareTurn(promptMarker: string, finalReply: string, steps: MockAgentToolStep[]) {
         const response = await fetch(`${mock.url}/admin/agent-workloads`, {
@@ -179,6 +198,10 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
         if (!snapshot.ok || !snapshot.data) return null;
         return snapshot.data.messages.flatMap(message => message.parts)
           .find(part => part.tool === tool && ["completed", "error"].includes(part.status) && matches(part.input)) ?? null;
+      },
+      async offeredCatalogs(promptMarker: string) {
+        const requests = await mock.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 30_000 });
+        return requests.map(request => [...new Set(request.advertisedToolNames ?? [])].sort());
       },
       async offeredTools(promptMarker: string) {
         const requests = await mock.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 30_000 });
@@ -221,8 +244,9 @@ export async function sandboxManagedDesktop(seed: Seed, { place }: { place: Plac
   } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
+export const sandboxHeaders = { "X-OpenWork-Sandbox-Only": "1", "X-OpenWork-Sandbox-Modes": "1" };
+
 /** The public desktop-config response describes the permissions for that identity. */
-export function hostRules(body: unknown): Record<string, unknown>[] {
-  return isRecord(body) && isRecord(body.agentPermissions)
-    ? records(body.agentPermissions.rules).filter(rule => rule.action === "host_execution") : [];
+export function desktopRules(body: unknown): Record<string, unknown>[] {
+  return isRecord(body) && isRecord(body.agentPermissions) ? records(body.agentPermissions.rules) : [];
 }

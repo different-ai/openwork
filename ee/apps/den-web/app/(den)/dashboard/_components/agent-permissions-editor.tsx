@@ -467,7 +467,6 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
           <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
-          {/* The sandbox settings deliberately show their full descriptions alongside the labels (P2 exception). */}
           <p className={`${definition.toggleMeans === "requires" ? "" : "truncate "}text-[12px] leading-4 text-[var(--dls-text-secondary)]`} title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
         {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}

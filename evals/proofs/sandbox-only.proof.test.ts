@@ -25,6 +25,8 @@ const managed = spec.world(sandboxManagedDesktop, { timeout: 900_000,
   resources: { surfaces: ["desktop"], services: ["den"],
     nativeReason: "The native desktop forwards the seeded member's verified Den policy to its embedded server; the microVM and live host mounts run on this computer." },
   needs: { placement: "local", optIn: ["MICROSANDBOX_PRODUCT_PROOF"] } });
+const directTools = ["edit", "glob", "grep", "read", "shell", "write"];
+const stepIds = ["download", "start", "folders"];
 const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
 
 async function revealLatestWork(user: User, probe: Probe) {
@@ -35,7 +37,7 @@ async function revealLatestWork(user: User, probe: Probe) {
   if (rails.elements.at(-1)?.tag === "button") await user.click({ testId: "completed-work-rail", nth: rails.elements.length - 1 });
 }
 
-live("a member turns off host tools and works in a real guest with only the folders they authorized", async ({ world, user, agent, probe, step, evidence }) => {
+live("a member adds sandbox tools, then limits the agent to the sandbox and authorized folders", async ({ world, user, agent, probe, step, evidence }) => {
   const turn = async (label: string, tool: string, args: Record<string, unknown>) => {
     const prompt = await runToolTurn({ user }, world, label, [{ tool, arguments: args }]);
     await revealLatestWork(user, probe);
@@ -45,41 +47,107 @@ live("a member turns off host tools and works in a real guest with only the fold
     within: 150_000, label: `the ${tool} call finishes`, until: call => call !== null,
   });
 
-  await step("before: the member can run host tools and the sandbox rollout is verified", async () => {
+  const waitMode = (key: "effectiveUseSandbox" | "effectiveForceSandbox") => probe.eventually(() => probe.desktopApi(world.settingsPath), {
+    within: 90_000, label: "the selected sandbox mode applies", until: result => result.status === 200 && JSON.stringify(result.body).includes(`"${key}":true`),
+  });
+  const openChat = async () => {
+    await user.click("Back to app");
+    await agent.run("session.open", { sessionId: world.session.sessionId });
+    await user.see("composer", { editable: true, timeoutMs: 120_000 });
+  };
+
+  await step("before: an eligible member has not opted in and no sandbox tools are offered", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     const settings = await probe.eventually(() => probe.desktopApi(world.settingsPath), {
-      within: 90_000, label: "the native desktop verifies the member's sandbox rollout",
+      within: 90_000, label: "the sandbox rollout is verified",
       until: result => result.status === 200 && JSON.stringify(result.body).includes('"featureEnabled":true'),
     });
     const privateBytes = await world.privateBytes();
-    const ok = settings.status === 200 && privateBytes === world.nonce;
-    evidence.recordAssertionEvidence("The host-only witness exists before isolation", `settings: ${JSON.stringify(settings.body)}; private host file exists: ${privateBytes === world.nonce}`, ok);
-    expect(settings.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: true, featureEnabled: true });
+    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveUseSandbox: false, effectiveForceSandbox: false, featureEnabled: true });
     expect(privateBytes).toBe(world.nonce);
+    const prompt = await turn("Identify the operating system before turning on the sandbox.", "shell", { command: "uname -s", description: "Identify this computer" });
+    const tools = await world.offeredTools(prompt);
+    const call = await settled("shell", input => input.command === "uname -s");
+    expect(call?.status).toBe("completed");
+    expect(call?.output).toContain("Darwin");
+    expect(tools).toContain("shell");
+    expect(tools.filter(tool => tool.startsWith("sandbox_"))).toEqual([]);
+    await user.notSee({ testId: "sandbox-mode-pill" });
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-use-switch" });
+    evidence.recordAssertionEvidence("The rollout alone does not change the catalog", `shell: ${call?.output}; sandbox tools: ${tools.filter(tool => tool.startsWith("sandbox_")).length}; private file unchanged: ${privateBytes === world.nonce}`, call?.output?.includes("Darwin") === true && !tools.some(tool => tool.startsWith("sandbox_")));
     await user.screenshot();
   });
 
-  await step("when the member turns off Run tools on this computer in Permissions", async () => {
+  await step("when the member turns on Use, Permissions shows the preparation steps", async () => {
+    await user.click({ testId: "sandbox-use-switch" });
+    await user.see({ testId: "sandbox-step-download" }, { timeoutMs: 30_000 });
+    const steps = (await probe.dom(stepIds.map(id => `[data-testid="sandbox-step-${id}"]`).join(","))).elements;
+    evidence.recordAssertionEvidence("Download, start, and connect folders are visible", steps.map(item => item.text).join("; "), steps.length === 3);
+    expect(steps).toHaveLength(3);
+    await user.screenshot();
+  });
+
+  await step("after: the sandbox is ready and the project is editable", async () => {
+    await user.see({ testId: "sandbox-ready" }, { timeoutMs: 180_000 });
+    const settings = await waitMode("effectiveUseSandbox");
+    const folders = (await probe.dom('[data-testid="sandbox-folder"]')).elements.map(item => item.text);
+    const canEdit = folders.some(text => text.includes(world.workspacePath) && text.includes("Can edit"));
+    evidence.recordAssertionEvidence("Ready lists the editable project", folders.join("; "), canEdit);
+    expect(canEdit).toBe(true);
+    expect(settings.body).toMatchObject({ useSandbox: true, forceSandbox: false, effectiveForceSandbox: false });
+    await user.screenshot();
+  });
+
+  await step("after: the same chat runs one Linux command in the sandbox and one Mac command outside it", async () => {
+    await openChat();
+    await user.see({ testId: "sandbox-mode-pill" }, { text: /^Sandbox$/ });
+    const hostCommand = "uname -s # Same chat outside the sandbox";
+    const prompt = await runToolTurn({ user }, world, "Identify the operating system in both environments.", [
+      { tool: "sandbox_shell", arguments: { command: "uname -s", description: "Identify the sandbox system" } },
+      { tool: "shell", arguments: { command: hostCommand, description: "Identify the Mac system" } },
+    ]);
+    await revealLatestWork(user, probe);
+    const guest = await settled("sandbox_shell", input => input.command === "uname -s");
+    const host = await settled("shell", input => input.command === hostCommand);
+    const catalogs = await world.offeredCatalogs(prompt);
+    const tools = catalogs[0] ?? [];
+    expect(tools).toEqual(expect.arrayContaining([...directTools, ...directTools.map(tool => `sandbox_${tool}`)]));
+    expect(guest?.status).toBe("completed");
+    expect(guest?.output).toContain("Linux");
+    expect(host?.status).toBe("completed");
+    expect(host?.output).toContain("Darwin");
+    await user.see({ testId: "sandbox-tag" }, { text: /^Sandbox$/ });
+    const tagged = (await probe.dom('[data-tool-aggregate-row]:has([data-testid="sandbox-tag"])')).elements;
+    const mac = (await probe.dom('[data-tool-aggregate-row]:has(button[aria-label*="Identify the Mac system"])')).elements;
+    const taggedMac = (await probe.dom('[data-tool-aggregate-row]:has(button[aria-label*="Identify the Mac system"]):has([data-testid="sandbox-tag"])')).elements;
+    expect(tagged).toHaveLength(1);
+    expect(mac).toHaveLength(1);
+    expect(taggedMac).toHaveLength(0);
+    evidence.recordAssertionEvidence("Only the Linux line is marked Sandbox and both sets of tools were offered", `sandbox: ${guest?.output}; computer: ${host?.output}; tags: ${tagged.length}; offered: ${tools.join(", ")}`, tagged.length === 1 && mac.length === 1 && taggedMac.length === 0);
+    await user.screenshot();
+  });
+
+  await step("when the member turns on Force, Use is included", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see({ testId: "host-execution-switch" }, { timeoutMs: 60_000 });
-    await user.click({ testId: "host-execution-switch" });
-    await user.see({ testId: "host-execution-saved" });
-    const result = await probe.desktopApi(world.settingsPath);
-    evidence.recordAssertionEvidence("The local switch saves a sandbox-only requirement", JSON.stringify(result.body), result.status === 200 && JSON.stringify(result.body).includes('"effectiveAllowHostExecution":false'));
-    expect(result.body).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false });
+    await user.see({ testId: "sandbox-force-switch" }, { timeoutMs: 60_000 });
+    await user.click({ testId: "sandbox-force-switch" });
+    await user.see({ text: "Included in Force OpenWork Sandbox" });
+    const result = await waitMode("effectiveForceSandbox");
+    evidence.recordAssertionEvidence("Force requires the sandbox for every tool", JSON.stringify(result.body), result.status === 200 && JSON.stringify(result.body).includes('"effectiveForceSandbox":true'));
+    expect(result.body).toMatchObject({ useSandbox: true, forceSandbox: true, effectiveForceSandbox: true, managedForce: false });
     await user.screenshot();
   });
 
   await step("after: the same shell tool runs on Linux and cannot read the unmounted host file", async () => {
-    await user.click("Back to app");
-    await agent.run("session.open", { sessionId: world.session.sessionId });
-    await user.see("composer", { editable: true, timeoutMs: 120_000 });
+    await openChat();
+    await user.see({ testId: "sandbox-mode-pill" }, { text: /^Sandbox only$/ });
     const command = `uname -s; if [ -f ${quote(world.privateFile)} ]; then cat ${quote(world.privateFile)}; else printf 'UNMOUNTED_HOST_FILE_IS_ABSENT\\n'; fi`;
     const prompt = await turn("Check the operating system and whether the private file is visible.", "shell", { command });
     const call = await settled("shell", input => input.command === command);
     const tools = await world.offeredTools(prompt);
     const output = call?.output ?? "";
-    const expectedTools = ["edit", "glob", "grep", "read", "shell", "write"];
+    const expectedTools = directTools;
     const ok = call?.status === "completed" && output.includes("Linux") && output.includes("UNMOUNTED_HOST_FILE_IS_ABSENT") && !output.includes(world.nonce) && JSON.stringify(tools) === JSON.stringify(expectedTools);
     evidence.recordAssertionEvidence("Real guest execution, not merely renamed tools", `offered: ${tools.join(", ")}; shell: ${call?.status}; error: ${call?.error ?? ""}; output: ${output}`, ok);
     expect(call?.status).toBe("completed");
@@ -87,15 +155,10 @@ live("a member turns off host tools and works in a real guest with only the fold
     expect(output).toContain("UNMOUNTED_HOST_FILE_IS_ABSENT");
     expect(output).not.toContain(world.nonce);
     expect(tools).toEqual(expectedTools);
-    // This is the first turn, so its rail is unambiguous even with chat
-    // virtualization. Expose the actual command output in the gallery.
-    await probe.eventually(() => probe.dom('[data-testid="completed-work-rail"]'), {
-      within: 5_000, label: "the guest command's activity is visible", until: snapshot => snapshot.elements.length > 0,
-    });
-    const folded = await probe.dom('[data-testid="completed-work-rail"][aria-expanded="false"]');
-    if (folded.elements.length) await user.click({ testId: "completed-work-rail" });
-    await user.click({ role: "button", label: "Show details for Ran a command" });
-    await user.see({ text: /Linux/ });
+    await user.see({ role: "button", label: "Show details for Ran a command" });
+    const disclosures = await probe.dom('button[aria-label="Show details for Ran a command"]');
+    await user.click({ role: "button", label: "Show details for Ran a command", nth: disclosures.elements.length - 1 });
+    await user.see({ text: /UNMOUNTED_HOST_FILE_IS_ABSENT/ });
     const visibleOutput = (await probe.dom('[data-text-command-output]')).elements.map(element => element.text).join("\n");
     expect(visibleOutput).toContain("Linux");
     expect(visibleOutput).toContain("UNMOUNTED_HOST_FILE_IS_ABSENT");
@@ -116,13 +179,17 @@ live("a member turns off host tools and works in a real guest with only the fold
     const granted = await agent.desktopApi(world.foldersPath, { method: "PUT", body: { folders: [world.authorizedPath] } });
     await agent.run("route.settings.authorized_folders");
     await user.see({ text: world.authorizedPath }, { timeoutMs: 60_000 });
-    evidence.recordAssertionEvidence("The real Authorized Folders setting contains the new path", `HTTP ${granted.status}; ${JSON.stringify(granted.body)}`, granted.status === 200 && JSON.stringify(granted.body).includes(world.authorizedPath));
+    const folderList = await probe.eventually(async () => (await probe.dom('[data-testid="sandbox-folder"]')).elements.map(item => item.text), {
+      within: 180_000, label: "the Ready list includes the authorized folder", until: entries => entries.some(text => text.includes(world.authorizedPath) && text.includes("Can edit")),
+    });
+    await user.see({ testId: "sandbox-ready" });
+    evidence.recordAssertionEvidence("The Ready list contains the new editable folder", `HTTP ${granted.status}; ${folderList.join("; ")}`, granted.status === 200 && folderList.some(text => text.includes(world.authorizedPath) && text.includes("Can edit")));
     expect(granted.status).toBe(200);
     expect(JSON.stringify(granted.body)).toContain(world.authorizedPath);
     await user.screenshot();
   });
 
-  await step("after: the guest reads the authorized folder at its unchanged absolute host path", async () => {
+  await step("after: the sandbox reads the authorized folder at the same path", async () => {
     await user.click("Back to app");
     await agent.run("session.open", { sessionId: world.session.sessionId });
     await turn("Read the newly authorized briefing at the same path.", "read", { path: world.sharedFile });
@@ -163,7 +230,7 @@ live("a member turns off host tools and works in a real guest with only the fold
     await user.screenshot();
   });
 
-  await step("after: a guest edit updates that same host file without exposing the private sibling", async () => {
+  await step("after: an edit in the sandbox changes the same file and leaves the private file intact", async () => {
     await turn("Replace the briefing through the guest edit tool.", "edit", { path: world.sharedFile, oldString: world.updatedText, newString: world.guestText });
     const call = await settled("edit", input => input.path === world.sharedFile);
     const bytes = await world.sharedBytes();
@@ -178,16 +245,27 @@ live("a member turns off host tools and works in a real guest with only the fold
 });
 
 unavailable("a member whose sandbox cannot start gets an error and never silently runs the command on their computer", async ({ world, user, agent, probe, step, evidence }) => {
-  await step("given the member requires a sandbox while its runtime directory is unavailable", async () => {
+  await step("before: Force stays on when the sandbox cannot start, and Permissions offers Retry", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     await probe.eventually(() => probe.desktopApi(world.settingsPath), { within: 90_000, label: "sandbox rollout is verified", until: result => JSON.stringify(result.body).includes('"featureEnabled":true') });
-    const saved = await agent.desktopApi(world.settingsPath, { method: "PUT", body: { allowHostExecution: false } });
-    evidence.recordAssertionEvidence("Sandbox-only stays required despite the runtime outage", JSON.stringify(saved.body), saved.status === 200 && JSON.stringify(saved.body).includes('"effectiveAllowHostExecution":false'));
-    expect(saved.body).toMatchObject({ effectiveAllowHostExecution: false, featureEnabled: true });
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-force-switch" }, { timeoutMs: 60_000 });
+    await user.click({ testId: "sandbox-force-switch" });
+    await user.see({ testId: "sandbox-error" }, { timeoutMs: 180_000 });
+    await user.see({ testId: "sandbox-retry" }, { text: "Retry" });
+    const saved = await probe.desktopApi(world.settingsPath);
+    const message = (await probe.dom('[data-testid="sandbox-error"]')).elements[0]?.text ?? "";
+    const plain = /sandbox/i.test(message) && !/microvm|bridge|host|fallback|engine|guest|ENOTDIR/i.test(message);
+    evidence.recordAssertionEvidence("The failure is explained without technical details", message, plain);
+    expect(saved.body).toMatchObject({ effectiveForceSandbox: true, featureEnabled: true });
+    expect(plain).toBe(true);
     await user.screenshot();
   });
   const command = `printf 'HOST_FALLBACK' > ${quote(world.sentinel)}`;
   await step("when the member asks the agent to save a file outside every mount", async () => {
+    await user.click("Back to app");
+    await agent.run("session.open", { sessionId: world.session.sessionId });
+    await user.see({ testId: "sandbox-mode-pill" }, { text: /^Sandbox only$/ });
     await runToolTurn({ user }, world, "Save a note while the sandbox service is unavailable.", [{ tool: "shell", arguments: { command } }]);
     await revealLatestWork(user, probe);
     const call = await probe.eventually(() => world.toolCall("shell", input => input.command === command), { within: 150_000, label: "the unavailable sandbox reports its error", until: value => value !== null });
@@ -202,19 +280,37 @@ unavailable("a member whose sandbox cannot start gets an error and never silentl
     expect(exists).toBe(false);
     await user.screenshot();
   });
+  await step("after: Retry prepares the sandbox once the runtime is available again", async () => {
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "sandbox-retry" });
+    await world.restoreRuntime();
+    await user.click({ testId: "sandbox-retry" });
+    await user.see({ testId: "sandbox-ready" }, { timeoutMs: 180_000 });
+    await user.notSee({ testId: "sandbox-error" });
+    const status = await probe.desktopApi(world.statusPath);
+    evidence.recordAssertionEvidence("Retry reaches Ready without restarting the app", JSON.stringify(status.body), status.status === 200 && JSON.stringify(status.body).includes('"state":"ready"'));
+    expect(status.body).toMatchObject({ mode: "force", state: "ready", error: null });
+    await user.screenshot();
+  });
 });
 
-ordinary("a member outside the sandbox rollout keeps ordinary host execution unchanged", async ({ world, user, probe, step, evidence }) => {
+ordinary("a member outside the sandbox rollout keeps ordinary host execution unchanged", async ({ world, user, agent, probe, step, evidence }) => {
   await step("before: the organization has not enabled sandbox tools", async () => {
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
+    await agent.run("route.settings.authorized_folders");
+    await user.see({ testId: "authorized-folders-panel" }, { timeoutMs: 60_000 });
+    const hidden = await probe.eventually(() => probe.dom('[data-testid="sandbox-panel"][data-ready="true"][hidden]'), { within: 60_000, label: "Permissions settles without a sandbox section", until: result => result.elements.length === 1 });
+    await user.notSee({ testId: "sandbox-panel" });
     const settings = await probe.desktopApi(world.settingsPath);
-    evidence.recordAssertionEvidence("The flag is off and host execution remains allowed", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"featureEnabled":false'));
-    expect(settings.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: true, featureEnabled: false });
+    evidence.recordAssertionEvidence("The flag is off and Permissions omits the sandbox section", JSON.stringify(settings.body), settings.status === 200 && hidden.elements.length === 1);
+    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveForceSandbox: false, allowHostExecution: true, effectiveAllowHostExecution: true, featureEnabled: false });
     await user.screenshot();
   });
   let prompt = "";
   const command = `cat ${quote(world.privateFile)}`;
   await step("when the member reads their ordinary host file with the normal shell tool", async () => {
+    await user.click("Back to app");
+    await agent.run("session.open", { sessionId: world.session.sessionId });
     prompt = await runToolTurn({ user }, world, "Read the private note on this computer.", [{ tool: "shell", arguments: { command, description: "Read a local note" } }]);
     await revealLatestWork(user, probe);
     const call = await probe.eventually(() => world.toolCall("shell", input => input.command === command), { within: 60_000, label: "the ordinary host call settles", until: value => value !== null });
@@ -247,20 +343,17 @@ managed("a managed member cannot weaken the team's sandbox-only requirement with
   });
   await step("after: Permissions explains the organization lock and disables the local switch", async () => {
     await agent.run("route.settings.authorized_folders");
-    await user.see({ testId: "host-execution-note" }, { timeoutMs: 60_000 });
-    const locked = await probe.eventually(() => probe.dom('[data-testid="host-execution-switch"]:is(:disabled, [aria-disabled="true"])'), {
-      within: 5_000, label: "the organization-managed switch is disabled", until: snapshot => snapshot.elements.length === 1,
-    });
-    const denied = await probe.dom('[data-testid="host-execution-row"][data-host-execution="deny"][data-host-execution-managed="true"]');
-    evidence.recordAssertionEvidence("The member sees a disabled, organization-managed restriction", `disabled switches: ${locked.elements.length}; managed deny rows: ${denied.elements.length}`, locked.elements.length === 1 && denied.elements.length === 1);
-    expect(locked.elements).toHaveLength(1);
-    expect(denied.elements).toHaveLength(1);
+    await user.see({ testId: "sandbox-use-managed" }, { text: "Managed by your organization", timeoutMs: 60_000 });
+    await user.see({ testId: "sandbox-force-managed" }, { text: "Managed by your organization" });
+    const locked = await probe.dom('[data-testid="sandbox-panel"] [role="switch"][aria-checked="true"]:is(:disabled,[aria-disabled="true"])');
+    evidence.recordAssertionEvidence("Both switches are on and managed by the organization", `locked and on: ${locked.elements.length}`, locked.elements.length === 2);
+    expect(locked.elements).toHaveLength(2);
     await user.screenshot();
   });
   await step("when a client saves a local allow directly, the effective restriction still stands", async () => {
     const result = await agent.desktopApi(world.settingsPath, { method: "PUT", body: { allowHostExecution: true } });
     await user.reload();
-    await user.see({ testId: "host-execution-note" }, { timeoutMs: 60_000 });
+    await user.see({ testId: "sandbox-force-managed" }, { text: "Managed by your organization", timeoutMs: 60_000 });
     evidence.recordAssertionEvidence("A public-API client cannot bypass the stricter policy either", `HTTP ${result.status}; ${JSON.stringify(result.body)}`, result.status === 200 && JSON.stringify(result.body).includes('"effectiveAllowHostExecution":false'));
     expect(result.body).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: false, managed: true });
     await user.screenshot();

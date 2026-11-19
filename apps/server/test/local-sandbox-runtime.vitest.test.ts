@@ -201,6 +201,10 @@ test("loopback bridge requires its own credential and rechecks the rollout for e
   try {
     expect((await request({ operation: "status", directory: f.workspace }, "wrong")).status).toBe(401);
     expect(await (await request({ operation: "status", directory: f.workspace })).json()).toEqual({ mode: "tools" });
+    expect(runtime.snapshot(f.workspace).state).toBe("off");
+    expect(provider.fake.count("create")).toBe(0);
+    expect((await request({ operation: "prompt", directory: f.workspace })).status).toBe(200);
+    await expect.poll(() => runtime.snapshot(f.workspace).state).toBe("ready");
     const called = await request({ operation: "execute", directory: f.workspace, name: "shell", input: { command: "pwd" }, sessionId: "s" });
     expect(await called.json()).toMatchObject({ content: [{ type: "text", text: "guest bridge result" }] });
     enabled = false;
@@ -299,7 +303,7 @@ test("an expired waiter never dispatches, even after the provider returns", asyn
     await expect.poll(() => runtime.snapshot(f.workspace).error?.code).toBe("timed_out");
     boot.open(); await warm;
     expect(provider.fake.count("run")).toBe(0);
-    expect(provider.fake.count("destroy")).toBe(1);
+    await expect.poll(() => provider.fake.count("destroy")).toBe(1);
   } finally { boot.open(); await runtime.close(); await f.cleanup(); }
 });
 
@@ -355,5 +359,96 @@ test("status routes are client-readable without work, with collaborator-only and
     expect((await hit("POST", "/prepare")).status).toBe(200);
     await expect.poll(() => runtime.snapshot(f.workspace).state).toBe("ready");
     expect(provider.fake.count("create")).toBe(1);
+  } finally { await runtime.close(); await f.cleanup(); }
+});
+
+test.each(["revoke", "revoke and regrant", "unchanged"])("a config write during blocked create: %s", async change => {
+  const f = await fixture();
+  const entered = gate(), release = gate();
+  const grants = { [`${f.external}/*`]: "allow" };
+  const prepared: string[][] = [];
+  const dispatched: Array<string | undefined> = [];
+  const provider = createFakeProvider({ onOperation: async op => {
+    if (op.name === "create" && prepared.length === 1) { entered.open(); await release.wait; }
+    if (op.name === "run") dispatched.push(op.sandboxId);
+  } });
+  const runtime = createLocalSandboxRuntime(f.config, {
+    settings: useSandbox, access: async () => ({ enabled: true, scope: "fixture" }),
+    provider: async mounts => { prepared.push(mounts.map(m => m.guestPath)); return provider; },
+  });
+  const write = (folders: Record<string, string>) => writeGlobalRuntimeOpencodeConfig(f.config, () => ({ permission: { external_directory: folders } }));
+  try {
+    await write(grants);
+    const command = runtime.execute(f.workspace, "shell", { command: "true" });
+    await entered.wait;
+    await write(change === "unchanged" ? grants : {});
+    if (change === "revoke and regrant") await write(grants);
+    expect(dispatched).toEqual([]);
+    release.open();
+    await command;
+    const [first, second] = provider.fake.sandboxes();
+    if (change === "unchanged") {
+      expect(dispatched).toEqual([first.id]);
+      expect(provider.fake.count("create")).toBe(1);
+      expect(provider.fake.count("destroy")).toBe(0);
+    } else {
+      expect(first.state).toBe("missing");
+      expect(dispatched).toEqual([second.id]);
+      expect(prepared[1].includes(f.external)).toBe(change === "revoke and regrant");
+    }
+  } finally { release.open(); await runtime.close(); await f.cleanup(); }
+});
+
+test.each(["create", "find", "inspect"])("a hung %s releases the preparation queue for Retry and close", async operation => {
+  const f = await fixture();
+  let hang = false, runs = 0;
+  const never = new Promise<void>(() => {});
+  const provider = createFakeProvider({
+    onOperation: op => hang && op.name === operation ? never : undefined,
+    onRun: () => { runs++; return { exitCode: 0, stdout: "ran in sandbox", stderr: "" }; },
+  });
+  const runtime = createLocalSandboxRuntime(f.config, { settings: useSandbox, access: async () => ({ enabled: true, scope: "fixture" }), provider: async () => provider, prepareTimeoutMs: 85 });
+  try {
+    if (operation === "inspect") await runtime.prepare(f.workspace);
+    hang = true;
+    await expect(runtime.execute(f.workspace, "shell", { command: "true" })).rejects.toThrow("took too long");
+    await expect.poll(() => runtime.snapshot(f.workspace).error?.code).toBe("timed_out");
+    expect(runs).toBe(0);
+    hang = false;
+    await runtime.prepare(f.workspace, "retry");
+    expect(runtime.snapshot(f.workspace).state).toBe("ready");
+    if (operation === "inspect") expect(provider.fake.count("destroy")).toBe(1);
+    await runtime.execute(f.workspace, "shell", { command: "true" });
+    expect(runs).toBe(1);
+    await expect(runtime.close()).resolves.toBeUndefined();
+  } finally { await runtime.close(); await f.cleanup(); }
+});
+
+test("an admission error settles preparing; a warm command inspects and reads each authority input once", async () => {
+  const f = await fixture();
+  let changed = true;
+  let accessReads = 0, settingsReads = 0, foldersReads = 0;
+  const provider = createFakeProvider();
+  const runtime = createLocalSandboxRuntime(f.config, {
+    settings: async () => { settingsReads++; return useSandbox(); },
+    access: async () => { accessReads++; if (changed) throw new ApiError(409, "policy_identity_changed", "The signed-in account changed."); return { enabled: true, scope: "fixture" }; },
+    externalDirectories: async () => { foldersReads++; return {}; }, provider: async () => provider,
+  });
+  try {
+    runtime.setMode(f.workspace, "use");
+    const rejected = runtime.prepare(f.workspace);
+    expect(runtime.snapshot(f.workspace).state).toBe("preparing");
+    await rejected;
+    expect(runtime.snapshot(f.workspace)).toMatchObject({ mode: "use", state: "failed", error: { retryable: true } });
+    changed = false;
+    await runtime.prepare(f.workspace, "retry");
+    const inspections = provider.fake.count("inspect"), finds = provider.fake.count("find");
+    accessReads = settingsReads = foldersReads = 0;
+    const start = performance.now();
+    await runtime.execute(f.workspace, "shell", { command: "true" });
+    console.info("Fake warm command ms", performance.now() - start);
+    expect([accessReads, settingsReads, foldersReads]).toEqual([1, 1, 1]);
+    expect(provider.fake.count("inspect") - inspections).toBe(1);
+    expect(provider.fake.count("find") - finds).toBe(0);
   } finally { await runtime.close(); await f.cleanup(); }
 });

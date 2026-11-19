@@ -1,4 +1,4 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -160,11 +160,11 @@ test("Den verification runs both reads in parallel, shares them, and expires wit
     mode = "force";
     await delay(2_010);
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
-    expect([desktopReads, orgReads]).toEqual([2, 2]);
+    expect([desktopReads, orgReads]).toEqual([2, 1]);
     mode = "offline";
     await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: false });
     expect(await policy.localSandboxAccess()).toMatchObject({ enabled: false, hostDenied: true, hostPolicyVerified: true });
-    expect([desktopReads, orgReads]).toEqual([3, 3]);
+    expect([desktopReads, orgReads]).toEqual([3, 2]);
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
   } finally { release.resolve(); await den.stop(); await f.cleanup(); }
 });
@@ -188,8 +188,11 @@ test("desired intent is durable without changing the applied local policy of act
     await writeSandboxSettings(f.config, { useSandbox: false, forceSandbox: false });
     expect(await readAppliedSandboxSettings(f.config)).toEqual({ useSandbox: true, forceSandbox: true });
     await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    const legacyRead = new Request("http://localhost/opencode/session");
+    await expect(policy.assertLegacyExecutionRequest(legacyRead, "/opencode/session")).rejects.toMatchObject({ code: "sandbox_only" });
     await applySandboxSettings(f.config);
     await expect(policy.assertHostExecution()).resolves.toBeUndefined();
+    await expect(policy.assertLegacyExecutionRequest(legacyRead, "/opencode/session")).resolves.toBeUndefined();
   } finally { await runtime.close(); await f.cleanup(); }
 });
 
@@ -591,7 +594,10 @@ test("settings and folder GETs stay local while Den hangs, then report verified 
     expect(await force.json()).toMatchObject({ useSandbox: true, forceSandbox: true, effectiveForceSandbox: true });
     const off = await put({ useSandbox: false });
     expect(off.status).toBe(200);
-    expect(await off.json()).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveForceSandbox: false });
+    expect(await off.json()).toMatchObject({ useSandbox: false, forceSandbox: false });
+    await expect.poll(async () => (await fetch(url("sandbox-settings"), { headers })).json())
+      .toMatchObject({ useSandbox: false, forceSandbox: false, effectiveForceSandbox: false, pending: false });
+    expect(await (await fetch(url("sandbox-status"), { headers })).json()).toMatchObject({ mode: "off", state: "off" });
     offline = true;
     await writeSandboxSettings(f.config, { useSandbox: false, forceSandbox: false });
     await policy.localSandboxAccess();
@@ -635,5 +641,102 @@ test("settings route requires approval before engine-global writes and leaves wo
     await server.stop(); await f.cleanup();
     if (previewOverride === undefined) delete process.env.OPENWORK_ENGINE_V2_PREVIEW;
     else process.env.OPENWORK_ENGINE_V2_PREVIEW = previewOverride;
+  }
+});
+
+test("host checks observe a new deny while an older rollout read is still held", async () => {
+  const f = await fixture();
+  const orgStarted = Promise.withResolvers<void>();
+  const releaseOrg = Promise.withResolvers<void>();
+  let deny = false, orgFinished = false;
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
+    if (new URL(request.url).pathname === "/v1/org") {
+      orgStarted.resolve();
+      await releaseOrg.promise;
+      orgFinished = true;
+      return Response.json({ features: { sandboxTools: true } });
+    }
+    return Response.json({ agentPermissions: { rules: deny ? [{ action: "host_execution", resource: "*", effect: "deny", source: "Everyone" }] : [] } });
+  } });
+  const policy = managedDesktopPolicy(f.config, { sandboxFreshnessMs: 100 });
+  try {
+    await policy.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, orgId: "org_fixture", token: "fixture" });
+    const rollout = policy.localSandboxAccess();
+    await orgStarted.promise;
+    expect(await Promise.race([policy.assertHostExecution().then(() => "allowed"), delay(300, "blocked on rollout")])).toBe("allowed");
+    deny = true;
+    await delay(110);
+    await expect(Promise.race([policy.assertHostExecution(), delay(300, "blocked on rollout")])).rejects.toMatchObject({ code: "sandbox_only" });
+    expect(orgFinished).toBe(false);
+    releaseOrg.resolve();
+    expect(await rollout).toMatchObject({ hostDenied: true });
+  } finally { releaseOrg.resolve(); await den.stop(); await f.cleanup(); }
+});
+
+test("Force-off stays restrictive during a held and failed replacement; settings PUT never waits", async () => {
+  const f = await fixture();
+  f.config.engineAutoUpgrade = false;
+  f.config.freshInstallEngine = "v2";
+  const releaseDen = Promise.withResolvers<void>();
+  const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: async () => {
+    await releaseDen.promise;
+    return Response.json({ features: { sandboxTools: false } });
+  } });
+  f.config.trustedDenOrigin = `http://127.0.0.1:${den.port}`;
+  const env = { OPENWORK_ENGINE_V2_PREVIEW: "1", OPENWORK_ENGINE_V2_CHAT: "1", OPENWORK_OPENCODE2_BIN: "fixture" };
+  const previous = new Map(Object.keys(env).map(key => [key, process.env[key]]));
+  Object.assign(process.env, env);
+  const entered = Promise.withResolvers<void>();
+  const releaseStart = Promise.withResolvers<void>();
+  const native = await import("../src/managed-opencode-v2.js");
+  let starts = 0;
+  const nativeStart = vi.spyOn(native, "createManagedOpencodeV2Server").mockImplementation(async options => {
+    if (++starts > 1) {
+      expect(await options.isolateProjectConfig?.()).toBe(false);
+      entered.resolve();
+      await releaseStart.promise;
+      throw new Error("Fixture restart failed");
+    }
+    let models: { providerID: string; id: string }[] = [];
+    return {
+      url: "http://127.0.0.1:1", username: "fixture", password: "fixture", childPid: 1, exitCode: null, stdout: "", stderr: "",
+      projectConfigDisabled: true, health: async () => ({ healthy: true, version: "2.2.6", pid: 1 }),
+      fetchJson: async path => ({ status: 200, json: { data: path === "/api/model" ? models : path.startsWith("/api/experimental/job") ? [] : {} } }),
+      async setProviders(specs) { models = specs.flatMap(spec => spec.models.map(model => ({ providerID: spec.id, id: model.id }))); },
+      async injectProvider() {}, async setSkills() {}, async refreshConfig() {}, async close() {},
+    };
+  });
+  await writeSandboxSettings(f.config, { useSandbox: true, forceSandbox: true });
+  const { startServer } = await import("../src/server.js");
+  const app = await startServer(f.config);
+  const policy = managedDesktopPolicy(f.config);
+  const { createSandboxToolsBridge } = await import("../src/sandbox-tools-bridge.js");
+  const bridge = await createSandboxToolsBridge(f.config);
+  const hostRequest = () => fetch(bridge.url, { method: "POST", headers: { Authorization: `Bearer ${bridge.token}` }, body: JSON.stringify({ operation: "host", directory: f.workspace }) });
+  const headers = { authorization: `Bearer ${f.config.token}`, "content-type": "application/json" };
+  const url = `http://127.0.0.1:${app.port}/workspace/ws_sandbox/sandbox-settings`;
+  const status = `http://127.0.0.1:${app.port}/experimental/engine-v2-preview/status`;
+  try {
+    await expect.poll(async () => (await (await fetch(status, { headers })).json()).running).toBe(true);
+    const before = performance.now();
+    const put = await fetch(url, { method: "PUT", headers, body: JSON.stringify({ useSandbox: false }) });
+    expect(performance.now() - before).toBeLessThan(200);
+    expect(put.status).toBe(200);
+    expect(await put.json()).toMatchObject({ forceSandbox: false, pending: true, effectiveForceSandbox: true });
+    await entered.promise;
+    await expect(policy.assertHostExecution()).rejects.toMatchObject({ code: "sandbox_only" });
+    expect(await policy.computerRules()).toContainEqual(expect.objectContaining({ effect: "deny" }));
+    expect(await policy.websiteRules()).toContainEqual(expect.objectContaining({ effect: "deny" }));
+    expect((await hostRequest()).status).toBe(503);
+    releaseStart.resolve();
+    await expect.poll(async () => (await (await fetch(status, { headers })).json()).lastError).toContain("Fixture restart failed");
+    expect(await (await fetch(url, { headers })).json()).toMatchObject({ pending: true, effectiveForceSandbox: true });
+    expect((await hostRequest()).status).toBe(503);
+  } finally {
+    releaseStart.resolve(); releaseDen.resolve();
+    await bridge.close(); await app.stop(); await den.stop();
+    nativeStart.mockRestore();
+    for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await f.cleanup();
   }
 });

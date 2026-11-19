@@ -469,6 +469,21 @@ export type SettingsSurfaceProps = {
   onClose?: () => void;
 };
 
+function PermissionsSandboxPanel(props: Omit<React.ComponentProps<typeof SandboxPanel>, "rollout">) {
+  const rollout = useDesktopFeature("sandboxTools", true);
+  return <SandboxPanel {...props} rollout={rollout} />;
+}
+
+function PermissionsRouteStart() {
+  const marked = useRef(false);
+  const markStart = useCallback((element: HTMLSpanElement | null) => {
+    if (!element || marked.current) return;
+    marked.current = true;
+    performance.mark("openwork:permissions:route-start");
+  }, []);
+  return <span hidden ref={markStart} />;
+}
+
 function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const navigate = useNavigate();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
@@ -2172,10 +2187,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     selectedWorkspace,
     selectedWorkspaceEndpoint,
   ]);
-  const markPermissionsRouteStart = useCallback((element: HTMLSpanElement | null) => {
-    if (element && route.tab === "permissions") performance.mark("openwork:permissions:route-start");
-  }, [route.tab]);
-
   const routeOpenworkStatus = openworkClient ? "connected" : "disconnected";
   const notFoundRouteError = !loading && routeWorkspaceId && !selectedWorkspace
     ? "Workspace was not found. Select a new workspace from the sidebar."
@@ -2362,7 +2373,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "permissions":
         return (
           <SettingsStack>
-            <span hidden ref={markPermissionsRouteStart} />
+            <PermissionsRouteStart />
             <AuthorizedFoldersPanel
               connecting={loading && !openworkClient}
               openworkServerClient={selectedWorkspaceEndpoint?.client ?? openworkClient}
@@ -2377,7 +2388,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
-            <SandboxPanel
+            <PermissionsSandboxPanel
               connecting={loading && !openworkClient}
               client={selectedWorkspaceEndpoint?.client ?? openworkClient}
               workspaceId={runtimeWorkspaceId}
