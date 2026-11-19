@@ -11,6 +11,7 @@ export { default as connectStandardTools } from "@openwork/features/flags/connec
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
+export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"

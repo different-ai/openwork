@@ -897,6 +897,7 @@ export async function startServer(
   managedDesktopPolicy(config).onV2OnlyChange = (enabled) => {
     void engineV2Preview.setV2Only(enabled).catch(() => undefined);
   };
+  managedDesktopPolicy(config).onIdentityDelivered = () => { void engineV2Preview.syncSystemProxy(); };
   managedDesktopPolicy(config).onChange = () => {
     void anonymousInference.initialize(config.port).then((changed) => {
       if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
