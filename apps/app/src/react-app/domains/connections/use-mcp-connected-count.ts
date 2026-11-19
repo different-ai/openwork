@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { unwrap } from "../../../app/lib/opencode";
 import type { Client, McpStatusMap } from "../../../app/types";
@@ -10,8 +10,10 @@ const REFRESH_INTERVAL_MS = 60_000;
  * opencode's mcp.status. Used by the session status bar so it reflects real
  * connectivity instead of a hardcoded value.
  */
-export function useMcpConnectedCount(client: Client | null, directory: string): number {
+export function useMcpConnectedCount(client: Client | null, directory: string, onStatuses?: (statuses: McpStatusMap) => void): number {
   const [count, setCount] = useState(0);
+  const observer = useRef(onStatuses);
+  observer.current = onStatuses;
 
   useEffect(() => {
     if (!client || !directory.trim()) {
@@ -24,7 +26,9 @@ export function useMcpConnectedCount(client: Client | null, directory: string): 
       try {
         const status = unwrap(await client.mcp.status({ directory }));
         if (cancelled) return;
-        const values = Object.values(status as McpStatusMap);
+        const statuses = status as McpStatusMap;
+        const values = Object.values(statuses);
+        observer.current?.(statuses);
         setCount(values.filter((entry) => entry.status === "connected").length);
       } catch {
         if (!cancelled) setCount(0);

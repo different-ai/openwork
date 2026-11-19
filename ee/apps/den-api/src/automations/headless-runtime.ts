@@ -4,7 +4,6 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { planIncludesHeadlessAutomations } from "../entitlements.js"
 import { headlessRunnerConfig } from "../headless-runner/client.js"
-import { getOrganizationFeatures, type FeatureMap } from "../features.js"
 
 /** Engine kind recorded on cloud agent runs that executed on the headless runner. */
 export const HEADLESS_AGENT_ENGINE_KIND = "openwork-headless-agent-v1"
@@ -19,15 +18,14 @@ export const HEADLESS_AGENT_ENGINE_KIND = "openwork-headless-agent-v1"
 export type CloudAutomationRuntime = "headless" | "web"
 
 export function cloudAutomationRuntimeForOrganization(
-  input: { features: Pick<FeatureMap, "headlessAutomations">; metadata: Parameters<typeof planIncludesHeadlessAutomations>[0] },
+  input: { metadata: Parameters<typeof planIncludesHeadlessAutomations>[0] },
   options: { env?: Record<string, string | undefined>; gatingEnabled?: boolean } = {},
 ): CloudAutomationRuntime {
-  if (!input.features.headlessAutomations) return "web"
   if (!planIncludesHeadlessAutomations(input.metadata, { gatingEnabled: options.gatingEnabled })) return "web"
   return headlessRunnerConfig(options.env ?? process.env) ? "headless" : "web"
 }
 
-/** Read uncached, so a platform-admin switch applies to the next run. */
+/** Read uncached, so a plan change applies to the next run. */
 export async function cloudAutomationRuntime(organizationId: string): Promise<CloudAutomationRuntime> {
   // Deployments without a runner never look up the organization.
   if (!headlessRunnerConfig()) return "web"
@@ -37,5 +35,5 @@ export async function cloudAutomationRuntime(organizationId: string): Promise<Cl
     .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId)))
     .limit(1)
   if (!organization) return "web"
-  return cloudAutomationRuntimeForOrganization({ features: await getOrganizationFeatures(organizationId), metadata: organization.metadata })
+  return cloudAutomationRuntimeForOrganization({ metadata: organization.metadata })
 }

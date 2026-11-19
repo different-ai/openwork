@@ -8,7 +8,7 @@ import type {
   Tool,
 } from "@modelcontextprotocol/client"
 
-export type { StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
+export type { OAuthDiscoveryState, StoredOAuthClientInformation, StoredOAuthTokens } from "@modelcontextprotocol/client"
 
 /**
  * Most OAuth scopes one connection may request. Without a required scope, MCP
@@ -145,7 +145,29 @@ export interface EnterpriseMcpOAuthCredentialPort {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
   }): Promise<void>
+  /**
+   * Optional. Runs one refresh-token grant at a time per credential, across
+   * every process sharing the store. Providers that rotate refresh tokens keep
+   * only one of several concurrent refreshes valid, so parallel grants can
+   * leave the saved credential unusable. The adapter holds the credential
+   * exclusively, then:
+   * - returns `superseded` with the current credential (if any), without
+   *   calling `refresh`, when the stored refresh token is no longer
+   *   `refreshToken`;
+   * - otherwise calls `refresh` and, when it returns tokens, commits them as a
+   *   refresh before releasing the credential (`refreshed`), or commits
+   *   nothing (`not-saved`).
+   */
+  refreshExclusively?(input: {
+    context: EnterpriseMcpPersistenceContext
+    refreshToken: string
+    refresh: () => Promise<{ tokens: StoredOAuthTokens; expiresAt?: EnterpriseMcpEpochMs } | undefined>
+  }): Promise<EnterpriseMcpOAuthRefreshOutcome>
 }
+
+export type EnterpriseMcpOAuthRefreshOutcome =
+  | { status: "refreshed" | "not-saved" }
+  | { status: "superseded"; credential?: EnterpriseMcpOAuthCredential }
 
 /** Application-owned ports. No database, tenant, or deployment shape leaks in. */
 export type EnterpriseMcpOAuthPersistence = {
@@ -157,9 +179,16 @@ export type EnterpriseMcpOAuthPersistence = {
 
 export type EnterpriseMcpOAuthConfiguration = {
   applicationType: "web" | "native"
+  manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
   clientMetadataUrl?: string
   authorizationServerIssuer?: string
   requestedScopes?: string[]
+  /**
+   * Ask for `requestedScopes` alone at sign-in, even when the server's sign-in
+   * challenge names more. Off by default: challenge scopes are otherwise kept.
+   * Ignored while `requestedScopes` is empty.
+   */
+  requestSelectedScopesOnly?: boolean
 }
 
 export type EnterpriseMcpRequestPhase =
@@ -267,6 +296,14 @@ export type EnterpriseMcpCallToolInput = {
   arguments: Record<string, unknown>
 }
 
+export type EnterpriseMcpCallListedToolInput = EnterpriseMcpCallToolInput & {
+  /**
+   * Runs on the provider's current tool list, in the same session as the call.
+   * Throwing refuses the call before anything is sent to the tool.
+   */
+  beforeCall: (tools: EnterpriseMcpTool[]) => void | Promise<void>
+}
+
 export type EnterpriseMcpListResourcesInput = {
   connection: EnterpriseMcpConnection
   redirectUri: string
@@ -323,6 +360,8 @@ export type EnterpriseMcpAuthorizationServerRequirement = {
 }
 
 export type EnterpriseMcpConnectionRequirements = {
+  /** Read-only suggestions, not trusted authorization servers and never auto-applied. */
+  publishedSignInAddresses?: Array<{ authorizationEndpoint: string; tokenEndpoint: string; advertisedIssuer: string; metadataIssuer: string }>
   status: "ready" | "manual_action_required" | "unsupported" | "unreachable"
   server: {
     url: string
@@ -336,7 +375,10 @@ export type EnterpriseMcpConnectionRequirements = {
     resource?: string
     protectedResourceMetadataUrl?: string
     authorizationServers: EnterpriseMcpAuthorizationServerRequirement[]
+    /** Scopes requested by the resource's authentication challenge, not inferred from its URL or tools. */
     requiredScopes: string[]
+    /** Protected-resource advertisement, kept separate so callers can disclose contradictory challenges. */
+    resourceScopesSupported?: string[]
     recommendedScopes: string[]
     refreshSupport: "supported" | "not_advertised" | "unknown"
     availableRegistrationMethods: Array<"pre_registered" | "client_metadata" | "dynamic">
@@ -356,7 +398,16 @@ export type EnterpriseMcpConnectionRequirements = {
   warnings: EnterpriseMcpRequirementWarning[]
 }
 
+export type EnterpriseMcpDiscoveryCheck = {
+  id: "server" | "resource" | "provider"
+  status: "running" | "passed" | "failed" | "skipped"
+  httpStatus?: number
+  code?: "authentication_required" | "not_required" | "issuer_mismatch" | "unavailable" | "unsupported"
+}
+
 export type DiscoverEnterpriseMcpConnectionRequirementsInput = {
+  onCheck?: (check: EnterpriseMcpDiscoveryCheck) => void
+  signal?: AbortSignal
   serverUrl: string
   fetch: EnterpriseMcpFetch
   timeoutMs?: number
@@ -378,16 +429,21 @@ export type EnterpriseMcpClientOptions = {
   expirationSkewMs?: number
   clientName?: string
   clientVersion?: string
+  /** Advertise webhook events only for an explicitly enabled subscription operation. */
+  webhookEvents?: boolean
   lifecycle?: EnterpriseMcpLifecycle
 }
 
 export interface EnterpriseMcpClient {
+  requestEvents(input: EnterpriseMcpListResourcesInput & { method: "events/list" | "events/subscribe" | "events/unsubscribe"; params: Record<string, unknown> }): Promise<Record<string, unknown>>
   connect(input: EnterpriseMcpConnectInput): Promise<EnterpriseMcpConnectResult>
   completeAuthorization(input: EnterpriseMcpCompleteAuthorizationInput): Promise<void>
   abandonAuthorization(input: EnterpriseMcpAbandonAuthorizationInput): Promise<void>
   listTools(input: EnterpriseMcpListToolsInput): Promise<EnterpriseMcpTool[]>
   callTool(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
   callToolRaw(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
+  /** Lists tools, then calls one, in a single provider session. */
+  callListedTool(input: EnterpriseMcpCallListedToolInput): Promise<EnterpriseMcpToolResult>
   listResources(input: EnterpriseMcpListResourcesInput): Promise<EnterpriseMcpResourceList>
   readResource(input: EnterpriseMcpReadResourceInput): Promise<EnterpriseMcpResourceResult>
   listResourceTemplates(input: EnterpriseMcpListResourceTemplatesInput): Promise<EnterpriseMcpResourceTemplateList>

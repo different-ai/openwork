@@ -1,0 +1,92 @@
+"use client";
+
+import { CARD_TITLE_CLASS } from "../../../_components/ui/dashboard-styles";
+import { analyticsSurfaceClass } from "./analytics-layout";
+
+export function formatWeekLabel(weekStart: string): string {
+  const date = new Date(`${weekStart}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return weekStart;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+export type BarSeries = {
+  label: string;
+  values: number[];
+};
+
+export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "Week of", isLoading = false, formatValue = String, emptyLabel = "No usage events yet" }: {
+  title: string;
+  subtitle: string;
+  weeks: { weekStart: string }[];
+  series: BarSeries[];
+  intervalLabel?: string;
+  isLoading?: boolean;
+  /** How a bar's value reads in its tooltip and the screen-reader table (money, for example). */
+  formatValue?: (value: number) => string;
+  emptyLabel?: string;
+}) {
+  const colorFor = (item: BarSeries) => item.label === "Failed" && item.values.some((value) => value > 0) ? "var(--ow-danger)" : "var(--dls-accent)";
+  const max = Math.max(1, ...series.flatMap((s) => s.values));
+  const hasData = series.some((s) => s.values.some((v) => v > 0));
+
+  return (
+    <figure className={`${analyticsSurfaceClass} p-4`} aria-label={title}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <h3 title={subtitle} className={CARD_TITLE_CLASS}>{title}</h3>
+          <p className="sr-only">{subtitle}</p>
+        </div>
+        {series.length > 1 ? (
+          <div className="flex items-center gap-3">
+            {series.map((s) => (
+              <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-[var(--dls-text-secondary)]">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colorFor(s) }} />
+                {s.label}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="relative mt-4">
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col justify-between pb-px">
+          {[0, 1, 2, 3].map((line) => <div key={line} className="border-t border-dashed border-[var(--den-list-line)]" />)}
+        </div>
+        <div className="relative flex h-[168px] items-end gap-1.5" aria-hidden="true">
+          {hasData ? weeks.map((week, i) => (
+            <div key={week.weekStart || i} className="flex h-full flex-1 items-end justify-center gap-px">
+              {series.map((s) => {
+                const value = s.values[i] ?? 0;
+                const height = value > 0 ? Math.max(2, (value / max) * 94) : 0;
+                return (
+                  <div
+                    key={s.label}
+                    title={`${intervalLabel ? `${intervalLabel} ` : ""}${formatWeekLabel(week.weekStart)} — ${s.label}: ${formatValue(value)}`}
+                    className="w-full max-w-[24px] rounded-t-[4px] transition-[height]"
+                    style={{
+                      height: `${height}%`,
+                      backgroundColor: value > 0 ? colorFor(s) : "var(--dls-hover)",
+                    }}
+                  />
+                );
+              })}
+            </div>
+          )) : null}
+        </div>
+        {!hasData ? (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span role="status" className="rounded-full bg-[var(--den-shell-topbar)] px-3 py-1 text-[12px] text-[var(--dls-text-secondary)]">{isLoading ? "Loading activity…" : emptyLabel}</span>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="mt-3 flex justify-between text-[11px] text-[var(--dls-text-secondary)]">
+        <span>{weeks.length > 0 ? formatWeekLabel(weeks[0].weekStart) : ""}</span>
+        <span>{weeks.length > 0 ? formatWeekLabel(weeks[weeks.length - 1].weekStart) : ""}</span>
+      </div>
+      <table className="sr-only"><caption>{title}</caption><thead><tr><th>Date</th>{series.map((s) => <th key={s.label}>{s.label}</th>)}</tr></thead>
+        <tbody>{weeks.map((week, i) => <tr key={week.weekStart}><th>{formatWeekLabel(week.weekStart)}</th>{series.map((s) => <td key={s.label}>{formatValue(s.values[i] ?? 0)}</td>)}</tr>)}</tbody>
+      </table>
+    </figure>
+  );
+}

@@ -151,7 +151,29 @@ gateway:
     adminTokenKey: GATEWAY_ADMIN_TOKEN
 ```
 
-The retention Secret reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and `INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret has different tokens. It enables admin access without `gateway.admin.enabled`. The inherited schedule is `0 3 * * *`, timezone `Etc/UTC`; the job calls the retained internal Service's `/internal/rollups/run`. Service enablement is also required. Non-Helm deployments must supply their own authorized maintenance caller.
+The retention Secret reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and `INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret has different tokens. It enables admin access without `gateway.admin.enabled`. Service enablement is also required.
+
+The job runs hourly, matching the hosted deployment. Each run calls the retained internal Service's `/internal/rollups/run`, folds request logs older than two days into hourly usage rollups, and deletes the folded rows in the same transaction; hourly rollups older than 90 days fold into daily rollups. The usage dashboard reads raw logs and rollups together, so totals stay correct between runs.
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `schedule` | `5 * * * *` | Charts before this change defaulted to nightly `0 3 * * *`. An explicitly set schedule is kept. |
+| `timeZone` | `Etc/UTC` | |
+| `maxBucketsPerRun` | `48` | Hours or days handled per run, `1` to `1000`. |
+| `maxSourceRowsPerBucket` | `5000` | Rows consumed per hour per run in one transaction, `1` to `5000`. |
+
+One run consumes at most `maxBucketsPerRun` × `maxSourceRowsPerBucket` rows (240,000 by default). An hour with more rows finishes over the next runs, so hourly runs keep up with roughly 240,000 requests per hour. The job logs its summary, for example `{"hourBuckets":1,"dayBuckets":0,"rawRowsDeleted":1253,...}`. If `hourBuckets` stays above `1` for several runs, the job is catching up.
+
+Non-Helm deployments must supply their own hourly caller with the same token and body:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"maxBucketsPerRun":48,"maxSourceRowsPerBucket":5000}' \
+  http://<gateway-internal-host>:8791/internal/rollups/run
+```
+
+A request without a body uses the same defaults.
 
 ## Sparse Helm compatibility
 
@@ -237,6 +259,26 @@ Use approved non-sensitive prompts to test both Gemini and Claude, streaming and
 The client-facing SDKs are the ordinary Google and Anthropic static-key SDKs; Gateway adapts their requests to the Google or Anthropic Vertex publisher respectively. Matching model-level Vertex SDK overrides are mapped too, while model aliases and supported metadata remain intact. Mixed-SDK partner models remain outside this support: Google sign-in does not enable unrelated adapters. Existing HTTP fixtures cover Vertex routing and relay behavior, but actual SDK-to-Vertex-adapter decoding through the materialized path still requires verification for both providers and both response modes.
 
 For `redirect_uri_mismatch`, compare the exact displayed callback with Google's registration. For `invalid_client`, ask the credential-set administrator to repair the OAuth client rather than repeatedly asking members for consent. For Vertex permission/model-access failures, review IAM, project, region, and partner access; do not assume every upstream `401`/`403` is an expired refresh token. Transient token-endpoint failures and quota errors need separate diagnosis. Do not replay an ambiguous or partly delivered inference stream automatically.
+
+## Amazon Bedrock and Microsoft Foundry: each member signs in
+
+Members can also sign in with their own account to **Amazon Bedrock** and **Amazon Bedrock (OpenAI)** through AWS IAM Identity Center, and to **Microsoft Foundry (Claude)** through Microsoft Entra ID. Follow [Amazon Bedrock](/ai-gateway/amazon-bedrock) and [Microsoft Foundry](/ai-gateway/microsoft-foundry) for the cloud-side setup.
+
+Both, and the Microsoft Foundry provider itself, are available in every organization; there is nothing to turn on in `/admin`.
+
+Run the release's database migration first: it adds the `aws_sso` credential kind and the credential-set columns `oauth_tenant_id` and `aws_sso`.
+
+Like Google sign-in, Den completes each sign-in and stores the member's refresh token encrypted; Gateway renews it and, for AWS, exchanges it for short-lived role credentials that sign Bedrock requests. Den API and Gateway need public HTTPS egress to:
+
+| Host | Service | Used by |
+| --- | --- | --- |
+| `oidc.<sso-region>.amazonaws.com` | IAM Identity Center sign-in and renewal | Den API, Gateway |
+| `portal.sso.<sso-region>.amazonaws.com` | Role credentials; sign-out | Den API, Gateway |
+| `sts.<sso-region>.amazonaws.com` | Checking who signed in | Den API |
+| `login.microsoftonline.com` | Entra ID sign-in, renewal and signing keys | Den API, Gateway |
+| `<resource>.services.ai.azure.com` | Microsoft Foundry inference | Gateway |
+
+These are public AWS and Microsoft endpoints and pass the default egress policy; no `GATEWAY_EGRESS_ALLOWED_ORIGINS` exception is needed. Microsoft Foundry sign-in uses the same Den callback as Google, ending in `/v1/inference-providers/oauth/callback`. AWS sign-in uses the OAuth device flow and needs no callback.
 
 ## Verify and troubleshoot
 

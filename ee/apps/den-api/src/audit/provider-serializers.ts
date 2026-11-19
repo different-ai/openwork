@@ -122,7 +122,9 @@ export function serializeProviderGroup(row: typeof GatewayModelGroupTable.$infer
   return snapshot({ id: row.id, name: text(row.name, 1020), description: row.description === null ? null : multilineText(row.description, 40_000), status: row.status, providerModelIds: strings(modelRowIds) })
 }
 export function serializeProviderSet(row: typeof GatewayCredentialSetTable.$inferSelect) {
-  return snapshot({ id: row.id, name: text(row.name, 1020), credentialMode: row.credential_mode, status: row.status, createdByMemberId: row.created_by_org_membership_id, oauthClientId: row.oauth_client_id === null ? null : text(row.oauth_client_id, 1020), oauthClientConfigured: Boolean(row.oauth_client_id && row.oauth_client_secret) })
+  return snapshot({ id: row.id, name: text(row.name, 1020), credentialMode: row.credential_mode, status: row.status, createdByMemberId: row.created_by_org_membership_id, oauthClientId: row.oauth_client_id === null ? null : text(row.oauth_client_id, 1020), oauthClientConfigured: Boolean(row.oauth_client_id && row.oauth_client_secret),
+    oauthTenantId: row.oauth_tenant_id === null ? null : text(row.oauth_tenant_id, 64),
+    awsSso: row.aws_sso === null ? null : { startUrl: text(row.aws_sso.startUrl, 2048), region: text(row.aws_sso.region, 32), accountId: text(row.aws_sso.accountId, 12), roleName: text(row.aws_sso.roleName, 32) } })
 }
 export function serializeProviderCredential(row: typeof GatewayProviderCredentialTable.$inferSelect) {
   return snapshot({ id: row.id, credentialSetId: row.credential_set_id, memberId: row.org_membership_id, subjectType: row.org_membership_id ? "member" : "organization", kind: row.kind, status: row.status, expiresAt: row.expires_at?.toISOString() ?? null })

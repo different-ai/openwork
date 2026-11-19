@@ -1,16 +1,17 @@
-import { and, eq, gt, lt, lte } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, AuthUserTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { Context, MiddlewareHandler } from "hono"
 import { getSignedCookie } from "hono/cookie"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
-import { auth } from "./auth.js"
+import { sessionTokenMatches } from "./session-token.js"
+import { auth, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX } from "./auth.js"
 import { cache, type CachedAuthSession } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
-import { getDenSessionExpiresAt, getDenSessionRefreshCutoff } from "./session-lifetime.js"
+import { sessionRefreshDue } from "./session-security-settings.js"
 
 type AuthSessionValue = {
   user: CachedAuthSession["user"]
@@ -40,13 +41,17 @@ export type AuthContextVariables = {
 const INTERNAL_MCP_PRINCIPAL_HEADER = "x-den-internal-mcp-principal"
 const INTERNAL_MCP_PRINCIPAL_TTL_MS = 60_000
 export const INTERNAL_CAPABILITY_CONNECTOR_HEADER = "x-den-internal-capability-connector"
-const BETTER_AUTH_SESSION_COOKIE_NAMES = [
-  "openwork-den.session_token",
-  "__Secure-openwork-den.session_token",
-  "better-auth.session_token",
-  "__Secure-better-auth.session_token",
-  "better-auth-session_token",
-] as const
+// With its own cookie prefix (a local world), this Den reads only its own cookies, never another Den's on the
+// same host; the legacy names are for the default prefix only.
+const BETTER_AUTH_SESSION_COOKIE_NAMES = env.authCookiePrefix === "openwork-den"
+  ? [
+    "openwork-den.session_token",
+    "__Secure-openwork-den.session_token",
+    "better-auth.session_token",
+    "__Secure-better-auth.session_token",
+    "better-auth-session_token",
+  ]
+  : [`${env.authCookiePrefix}.session_token`, `__Secure-${env.authCookiePrefix}.session_token`]
 
 // Per-process secret used exclusively to sign the internal MCP principal header.
 // It is generated fresh at startup, lives only in memory, and is never derived
@@ -59,6 +64,8 @@ type InternalMcpPrincipal = {
   userId: string
   organizationId: string
   expiresAt: number
+  /** MCP grant/client/run-token identifier (`grant:<id>` …) for audit attribution; never token material. */
+  credentialId?: string
 }
 
 type InternalCapabilityConnector = InternalMcpPrincipal & {
@@ -94,11 +101,12 @@ function verifySignature(payload: string, signature: string) {
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer)
 }
 
-export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string }) {
+export function createInternalMcpPrincipalHeader(input: { userId: string; organizationId: string; credentialId?: string | null }) {
   const principal: InternalMcpPrincipal = {
     userId: normalizeDenTypeId("user", input.userId),
     organizationId: normalizeDenTypeId("organization", input.organizationId),
     expiresAt: Date.now() + INTERNAL_MCP_PRINCIPAL_TTL_MS,
+    ...(input.credentialId ? { credentialId: input.credentialId } : {}),
   }
   const payload = Buffer.from(JSON.stringify(principal), "utf8").toString("base64url")
   return `${payload}.${signPrincipalPayload(payload)}`
@@ -145,6 +153,20 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   }
 
   return parsed
+}
+
+/**
+ * The request is a Connect capability call: an agent acting for the member (in Slack or Workbot chat), not the
+ * member's own browser. Only Den signs this header, so a caller cannot claim it.
+ */
+export function cameThroughConnect(headers: Headers): boolean {
+  return verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)) !== null
+}
+
+/** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
+export function readInternalMcpPrincipalCredentialId(headers: Headers): string | null {
+  const credentialId = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))?.credentialId
+  return typeof credentialId === "string" && credentialId ? credentialId : null
 }
 
 export function readInternalCapabilityConnectorId(headers: Headers): string | null {
@@ -329,12 +351,21 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
   }
 
   const now = new Date()
-  const refreshCutoff = getDenSessionRefreshCutoff(now)
-  if (row.session.expiresAt > refreshCutoff) {
+  if (!sessionRefreshDue(row.session, now)) {
     return bearerSessionValue(row)
   }
 
-  const nextExpiresAt = getDenSessionExpiresAt(now)
+  // Extending reads the person's session limits (Auth & Security › General), so
+  // shorter ones set by any of their organizations apply here too.
+  let nextExpiresAt: Date
+  try {
+    const { userSessionExpiresAt } = await import("./session-security-lifetime.js")
+    nextExpiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
+  } catch (error) {
+    // The session stays valid until its current expiry; a later request extends it.
+    logger.error("session length could not be read", { auth_session_source: "den_session_middleware", request_id: requestContext?.requestId, error })
+    return bearerSessionValue(row)
+  }
   try {
     await db
       .update(AuthSessionTable)
@@ -343,10 +374,10 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
         updatedAt: now,
       })
       .where(and(
-        eq(AuthSessionTable.token, token),
+        sessionTokenMatches(token),
         gt(AuthSessionTable.expiresAt, now),
-        lte(AuthSessionTable.expiresAt, refreshCutoff),
-        lt(AuthSessionTable.expiresAt, nextExpiresAt),
+        // Not already extended by a concurrent request.
+        eq(AuthSessionTable.updatedAt, row.session.updatedAt),
       ))
   } catch (error) {
     logger.error("session refresh failed", {
@@ -383,17 +414,22 @@ export async function revokeBearerSession(headers: Headers) {
     return false
   }
 
-  const rows = await db
-    .select({ id: AuthSessionTable.id })
+  // primary: a session created moments ago must still have its cached id revoked.
+  const rows = await db.$primary
+    .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
-    .where(eq(AuthSessionTable.token, token))
+    .where(sessionTokenMatches(token))
     .limit(1)
-  await db.delete(AuthSessionTable).where(eq(AuthSessionTable.token, token))
+  await db.delete(AuthSessionTable).where(sessionTokenMatches(token))
   // Sign-out/revocation is the authoritative point that invalidates cached auth.
   await cache.auth.revokeSession(token)
   const session = rows[0]
   if (session) {
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
+    // Direct delete (desktop bearer sign-out): no better-auth hook fires.
+    // Lazy import keeps session.ts free of an audit import cycle at load time.
+    const { recordSessionRevoked } = await import("./audit/domain/sessions.js")
+    await recordSessionRevoked(session, "sign_out").catch(() => undefined)
   }
   return true
 }
@@ -413,11 +449,21 @@ export async function getRequestSession(headers: Headers, context?: Context): Pr
   }
 
   const bearerToken = readBearerToken(headers)
-  if (!bearerToken) {
+  if (!bearerToken || isMcpAccessToken(bearerToken)) {
     return null
   }
 
   return getSessionFromToken(bearerToken, sessionRequestContext(context))
+}
+
+/**
+ * MCP access tokens are JWTs or opaque `ow_mcp_at_` tokens, and verifyMcpRequest
+ * authenticates them. Den session tokens are 32 letters and digits, so no session
+ * row can match either shape: skip the lookup rather than pay for a miss on every
+ * MCP request (misses are not cached).
+ */
+function isMcpAccessToken(token: string) {
+  return token.includes(".") || token.startsWith(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX)
 }
 
 export function shouldSkipRequestSession(request: Request) {

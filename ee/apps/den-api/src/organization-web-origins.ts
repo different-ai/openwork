@@ -2,6 +2,9 @@ import { ORGANIZATION_WEB_ORIGIN_LIMIT, normalizeExactHttpsOrigin } from "@openw
 import { and, asc, count, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable, OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { appendDomainChanges } from "./audit/domain/legacy.js"
+import { webOriginApprovedEvent, webOriginRemovedEvent } from "./audit/domain/web-origins.js"
+import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 
 type OrganizationId = DenTypeId<"organization">
@@ -17,7 +20,7 @@ export type OrganizationWebOriginRecord = {
 }
 
 export type ApproveOrganizationWebOriginResult =
-  | { ok: true; webOrigin: OrganizationWebOriginRecord }
+  | { ok: true; webOrigin: OrganizationWebOriginRecord; auditEventIds: string[] }
   | { ok: false; reason: "already_approved" | "limit_reached" }
 
 /** Resolves whether `origin` is approved, optionally scoped to one organization. */
@@ -32,7 +35,8 @@ let approvalCacheGeneration = 0
 
 async function lookupWebOriginApprovalInDatabase(input: { origin: string; organizationId?: OrganizationId }) {
   const originMatch = eq(OrganizationWebOriginTable.origin, input.origin)
-  const rows = await db
+  // primary: runs right after an approval or removal clears the cache, and the result is cached.
+  const rows = await db.$primary
     .select({ id: OrganizationWebOriginTable.id })
     .from(OrganizationWebOriginTable)
     .where(input.organizationId ? and(eq(OrganizationWebOriginTable.organizationId, input.organizationId), originMatch) : originMatch)
@@ -52,7 +56,8 @@ export function setWebOriginApprovalLookupForTest(lookup: WebOriginApprovalLooku
 type MemberWebOriginLookup = (input: { userId: UserId; origin: string }) => Promise<OrganizationId[]>
 
 async function lookupMemberOrganizationsApprovingInDatabase(input: { userId: UserId; origin: string }) {
-  const rows = await db
+  // primary: an uncached handoff check, so a removal takes effect immediately.
+  const rows = await db.$primary
     .select({ organizationId: OrganizationWebOriginTable.organizationId })
     .from(OrganizationWebOriginTable)
     .innerJoin(MemberTable, and(
@@ -87,10 +92,14 @@ function isCanonicalExactHttpsOrigin(origin: string) {
   return normalizeExactHttpsOrigin(origin) === origin
 }
 
+const DUPLICATE_ENTRY_MESSAGE = /\bDuplicate entry\b|\(errno 1062\)/
+
 function isDuplicateEntry(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "ER_DUP_ENTRY") return true
   if ("errno" in error && error.errno === 1062) return true
+  // PlanetScale/Vitess surface MySQL errors as message text only, e.g. "... code = AlreadyExists desc = Duplicate entry 'x' for key 'y' (errno 1062) (sqlstate 23000) ...".
+  if ("message" in error && typeof error.message === "string" && DUPLICATE_ENTRY_MESSAGE.test(error.message)) return true
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 
@@ -189,11 +198,14 @@ export async function approveOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   origin: string
   createdByOrgMemberId: MemberId
-}): Promise<ApproveOrganizationWebOriginResult> {
-  const id = createDenTypeId("organizationWebOrigin")
+  /** Reuse a known-free id (config-blob imports reuse source ids). Routes omit it. */
+  id?: OrganizationWebOriginId
+}, capture: AuditChangeCapture | null = null): Promise<ApproveOrganizationWebOriginResult> {
+  const id = input.id ?? createDenTypeId("organizationWebOrigin")
   const createdAt = new Date()
 
   let outcome: "created" | "already_approved" | "limit_reached"
+  let auditEventIds: string[] = []
   try {
     outcome = await db.transaction(async (tx) => {
       // The organization row is the serialization point for the per-org limit.
@@ -216,10 +228,13 @@ export async function approveOrganizationWebOrigin(input: {
         createdByOrgMemberId: input.createdByOrgMemberId,
         createdAt,
       })
+      auditEventIds = await appendDomainChanges(tx, capture, [webOriginApprovedEvent(input.organizationId, { id, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId, createdAt })])
       return "created" as const
     })
   } catch (error) {
     if (!isDuplicateEntry(error)) throw error
+    // A reused id (config-blob import) taken in the meantime is not "already approved": try once more with a new id.
+    if (input.id) return approveOrganizationWebOrigin({ organizationId: input.organizationId, origin: input.origin, createdByOrgMemberId: input.createdByOrgMemberId }, capture)
     outcome = "already_approved"
   }
 
@@ -234,19 +249,25 @@ export async function approveOrganizationWebOrigin(input: {
       createdAt,
       createdByName: await readCreatorName(input.createdByOrgMemberId),
     },
+    auditEventIds,
   }
 }
 
-/** Removes one approved origin from the organization. Returns the removed origin, or null when absent. */
+/**
+ * Removes one approved origin from the organization. Returns the removed origin
+ * (and the web_origin.removed event ids when captured), or null when absent.
+ */
 export async function removeOrganizationWebOrigin(input: {
   organizationId: OrganizationId
   id: OrganizationWebOriginId
-}): Promise<string | null> {
+}, capture: AuditChangeCapture | null = null): Promise<{ origin: string; auditEventIds: string[] } | null> {
   const scope = and(eq(OrganizationWebOriginTable.id, input.id), eq(OrganizationWebOriginTable.organizationId, input.organizationId))
-  const [row] = await db.select({ origin: OrganizationWebOriginTable.origin }).from(OrganizationWebOriginTable).where(scope).limit(1)
-  if (!row) return null
-
-  await db.delete(OrganizationWebOriginTable).where(scope)
-  invalidateWebOriginApprovalCache(row.origin)
-  return row.origin
+  const removed = await db.transaction(async (tx) => {
+    const [row] = await tx.select().from(OrganizationWebOriginTable).where(scope).limit(1).for("update")
+    if (!row) return null
+    await tx.delete(OrganizationWebOriginTable).where(scope)
+    return { origin: row.origin, auditEventIds: await appendDomainChanges(tx, capture, [webOriginRemovedEvent(input.organizationId, row)]) }
+  })
+  if (removed) invalidateWebOriginApprovalCache(removed.origin)
+  return removed
 }

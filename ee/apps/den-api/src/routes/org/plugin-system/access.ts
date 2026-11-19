@@ -11,9 +11,11 @@ import {
   PluginConfigObjectTable,
   PluginTable,
 } from "@openwork-ee/den-db/schema"
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
-import { memberHasRole } from "../shared.js"
+import { memberPermissionsForOrganizationContext } from "../../../middleware/member-permissions.js"
+import type { MemberPermissions } from "../../../permissions/effective.js"
 
 export type PluginArchResourceKind = "config_object" | "connector_instance" | "marketplace" | "plugin"
 export type PluginArchRole = "viewer" | "editor" | "manager"
@@ -23,6 +25,13 @@ export type PluginArchActorContext = {
   apiKey?: true
   automation?: true
   memberTeams: MemberTeamSummary[]
+  /**
+   * The actor's effective permissions, when already resolved (request
+   * middleware, or a synthetic actor such as a connector automation). When
+   * absent they are resolved from `organizationContext` once per context
+   * object (see pluginArchPermissions).
+   */
+  memberPermissions?: MemberPermissions
   organizationContext: OrganizationContext
   session: { createdAt?: Date | string | null } | null | undefined
 }
@@ -98,15 +107,43 @@ function maxRole(current: PluginArchRole | null, candidate: PluginArchRole | nul
   return rolePriority[candidate] > rolePriority[current] ? candidate : current
 }
 
-export function isPluginArchOrgAdmin(context: PluginArchActorContext) {
-  return context.organizationContext.currentMember.isOwner || memberHasRole(context.organizationContext.currentMember.role, "admin")
+/**
+ * The actor's effective permissions. Uses `context.memberPermissions` when set;
+ * otherwise resolves them for `context.organizationContext.currentMember`,
+ * cached per organization context object, so one request resolves once no
+ * matter how many items it checks.
+ */
+export async function pluginArchPermissions(context: PluginArchActorContext): Promise<MemberPermissions> {
+  if (context.memberPermissions) return context.memberPermissions
+  const memberTeams = context.memberTeams.length > 0 ? context.memberTeams : undefined
+  const permissions = await memberPermissionsForOrganizationContext(context.organizationContext, memberTeams)
+  context.memberPermissions = permissions
+  return permissions
 }
 
-export function hasPluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
-  if (capability === "plugin.create" || capability === "config_object.create") {
+export async function pluginArchHasPermission(context: PluginArchActorContext, key: PermissionKey) {
+  return (await pluginArchPermissions(context)).has(key)
+}
+
+/** Holders of `sharing.manage_all` act as manager on every plugin, marketplace, config object and connector instance. */
+export function canManageAllPluginArchResources(context: PluginArchActorContext) {
+  return pluginArchHasPermission(context, "sharing.manage_all")
+}
+
+const pluginArchCapabilityPermissions: Record<PluginArchCapability, PermissionKey | null> = {
+  "config_object.create": null,
+  "plugin.create": null,
+  "marketplace.create": "marketplaces.manage",
+  "connector_account.create": "connectors.manage",
+  "connector_instance.create": "connectors.manage",
+}
+
+export async function hasPluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
+  const key = pluginArchCapabilityPermissions[capability]
+  if (key === null) {
     return true
   }
-  return isPluginArchOrgAdmin(context)
+  return pluginArchHasPermission(context, key)
 }
 
 function roleSatisfies(role: PluginArchRole | null, required: PluginArchRole) {
@@ -213,7 +250,7 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
     return null
   }
 
-  if (isPluginArchOrgAdmin(context)) {
+  if (await canManageAllPluginArchResources(context)) {
     return "manager" satisfies PluginArchRole
   }
 
@@ -246,7 +283,7 @@ async function resolveMarketplaceRoleForIds(context: PluginArchActorContext, mar
     return null
   }
 
-  if (isPluginArchOrgAdmin(context)) {
+  if (await canManageAllPluginArchResources(context)) {
     return "manager" satisfies PluginArchRole
   }
 
@@ -289,7 +326,7 @@ export async function resolvePluginArchPluginRoles(context: PluginArchActorConte
   const organizationPluginIds = pluginRows.map((plugin) => plugin.id)
   if (organizationPluginIds.length === 0) return roles
 
-  if (isPluginArchOrgAdmin(context)) {
+  if (await canManageAllPluginArchResources(context)) {
     for (const pluginId of organizationPluginIds) roles.set(pluginId, "manager")
     return roles
   }
@@ -359,12 +396,97 @@ export async function resolvePluginArchPluginRoles(context: PluginArchActorConte
   return roles
 }
 
+/** Resolves the caller's role for many config objects with the same rules as resolvePluginArchResourceRole. */
+export async function resolvePluginArchConfigObjectRoles(context: PluginArchActorContext, configObjectIds: ConfigObjectId[]) {
+  const roles = new Map<ConfigObjectId, PluginArchRole>()
+  const organizationId = context.organizationContext.organization.id
+  if (configObjectIds.length === 0) return roles
+  const existing = await db.select({ id: ConfigObjectTable.id })
+    .from(ConfigObjectTable)
+    .where(and(eq(ConfigObjectTable.organizationId, organizationId), inArray(ConfigObjectTable.id, configObjectIds)))
+  const existingIds = existing.map((row) => row.id)
+  if (existingIds.length === 0) return roles
+
+  if (await canManageAllPluginArchResources(context)) {
+    for (const configObjectId of existingIds) roles.set(configObjectId, "manager")
+    return roles
+  }
+
+  const memberId = context.organizationContext.currentMember.id
+  const teamIds = context.memberTeams.map((team) => team.id)
+  const directGrants = await db
+    .select({
+      configObjectId: ConfigObjectAccessGrantTable.configObjectId,
+      orgMembershipId: ConfigObjectAccessGrantTable.orgMembershipId,
+      orgWide: ConfigObjectAccessGrantTable.orgWide,
+      removedAt: ConfigObjectAccessGrantTable.removedAt,
+      role: ConfigObjectAccessGrantTable.role,
+      teamId: ConfigObjectAccessGrantTable.teamId,
+    })
+    .from(ConfigObjectAccessGrantTable)
+    .where(and(
+      inArray(ConfigObjectAccessGrantTable.configObjectId, existingIds),
+      eq(ConfigObjectAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByConfigObject = groupGrantsBy(directGrants, (grant) => grant.configObjectId)
+
+  const unresolvedIds: ConfigObjectId[] = []
+  for (const configObjectId of existingIds) {
+    const role = resolvePluginArchGrantRole({ grants: grantsByConfigObject.get(configObjectId) ?? [], memberId, teamIds })
+    if (role) roles.set(configObjectId, role)
+    else unresolvedIds.push(configObjectId)
+  }
+  if (unresolvedIds.length === 0) {
+    return roles
+  }
+
+  // Without a direct grant, any containing plugin the caller owns or is
+  // granted makes the config object viewable. Catalog access does not count.
+  const memberships = await db
+    .select({ configObjectId: PluginConfigObjectTable.configObjectId, pluginId: PluginConfigObjectTable.pluginId })
+    .from(PluginConfigObjectTable)
+    .where(and(inArray(PluginConfigObjectTable.configObjectId, unresolvedIds), isNull(PluginConfigObjectTable.removedAt)))
+  if (memberships.length === 0) {
+    return roles
+  }
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+    .from(PluginTable)
+    .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, [...new Set(memberships.map((membership) => membership.pluginId))])))
+  if (pluginRows.length === 0) {
+    return roles
+  }
+  const pluginGrants = await db
+    .select({
+      orgMembershipId: PluginAccessGrantTable.orgMembershipId,
+      orgWide: PluginAccessGrantTable.orgWide,
+      pluginId: PluginAccessGrantTable.pluginId,
+      removedAt: PluginAccessGrantTable.removedAt,
+      role: PluginAccessGrantTable.role,
+      teamId: PluginAccessGrantTable.teamId,
+    })
+    .from(PluginAccessGrantTable)
+    .where(and(
+      inArray(PluginAccessGrantTable.pluginId, pluginRows.map((plugin) => plugin.id)),
+      eq(PluginAccessGrantTable.organizationId, organizationId),
+    ))
+  const grantsByPlugin = groupGrantsBy(pluginGrants, (grant) => grant.pluginId)
+  const reachablePluginIds = new Set(pluginRows
+    .filter((plugin) => plugin.createdByOrgMembershipId === memberId
+      || resolvePluginArchGrantRole({ grants: grantsByPlugin.get(plugin.id) ?? [], memberId, teamIds }) !== null)
+    .map((plugin) => plugin.id))
+
+  for (const membership of memberships) {
+    if (reachablePluginIds.has(membership.pluginId)) roles.set(membership.configObjectId, "viewer")
+  }
+  return roles
+}
+
 export async function resolvePluginArchResourceRole(input: ResourceLookupInput) {
   if (!(await resourceExistsInOrganization(input))) {
     return null
   }
 
-  if (isPluginArchOrgAdmin(input.context)) {
+  if (await canManageAllPluginArchResources(input.context)) {
     return "manager" satisfies PluginArchRole
   }
 
@@ -465,7 +587,7 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
 }
 
 export async function requirePluginArchCapability(context: PluginArchActorContext, capability: PluginArchCapability) {
-  if (hasPluginArchCapability(context, capability)) {
+  if (await hasPluginArchCapability(context, capability)) {
     return
   }
 

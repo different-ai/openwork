@@ -67,6 +67,24 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
     at: new Date().toISOString(),
   };
   if (!matched) return { request, reply: "Active session workload" };
+  if (results.length && text(results[0]?.content).includes("This is discovery metadata, NOT the skill's instructions")) {
+    const capability = text(results[0]?.content).match(/"name":"((?:skill|plugin):[^"\n]+)"/)?.[1];
+    if (!capability) throw new Error("Cloud skill discovery omitted its retrieval capability");
+    const tools = Array.isArray(body.tools) ? body.tools.filter(record) : [];
+    const execute = tools.find(item => item.type === "function" && record(item.function) && item.function.name === "execute");
+    if (!execute) throw new Error("Cloud skill retrieval needs the native execute tool");
+    if (results.length <= 2) {
+      if (results.length === 2 && !text(results[1]?.content).includes("get_skill")) throw new Error("get_skill was not discovered through Code Mode");
+      request.kind = "tool";
+      request.toolName = "execute";
+      request.arguments = { code: results.length === 1
+        ? 'return search({ namespace: "openwork-cloud", query: "get_skill" });'
+        : `return await tools["openwork-cloud"]["get_skill"](${JSON.stringify({ name: capability })});` };
+      return { request, reply: "" };
+    }
+    const reply = text(results.at(-1)?.content);
+    return { request, reply: reply.includes("current code:") ? reply : "OpenWork: UNAVAILABLE" };
+  }
   if (results.length) {
     const reply = text(results.at(-1)?.content);
     if (!reply) throw new Error("The model received no tool result text");
@@ -88,6 +106,7 @@ function decide(body: Record<string, unknown>, turn: { prompt: string; forcedSki
       request.arguments = { id };
     }
   }
+  if (request.kind !== "tool") request.arguments = { availableSkills: skills };
   return { request, reply: "OpenWork: UNAVAILABLE" };
 }
 

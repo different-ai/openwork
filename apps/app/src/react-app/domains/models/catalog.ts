@@ -8,7 +8,7 @@ import { filterCloudManagedModelOptions, markDisabledModelOptions, mergeModelOpt
 import { isCloudManagedProviderKey } from "../connections/provider-auth/cloud-provider-config";
 import { filterEntitledModelOptions, hideBuiltInZenFallback, isProviderAllowedByDesktopPolicy } from "../connections/provider-auth/provider-policy";
 import { modelRefKey } from "../session/models/model-collections-store";
-import { isAutoModel, withAutoDefaultPin, withImportedModelMetadata, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
+import { freeAutoCoveredByOpenWorkModels, isAutoModel, isFreeAutoModel, withAutoDefaultPin, withImportedModelMetadata, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
 
 // Every model picker (composer popover, "All models" dialog, command palette,
 // shortcuts) reads its options from this pipeline, so they list the same
@@ -78,7 +78,9 @@ export function buildModelCatalog(input: ModelCatalogInput): ModelCatalog {
   // Free Auto that is switched off, or not yet confirmed on, is not offered anywhere. It is not "unavailable":
   // that state is for Auto that is on but failing. The model stays known so a saved choice can still be named.
   const autoHidden = input.autoPending === true || freeAutoSwitchedOff(input.autoStatus);
-  const offered = autoHidden ? entitled.filter((option) => !isAutoModel(option)) : entitled;
+  // Members whose organization has OpenWork Models choose its models directly, so free Auto is not listed for them.
+  const freeAutoCovered = freeAutoCoveredByOpenWorkModels(entitled);
+  const offered = entitled.filter((option) => autoHidden ? !isAutoModel(option) : !(freeAutoCovered && isFreeAutoModel(option)));
   // Under "only managed providers" the list stays exactly as the desktop policy allows it, Zen included.
   const listed = input.restrictToCloud ? offered : hideBuiltInZenFallback(offered);
   return { known, options: withAutoDefaultPin(listed, input.autoStatus) };
@@ -119,7 +121,9 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
   const implicitStarter = !input.sessionScoped && !known && !saved && current.providerID === "opencode" && current.modelID === "big-pickle";
   // The free Zen starter is only hidden from the list once better models exist; it still works, so it is not "unavailable".
   const hiddenZenFallback = Boolean(known && !known.disabled && known.zenFallback === true);
-  if (implicitStarter || (hiddenZenFallback && !policyBlocked && !blockedBySaved)
+  // Free Auto hidden behind OpenWork Models still works for a conversation already on it.
+  const hiddenFreeAuto = Boolean(known && !known.disabled && isFreeAutoModel(known) && freeAutoCoveredByOpenWorkModels(input.catalog.options));
+  if (implicitStarter || ((hiddenZenFallback || hiddenFreeAuto) && !policyBlocked && !blockedBySaved)
     || (input.catalogState === "loading" && !policyBlocked && !signedOut)) return undefined;
   return {
     model: current,
@@ -127,6 +131,24 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
     description: signedOut ? undefined : known?.description ?? saved?.description,
     reason: policyBlocked ? "policy" : signedOut ? "signed-out" : saved?.reason ?? (known?.disabled ? "disabled" : "unavailable"),
   };
+}
+
+/**
+ * Names the chosen organization model while the saved sign-in is still being checked. Organization models
+ * are not offered until that check answers, but the one already chosen keeps the name and settings it had
+ * in the last list instead of reading as nothing selected. Display only: never listed or selectable.
+ */
+export function restoringModelOption(input: {
+  current: ModelRef | undefined;
+  /** The saved sign-in has been neither verified nor rejected yet. */
+  restoring: boolean;
+  runtime: readonly ModelOption[] | null;
+  fallback?: readonly ModelOption[];
+}): ModelOption | undefined {
+  const { current } = input;
+  if (!input.restoring || !current || !isCloudManagedProviderKey(current.providerID)) return undefined;
+  const key = modelRefKey(current);
+  return [...(input.runtime ?? []), ...(input.fallback ?? [])].find((option) => modelRefKey(option) === key);
 }
 
 /** A saved choice blocked by policy or a disabled provider is not listed, even if its provider reappears. */

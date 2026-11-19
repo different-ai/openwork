@@ -54,6 +54,7 @@ export const SEED_MEANINGS: Readonly<Record<string, string>> = {
   team: "A seeded organization owner with demo Slack, Notion, Linear, Google Calendar and Gmail (in-memory Acme Robotics data) plus real Notion and Linear connectors (individual accounts stay unconnected).",
   restricted: "The team seed with Den's canonical restricted desktop policy applied.",
   workspace: "The team seed; with a desktop (preview-full) it is signed in to a workspace with the demo apps ready.",
+  plans: "Organizations in each plan situation that limits who may join (an Enterprise trial set to 20 users with 5, Free at its limit, an Enterprise plan for 6 users, Team paid in a loopback test-mode Stripe), all owned by the test account, which is also this Den's platform admin.",
   blank: "Exact published release bytes with a completely blank, unseeded profile.",
 };
 
@@ -70,7 +71,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     family: "preview",
     components: ["desktop"],
     targets: [
-      { target: "local/host", seeds: ["fresh"], sources: ["local"], defaultSource: LOCAL, note: "A native desktop window on this computer; no Den or account." },
+      { target: "local/host", seeds: ["fresh"], sources: ["local"], defaultSource: LOCAL, note: "Opens and focuses a desktop window on this computer; no Den or account. To check app UI without a window, use dev-app-web (headless)." },
       { target: "daytona/linux", seeds: ["fresh", "blank"], sources: ["sha", "ref", "release"], defaultSource: DEV, note: "Linux Electron in a private noVNC viewer. fresh builds a pushed commit; blank runs exact published release bytes." },
       { target: "daytona/windows", seeds: ["blank"], sources: ["release"], note: "Only an exact published Windows x64 release in a private VM." },
       { target: "freestyle/linux", seeds: ["fresh"], sources: ["sha", "ref"], defaultSource: DEV, note: "Signed-out desktop snapshot of a pushed commit: no Den, releases or --env app settings." },
@@ -80,24 +81,26 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
       { intent: "Latest dev (alpha) desktop on Daytona (accepts --env app settings)", command: `${UP} preview-desktop --place daytona --stage <stage> ${DETACH}` },
       { intent: "Exact published Linux release with a blank profile", command: `${UP} preview-desktop --place daytona --stage <stage> --source desktop=release:<x.y.z>/<distribution> --seed blank ${DETACH}` },
       { intent: "Exact published Windows release", command: `${UP} preview-desktop --place daytona --os windows --stage <stage> --source desktop=release:<x.y.z>/<distribution> --seed blank ${DETACH}` },
-      { intent: "This checkout as a native desktop window", command: `${UP} preview-desktop --stage <stage>` },
+      { intent: "This checkout as a native desktop window (opens a window on this computer; only when asked)", command: `${UP} preview-desktop --stage <stage>` },
     ],
     caveats: [
       "The desktop app alone: for a signed-in desktop use preview-full --seed workspace.",
       NO_MODELS,
       "Remote desktops are Linux (or a published Windows release), not a macOS parity check.",
+      "For app UI that does not need the desktop shell, prefer `pnpm world up dev-app-web --detach -- --browser`: the app in headless Chrome with a CDP address, nothing on screen.",
     ],
   },
   "preview-den": {
     family: "preview",
     components: ["den"],
     targets: [
-      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis." },
+      { target: "local/host", seeds: [...DEN_SEEDS, "plans"], sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis. plans runs a loopback test-mode Stripe, so it is local only." },
       { target: "daytona/linux", seeds: DEN_SEEDS, sources: ["sha", "ref"], defaultSource: DEV, note: "Den in a private Daytona sandbox." },
     ],
     examples: [
       { intent: "Den signup and onboarding from latest dev", command: `${UP} preview-den --place daytona --stage <stage> --seed fresh ${DETACH}` },
       { intent: "Seeded team administration (demo apps plus real connectors)", command: `${UP} preview-den --place daytona --stage <stage> --seed team ${DETACH}` },
+      { intent: "Every plan and seat situation, to check /admin Billing and the customer's Billing and invite screens", command: `${UP} preview-den --stage <stage> --seed plans ${DETACH}` },
       { intent: "A specific pushed commit", command: `${UP} preview-den --place daytona --stage <stage> --source den=sha:<full-pushed-sha> --seed fresh ${DETACH}` },
     ],
     caveats: ["Den alone: no desktop app. Mail stays in the preview's development outbox."],
@@ -106,7 +109,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     family: "preview",
     components: ["den", "desktop"],
     targets: [
-      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis plus a native desktop window." },
+      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis plus a desktop window that opens and takes focus on this computer." },
       { target: "daytona/linux", seeds: DEN_SEEDS, sources: ["sha", "ref"], defaultSource: DEV, note: "Two private Daytona sandboxes: Den plus a Linux desktop wired to it. Select a commit with --source den=...; the desktop builds from the same commit." },
     ],
     examples: [
@@ -157,13 +160,17 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     ],
     examples: [
       { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
+      { intent: "Feel Workbot for real: a real model, its own computer and an MCP App (local; keys from env or Infisical)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --live` },
+      { intent: "Workbot's Calendar over the Acme org: seeded Automations, model choices and mock meetings (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
       { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
       { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
     ],
     caveats: [
       "Sign in to Workbot as alex@acme.test (Den's seeded owner); Workbot and headless Automations are on for Acme Robotics.",
-      "The model is the deterministic Acme upstream (every answer is the same sentence) and the runner's computer is off: no paid keys or Freestyle key enter the world.",
-      "Every placement signs in through Den, sends a message and checks the runner's answer before reporting ready.",
+      "Acme Robotics has the in-memory demo Slack, Gmail, Google Calendar, Notion and Linear connected (you are Alex Chen); writes stay in memory until the world stops.",
+      "By default the model is the deterministic Acme upstream (every answer is the same sentence) and the runner's computer is off: no paid keys or Freestyle key enter the world.",
+      "-- --live (local only) uses a real model (ANTHROPIC_API_KEY or Infisical), turns on Workbot's computer when a Freestyle key is available, and seeds the Order calculator MCP App; it leaves the conversation empty so your first open is real.",
+      "Every placement signs in through Den before reporting ready; without --live it also sends a message and checks the runner's answer.",
     ],
   },
 };

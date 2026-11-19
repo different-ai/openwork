@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const CLOUD_MODEL_CONFIG_VERSION = 3;
+export const CLOUD_MODEL_CONFIG_VERSION = 4;
 export const CATALOG_FAST_VARIANT = "__openwork_catalog_fast_v1";
 export const FAST_VARIANT_PREFIX = "__openwork_fast_v1/";
 export const FAST_DEFAULT_VARIANT = `${FAST_VARIANT_PREFIX}default`;
@@ -48,8 +48,26 @@ export function catalogModelVariants(config: Record<string, unknown>, providerNp
   const fast = catalogFastVariants(config, providerNpm);
   if (fast) return fast;
   const modelProvider = isRecord(config.provider) ? config.provider : {};
-  if (providerNpm !== "@ai-sdk/anthropic" || config.reasoning === false
+  if (config.reasoning === false
     || (modelProvider.npm !== undefined && modelProvider.npm !== providerNpm)) return undefined;
+  if (providerNpm === "@ai-sdk/google" || providerNpm === "@ai-sdk/google-vertex") {
+    const efforts = [...new Set((Array.isArray(config.reasoning_options) ? config.reasoning_options : []).flatMap((option) => {
+      const parsed = effortOption.safeParse(option);
+      return parsed.success ? parsed.data.values : [];
+    }))];
+    if (!efforts.length) return undefined;
+    const variants = isRecord(config.variants) ? { ...config.variants } : {};
+    // V1 merges configured variants into inferred defaults. Omitting MINIMAL
+    // does not remove it: disable every effort the catalog excludes, including
+    // for opaque Gateway aliases. Explicit user overrides still take precedence.
+    for (const effort of reasoningEffort.options) {
+      if (!Object.hasOwn(variants, effort)) variants[effort] = efforts.includes(effort)
+        ? { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
+        : { disabled: true };
+    }
+    return variants;
+  }
+  if (providerNpm !== "@ai-sdk/anthropic") return undefined;
   const efforts = [...new Set((Array.isArray(config.reasoning_options) ? config.reasoning_options : []).flatMap((option) => {
     const parsed = effortOption.safeParse(option);
     return parsed.success ? parsed.data.values.filter(value => ["low", "medium", "high", "xhigh", "max"].includes(value)) : [];
@@ -68,23 +86,23 @@ export function nativeModelVariants(raw: unknown, providerPackage: string | unde
   const enabled = Object.entries(variants).flatMap(([id, value]) => {
     if (!isRecord(value) || value.disabled === true) return [];
     const { disabled, ...options } = value;
-    return [{ id, settings: { providerOptions: options } }];
+    return [{ id, settings: options }];
   });
   const metadata = fastMetadata.safeParse(variants[CATALOG_FAST_VARIANT]);
-  if (providerPackage !== "@opencode-ai/ai/providers/openai"
+  if (providerPackage !== "@opencode/ai/providers/openai"
     || !metadata.success
     || Object.keys(variants).some((id) => id.startsWith(FAST_VARIANT_PREFIX))) return enabled;
   // Catalog efforts are not OpenCode variants. Expand only here, and never
   // resurrect an explicitly disabled variant or overwrite custom settings.
   for (const effort of metadata.data.reasoningEfforts ?? []) {
-    if (!Object.hasOwn(variants, effort)) enabled.push({ id: effort, settings: { providerOptions: { reasoningEffort: effort } } });
+    if (!Object.hasOwn(variants, effort)) enabled.push({ id: effort, settings: { reasoningEffort: effort } });
   }
   return [
     ...enabled,
-    { id: FAST_DEFAULT_VARIANT, settings: { providerOptions: { serviceTier: "priority" } } },
+    { id: FAST_DEFAULT_VARIANT, settings: { serviceTier: "priority" } },
     ...enabled.map((variant) => ({
       id: fastVariantId(variant.id),
-      settings: { providerOptions: { ...variant.settings.providerOptions, serviceTier: "priority" } },
+      settings: { ...variant.settings, serviceTier: "priority" },
     })),
   ];
 }
@@ -112,8 +130,8 @@ export function materializeLegacyFastProviders(providers: Record<string, Record<
           if (!efforts.includes(effort) && !Object.hasOwn(variants, effort)) variants[effort] = { disabled: true };
         }
       }
-      for (const variant of nativeModelVariants(model.variants, "@opencode-ai/ai/providers/openai")) {
-        if (!Object.hasOwn(variants, variant.id)) variants[variant.id] = variant.settings.providerOptions;
+      for (const variant of nativeModelVariants(model.variants, "@opencode/ai/providers/openai")) {
+        if (!Object.hasOwn(variants, variant.id)) variants[variant.id] = variant.settings;
       }
       models[modelId] = { ...model, variants };
     }

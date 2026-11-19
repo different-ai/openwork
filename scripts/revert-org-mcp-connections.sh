@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Layered rollback runbook for org MCP connections (PRs #2406 + #2451 (desktop PR #2439 was superseded by #2451)).
+# Rollback runbook for org MCP connections (PRs #2406 + #2451 (desktop PR #2439 was superseded by #2451)).
 #
-# Layer 0 — instant, no deploy (prefer this): in /admin, disable the
-# mcpConnections capability for affected organizations. Every desktop version
-# in the field goes dark on its next poll from the org-level kill switch.
+# Org MCP connections are generally available, so there is no per-organization
+# switch any more: rolling back means reverting code.
 #
-# Layer 1 — code revert (this script): builds a revert branch from the squash
-# commits on origin/dev, newest first, and opens a PR. Desktop app code is
-# harmless while the server feature is dark, so reverting #2451 alone is
-# usually enough; --all also reverts the server/API PR #2406.
+# Code revert (this script): builds a revert branch from the squash commits on
+# origin/dev, newest first, and opens a PR. Reverting #2451 removes the desktop
+# side; --all also reverts the server/API PR #2406.
 #
 # DB note: #2406's tables (external MCP connections, grants) are additive.
 # A code revert leaves them in place on purpose — do NOT run destructive
@@ -73,7 +71,7 @@ if [ "$PUSH" -eq 1 ]; then
   git push origin "$BRANCH"
   gh pr create --base dev --head "$BRANCH" \
     --title "revert: org MCP connections (${PRS[*]/#/#})" \
-    --body "Emergency revert of the org MCP connections stack. Layer-0 kill switch (mcpConnections org capability set to false) should already be active; this removes the code. Additive DB tables are intentionally left in place."
+    --body "Emergency revert of the org MCP connections stack; this removes the code. Additive DB tables are intentionally left in place."
 else
   echo "Next: git push origin $BRANCH && gh pr create --base dev --head $BRANCH"
 fi

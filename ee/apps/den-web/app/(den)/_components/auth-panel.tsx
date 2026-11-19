@@ -3,9 +3,10 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
+import { emailFirstStepWhenSignUpClosed, isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
+import { readLastSignInMethod, type LastSignInMethod } from "../_lib/last-sign-in";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { signsInInPlace } from "../_lib/auth-resume";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
@@ -21,11 +22,34 @@ type PanelContent = {
 type EmailFirstStep = "email" | "sso" | "google" | "github" | "password" | "new_account";
 type ResolvedLoginStep = Exclude<EmailFirstStep, "email">;
 
+type AlternativeLoginStep = Exclude<ResolvedLoginStep, "sso">;
+
 type LoginOption = {
   nextStep: ResolvedLoginStep;
+  offerGoogleOnPassword: boolean;
   signInPath: string | null;
   signInUrl: string | null;
+  /**
+   * ssoPerOrganization: SSO is offered first and this is the usual step, one
+   * click away. Absent: SSO is the only way in.
+   */
+  alternativeStep: AlternativeLoginStep | null;
+  ssoRequired: boolean;
+  organizationName: string | null;
+  /** The identity providers that sign in this email; several get one button each. */
+  ssoProviders: SsoProviderOption[];
 };
+
+type SsoProviderOption = { providerId: string; name: string };
+
+function readSsoProviders(value: unknown): SsoProviderOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!isRecord(entry) || typeof entry.providerId !== "string" || typeof entry.name !== "string") return [];
+    const name = entry.name.trim();
+    return entry.providerId && name ? [{ providerId: entry.providerId, name }] : [];
+  });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -35,6 +59,10 @@ function isResolvedLoginStep(value: unknown): value is ResolvedLoginStep {
   return value === "sso" || value === "google" || value === "github" || value === "password" || value === "new_account";
 }
 
+function readAlternativeLoginStep(value: unknown): AlternativeLoginStep | null {
+  return value === "google" || value === "github" || value === "password" || value === "new_account" ? value : null;
+}
+
 function readLoginOption(payload: unknown): LoginOption | null {
   if (!isRecord(payload) || !isResolvedLoginStep(payload.nextStep)) {
     return null;
@@ -42,8 +70,13 @@ function readLoginOption(payload: unknown): LoginOption | null {
 
   return {
     nextStep: payload.nextStep,
+    offerGoogleOnPassword: payload.nextStep === "password" && payload.offerGoogleOnPassword === true,
     signInPath: typeof payload.signInPath === "string" ? payload.signInPath : null,
     signInUrl: typeof payload.signInUrl === "string" ? payload.signInUrl : null,
+    alternativeStep: payload.nextStep === "sso" ? readAlternativeLoginStep(payload.alternativeStep) : null,
+    ssoRequired: payload.ssoRequired === true,
+    organizationName: typeof payload.organizationName === "string" && payload.organizationName.trim() ? payload.organizationName.trim() : null,
+    ssoProviders: payload.nextStep === "sso" ? readSsoProviders(payload.ssoProviders) : [],
   };
 }
 
@@ -69,24 +102,57 @@ function GoogleLogo() {
   );
 }
 
+function LastUsedBadge() {
+  return (
+    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-[var(--dls-hover)] px-2 py-0.5 text-[11px] font-medium leading-4 text-[var(--dls-text-secondary)]">
+      Last used
+    </span>
+  );
+}
+
 function SocialButton({
   children,
   onClick,
   disabled,
+  lastUsed = false,
 }: {
   children: ReactNode;
   onClick: () => void;
   disabled: boolean;
+  lastUsed?: boolean;
 }) {
   return (
     <button
       type="button"
-      className="den-button-secondary den-social-button"
+      className={`den-button-secondary den-social-button${lastUsed ? " relative" : ""}`}
       onClick={onClick}
       disabled={disabled}
+      data-last-used={lastUsed ? "true" : undefined}
     >
       {children}
+      {lastUsed ? <LastUsedBadge /> : null}
     </button>
+  );
+}
+
+/**
+ * Email-first steps ask for the password on a separate form. Password managers
+ * only save a credential when the password form also carries the account name,
+ * so the password step repeats the email in a visually hidden, read-only
+ * username field (Chrome and Safari both look for autocomplete="username").
+ */
+function HiddenUsernameField({ email }: { email: string }) {
+  return (
+    <input
+      type="email"
+      name="email"
+      autoComplete="username"
+      value={email}
+      readOnly
+      tabIndex={-1}
+      aria-hidden="true"
+      className="pointer-events-none absolute h-px w-px overflow-hidden opacity-0"
+    />
   );
 }
 
@@ -229,6 +295,7 @@ export function AuthPanel({
   emailStepContent,
   socialFirst = false,
   socialProviders = ["google", "github"],
+  signInOnly = false,
 }: {
   prefilledEmail?: string;
   prefillKey?: string;
@@ -259,6 +326,11 @@ export function AuthPanel({
   socialFirst?: boolean;
   /** Which providers a social-first panel offers. */
   socialProviders?: readonly ("google" | "github")[];
+  /**
+   * Signs existing accounts in and offers no way to create one (the OpenWork phone app). The person gives their
+   * email first, so Google and GitHub are offered only to an account that already uses them.
+   */
+  signInOnly?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -271,6 +343,11 @@ export function AuthPanel({
   const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
   const [loginOptionBusy, setLoginOptionBusy] = useState(false);
   const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
+  // The method a password or social sign-in left in a long-lived cookie.
+  // "pending" until the browser cookie is read after hydration.
+  const [rememberedMethod, setRememberedMethod] = useState<LastSignInMethod | null | "pending">("pending");
+  const [rememberedDismissed, setRememberedDismissed] = useState(false);
+  const [rememberedPasswordOpen, setRememberedPasswordOpen] = useState(false);
   const {
     authMode,
     setAuthMode,
@@ -306,10 +383,14 @@ export function AuthPanel({
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
   const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
-  const visibleAuthMode = resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
+  // Closed by this deployment's setting, or because the caller only signs existing accounts in.
+  const signUpClosed = isSingleOrgPrivateSignup || signInOnly;
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const emailFirstInvite = emailFirstInvitationId?.trim() ?? "";
+  // An invitation still creates its account where sign-up is otherwise closed.
+  const noNewAccounts = signUpClosed && !emailFirstInvite;
+  const visibleAuthMode = signInOnly && noNewAccounts ? "sign-in" : resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
 
   function getLoginOptionsPath(targetEmail: string) {
     const params = new URLSearchParams({ email: targetEmail });
@@ -320,10 +401,10 @@ export function AuthPanel({
   }
 
   useEffect(() => {
-    if (isSingleOrgPrivateSignup && !emailFirstInvite && authMode === "sign-up") {
+    if (noNewAccounts && authMode === "sign-up") {
       setAuthMode("sign-in");
     }
-  }, [authMode, emailFirstInvite, isSingleOrgPrivateSignup, setAuthMode]);
+  }, [authMode, noNewAccounts, setAuthMode]);
 
   useEffect(() => {
     if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org") {
@@ -371,15 +452,61 @@ export function AuthPanel({
   };
 
   const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
-  const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && !emailFirstInvite && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
+  const emailFirstStep: EmailFirstStep = emailFirstStepWhenSignUpClosed(requestedEmailFirstStep, noNewAccounts);
   const emailFirstEmail = email.trim();
+  const ssoOrganizationName = loginOption?.organizationName ?? "Your organization";
+  const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
+  const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
+
+  // Read the remembered method once. setAuthMode is a new function on every
+  // provider render, so without this guard any later render (a session check,
+  // typing the email) re-ran this effect, closed the email form the person had
+  // just opened from "Continue with email", and cleared sign-in errors.
+  const rememberedMethodReadRef = useRef(false);
+  useEffect(() => {
+    if (!canRememberSignIn) {
+      rememberedMethodReadRef.current = false;
+      setRememberedMethod(null);
+      return;
+    }
+    if (rememberedMethodReadRef.current) {
+      return;
+    }
+    rememberedMethodReadRef.current = true;
+    const method = readLastSignInMethod(document.cookie);
+    if (!method) {
+      setRememberedMethod(null);
+      return;
+    }
+    setRememberedMethod(method);
+    setRememberedPasswordOpen(method === "password");
+    setAuthMode("sign-in");
+  }, [canRememberSignIn, setAuthMode]);
+
+  const rememberedSignInPending = canRememberSignIn && rememberedMethod === "pending" && emailFirstStep === "email";
+  const lastUsedMethod = rememberedMethod === "pending" ? null : rememberedMethod;
+  const showRememberedSignIn = canRememberSignIn && Boolean(lastUsedMethod) && !rememberedDismissed && emailFirstStep === "email" && !isSingleOrgSsoMode;
   const emailFirstContent: PanelContent =
-    emailFirstStep === "email"
+    showRememberedSignIn || rememberedSignInPending
+      ? {
+          title: "Welcome back.",
+          copy: "",
+          submitLabel: "Sign in",
+        }
+      : emailFirstStep === "email"
       ? {
           title: "Start using OpenWork",
           copy: "Enter your email and we'll send you to the right sign-in step.",
           submitLabel: "Next",
           ...emailStepContent,
+        }
+      : emailFirstStep === "sso" && loginOption?.alternativeStep
+      ? {
+          title: "Sign in with SSO.",
+          copy: loginOption.ssoRequired
+            ? `${ssoOrganizationName} requires SSO. Use another method to reach a different organization.`
+            : `${ssoOrganizationName} uses single sign-on for this email.`,
+          submitLabel: ssoContinueLabel,
         }
       : emailFirstStep === "sso"
       ? {
@@ -433,7 +560,7 @@ export function AuthPanel({
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
   // focused sub-flows (email verification, password reset) where switching mode
   // mid-step would be confusing.
-  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !isSingleOrgPrivateSignup && !verificationRequired && !isPasswordResetRequest;
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !signUpClosed && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
   const showEmailPasswordAuth = !isSingleOrgSsoMode;
@@ -493,7 +620,7 @@ export function AuthPanel({
         }
 
         setEmail(trimmedEmail);
-        setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+        setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
         setLoginOption(nextOption);
       } catch (error) {
         if (!superseded()) {
@@ -532,7 +659,8 @@ export function AuthPanel({
     window.location.assign(nextUrl.toString());
   };
 
-  const startEmailFirstSso = () => {
+  /** Start SSO at the organization's sign-in page; with a provider id, that identity provider (several to choose from). */
+  const startEmailFirstSso = (providerId?: string) => {
     const target = loginOption?.signInPath ?? loginOption?.signInUrl;
     if (!target) {
       setLoginOptionError("Could not find your organization SSO sign-in link. Try again.");
@@ -540,12 +668,24 @@ export function AuthPanel({
     }
 
     const nextUrl = new URL(target, window.location.origin);
+    if (providerId) {
+      nextUrl.searchParams.set("providerId", providerId);
+    }
     nextUrl.searchParams.set("callbackURL", getSocialCallbackUrl(runtimeConfig.openworkAuthCallbackUrl));
     const trimmedEmail = email.trim();
     if (trimmedEmail) {
       nextUrl.searchParams.set("loginHint", trimmedEmail);
     }
     window.location.assign(nextUrl.toString());
+  };
+
+  /** ssoPerOrganization: leave the suggested SSO for the usual step (password, Google, a new account). */
+  const chooseAlternativeLoginStep = () => {
+    const alternativeStep = loginOption?.alternativeStep;
+    if (!loginOption || !alternativeStep) return;
+    setLoginOptionError(null);
+    setAuthMode(alternativeStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
+    setLoginOption({ ...loginOption, nextStep: alternativeStep, alternativeStep: null });
   };
 
   const resolveEmailFirstStep = async (event: FormEvent<HTMLFormElement>) => {
@@ -576,7 +716,7 @@ export function AuthPanel({
       }
 
       setEmail(trimmedEmail);
-      setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+      setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
       setLoginOption(nextOption);
     } catch (error) {
       setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
@@ -709,12 +849,12 @@ export function AuthPanel({
             <p className="den-eyebrow">{eyebrow}</p>
             <div className="grid gap-2">
               <h2 className={titleClass}>{activeContent.title}</h2>
-              {socialFirst && emailFirstStep === "email" ? null : <p className="den-copy">{activeContent.copy}</p>}
+              {(socialFirst && emailFirstStep === "email") || !activeContent.copy ? null : <p className="den-copy">{activeContent.copy}</p>}
             </div>
           </div>
         ) : null}
 
-        {socialFirst && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" ? (
+        {socialFirst && !signInOnly && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
           <div className="grid gap-2.5">
             {socialProviders.includes("google") ? (
               <SocialButton onClick={() => void beginSocialAuth("google")} disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}>
@@ -749,7 +889,121 @@ export function AuthPanel({
           </div>
         ) : null}
 
-        {!waitingForPrefilledLoginOption && emailFirstStep === "email" ? (
+        {rememberedSignInPending ? (
+          <div className="grid gap-2.5" aria-busy="true" aria-label="Checking how you signed in last time" data-testid="remembered-sign-in-loading">
+            {[0, 1, 2].map((index) => (
+              <span key={index} className="h-12 rounded-xl bg-[var(--dls-hover)] motion-safe:animate-pulse" />
+            ))}
+          </div>
+        ) : null}
+
+        {showRememberedSignIn ? (
+          <div className="grid gap-2.5" data-testid="remembered-sign-in">
+            <SocialButton
+              onClick={() => void beginSocialAuth("google")}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+              lastUsed={lastUsedMethod === "google"}
+            >
+              <GoogleLogo />
+              <span>Continue with Google</span>
+            </SocialButton>
+            <SocialButton
+              onClick={() => void beginSocialAuth("github")}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+              lastUsed={lastUsedMethod === "github"}
+            >
+              <GitHubLogo />
+              <span>Continue with GitHub</span>
+            </SocialButton>
+            {rememberedPasswordOpen ? (
+              <form
+                className="grid gap-4 pt-1"
+                data-testid="remembered-password-form"
+                data-last-used={lastUsedMethod === "password" ? "true" : undefined}
+                onSubmit={async (event) => {
+                  const next = await submitAuth(event);
+                  await handleAuthNavigation(next);
+                }}
+              >
+                <label className="grid gap-2">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="den-label">Email</span>
+                    {lastUsedMethod === "password" ? (
+                      <span className="rounded-full bg-[var(--dls-hover)] px-2 py-0.5 text-[11px] font-medium leading-4 text-[var(--dls-text-secondary)]">
+                        Last used
+                      </span>
+                    ) : null}
+                  </span>
+                  <input
+                    className="den-input"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    name="email"
+                    autoComplete="username"
+                    required
+                  />
+                </label>
+                <label className="grid gap-2">
+                  <span className="den-label">Password</span>
+                  <input
+                    className="den-input"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    name="password"
+                    autoComplete="current-password"
+                    required
+                  />
+                </label>
+                <div className="-mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    className="text-sm font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                    onClick={() => {
+                      setAuthMode("sign-in");
+                      setPasswordResetRequested(true);
+                      setPasswordResetInfo("");
+                      setPasswordResetError(null);
+                    }}
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <button type="submit" className="den-button-primary w-full" disabled={formBusy}>
+                  {formBusy ? "Working..." : "Sign in"}
+                </button>
+              </form>
+            ) : (
+              <SocialButton
+                onClick={() => setRememberedPasswordOpen(true)}
+                disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                lastUsed={lastUsedMethod === "password"}
+              >
+                <span>Continue with email</span>
+              </SocialButton>
+            )}
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <button
+              type="button"
+              className="den-button-secondary w-full"
+              data-testid="remembered-sign-in-sso"
+              onClick={() => {
+                setRememberedDismissed(true);
+                setRememberedPasswordOpen(false);
+                setPassword("");
+                setLoginOptionError(null);
+              }}
+              disabled={authBusy || desktopRedirectBusy}
+            >
+              <span>Single sign-on</span>
+            </button>
+          </div>
+        ) : null}
+
+        {!waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
           <form className="grid gap-4" onSubmit={resolveEmailFirstStep}>
             <label className="grid gap-2">
               <span className="den-label">Email</span>
@@ -758,7 +1012,8 @@ export function AuthPanel({
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
-                autoComplete="email"
+                name="email"
+                autoComplete="username"
                 required
               />
             </label>
@@ -776,16 +1031,50 @@ export function AuthPanel({
           </form>
         ) : null}
 
-        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && (loginOption?.ssoProviders.length ?? 0) > 1 ? (
+          <div className="grid gap-2" data-testid="email-first-sso-providers">
+            {loginOption?.ssoProviders.map((provider) => (
+              <button
+                key={provider.providerId}
+                type="button"
+                className="den-button-primary w-full"
+                onClick={() => startEmailFirstSso(provider.providerId)}
+                disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                data-testid="email-first-sso-provider"
+              >
+                {`Continue with ${provider.name}`}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+        ) : !waitingForPrefilledLoginOption && emailFirstStep === "sso" ? (
           <button
             type="button"
             className="den-button-primary w-full"
-            onClick={startEmailFirstSso}
+            onClick={() => startEmailFirstSso()}
             disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            data-testid="email-first-sso"
           >
-            Sign in with SSO
+            {loginOption?.alternativeStep ? ssoContinueLabel : "Sign in with SSO"}
             <ArrowRight className="h-4 w-4" />
           </button>
+        ) : null}
+
+        {!waitingForPrefilledLoginOption && emailFirstStep === "sso" && loginOption?.alternativeStep ? (
+          <>
+            <div className="den-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
+            <button
+              type="button"
+              className="den-button-secondary w-full"
+              data-testid="email-first-sso-alternative"
+              onClick={chooseAlternativeLoginStep}
+              disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+            >
+              Use another sign-in method
+            </button>
+          </>
         ) : null}
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "google" ? (
@@ -810,12 +1099,13 @@ export function AuthPanel({
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "password" ? (
           <form
-            className="grid gap-4"
+            className="relative grid gap-4"
             onSubmit={async (event) => {
               const next = await submitAuth(event);
               await handleAuthNavigation(next);
             }}
           >
+            <HiddenUsernameField email={email} />
             <label className="grid gap-2">
               <span className="den-label">Password</span>
               <input
@@ -823,6 +1113,7 @@ export function AuthPanel({
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                name="password"
                 autoComplete="current-password"
                 required
               />
@@ -845,13 +1136,27 @@ export function AuthPanel({
               {formBusy ? "Working..." : "Sign in"}
               {!formBusy ? <ArrowRight className="h-4 w-4" /> : null}
             </button>
+            {loginOption?.offerGoogleOnPassword && !hideSocialAuth && socialProviders.includes("google") ? (
+              <>
+                <div className="den-divider" aria-hidden="true">
+                  <span>or</span>
+                </div>
+                <SocialButton
+                  onClick={() => void beginSocialAuth("google", { loginHint: email.trim() })}
+                  disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}
+                >
+                  <GoogleLogo />
+                  <span>Continue with Google</span>
+                </SocialButton>
+              </>
+            ) : null}
           </form>
         ) : null}
 
         {!waitingForPrefilledLoginOption && emailFirstStep === "new_account" ? (
           <form
             data-testid="signup-new-account"
-            className="grid gap-4"
+            className="relative grid gap-4"
             onSubmit={async (event) => {
               const next = await submitAuth(event);
               await handleAuthNavigation(next);
@@ -864,10 +1169,12 @@ export function AuthPanel({
                 type="text"
                 value={authName}
                 onChange={(event) => setAuthName(event.target.value)}
+                name="name"
                 autoComplete="name"
                 required
               />
             </label>
+            {hideEmailField ? <HiddenUsernameField email={email} /> : null}
             {!hideEmailField ? (
               <label className="grid gap-2">
                 <span className="den-label">Email</span>
@@ -876,7 +1183,8 @@ export function AuthPanel({
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
+                  name="email"
+                  autoComplete="username"
                   readOnly={lockEmail}
                   disabled={lockEmail}
                   required
@@ -890,6 +1198,7 @@ export function AuthPanel({
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                name="password"
                 autoComplete="new-password"
                 aria-invalid={signupPasswordFeedback.length > 0}
                 required
@@ -1062,7 +1371,8 @@ export function AuthPanel({
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
+              name="email"
+              autoComplete="username"
               readOnly={lockEmail}
               disabled={lockEmail}
               required
@@ -1078,6 +1388,7 @@ export function AuthPanel({
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              name="password"
               autoComplete={visibleAuthMode === "sign-up" ? "new-password" : "current-password"}
               aria-invalid={visibleAuthMode === "sign-up" && signupPasswordFeedback.length > 0}
               required
@@ -1096,6 +1407,7 @@ export function AuthPanel({
               onChange={(event) =>
                 setVerificationCode(event.target.value.replace(/\D+/g, "").slice(0, 6))
               }
+              name="code"
               autoComplete="one-time-code"
               required
             />
@@ -1199,7 +1511,7 @@ export function AuthPanel({
               <span>Waiting for your verification code</span>
             </div>
           ) : null}
-          {authError && visibleAuthMode === "sign-in" && !isSingleOrgPrivateSignup && !verificationRequired && showEmailPasswordAuth ? (
+          {authError && visibleAuthMode === "sign-in" && !signUpClosed && !verificationRequired && showEmailPasswordAuth ? (
             <button
               type="button"
               className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"

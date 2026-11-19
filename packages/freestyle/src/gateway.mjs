@@ -54,6 +54,17 @@ function clientMetadata(req, auth) {
   return origin === auth?.config.origins?.den || origin === auth?.config.origins?.api;
 }
 
+/**
+ * Browser origins this gateway serves. A proxy that rewrites the Host header
+ * (Daytona's per-port preview URLs) cannot be checked against Host, so the
+ * controller lists each public origin it issued in `allowedOrigins`.
+ */
+function allowedOriginsFor(req, auth, socket = false) {
+  if (Array.isArray(auth.config.allowedOrigins)) return auth.config.allowedOrigins.filter((origin) => typeof origin === "string");
+  if (socket) return [`https://${req.headers.host}`];
+  return Object.values(auth.config.origins ?? { app: `https://${req.headers.host}` });
+}
+
 function headers(req, port = upstreamPort, pairs = []) {
   // The access credential belongs to this gateway, never to the app or its logs.
   const { cookie, ...rest } = req.headers;
@@ -109,7 +120,7 @@ export const server = createServer(async (req, res) => {
   }
   // Clones share fixture credentials internally. The outer private cookie and
   // origin check prevent a page in one clone from using another clone's cookies.
-  const allowedOrigins = Object.values(auth.config.origins ?? { app: `https://${req.headers.host}` });
+  const allowedOrigins = allowedOriginsFor(req, auth);
   if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) {
     res.writeHead(403); res.end("Use this sandbox's own service URLs."); return;
   }
@@ -134,7 +145,7 @@ export const server = createServer(async (req, res) => {
 server.on("upgrade", async (req, socket, head) => {
   const auth = await access(req);
   // A cookie alone must not authorize a cross-site WebSocket.
-  if (!auth?.authorized || (req.headers.origin && req.headers.origin !== `https://${req.headers.host}`)) {
+  if (!auth?.authorized || (req.headers.origin && !allowedOriginsFor(req, auth, true).includes(req.headers.origin))) {
     socket.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     return;
   }

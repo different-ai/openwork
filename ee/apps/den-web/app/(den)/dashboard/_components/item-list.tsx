@@ -2,7 +2,7 @@
 
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Menu } from "@base-ui/react/menu";
-import { MoreHorizontal, Search } from "lucide-react";
+import { ChevronRight, MoreHorizontal, Search } from "lucide-react";
 import Link from "next/link";
 import { type ComponentProps, type ReactNode, useRef, useState } from "react";
 import { type ButtonSize, type ButtonVariant, buttonVariants, DenButton } from "../../_components/ui/button";
@@ -18,8 +18,9 @@ export function LinkButton({ variant = "secondary", size = "md", className = "",
 }
 
 /**
- * The one list used by My Library and Manage: a white panel of rows with a
- * 32px logo lane, name and description, a status lane, and an action lane.
+ * The one list used by My Library and Manage, in the Computers row language:
+ * flat rows on the page with a hairline between them, a 32px logo lane, name
+ * and description, a status lane, and an action lane. No card around it.
  */
 export function ItemSection({ title, meta, children, testId, variant = "default" }: {
   title: string;
@@ -32,9 +33,9 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
   if (variant === "rule") {
     return (
       <section className="flex flex-col" data-testid={testId}>
-        <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-1.5">
-          <h2 className="text-[12px] font-medium leading-4 text-gray-700">{title}</h2>
-          {meta ? <p className="text-[12px] leading-4 text-gray-500">{meta}</p> : null}
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--den-list-line)] pb-1.5">
+          <h2 className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</h2>
+          {meta ? <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{meta}</p> : null}
         </div>
         {children}
       </section>
@@ -43,62 +44,25 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
   return (
     <section className="flex flex-col gap-2.5" data-testid={testId}>
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-[13px] font-medium leading-4 text-gray-500">{title}</h2>
-        {meta ? <p className="text-[12px] leading-4 text-gray-500">{meta}</p> : null}
+        <h2 className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</h2>
+        {meta ? <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{meta}</p> : null}
       </div>
       {children}
     </section>
   );
 }
 
-export function ItemPanel({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return (
-    <div className={`flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white py-1 ${className}`}>
-      {children}
-    </div>
-  );
-}
-
-/** Rows on the page itself, separated by hairlines, with no card around them. */
-export function ItemFlatList({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col [&>*]:border-b [&>*]:border-gray-100">{children}</div>;
-}
-
-/**
- * One Library row: logo tile, name with its state, kind, where it came from,
- * and the one action it needs. Fixed-width lanes keep every row aligned.
- */
-export function LibraryListRow({ logo, title, ready, tag, kind, status, action, href, testId }: {
-  logo: ReactNode;
-  title: string;
-  ready?: boolean;
-  tag?: ReactNode;
-  kind: string;
-  status?: ReactNode;
-  action?: ReactNode;
-  href?: string;
-  testId?: string;
+export function ItemPanel({ children, className = "", variant = "divided" }: {
+  children: ReactNode;
+  className?: string;
+  /** Inset lists use padded, rounded rows instead of edge-to-edge dividers. */
+  variant?: "divided" | "inset";
 }) {
-  const body = (
-    <>
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gray-50 [&_img]:max-h-5 [&_img]:max-w-5">{logo}</span>
-      <span className="flex w-[150px] shrink-0 items-center gap-1.5 md:w-[200px]">
-        <span className="truncate text-[13px] font-medium leading-4 text-gray-900">{title}</span>
-        {ready ? <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" role="img" aria-label="Ready" data-library-ready /> : null}
-        {tag}
-      </span>
-      <span className="hidden w-[84px] shrink-0 text-[12px] leading-4 text-gray-500 sm:block" data-library-kind-label>{kind}</span>
-      <span className="min-w-0 flex-1 truncate text-[12px] leading-4 text-gray-500" data-item-status>{status}</span>
-    </>
-  );
   return (
-    <div className="flex h-[52px] items-center gap-3" data-testid={testId}>
-      {href ? (
-        <Link href={href} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">{body}</Link>
-      ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
-      )}
-      <span className="flex w-[96px] shrink-0 justify-end">{action}</span>
+    // Both variants read as Computers rows now; "inset" is kept for callers. Rows sit flush on the page:
+    // side padding belonged to the card this used to be.
+    <div data-variant={variant} className={`flex flex-col border-t border-[var(--den-list-line)] [&>*]:border-b [&>*]:border-[var(--den-list-line)] [&>*]:px-0! ${className}`}>
+      {children}
     </div>
   );
 }
@@ -106,10 +70,10 @@ export function LibraryListRow({ logo, title, ready, tag, kind, status, action, 
 /** Placeholder rows the size of ItemRow, for an ItemPanel whose list is loading. */
 export function ItemRowsSkeleton({ label, rows = 3 }: { label: string; rows?: number }) {
   return (
-    <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-gray-100 motion-safe:animate-pulse">
+    <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-[var(--den-list-line)] motion-safe:animate-pulse">
       {Array.from({ length: rows }, (_, index) => (
-        <div key={index} aria-hidden className="flex items-center gap-3.5 px-5 py-3">
-          <span className="h-8 w-8 shrink-0 rounded-[7px] bg-gray-100" />
+        <div key={index} aria-hidden className="flex min-h-12 items-center gap-3 py-1.5">
+          <span className="h-8 w-8 shrink-0 rounded-lg bg-[var(--dls-hover)]" />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex h-5 items-center"><span className="h-3 w-32 rounded bg-gray-100" /></span>
             <span className="flex h-[18px] items-center"><span className="h-2.5 w-56 max-w-full rounded bg-gray-100" /></span>
@@ -135,10 +99,20 @@ export function ItemRow({
   title,
   description,
   status,
+  statusOnNarrow,
+  wideAction,
+  wrapDescription,
   action,
   href,
   testId,
+  comparison,
+  compact = false,
 }: {
+  statusOnNarrow?: boolean;
+  wideAction?: boolean;
+  wrapDescription?: boolean;
+  /** Numeric comparisons stay next to the name instead of using the status lane. */
+  comparison?: ReactNode;
   logo?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
@@ -146,31 +120,35 @@ export function ItemRow({
   action?: ReactNode;
   href?: string;
   testId?: string;
+  /** Compact state lane remains visible in a narrow Library window. */
+  compact?: boolean;
 }) {
   const body = (
     <>
       {logo ? <span className="flex shrink-0 items-center">{logo}</span> : null}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-[14px] font-medium leading-5 text-gray-900">{title}</span>
-        {description ? <span className="truncate text-[13px] leading-[18px] text-gray-500">{description}</span> : null}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{title}</span>
+        {statusOnNarrow && status ? <span className="whitespace-nowrap text-[12px] leading-4 text-muted-foreground sm:hidden">{status}</span> : null}
+        {description ? <span className={wrapDescription ? "break-words text-[12px] leading-4 text-[var(--dls-text-secondary)]" : "truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]"}>{description}</span> : null}
       </span>
     </>
   );
   return (
-    <div className="flex items-center gap-3.5 px-5 py-3" data-testid={testId}>
+    <div className={compact ? "flex min-h-12 items-center gap-3 py-1.5" : statusOnNarrow ? "flex min-h-12 items-center gap-2 py-1.5 sm:gap-3" : "flex min-h-12 items-center gap-3 py-1.5"} data-testid={testId} data-library-integrated-row={compact || undefined}>
       {href ? (
-        <Link href={href} className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
+        <Link href={href} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300">
           {body}
         </Link>
       ) : (
-        <span className="flex min-w-0 flex-1 items-center gap-3.5">{body}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-3">{body}</span>
       )}
+      {comparison}
       {status !== undefined ? (
-        <span className="hidden w-[220px] shrink-0 truncate text-right text-[12px] leading-4 text-gray-500 sm:block" data-item-status>
+        <span className={compact ? "w-14 shrink-0 truncate text-right text-[13px] text-[var(--dls-text-secondary)] sm:w-28" : "hidden w-[220px] shrink-0 truncate text-right text-[13px] leading-5 text-[var(--dls-text-secondary)] sm:block"} data-item-status>
           {status}
         </span>
       ) : null}
-      {action !== undefined ? <span className="flex w-[72px] shrink-0 justify-end">{action}</span> : null}
+      {action !== undefined ? <span className={wideAction ? "flex w-[96px] shrink-0 justify-end" : compact ? "flex w-7 shrink-0 justify-end sm:w-[72px]" : "flex w-[72px] shrink-0 justify-end"} data-item-action>{action}</span> : null}
     </div>
   );
 }
@@ -183,6 +161,7 @@ export type ItemMenuEntry = {
   disabled?: boolean;
   /** Ask before running onSelect. */
   confirm?: { title: string; description: string; action: string };
+  testId?: string;
 };
 
 /** Remove menu entry that asks first; the same copy everywhere an item can be removed. */
@@ -244,7 +223,7 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
           {error ? <DenNotice className="mt-4" tone="error" message={error} /> : null}
           <div className="mt-5 flex justify-end gap-2">
             <AlertDialog.Close ref={cancelRef} disabled={busy} data-testid="confirm-dialog-cancel" className={buttonVariants({ variant: "secondary" })}>Cancel</AlertDialog.Close>
-            <DenButton variant={shown.destructive ? "destructive" : "primary"} loading={busy} onClick={() => void run()}>{shown.confirm?.action}</DenButton>
+            <DenButton variant={shown.destructive ? "destructive" : "primary"} loading={busy} data-testid="confirm-dialog-action" onClick={() => void run()}>{shown.confirm?.action}</DenButton>
           </div>
         </AlertDialog.Popup>
       </AlertDialog.Portal>
@@ -252,16 +231,16 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   );
 }
 
-export function ItemMenu({ label, entries, size = "sm" }: { label: string; entries: ItemMenuEntry[]; size?: "sm" | "md" }) {
+export function ItemMenu({ label, entries, size = "sm", testId }: { label: string; entries: ItemMenuEntry[]; size?: "sm" | "md"; testId?: string }) {
   const [confirming, setConfirming] = useState<ItemMenuEntry | null>(null);
   if (entries.length === 0) return null;
   const trigger = size === "md"
-    ? "flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+    ? "flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
     : "flex h-7 w-7 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900";
   return (
     <>
     <Menu.Root>
-      <Menu.Trigger aria-label={label} className={trigger}>
+      <Menu.Trigger aria-label={label} data-testid={testId} className={trigger}>
         <MoreHorizontal className="h-4 w-4" aria-hidden />
       </Menu.Trigger>
       <Menu.Portal>
@@ -271,6 +250,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
               <Menu.Item
                 key={entry.label}
                 disabled={entry.disabled}
+                data-testid={entry.testId}
                 render={<Link href={entry.href} />}
                 className="flex cursor-pointer items-center rounded-lg px-3 py-2 text-gray-700 outline-none data-[highlighted]:bg-gray-50 data-[highlighted]:text-gray-900"
               >
@@ -280,6 +260,7 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
               <Menu.Item
                 key={entry.label}
                 disabled={entry.disabled}
+                data-testid={entry.testId}
                 onClick={() => (entry.confirm ? setConfirming(entry) : void entry.onSelect?.())}
                 className={`flex cursor-pointer items-center rounded-lg px-3 py-2 outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 data-[highlighted]:bg-gray-50 ${entry.destructive ? "text-red-600" : "text-gray-700 data-[highlighted]:text-gray-900"}`}
               >
@@ -300,17 +281,52 @@ export function ItemMenu({ label, entries, size = "sm" }: { label: string; entri
   );
 }
 
-/** Label and value rows under Details. */
-export function DetailRows({ rows }: { rows: { label: string; value: ReactNode }[] }) {
+/** Label and value rows under Details: flat, a hairline between them, as settings rows are. */
+export function DetailRows({ rows }: { rows: { label: string; value: ReactNode; wrap?: boolean }[] }) {
   return (
-    <div className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
+    <div className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
       {rows.map((row) => (
-        <div key={row.label} className="flex items-center justify-between gap-4 px-5 py-3 text-[13px] leading-[18px]">
-          <span className="text-gray-500">{row.label}</span>
-          <span className="min-w-0 truncate text-right font-medium text-gray-900">{row.value}</span>
+        // A long value reads as a paragraph under its label; a short one sits across from it.
+        <div key={row.label} className={`flex min-h-10 gap-x-4 gap-y-0.5 py-2 text-[13px] leading-5 ${row.wrap ? "flex-col" : "items-center justify-between"}`}>
+          <span className="shrink-0 text-[var(--dls-text-secondary)]">{row.label}</span>
+          <span className={row.wrap ? "min-w-0 max-w-[760px] break-words text-[var(--dls-text-primary)]" : "min-w-0 truncate text-right text-[var(--dls-text-primary)]"}>{row.value}</span>
         </div>
       ))}
     </div>
+  );
+}
+
+/** Disclosures one under another, sharing the hairline between them. */
+export function DisclosureGroup({ children }: { children: ReactNode }) {
+  return <div className="flex flex-col [&>section+section]:border-t-0">{children}</div>;
+}
+
+/**
+ * One collapsed part of a page: a row that names what is inside, with a
+ * chevron on the right that turns as it opens (DESIGN.md P3, S3). The one
+ * disclosure every detail page uses. Several in a row go in a `DisclosureGroup`.
+ */
+export function DisclosureSection({ label, state, open, onToggle, children, testId }: {
+  label: string;
+  /** What is set, at a glance, beside the chevron. */
+  state?: ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <section className="flex flex-col border-y border-[var(--den-list-line)]">
+      <button type="button" aria-expanded={open} onClick={onToggle} data-testid={testId}
+        className="flex min-h-12 items-center justify-between gap-4 rounded-sm py-2 text-left text-[13px] font-medium text-[var(--dls-text-primary)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-text-secondary)]">
+        {label}
+        <span className="flex items-center gap-2 font-normal text-[var(--dls-text-secondary)]">
+          {state}
+          <ChevronRight className={`h-4 w-4 transition-transform duration-150 ease-out motion-reduce:transition-none ${open ? "rotate-90" : ""}`} strokeWidth={1.5} aria-hidden />
+        </span>
+      </button>
+      {open ? <div className="border-t border-[var(--den-list-line)]">{children}</div> : null}
+    </section>
   );
 }
 

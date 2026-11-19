@@ -44,6 +44,8 @@ export const ConfigObjectTable = mysqlTable(
   {
     id: denTypeIdColumn("configObject", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    /** Stable key that travels with the object between organizations. Set once, editable, never follows the title. */
+    externalKey: varchar("external_key", { length: 128 }),
     objectType: mysqlEnum("object_type", configObjectTypeValues).notNull(),
     sourceMode: mysqlEnum("source_mode", configObjectSourceModeValues).notNull(),
     title: varchar("title", { length: 255 }).notNull(),
@@ -61,6 +63,7 @@ export const ConfigObjectTable = mysqlTable(
   },
   (table) => [
     index("config_object_organization_id").on(table.organizationId),
+    uniqueIndex("config_object_org_external_key").on(table.organizationId, table.externalKey),
     index("config_object_type").on(table.objectType),
     index("config_object_source_mode").on(table.sourceMode),
     index("config_object_status").on(table.status),
@@ -100,6 +103,8 @@ export const PluginTable = mysqlTable(
   {
     id: denTypeIdColumn("plugin", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    /** Stable key that travels with the plugin between organizations. Set once, editable, never follows the name. */
+    externalKey: varchar("external_key", { length: 128 }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     sourceRepositoryUrl: varchar("source_repository_url", { length: 1024 }),
@@ -113,8 +118,10 @@ export const PluginTable = mysqlTable(
   },
   (table) => [
     index("plugin_organization_id").on(table.organizationId),
+    uniqueIndex("plugin_org_external_key").on(table.organizationId, table.externalKey),
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
+    index("plugin_status_created_at").on(table.status, table.createdAt),
     index("plugin_name").on(table.name),
     index("plugin_directory_page").on(table.organizationId, table.status, table.updatedAt, table.id),
   ],
@@ -140,6 +147,7 @@ export const MarketplaceTable = mysqlTable(
     index("marketplace_organization_id").on(table.organizationId),
     index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("marketplace_status").on(table.status),
+    index("marketplace_status_created_at").on(table.status, table.createdAt, table.name),
     index("marketplace_name").on(table.name),
   ],
 )
@@ -410,6 +418,38 @@ export const ConnectorSyncEventTable = mysqlTable(
     index("connector_sync_event_status_next_attempt_at").on(table.status, table.nextAttemptAt),
     index("connector_sync_event_source_revision_ref").on(table.sourceRevisionRef),
     index("connector_sync_event_external_event_ref").on(table.externalEventRef),
+  ],
+)
+
+export const connectorTargetReconcileStatusValues = ["ok", "retrying", "paused"] as const
+
+/**
+ * When the scheduled reconcile next checks a connector target against its
+ * source (for GitHub, the branch head). One small row per target, so a run
+ * reads due targets from an index in pages instead of loading every target
+ * with its config. A run claims a row by moving next_probe_at a few minutes
+ * ahead, so a run that stops mid-probe is retried once that passes. Paused rows
+ * have no next_probe_at: they wait until the target, its instance or its
+ * account changes after paused_revision_at.
+ */
+export const ConnectorTargetReconcileTable = mysqlTable(
+  "connector_target_reconcile",
+  {
+    connectorTargetId: denTypeIdColumn("connectorTarget", "connector_target_id").notNull().primaryKey(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    connectorType: mysqlEnum("connector_type", connectorTypeValues).notNull(),
+    status: mysqlEnum("status", connectorTargetReconcileStatusValues).notNull().default("ok"),
+    nextProbeAt: timestamp("next_probe_at", { fsp: 3 }),
+    lastProbedAt: timestamp("last_probed_at", { fsp: 3 }),
+    failureCount: int("failure_count").notNull().default(0),
+    error: varchar("error", { length: 1024 }),
+    pausedRevisionAt: timestamp("paused_revision_at", { fsp: 3 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("connector_target_reconcile_type_next_probe").on(table.connectorType, table.nextProbeAt, table.connectorTargetId),
+    index("connector_target_reconcile_type_status").on(table.connectorType, table.status),
+    index("connector_target_reconcile_organization_id").on(table.organizationId),
   ],
 )
 

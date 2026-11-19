@@ -2,16 +2,21 @@
   "name": "@openwork/review-app",
   "private": true,
   "version": "0.0.0",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
-    "build": "next build",
+    "build": "pnpm --filter \"@openwork/review-app^...\" --if-present run build && next build",
     "start": "next start --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openwork/daytona-evidence": "workspace:*",
+    "@openwork/evidence-provider": "workspace:*",
     "@openwork/freestyle": "workspace:*",
     "@openwork/review": "workspace:*",
-    "next": "16.3.6",
+    "next": "16.4.5",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

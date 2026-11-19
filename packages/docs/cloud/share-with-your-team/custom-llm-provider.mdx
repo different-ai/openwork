@@ -4,9 +4,9 @@ description: "Share an OpenAI-compatible endpoint, such as Azure AI Foundry, Lit
 keywords: ["custom provider", "OpenAI-compatible", "Azure AI Foundry", "LiteLLM", "vLLM", "base URL", "custom endpoint", "legacy provider"]
 ---
 
-Use this when the provider isn't in the catalog: Azure AI Foundry, LiteLLM, vLLM, or an internal gateway. You add the endpoint and key once in OpenWork Cloud, and it syncs to members' desktop apps.
+Use this when you need a custom endpoint or model definition outside the supported AI Gateway integrations, such as vLLM or an internal gateway. You add the endpoint and key once in OpenWork Cloud, and it syncs to members' desktop apps.
 
-Custom endpoints are legacy providers, so the key is synced to members' apps and there's no usage tracking. If your provider is in the catalog, an [AI Gateway provider](/ai-gateway/overview) keeps the key on the server instead. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider) for how the two compare.
+Providers created with this legacy custom-provider form sync the key to members' apps and have no AI Gateway usage tracking. Before using it, check the [provider support matrix](/ai-gateway/provider-support): Gateway supports compatible catalog endpoint overrides, a dedicated [LiteLLM integration](/ai-gateway/litellm), Azure OpenAI, and [Claude on Microsoft Foundry](/ai-gateway/microsoft-foundry), while keeping upstream credentials on the server. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider) for how the two paths compare.
 
 ## Create the custom provider
 

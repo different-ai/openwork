@@ -1,6 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { ensureMemberGatewayKey } from "../../gateway-keys.js"
+import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -21,9 +21,10 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, parseSkillMarkdown } from "@openwork-ee/utils"
 import { createHash, randomBytes } from "node:crypto"
-import type { Hono } from "hono"
+import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { attributeAuditRequest, auditSessionUserAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../../desktop-policies.js"
 import { env } from "../../env.js"
@@ -44,9 +45,10 @@ import {
 } from "../../workspace-preclaim.js"
 import { DEFAULT_ORGANIZATION_LIMITS } from "../../organization-limits.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
-import { seedDefaultOrganizationRoles, setSessionActiveOrganization } from "../../orgs.js"
+import { setSessionActiveOrganization } from "../../orgs.js"
 import { clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES } from "../org/plugin-system/projection-text.js"
 import type { AuthContextVariables } from "../../session.js"
+import { requestClientIpKey } from "../../request-client-ip.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -184,13 +186,21 @@ async function readPreclaimAssertion(headers: Headers, bootstrapId: string) {
   return { ok: true as const, bootstrap: checked.bootstrap, revoked: checked.revoked }
 }
 
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
+/**
+ * Audit attribution for a verified bootstrap credential: the provisional
+ * organization it is bound to, actor = the authenticated user (the setup agent
+ * with its setup member for pre-claim assertions; the claiming person, not
+ * yet a member, for claim codes/links).
+ */
+async function attributeBootstrap(c: Context, input: { organizationId: string; userId: string | null; memberId?: string | null }) {
+  const attribution = input.userId ? auditSessionUserAttribution(input.userId, input.memberId) : null
+  if (!attribution) return null
+  const audited = await attributeAuditRequest(c, { organizationId: input.organizationId, ...attribution })
+  return audited.ok ? null : audited.response
 }
 
-function requestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
+function sha256(value: string) {
+  return createHash("sha256").update(value).digest("hex")
 }
 
 /** Teammates saved at setup, handed to the new owner to invite. */
@@ -232,7 +242,8 @@ function skillMetadata(skillText: string) {
 }
 
 async function checkBootstrapRateLimit(key: string, now: number) {
-  const [row] = await db
+  // primary: the counter is read back right after earlier requests wrote it.
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -261,7 +272,7 @@ async function checkBootstrapRateLimit(key: string, now: number) {
 
 async function enforceBootstrapRateLimit(headers: Headers) {
   const now = Date.now()
-  return checkBootstrapRateLimit(`bootstrap:workspace:${requestAddress(headers)}`, now)
+  return checkBootstrapRateLimit(`bootstrap:workspace:${requestClientIpKey(headers)}`, now)
 }
 
 type BootstrapTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
@@ -574,7 +585,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       })
 
       await ensureDefaultDesktopPolicyForOrganization({ organizationId: result.organization.id, createdByOrgMemberId: result.setupMemberId })
-      await seedDefaultOrganizationRoles(result.organization.id)
 
       const assertion = await signPreclaimAssertion({
         bootstrapId: result.setup.id,
@@ -626,6 +636,18 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       const now = new Date()
       const tokenHash = sha256(input.token)
       const normalizedUserId = normalizeDenTypeId("user", user.id)
+
+      // Resolve the claim's organization (no lock) to record the intent before
+      // the locking transfer transaction below.
+      const [pendingClaim] = await db
+        .select({ organizationId: WorkspaceClaimTable.organizationId })
+        .from(WorkspaceClaimTable)
+        .where(and(eq(WorkspaceClaimTable.tokenHash, tokenHash), eq(WorkspaceClaimTable.status, "pending"), gt(WorkspaceClaimTable.expiresAt, now)))
+        .limit(1)
+      if (pendingClaim) {
+        const auditBlocked = await attributeBootstrap(c, { organizationId: pendingClaim.organizationId, userId: normalizedUserId })
+        if (auditBlocked) return auditBlocked
+      }
 
       const result = await db.transaction(async (tx) => {
         const [claim] = await tx
@@ -695,7 +717,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       // A claim link also ends the agent's pre-claim credentials.
       await revokePreclaimCredentials(result.bootstrapId)
       await retirePreclaimAgent(result.bootstrapId)
@@ -724,6 +748,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (checked.revoked) {
         return c.json({ error: "invalid_token", error_description: "This workspace was already claimed or expired." }, 401)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
       c.header("Cache-Control", "no-store")
       return c.json(await issueClaimCode(checked.bootstrap))
     },
@@ -746,6 +772,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
     async (c) => {
       const checked = await readPreclaimAssertion(c.req.raw.headers, c.req.valid("param").bootstrapId)
       if (!checked.ok) return c.json(checked.body, 401)
+      const auditBlocked = await attributeBootstrap(c, { organizationId: checked.bootstrap.organizationId, userId: checked.bootstrap.agentUserId, memberId: checked.bootstrap.setupMemberId })
+      if (auditBlocked) return auditBlocked
       c.header("Cache-Control", "no-store")
       return c.json(await readClaimState(checked.bootstrap))
     },
@@ -772,6 +800,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!lookup.ok) {
         return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: c.get("user").id })
+      if (auditBlocked) return auditBlocked
       return c.json({ organization: { id: lookup.organizationId, name: lookup.organizationName } })
     },
   )
@@ -807,6 +837,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (!lookup.ok) {
         return c.json({ error: "invalid_user_code", message: "This code is invalid or has expired. Ask your agent for a new one." }, 404)
       }
+      const auditBlocked = await attributeBootstrap(c, { organizationId: lookup.organizationId, userId: normalizedUserId })
+      if (auditBlocked) return auditBlocked
 
       const result = await db.transaction(async (tx) => {
         const [code] = await tx
@@ -862,7 +894,9 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
+      // Same as any other join: billing follows the new user count and the
+      // member gets a gateway key.
+      await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },
   )

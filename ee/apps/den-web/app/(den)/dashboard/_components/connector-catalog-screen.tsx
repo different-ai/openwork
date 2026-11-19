@@ -1,9 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
 import { useState } from "react";
-import { DenButton } from "../../_components/ui/button";
 import {
   getAddConnectorRoute,
   getLibraryAddConnectorRoute,
@@ -83,13 +81,9 @@ export function ConnectorCatalogScreen({ mode }: { mode: ConnectorFlowMode }) {
   return (
     <ItemPage testId="connector-catalog">
       <ItemHeader
+        compact
         back={mode === "admin" ? { href: getMcpConnectionsRoute(orgSlug), label: "Connectors" } : { href: getLibraryRoute(orgSlug), label: "My Library" }}
         title="Add a connector"
-        actions={mode === "admin" ? (
-          <DenButton variant="secondary" size="sm" icon={Plus} className="h-9" onClick={() => setCustomName("")} data-testid="add-any-mcp">
-            Add any MCP
-          </DenButton>
-        ) : undefined}
       />
       {presets.error ? (
         <p className="text-[13px] text-red-600">{presets.error instanceof Error ? presets.error.message : "The list did not load."}</p>

@@ -12,7 +12,7 @@ const TARGET_ORGANIZATION_INDEX = ORGANIZATION_COUNT - 11
 const SESSION_COUNT = USER_COUNT
 const WORKER_COUNT = Math.ceil(USER_COUNT / 3)
 const INVITATION_COUNT = Math.ceil(USER_COUNT / 5)
-const GATEWAY_REQUEST_COUNT = Math.ceil(USER_COUNT / 4) * 2
+const TELEMETRY_EVENT_COUNT = Math.ceil(USER_COUNT / 4) * 2
 const INITIAL_BUDGET_MS = 500
 const SEARCH_BUDGET_MS = 300
 const DEFAULT_DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_admin_scale_benchmark"
@@ -91,7 +91,7 @@ async function createTables(connection: Connection) {
   await connection.query("CREATE TABLE `account` (`id` varchar(64) NOT NULL, `user_id` varchar(64) NOT NULL, `account_id` text NOT NULL, `provider_id` text NOT NULL, `access_token` text, `refresh_token` text, `access_token_expires_at` timestamp(3), `refresh_token_expires_at` timestamp(3), `scope` text, `id_token` text, `password` text, `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), KEY `account_user_id` (`user_id`))")
   await connection.query("CREATE TABLE `session` (`id` varchar(64) NOT NULL, `user_id` varchar(64) NOT NULL, `active_organization_id` varchar(64), `active_team_id` varchar(64), `token` varchar(255) NOT NULL, `expires_at` timestamp(3) NOT NULL, `ip_address` text, `user_agent` text, `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), UNIQUE KEY `session_token` (`token`), KEY `session_user_id` (`user_id`))")
   await connection.query("CREATE TABLE `worker` (`id` varchar(64) NOT NULL, `org_id` varchar(64) NOT NULL, `created_by_user_id` varchar(64), `name` varchar(255) NOT NULL, `description` varchar(1024), `destination` enum('local','cloud') NOT NULL, `status` enum('provisioning','healthy','failed','stopped') NOT NULL, `image_version` varchar(128), `workspace_path` varchar(1024), `sandbox_backend` varchar(64), `last_heartbeat_at` timestamp(3), `last_active_at` timestamp(3), `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), KEY `worker_org_id` (`org_id`), KEY `worker_created_by_user_id` (`created_by_user_id`), KEY `worker_status` (`status`), KEY `worker_last_heartbeat_at` (`last_heartbeat_at`), KEY `worker_last_active_at` (`last_active_at`))")
-  await connection.query("CREATE TABLE `gateway_request_logs` (`id` varchar(64) NOT NULL, `organization_id` varchar(64) NOT NULL, `org_membership_id` varchar(64) NOT NULL, `started_at` timestamp(3) NOT NULL, PRIMARY KEY (`id`), KEY `gateway_request_logs_member_started` (`org_membership_id`,`started_at`))")
+  await connection.query("CREATE TABLE `telemetry_event` (`id` varchar(64) NOT NULL, `org_id` varchar(64) NOT NULL, `member_id` varchar(64) NOT NULL, `event_type` varchar(64) NOT NULL, `event_timestamp` timestamp(3) NOT NULL, `source` varchar(32), `session_id` varchar(128), `duration_ms` int, `success` boolean, `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), KEY `telemetry_event_org_id_type_ts` (`org_id`,`event_type`,`event_timestamp`), KEY `telemetry_event_org_id_member_id` (`org_id`,`member_id`), KEY `telemetry_event_member_ts` (`member_id`,`event_timestamp`), KEY `telemetry_event_org_session_ts` (`org_id`,`session_id`,`event_timestamp`), KEY `telemetry_event_org_ts_window` (`org_id`,`event_timestamp`,`event_type`,`member_id`,`session_id`,`source`,`duration_ms`))")
   await connection.query("CREATE TABLE `invitation` (`id` varchar(64) NOT NULL, `organization_id` varchar(64) NOT NULL, `email` varchar(255) NOT NULL, `role` varchar(255) NOT NULL, `status` varchar(32) NOT NULL DEFAULT 'pending', `team_id` varchar(64), `inviter_id` varchar(64) NOT NULL, `org_member_id` varchar(64), `invite_token` varchar(64), `expires_at` timestamp(3) NOT NULL, `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), KEY `invitation_organization_id` (`organization_id`), KEY `invitation_email` (`email`), KEY `invitation_status` (`status`), KEY `invitation_team_id` (`team_id`), KEY `invitation_inviter_id` (`inviter_id`), KEY `invitation_org_member_id` (`org_member_id`), UNIQUE KEY `invitation_invite_token` (`invite_token`))")
   await connection.query("CREATE TABLE `org_subscriptions` (`id` varchar(64) NOT NULL, `organization_id` varchar(64) NOT NULL, `created_by_org_membership_id` varchar(64), `type` enum('inference','seat') NOT NULL, `status` enum('incomplete','incomplete_expired','trialing','active','past_due','canceled','unpaid','paused','expired') NOT NULL DEFAULT 'incomplete', `stripe_customer_id` varchar(255) NOT NULL, `stripe_subscription_id` varchar(255) NOT NULL, `stripe_price_id` varchar(255), `stripe_subscription_item_id` varchar(255), `quantity` int NOT NULL DEFAULT 0, `current_period_start` timestamp(3), `current_period_end` timestamp(3), `cancel_at_period_end` boolean NOT NULL DEFAULT false, `canceled_at` timestamp(3), `ended_at` timestamp(3), `last_event_id` varchar(255), `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), KEY `org_subscriptions_organization_id` (`organization_id`), KEY `org_subscriptions_customer_id` (`stripe_customer_id`), UNIQUE KEY `org_subscriptions_subscription_id` (`stripe_subscription_id`), UNIQUE KEY `org_subscriptions_org_type` (`organization_id`,`type`), KEY `org_subscriptions_status` (`status`))")
   await connection.query("CREATE TABLE `admin_allowlist` (`id` varchar(64) NOT NULL, `email` varchar(255) NOT NULL, `note` varchar(255), `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), `updated_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (`id`), UNIQUE KEY `admin_allowlist_email` (`email`))")
@@ -219,22 +219,29 @@ function invitationRow(index: number) {
   ]
 }
 
-function gatewayUserIndex(index: number) {
-  if (index >= GATEWAY_REQUEST_COUNT - 2) {
+function telemetryUserIndex(index: number) {
+  if (index >= TELEMETRY_EVENT_COUNT - 2) {
     return TARGET_USER_INDEX
   }
 
   return Math.min(Math.floor(index / 2) * 4, USER_COUNT - 1)
 }
 
-function gatewayRow(index: number) {
-  const userIndex = gatewayUserIndex(index)
+function telemetryRow(index: number) {
+  const userIndex = telemetryUserIndex(index)
   const orgIndex = userIndex === TARGET_USER_INDEX ? TARGET_ORGANIZATION_INDEX : userIndex
+  const taskEvent = index % 2 === 1
   return [
-    typeId("grl", index),
+    typeId("tev", index),
     organizationId(orgIndex),
     memberId(userIndex),
-    index % 2 === 1 ? "2026-07-10 12:00:00.000" : "2026-07-09 12:00:00.000",
+    taskEvent ? "task.completed" : "session.active",
+    taskEvent ? "2026-07-10 12:00:00.000" : "2026-07-09 12:00:00.000",
+    "app",
+    taskEvent ? `scale-session-${userIndex}` : null,
+    taskEvent ? 1200 : null,
+    taskEvent ? 1 : null,
+    "2026-07-10 12:00:00.000",
   ]
 }
 
@@ -294,9 +301,9 @@ async function seed(connection: Connection) {
   )
   await insertBatches(
     connection,
-    "INSERT INTO `gateway_request_logs` (`id`,`organization_id`,`org_membership_id`,`started_at`) VALUES ?",
-    GATEWAY_REQUEST_COUNT,
-    gatewayRow,
+    "INSERT INTO `telemetry_event` (`id`,`org_id`,`member_id`,`event_type`,`event_timestamp`,`source`,`session_id`,`duration_ms`,`success`,`created_at`) VALUES ?",
+    TELEMETRY_EVENT_COUNT,
+    telemetryRow,
   )
   await connection.query("INSERT INTO `admin_allowlist` (`id`,`email`,`note`,`created_at`,`updated_at`) VALUES ('aal_00000000000000000000000000','admin@example.com','Scale benchmark admin','2026-07-01 12:00:00.000','2026-07-01 12:00:00.000')")
 }
@@ -350,7 +357,7 @@ async function assertSeedCounts(connection: Connection) {
   const [sessionRows] = await connection.query("SELECT COUNT(*) AS total FROM `session`")
   const [workerRows] = await connection.query("SELECT COUNT(*) AS total FROM `worker`")
   const [invitationRows] = await connection.query("SELECT COUNT(*) AS total FROM `invitation`")
-  const [gatewayRows] = await connection.query("SELECT COUNT(*) AS total FROM `gateway_request_logs`")
+  const [telemetryRows] = await connection.query("SELECT COUNT(*) AS total FROM `telemetry_event`")
   const userTotal = readTotal(userRows)
   const organizationTotal = readTotal(organizationRows)
   const accountTotal = readTotal(accountRows)
@@ -358,7 +365,7 @@ async function assertSeedCounts(connection: Connection) {
   const sessionTotal = readTotal(sessionRows)
   const workerTotal = readTotal(workerRows)
   const invitationTotal = readTotal(invitationRows)
-  const gatewayTotal = readTotal(gatewayRows)
+  const telemetryTotal = readTotal(telemetryRows)
 
   if (userTotal !== USER_COUNT || organizationTotal !== ORGANIZATION_COUNT) {
     throw new Error(`Seed count mismatch: users=${userTotal}, organizations=${organizationTotal}`)
@@ -366,8 +373,8 @@ async function assertSeedCounts(connection: Connection) {
   if (accountTotal !== USER_COUNT || memberTotal !== USER_COUNT) {
     throw new Error(`Related seed count mismatch: accounts=${accountTotal}, members=${memberTotal}`)
   }
-  if (sessionTotal !== SESSION_COUNT || workerTotal !== WORKER_COUNT || invitationTotal !== INVITATION_COUNT || gatewayTotal !== GATEWAY_REQUEST_COUNT) {
-    throw new Error(`Enrichment seed count mismatch: sessions=${sessionTotal}, workers=${workerTotal}, invitations=${invitationTotal}, gatewayRequests=${gatewayTotal}`)
+  if (sessionTotal !== SESSION_COUNT || workerTotal !== WORKER_COUNT || invitationTotal !== INVITATION_COUNT || telemetryTotal !== TELEMETRY_EVENT_COUNT) {
+    throw new Error(`Enrichment seed count mismatch: sessions=${sessionTotal}, workers=${workerTotal}, invitations=${invitationTotal}, telemetry=${telemetryTotal}`)
   }
 }
 

@@ -95,12 +95,13 @@ export type CodemodeConnectionNamespaceContext = {
 type CodemodeMemberIdentity = {
   orgMembershipId: DenTypeId<"member">
   teamIds: DenTypeId<"team">[]
+  /** A Workbot turn: connections an admin set to "Not allowed" for Workbot (workbot-turn-limits.ts). */
+  withheldConnectionIds?: ReadonlySet<string>
 }
 
 export async function resolveCodemodeConnectionNamespaceContext(input: {
   organizationId: string
   member: CodemodeMemberIdentity | null
-  includeExternalMcp?: boolean
 }): Promise<CodemodeConnectionNamespaceContext> {
   if (!input.member) {
     return {
@@ -119,13 +120,12 @@ export async function resolveCodemodeConnectionNamespaceContext(input: {
       orgMembershipId: input.member.orgMembershipId,
       teamIds: input.member.teamIds,
     }),
-    input.includeExternalMcp === false
-      ? Promise.resolve([])
-      : listUsableExternalMcpConnections({
-        organizationId,
-        orgMembershipId: input.member.orgMembershipId,
-        teamIds: input.member.teamIds,
-      }),
+    listUsableExternalMcpConnections({
+      organizationId,
+      orgMembershipId: input.member.orgMembershipId,
+      teamIds: input.member.teamIds,
+      withheldConnectionIds: input.member.withheldConnectionIds,
+    }),
   ])
   const codemodeNativeProviderEntries = nativeProviderEntries.filter((entry) => entry.connectedForMe === true)
   // Search chooses a bounded, query-ranked set to probe. Workflow namespaces

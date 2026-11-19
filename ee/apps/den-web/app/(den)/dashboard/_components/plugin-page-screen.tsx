@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, UserPlus } from "lucide-react";
+import { LockKeyhole, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
@@ -15,46 +15,45 @@ import {
   getPluginsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { useFeatureIntro, useFeatureIntroRuntime } from "../_features/feature-intros";
 import { type AccessDraft, accessAddedToast, ownedAccessStatus } from "./access-summary";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
 import { ItemHeader, ItemPage, SectionTitle } from "./item-header";
 import { McpConnectionAppSetup } from "./mcp-connection-app-setup";
 import { DetailRows, ItemMenu, removeEntry, ItemPanel, ItemRow, LinkButton } from "./item-list";
-import { ConnectorLogo, KindTile, LetterTile } from "./item-logo";
+import { ConnectorLogo, KindTile, LetterTile, PluginLogo } from "./item-logo";
 import { draftFromPluginGrants, useSavePluginAccess } from "./item-sharing";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import { receivedStatus } from "./library-view";
 import { usePluginAccess } from "./plugin-access-data";
 import { type DenPlugin, pluginQueryKeys, usePlugin } from "./plugin-data";
 import { PluginPageSkeleton } from "./plugin-skeletons";
+import { pluginSharedBeyondOwnerWithCollections, usePluginCollectionGrants } from "./plugins-intro-facts";
 import { WhoCanUseIt } from "./who-can-use-it";
+import { SkillPreview, skillTitle } from "./skill-preview";
+export { skillTitle } from "./skill-preview";
 
 export function pluginChatDeepLink(plugin: Pick<DenPlugin, "name">): string {
   const params = new URLSearchParams({ prompt: `Use ${plugin.name} to help me with this: ` });
   return `openwork://chat?${params.toString()}`;
 }
 
-/** Skill names are stored as slugs; people read "Prep a sales call". */
-export function skillTitle(name: string): string {
-  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return name;
-  const words = name.replace(/-/g, " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-function thingsLabel(count: number): string {
-  return count === 1 ? "1 thing" : `${count} things`;
-}
-
-export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: DenPlugin; appMcpServersEnabled?: boolean }) {
+export function WhatsInside({
+  plugin,
+  appMcpServersEnabled = false,
+}: {
+  plugin: DenPlugin;
+  appMcpServersEnabled?: boolean;
+}) {
   const rows = [
     ...plugin.authoredApps.map((app) => ({
       key: `app:${app.id}`,
       logo: <LetterTile name={app.name} />,
       title: app.name,
       description: "",
-      kind: "App",
-      href: appMcpServersEnabled ? pluginChatDeepLink({ name: `the ${app.name} app from ${plugin.name}` }) : undefined,
+      kind: "Artifact",
+      href: appMcpServersEnabled ? pluginChatDeepLink({ name: `the ${app.name} artifact from ${plugin.name}` }) : undefined,
     })),
     ...plugin.skills.map((skill) => ({
       key: `skill:${skill.id}`,
@@ -80,12 +79,15 @@ export function WhatsInside({ plugin, appMcpServersEnabled = false }: { plugin: 
   ];
   return (
     <section className="flex flex-col gap-2.5" data-testid="whats-inside">
-      <SectionTitle title="What's inside" meta={thingsLabel(rows.length)} />
+      <SectionTitle title="What's inside" />
       <ItemPanel>
-        {rows.length === 0 ? <p className="px-5 py-4 text-[13px] text-gray-500">Nothing inside yet.</p> : null}
-        {rows.map((row) => (
-          <ItemRow key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
-        ))}
+        {rows.length === 0 ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Nothing inside yet.</p> : null}
+        {rows.map((row) => {
+          const skill = plugin.skills.find((entry) => row.key === `skill:${entry.id}`);
+          return skill ? <SkillPreview key={row.key} skill={skill} /> : (
+            <ItemRow compact key={row.key} logo={row.logo} title={row.title} description={row.description || undefined} href={"href" in row && typeof row.href === "string" ? row.href : undefined} action={<span className="text-[12px] text-gray-500">{row.kind}</span>} />
+          );
+        })}
       </ItemPanel>
     </section>
   );
@@ -128,13 +130,9 @@ function useArchivePlugin() {
 
 /** B2 (a member's plugin) and D3 (Manage, with Who can use it inline). */
 export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "member" | "admin" }) {
-  return mode === "member" ? <MemberPluginPage pluginId={pluginId} /> : <PluginPage pluginId={pluginId} mode="admin" libraryItems={undefined} />;
-}
-
-/** My Library loads alongside the plugin; Manage pages never need it. */
-function MemberPluginPage({ pluginId }: { pluginId: string }) {
+  // Item managers may not hold Manage all shared items. Resolve their item role on both routes.
   const library = useLibrary();
-  return <PluginPage pluginId={pluginId} mode="member" libraryItems={library.data} />;
+  return <PluginPage pluginId={pluginId} mode={mode} libraryItems={library.data} />;
 }
 
 function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: "member" | "admin"; libraryItems: LibraryItem[] | undefined }) {
@@ -148,9 +146,24 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
+  // Feature intros: on Manage, a banner while nobody besides its owner can use this plugin,
+  // directly or through a collection it's in.
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const collectionGrants = usePluginCollectionGrants(
+    (plugin.data?.marketplaces ?? []).map((collection) => collection.id),
+    introsEnabled && mode === "admin" && Boolean(plugin.data),
+  );
+  const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && collectionGrants && orgContext ? {
+    // This plugin exists, so the section is set up.
+    plugins: 1,
+    sharedBeyondOwner: pluginSharedBeyondOwnerWithCollections(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId, collectionGrants),
+    canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
+      || libraryItems?.some(item => item.type === "plugin" && item.id === pluginId && item.role === "manager") === true
+      || getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageAllShared,
+  } : null);
 
   if (plugin.isLoading) {
-    return <PluginPageSkeleton back={back} mode={mode} />;
+    return <PluginPageSkeleton back={back} mode={mode} compact />;
   }
 
   if (!plugin.data) {
@@ -168,16 +181,20 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const data = plugin.data;
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = data.createdByOrgMembershipId !== null && data.createdByOrgMembershipId === viewerId;
-  const canManage = mine || Boolean(orgContext && getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).isAdmin);
+  const memberAccess = orgContext
+    ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
+    : null;
   const draft = access.data ? draftFromPluginGrants(access.data) : null;
   const item = libraryItems?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
+  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
+  const canManage = mine || (item?.type === "plugin" && item.role === "manager") || memberAccess?.canManageAllShared === true;
   const creator = orgContext?.members.find((member) => member.id === data.createdByOrgMembershipId);
   const who = mine && orgContext && draft
     ? ownedAccessStatus(draft, orgContext, viewerId)
     : item ? receivedStatus(item.edges) : "";
 
   async function changeAccess(next: AccessDraft) {
-    if (!access.data || !orgContext || !draft) return;
+    if (!canManage || savingAccess || !access.data || !orgContext || !draft) return;
     const previous = draft;
     setSavingAccess(true);
     setAccessError(null);
@@ -212,12 +229,13 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   return (
     <ItemPage testId="plugin-page">
       <ItemHeader
+        compact
         back={back}
-        logo={<LetterTile name={data.name} size="lg" />}
+        logo={<PluginLogo name={data.name} size="lg" />}
         title={data.name}
-        description={data.description || undefined}
         actions={(
           <>
+            {!canManage ? <DenButton size="sm" variant="secondary" icon={LockKeyhole} disabled>Manage</DenButton> : null}
             <ItemMenu
               size="md"
               label={`More for ${data.name}`}
@@ -227,18 +245,20 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
               ] : []}
             />
             {mode === "member" && mine ? (
-              <LinkButton href={getLibraryPluginShareRoute(orgSlug, pluginId)}>
+              <LinkButton size="sm" href={getLibraryPluginShareRoute(orgSlug, pluginId)}>
                 <UserPlus className="h-4 w-4" aria-hidden />
                 Share
               </LinkButton>
             ) : null}
-            <DenButton icon={MessageSquare} href={pluginChatDeepLink(data)}>Chat</DenButton>
+            <DenButton size="sm" icon={MessageSquare} href={pluginChatDeepLink(data)}>Chat</DenButton>
           </>
         )}
       />
 
+      {accessIntro.size === "banner" ? accessIntro.element : null}
+
       {mode === "admin" && orgContext && draft ? (
-        <section className="flex flex-col gap-2.5">
+        <section id="who-can-use-it" className="flex scroll-mt-6 flex-col gap-2.5">
           <SectionTitle title="Who can use it" />
           <WhoCanUseIt
             value={draft}
@@ -246,31 +266,35 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
             members={orgContext.members}
             teams={orgContext.teams}
             owner={creator ? { id: creator.id, name: creator.user.name || creator.user.email, isYou: creator.id === viewerId } : null}
-            canShareWithEveryone
+            canShareWithEveryone={memberAccess?.canShareWithEveryone === true}
             everyoneOffDescription={draft.memberIds.filter((id) => id !== data.createdByOrgMembershipId).length === 0 && draft.teamIds.length === 0
               ? "Off. Only you have it so far."
               : "Off. Only the people and teams below have it."}
-            disabled={savingAccess}
+            disabled={savingAccess || !canManage}
           />
           {accessError ? <p className="text-[13px] text-red-600">{accessError}</p> : null}
         </section>
       ) : null}
 
-      <WhatsInside plugin={data} appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true} />
+      <WhatsInside
+        plugin={data}
+        appMcpServersEnabled={orgContext?.capabilities.appMcpServers === true}
+      />
       <AppMcpServers plugin={data} />
 
-      {mode === "member" ? (
-        <section className="flex flex-col gap-2.5">
-          <SectionTitle title="Details" />
-          <DetailRows
-            rows={[
-              { label: "Who can use it", value: who },
-              { label: "Made by", value: mine ? "You" : creator?.user.name || "Your organization" },
-              ...(formatAddedDate(data.createdAt) ? [{ label: "Added", value: formatAddedDate(data.createdAt) }] : []),
-            ]}
-          />
-        </section>
-      ) : null}
+      {!canManage ? <p className="flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-manage-locked"><LockKeyhole className="size-4 shrink-0" aria-hidden />Only a plugin manager or organization admin can edit or remove it.</p> : null}
+
+      <section className="flex flex-col gap-2.5">
+        <SectionTitle title="Details" />
+        <DetailRows
+          rows={[
+            ...(data.description ? [{ label: "About", value: data.description, wrap: true }] : []),
+            ...(mode === "member" ? [{ label: "Who can use it", value: who }] : []),
+            { label: "Made by", value: mine ? "You" : creator?.user.name || "Your organization" },
+            ...(formatAddedDate(data.createdAt) ? [{ label: "Added", value: formatAddedDate(data.createdAt) }] : []),
+          ]}
+        />
+      </section>
     </ItemPage>
   );
 }

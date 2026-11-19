@@ -5,40 +5,9 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { publishReviewPr } from "../packages/test-artifacts/src/publish-pr.ts";
 import { readTestRunDirectory } from "../packages/test-artifacts/src/scan.ts";
-import { changedFiles, proofArtifact, selectProof } from "../../.github/scripts/pr-proof.mjs";
-
-// The only producer: the PR change proof run on the PR head.
-const producers = [
-  { file: "pr-proof.yml", name: "PR change proof", events: ["pull_request"] },
-];
-const validSha = (sha) => typeof sha === "string" && /^[a-f0-9]{40}$/.test(sha);
-const validId = (id) => Number.isSafeInteger(id) && id > 0;
-function sameRepo(value, repo) {
-  const [owner, name] = repo.split("/");
-  return value?.full_name === repo && value?.owner?.login === owner && value?.name === name;
-}
-
-// All identity comes from GitHub's API, never artifact contents or the event's first PR.
-export function association(run, repo, workflows) {
-  const producer = workflows.find((workflow) => workflow.id === run.workflow_id);
-  if (!producer || run.path !== `.github/workflows/${producer.file}` || run.name !== producer.name)
-    return { reason: "unrecognized producer workflow" };
-  if (!sameRepo(run.repository, repo) || !sameRepo(run.head_repository, repo))
-    return { reason: "producer repository identity mismatch" };
-  if (run.status !== "completed" || !["success", "failure"].includes(run.conclusion) || !producer.events.includes(run.event))
-    return { reason: "producer event or completion is not eligible" };
-  if (!Array.isArray(run.pull_requests) || run.pull_requests.length !== 1)
-    return { reason: "missing or ambiguous PR association" };
-  const pr = run.pull_requests[0];
-  // Run PR stubs expose repo IDs, not necessarily full repository objects.
-  if (!validId(run.repository.id) || run.head_repository.id !== run.repository.id || pr.base?.repo?.id !== run.repository.id || pr.head?.repo?.id !== run.head_repository.id)
-    return { reason: "PR base or head repository identity mismatch" };
-  if (!validId(pr.number) || !validSha(pr.head?.sha))
-    return { reason: "missing PR identity" };
-  if (run.head_sha !== pr.head.sha)
-    return { reason: "producer SHA differs from PR association" };
-  return { pr: pr.number, sha: pr.head.sha };
-}
+import { designDigest } from "../packages/test-artifacts/src/review.ts";
+import { changedFiles, proofArtifactsForAttempt, selectProofForEvent } from "../../.github/scripts/pr-proof.mjs";
+import { association, authorEvidenceNotice, producers, sameRepo, validId } from "../../.github/scripts/evidence-association.mjs";
 
 function gh(args) {
   const result = spawnSync("gh", args, { encoding: "utf8", timeout: 90_000, maxBuffer: 64 * 1024 * 1024 });
@@ -64,7 +33,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
   const source = await api(`repos/${repo}/actions/runs/${runId}`);
   if (!validId(source.id) || String(source.id) !== String(runId)) return skip("source run identity mismatch");
   if (runAttempt && (!validId(Number(runAttempt)) || source.run_attempt !== Number(runAttempt))) return skip("source run attempt is stale");
-  const identity = association(source, repo, workflows);
+  const identity = await association(source, repo, workflows, api);
   if (identity.reason) return skip(identity.reason);
   const current = await api(`repos/${repo}/pulls/${identity.pr}`);
   if (current.number !== identity.pr || current.state !== "open" || !sameRepo(current.base?.repo, repo) || !sameRepo(current.head?.repo, repo))
@@ -79,7 +48,7 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
   }
   let selection;
   try {
-    selection = selectProof(files);
+    selection = selectProofForEvent(files, source.event);
   } catch {
     return skip("current PR changed-file listing is unsafe");
   }
@@ -88,13 +57,11 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
   const artifacts = await api(`repos/${repo}/actions/runs/${source.id}/artifacts?per_page=100`);
   if (!Array.isArray(artifacts.artifacts) || artifacts.total_count !== artifacts.artifacts.length)
     return skip("proof artifact listing is incomplete");
-  const expected = new Map(selection.specs.map(spec => [proofArtifact(spec, source.run_attempt), spec]));
   if (artifacts.artifacts.some(artifact => artifact.expired)) return skip("proof artifacts expired");
-  if (artifacts.artifacts.some(artifact => artifact.name?.startsWith("pr-proof-") && !expected.has(artifact.name)))
-    return skip("unexpected proof artifact is present");
-  for (const name of expected.keys())
-    if (artifacts.artifacts.filter(artifact => artifact.name === name).length !== 1)
-      return skip("required proof artifact is missing or duplicated");
+  // After "Re-run failed jobs", specs that passed keep their earlier attempt's records.
+  const chosen = proofArtifactsForAttempt(artifacts.artifacts, selection.specs, source.run_attempt);
+  if (chosen.reason) return skip(chosen.reason);
+  const expected = chosen.expected;
   const directory = await mkdtemp(join(tmpdir(), "openwork-pr-proof-"));
   try {
     const testRunDirs = [];
@@ -115,9 +82,11 @@ export async function publishCompletedEvidence({ repo, runId, runAttempt }, depe
     if ((await api(`repos/${repo}/pulls/${identity.pr}`)).head.sha !== identity.sha)
       return skip("PR identity changed before proof publication");
     const result = await publish({ pr: identity.pr, testRunDirs, gaps: [], automatic: true, replaceAutomatic: true,
-      presentation: "native", title: `PR #${identity.pr} change proof` });
+      presentation: "native", title: `PR #${identity.pr} change proof`, notice: authorEvidenceNotice(source) });
     log(result.posted ? result.urls.report : "PR proof review unchanged.");
-    return result;
+    // Advisory design notes for the Evidence preview check; never a reason to fail publication.
+    const design = await designDigest(testRunDirs).catch(() => undefined);
+    return design ? { ...result, design } : result;
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -153,7 +122,7 @@ export async function publicationJob(env, dependencies = {}) {
         !/^\/r\/[a-f0-9]{32}$/.test(reportUrl.pathname) || reportUrl.search || reportUrl.hash || reportUrl.username || reportUrl.password)
       throw new Error("Invalid published report URL");
     await summary(`## Evidence publication: published\n\n[Open private review report](${reportUrl.href})\n\nPublication succeeded; this is not a test verdict or human approval. The report shows the selected evidence and its limitations.\n`);
-    await receipt({ state: "published", reportUrl: reportUrl.href, evidence: result.evidence });
+    await receipt({ state: "published", reportUrl: reportUrl.href, evidence: result.evidence, ...(result.design ? { design: result.design } : {}) });
     return { state: "published", exitCode: 0 };
   } catch {
     await summary("## Evidence publication: failed\n\nNo new report link was confirmed. Existing evidence is not replaced by raw logs or public attachments. Check publisher configuration and the source run, then replay publication. No test pass is inferred.\n");

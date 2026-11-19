@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto"
-import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@openwork/headless-threads"
+import {
+  connectionBlockerFromToolCalls,
+  connectionBlockerMessage,
+  createHeadlessThreadClient,
+  isHeadlessModelAccessError,
+  type ConnectionBlocker,
+  type HeadlessThreadTranscript,
+} from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -73,6 +80,8 @@ export type CloudAgentExecution =
       needsAttention?: boolean
       events?: CloudAgentEvent[]
       usage?: AutomationUsage
+      /** What the agent wrote, when it finished but could not do the work. */
+      resultSummary?: string
     }
 
 export type CloudAgentExecutorInput = OwnerScope & {
@@ -174,8 +183,8 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
     isNull(MemberTable.removedAt),
   )).limit(1)
   if (!members[0]) return false
-  if (!cloudHostingAvailable({ orgMode: env.orgMode })) return false
-  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
+  if (!cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })) return false
+  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId, { memberId: scope.ownerMemberId })
   if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
   return worker !== null && worker.status !== "failed"
@@ -315,7 +324,19 @@ export type CloudConnectDeps = {
   now: () => number
 }
 
-type CloudConnectResult = { ok: true } | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string }
+type CloudConnectResult =
+  | { ok: true }
+  | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable" | "execution_failed"; message: string }
+
+/**
+ * Den leaves a per-member provider off the owner's worker while the owner has
+ * no active key for it, so its model cannot run there. Say that, instead of
+ * letting the health probe report it as an OpenWork Connect problem.
+ */
+function missingMemberCredentialMessage(providerName: string): string {
+  return `${providerName} uses a separate key for each member, and the Automation owner has no active key for it. `
+    + `Ask an organization admin to issue your key for ${providerName}, then resume this Automation.`
+}
 
 function engineWarmingUp(health: Record<string, unknown> | null): boolean {
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
@@ -379,13 +400,19 @@ export async function connectHealth(input: {
   // read phase cannot fail on the same warm-up window.
   if (!engineWarmingUp(health)) {
     try {
-      await deps.materializeProviders({
+      const materialized = await deps.materializeProviders({
         organizationId: normalizeDenTypeId("organization", input.organizationId),
         workerId: normalizeDenTypeId("worker", input.workerId),
         instanceUrl: input.baseUrl,
         hostToken: input.access.hostToken,
         clientToken: input.access.clientToken,
       })
+      const missing = materialized.ok
+        ? materialized.missingMemberCredentials.find((provider) => provider.id === input.action.model.providerId)
+        : undefined
+      if (missing) {
+        return { ok: false, code: "provider_unavailable", message: missingMemberCredentialMessage(missing.name) }
+      }
     } catch (error) {
       logger.warn("automation run provider materialization warning", {
         worker_id: input.workerId,
@@ -403,10 +430,17 @@ export async function connectHealth(input: {
     health = isRecord(refreshed?.health) ? refreshed.health : null
   }
   if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
-  if (health?.usable === true && health.usableByCurrentModel !== true) {
-    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities." }
-  }
   const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
+  if (failure?.code === "provider_tool_projection_missing") {
+    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities. Choose a supported model to resume this Automation." }
+  }
+  if (failure?.stage === "provider_projection" || health?.usable === true) {
+    return {
+      ok: false,
+      code: "execution_failed",
+      message: "The selected model's availability could not be checked. Retry the run when the runtime catalog is available.",
+    }
+  }
   return {
     ok: false,
     code: "connect_access_unavailable",
@@ -457,7 +491,7 @@ function terminalFailure(input: {
   usage: AutomationUsage
 }): CloudAgentExecution {
   const { error, transcript, usage } = input
-  const modelAccess = error.name === "ProviderAuthError"
+  const modelAccess = isHeadlessModelAccessError(error)
   return {
     ok: false,
     status: "failed",
@@ -469,6 +503,40 @@ function terminalFailure(input: {
     events: [
       ...transcriptEvents(transcript, usage),
       { type: "terminal", payload: { status: "failed", errorName: error.name, message: error.message } },
+    ],
+  }
+}
+
+/**
+ * The agent finished, but OpenWork Cloud told it a connection must be
+ * connected or reconnected first, so the run did not do its work. It fails
+ * with the connection named instead of reading as a success. Not retried: a
+ * retry hits the same connection until its owner fixes it.
+ */
+export function connectionBlockedExecution(input: {
+  blocker: ConnectionBlocker
+  /** The agent's own answer, when it wrote one. */
+  answer: string
+  usage: AutomationUsage
+  events: CloudAgentEvent[]
+}): CloudAgentExecution {
+  const { blocker } = input
+  const message = connectionBlockerMessage(blocker)
+  return {
+    ok: false,
+    status: "failed",
+    code: "connection_action_required",
+    message,
+    retryable: false,
+    ...(input.answer.trim() ? { resultSummary: input.answer.trim().slice(0, RESULT_SUMMARY_LIMIT) } : {}),
+    usage: input.usage,
+    events: [
+      ...input.events,
+      {
+        type: "warning",
+        payload: { code: "connection_action_required", ...blocker },
+      },
+      { type: "terminal", payload: { status: "failed", code: "connection_action_required", message } },
     ],
   }
 }
@@ -499,7 +567,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
       needsAttention: true,
     }
   }
-  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
+  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId, { memberId: input.ownerMemberId })
   if (!webAccess.hasAccess) {
     return {
       ok: false,
@@ -515,6 +583,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
     ownerMemberId: input.ownerMemberId,
     providerId: input.action.model.providerId,
     modelId: input.action.model.modelId,
+    executionTarget: "cloud",
   })
   if (access.ok) return null
   return {
@@ -567,7 +636,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       signal,
     })
     if (!connect.ok) {
-      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
+      return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: connect.code !== "execution_failed" }
     }
 
     client = createHeadlessThreadClient({
@@ -576,6 +645,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       token: runtime.access.clientToken,
       hostToken: runtime.access.hostToken,
       requestTimeoutMs: WORKER_REQUEST_TIMEOUT_MS,
+      requireModelAvailability: true,
       fetch: (url, init = {}) => fetchPreviewNoRedirect(previewFetch(), url, init),
       defaultModel: {
         providerId: input.action.model.providerId,
@@ -663,6 +733,10 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     const usage = usageFromTranscript(transcript.usage)
     if (transcript.terminalError) return terminalFailure({ error: transcript.terminalError, transcript, usage })
     const resultSummary = transcript.finalAssistantText.trim() || "OpenWork Cloud completed the Automation run."
+    const blocker = connectionBlockerFromToolCalls(transcript.messages.flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part] : [])))
+    if (blocker) {
+      return connectionBlockedExecution({ blocker, answer: transcript.finalAssistantText, usage, events: transcriptEvents(transcript, usage) })
+    }
     return {
       ok: true,
       threadId: nativeThreadId,
@@ -694,10 +768,12 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
         }
       }
     }
+    const modelAccess = !cancelled && !timedOut && isHeadlessModelAccessError(error)
     return {
       ok: false,
       status: cancelled ? "cancelled" : "failed",
-      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : "execution_failed",
+      code: cancelled ? "cancelled" : timedOut ? "execution_timed_out" : modelAccess ? "model_access_lost" : "execution_failed",
+      needsAttention: modelAccess,
       message: cancelled ? "The Automation run was cancelled."
         : timedOut ? "The Automation run exceeded its maximum runtime." : error instanceof Error ? error.message : "Cloud agent execution failed.",
       // A thrown transport or executor error may happen after OpenCode accepted

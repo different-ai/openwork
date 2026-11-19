@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { env } from "../env.js"
+import { workbotOAuthReturnSchema, type WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 import { publicRequestUrl } from "../request-url.js"
 import { clientSelectedFeatures, resolveProviderScopes, type NativeOAuthProviderConfig } from "./provider-registry.js"
 import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-tenant.js"
@@ -67,6 +68,7 @@ export type OAuthStatePayload = {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   nonce: string
   iat?: number
   exp: number
@@ -81,6 +83,7 @@ export function createOAuthStateToken(input: {
   callbackMode?: "shared-v1" | "isolated-v1" | "legacy-v1"
   authorizationServerIssuer?: string
   authorizationResponseIssuerRequired?: boolean
+  workbotReturn?: WorkbotOAuthReturn
   secret: string
   ttlSeconds?: number
   now?: number
@@ -97,6 +100,7 @@ export function createOAuthStateToken(input: {
     ...(input.authorizationResponseIssuerRequired !== undefined
       ? { authorizationResponseIssuerRequired: input.authorizationResponseIssuerRequired }
       : {}),
+    ...(input.workbotReturn ? { workbotReturn: workbotOAuthReturnSchema.parse(input.workbotReturn) } : {}),
     nonce: randomUUID(),
     iat: Math.floor(nowMs / 1000),
     exp: Math.floor(nowMs / 1000) + (input.ttlSeconds ?? 10 * 60),
@@ -130,6 +134,7 @@ export function verifyOAuthStateToken(input: { token: string; secret: string; no
       || (payload.callbackMode !== undefined && payload.callbackMode !== "shared-v1" && payload.callbackMode !== "isolated-v1" && payload.callbackMode !== "legacy-v1")
       || (payload.authorizationServerIssuer !== undefined && typeof payload.authorizationServerIssuer !== "string")
       || (payload.authorizationResponseIssuerRequired !== undefined && typeof payload.authorizationResponseIssuerRequired !== "boolean")
+      || (payload.workbotReturn !== undefined && !workbotOAuthReturnSchema.safeParse(payload.workbotReturn).success)
       || typeof payload.nonce !== "string"
       || (payload.iat !== undefined && typeof payload.iat !== "number")
       || typeof payload.exp !== "number"
@@ -367,7 +372,12 @@ export function resolveOAuthEndpointUrl(input: {
   client: OrgOAuthClientRow
   endpoint: "authorize" | "token"
 }): string {
-  const template = input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
+  // A sandbox's sample Microsoft 365 signs in at its own workplace, or not at all: never at Microsoft.
+  const sandbox = input.client.sandboxEndpoints
+  if (sandbox?.status === "unavailable") throw new OAuthClientConfigurationError(sandbox.message)
+  const template = sandbox
+    ? input.endpoint === "authorize" ? sandbox.authorizeUrl : sandbox.tokenUrl
+    : input.endpoint === "authorize" ? input.provider.authorizeUrl : input.provider.tokenUrl
   const tenantIdExtraKey = input.provider.tenantIdExtraKey
   if (!tenantIdExtraKey) return template
 
@@ -459,6 +469,11 @@ async function refreshTokens(input: {
   })
 }
 
+function isRevokedGrant(error: unknown): boolean {
+  return error instanceof OAuthTokenExchangeError
+    && (error.code === "oauth_invalid_grant" || error.code === "oauth_reauthentication_required")
+}
+
 /**
  * Returns a valid, unexpired access token for the calling member's
  * connected account, refreshing it (and persisting the refresh) if needed.
@@ -494,7 +509,27 @@ export async function getValidAccessToken(input: {
     return { error: "client_not_configured" }
   }
 
-  const refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
+  let refreshed: TokenResponse
+  try {
+    refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
+  } catch (error) {
+    if (!isRevokedGrant(error)) throw error
+    // The provider no longer honors this grant (revoked access, password
+    // change, expired consent). Clear it so later requests ask the member to
+    // connect again instead of retrying a dead refresh token.
+    await refreshConnectedAccountForActiveMember({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      providerId: input.credentialProviderId,
+      expectedAccountId: account.id,
+      expectedAccessToken: account.accessToken,
+      expectedRefreshToken: account.refreshToken,
+      accessToken: null,
+      refreshToken: null,
+      expiresAt: null,
+    })
+    return { error: "not_connected" }
+  }
   const expiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null
   const updated = await refreshConnectedAccountForActiveMember({
     organizationId: input.organizationId,

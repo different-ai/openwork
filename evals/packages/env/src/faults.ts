@@ -19,8 +19,8 @@ export interface FaultProxy extends AsyncDisposable {
   ref: DenRef;
   arrivals?(): Promise<Omit<FaultRequest, "status">[]>;
   faults: {
-    status(pathPrefix: string, statusCode: number, opts?: { times?: number; body?: unknown }): Promise<void>;
-    latency(pathPrefix: string, delayMs: number, opts?: { times?: number }): Promise<void>;
+    status(pathPrefix: string, statusCode: number, opts?: { times?: number; body?: unknown; method?: string; headers?: Record<string, string> }): Promise<void>;
+    latency(pathPrefix: string, delayMs: number, opts?: { times?: number; method?: string }): Promise<void>;
     clear(): Promise<void>;
   };
   /** Local lane: the live in-memory log (back-compat). Remote lane: the snapshot from the last requestLog() call. */
@@ -37,10 +37,11 @@ export interface FaultProxyOptions {
 interface RuleBase {
   pathPrefix: string;
   remaining: number;
+  method?: string;
 }
 
 type FaultRule =
-  | (RuleBase & { kind: "status"; statusCode: number; body: unknown })
+  | (RuleBase & { kind: "status"; statusCode: number; body: unknown; headers?: Record<string, string> })
   | (RuleBase & { kind: "latency"; delayMs: number });
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -76,9 +77,9 @@ function times(value: number | undefined): number {
   return value;
 }
 
-function takeRule(rules: FaultRule[], path: string): FaultRule | null {
+function takeRule(rules: FaultRule[], path: string, method: string): FaultRule | null {
   for (const rule of rules) {
-    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix)) continue;
+    if (rule.remaining <= 0 || !path.startsWith(rule.pathPrefix) || (rule.method !== undefined && rule.method !== method)) continue;
     rule.remaining -= 1;
     return rule;
   }
@@ -170,15 +171,19 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
   const server = createServer((incoming, response) => {
     void (async () => {
       const path = incoming.url ?? "/";
-      const rule = takeRule(rules, path);
+      const rule = takeRule(rules, path, incoming.method ?? "GET");
       arrivals.push({ method: incoming.method ?? "GET", path, faulted: rule !== null, at: Date.now() });
       if (rule?.kind === "status") {
         const body = JSON.stringify(rule.body ?? { error: `Injected HTTP ${rule.statusCode}` });
         requests.push({ method: incoming.method ?? "GET", path, status: rule.statusCode, faulted: true, at: Date.now() });
+        // Den requests from the app in a browser carry credentials, so a
+        // wildcard origin is refused; answer the caller's origin as Den does.
+        const origin = incoming.headers.origin;
         response.writeHead(rule.statusCode, {
-          "access-control-allow-origin": "*",
+          ...(origin ? { "access-control-allow-origin": origin, "access-control-allow-credentials": "true", vary: "Origin" } : { "access-control-allow-origin": "*" }),
           "content-length": Buffer.byteLength(body),
           "content-type": "application/json",
+          ...rule.headers,
         });
         response.end(body);
         return;
@@ -211,10 +216,10 @@ async function localFaultProxy(ref: DenRef): Promise<FaultProxy> {
     async arrivals() { return arrivals.map(row => ({ ...row })); },
     faults: {
       async status(pathPrefix, statusCode, opts = {}) {
-        rules.push({ kind: "status", pathPrefix, statusCode, body: opts.body, remaining: times(opts.times) });
+        rules.push({ kind: "status", pathPrefix, statusCode, body: opts.body, remaining: times(opts.times), method: opts.method?.toUpperCase(), headers: opts.headers });
       },
       async latency(pathPrefix, delayMs, opts = {}) {
-        rules.push({ kind: "latency", pathPrefix, delayMs, remaining: times(opts.times) });
+        rules.push({ kind: "latency", pathPrefix, delayMs, remaining: times(opts.times), method: opts.method?.toUpperCase() });
       },
       async clear() {
         rules.length = 0;
@@ -275,16 +280,29 @@ export async function faultProxy(ref: DenRef, options: FaultProxyOptions = {}): 
     ref: { apiUrl: apiUpstream ? remote.url : `${remote.url}/api/den`, webUrl: remote.url },
     faults: {
       status(pathPrefix, statusCode, opts = {}) {
-        return post("rules", { kind: "status", pathPrefix, statusCode, times: opts.times, body: opts.body });
+        return post("rules", { kind: "status", pathPrefix, statusCode, times: opts.times, body: opts.body, method: opts.method, headers: opts.headers });
       },
       latency(pathPrefix, delayMs, opts = {}) {
-        return post("rules", { kind: "latency", pathPrefix, delayMs, times: opts.times });
+        return post("rules", { kind: "latency", pathPrefix, delayMs, times: opts.times, method: opts.method });
       },
       clear() {
         return post("clear");
       },
     },
     requests,
+    async arrivals() {
+      const response = await control("requests");
+      const body: unknown = await response.json();
+      if (typeof body !== "object" || body === null || !("arrivals" in body) || !Array.isArray(body.arrivals)) throw new Error("Fault proxy control returned no arrival witness.");
+      const arrivals: Omit<FaultRequest, "status">[] = [];
+      for (const value of body.arrivals) {
+        if (typeof value !== "object" || value === null || !("method" in value) || typeof value.method !== "string"
+          || !("path" in value) || typeof value.path !== "string" || !("faulted" in value) || typeof value.faulted !== "boolean"
+          || !("at" in value) || typeof value.at !== "number") throw new Error("Fault proxy returned an invalid arrival witness.");
+        arrivals.push({ method: value.method, path: value.path, faulted: value.faulted, at: value.at });
+      }
+      return arrivals;
+    },
     async requestLog(): Promise<FaultRequest[]> {
       const response = await control("requests");
       const body: unknown = await response.json();

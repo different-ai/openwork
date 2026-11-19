@@ -7,10 +7,11 @@ import {
   GatewayUsageResetTable as R,
 } from "./schema/gateway-usage-limits"
 import {
-  effectiveUsagePolicies,
+  effectiveUsagePolicyScopes,
   usageFail,
   type GatewayUsageScope,
   type UsageTx,
+  type UsageWinner,
 } from "./gateway-usage-read"
 
 type MemberId = GatewayUsageScope["memberId"]
@@ -84,6 +85,39 @@ export async function lockUsageMembers(
       .for("update")
 }
 
+/**
+ * Hands one member's direct limit assignments to another. Used when an invitation is accepted
+ * by someone who is already a member: the invitation's placeholder row is deleted, and limits
+ * assigned to it while it was pending belong to the person. Call inside
+ * `withGatewayUsageEntitlementMutation` with both members listed.
+ */
+export async function moveUsageMemberAssignments(
+  tx: UsageTx,
+  organizationId: OrganizationId,
+  from: MemberId,
+  to: MemberId,
+) {
+  const rows = await tx
+    .select({ id: A.id, policyId: A.policyId })
+    .from(A)
+    .where(and(eq(A.organizationId, organizationId), eq(A.memberId, from)))
+    .for("update")
+  if (!rows.length) return
+  const held = new Set(
+    (
+      await tx
+        .select({ policyId: A.policyId })
+        .from(A)
+        .where(and(eq(A.organizationId, organizationId), eq(A.memberId, to)))
+        .for("update")
+    ).map((row) => row.policyId),
+  )
+  for (const row of rows) {
+    if (held.has(row.policyId)) await tx.delete(A).where(eq(A.id, row.id))
+    else await tx.update(A).set({ memberId: to }).where(eq(A.id, row.id))
+  }
+}
+
 export async function withGatewayUsageEntitlementMutation<T>(
   tx: UsageTx,
   organizationId: OrganizationId,
@@ -94,7 +128,7 @@ export async function withGatewayUsageEntitlementMutation<T>(
   await lockUsageOrganization(tx, organizationId)
   const members = [...new Set(memberIds)].sort()
   await lockUsageMembers(tx, organizationId, members)
-  const before = new Map<MemberId, Awaited<ReturnType<typeof effectiveUsagePolicies>>>()
+  const before = new Map<MemberId, Map<string, UsageWinner[]>>()
   const active = new Map<MemberId, boolean>()
   for (const memberId of members) {
     const [member] = await tx
@@ -103,11 +137,11 @@ export async function withGatewayUsageEntitlementMutation<T>(
       .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId)))
       .for("share")
     active.set(memberId, member?.userId != null && member.removedAt === null)
-    before.set(memberId, await effectiveUsagePolicies(tx, { organizationId, memberId }, true))
+    before.set(memberId, await effectiveUsagePolicyScopes(tx, { organizationId, memberId }, true))
   }
   const result = await mutation()
   for (const memberId of members) {
-    const after = await effectiveUsagePolicies(tx, { organizationId, memberId }, true)
+    const after = await effectiveUsagePolicyScopes(tx, { organizationId, memberId }, true)
     const [member] = await tx
       .select()
       .from(MemberTable)
@@ -115,8 +149,8 @@ export async function withGatewayUsageEntitlementMutation<T>(
       .for("share")
     const memberChanged =
       active.get(memberId) !== (member?.userId != null && member.removedAt === null)
-    const previous = before.get(memberId) ?? []
-    const signature = (winner: (typeof after)[number] | undefined) =>
+    const previous = before.get(memberId) ?? new Map<string, UsageWinner[]>()
+    const signature = (winner: UsageWinner | undefined) =>
       JSON.stringify(
         winner
           ? [
@@ -127,37 +161,45 @@ export async function withGatewayUsageEntitlementMutation<T>(
             ]
           : null,
       )
-    const changed = [
-      ...new Set([...previous, ...after].map((winner) => winner.limit.timeframe)),
-    ].filter(
-      (frame) =>
-        memberChanged ||
-        signature(previous.find((winner) => winner.limit.timeframe === frame)) !==
-          signature(after.find((winner) => winner.limit.timeframe === frame)),
-    )
-    if (!changed.length) continue
-    await tx
-      .update(R)
-      .set({ status: "expired", pendingBucketId: null })
-      .where(
-        and(
-          eq(R.organizationId, organizationId),
-          eq(R.memberId, memberId),
-          eq(R.status, "pending"),
-          inArray(R.timeframe, changed),
-        ),
+    // Compare winners per (provider scope, timeframe): an edit to a provider
+    // limit must not expire requests or extensions on the default, and back.
+    for (const providerScope of new Set([...previous.keys(), ...after.keys()])) {
+      const was = previous.get(providerScope) ?? []
+      const next = after.get(providerScope) ?? []
+      const changed = [
+        ...new Set([...was, ...next].map((winner) => winner.limit.timeframe)),
+      ].filter(
+        (frame) =>
+          memberChanged ||
+          signature(was.find((winner) => winner.limit.timeframe === frame)) !==
+            signature(next.find((winner) => winner.limit.timeframe === frame)),
       )
-    await tx
-      .update(B)
-      .set({ extensionMicroUsd: 0 })
-      .where(
-        and(
-          eq(B.organizationId, organizationId),
-          eq(B.memberId, memberId),
-          gt(B.resetAt, now),
-          or(...changed.map((frame) => eq(B.timeframe, frame))),
-        ),
-      )
+      if (!changed.length) continue
+      await tx
+        .update(R)
+        .set({ status: "expired", pendingBucketId: null })
+        .where(
+          and(
+            eq(R.organizationId, organizationId),
+            eq(R.memberId, memberId),
+            eq(R.providerScope, providerScope),
+            eq(R.status, "pending"),
+            inArray(R.timeframe, changed),
+          ),
+        )
+      await tx
+        .update(B)
+        .set({ extensionMicroUsd: 0 })
+        .where(
+          and(
+            eq(B.organizationId, organizationId),
+            eq(B.memberId, memberId),
+            eq(B.providerScope, providerScope),
+            gt(B.resetAt, now),
+            or(...changed.map((frame) => eq(B.timeframe, frame))),
+          ),
+        )
+    }
   }
   return result
 }

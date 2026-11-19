@@ -14,7 +14,12 @@ export type UsageBucketSnapshot = Pick<
   | "baseAllowanceMicroUsd"
   | "hardLimit"
   | "allowRequestReset"
-> & { startAt: string; resetAt: string }
+> & {
+  startAt: string
+  resetAt: string
+  /** Present only for provider-limit buckets; absent means the default scope. */
+  providerScope?: string
+}
 export type GatewayUsageSnapshot =
   | { version: 1; buckets: UsageBucketSnapshot[] }
   | { version: 2; admittedAt: string; trackingVersion?: number; buckets: UsageBucketSnapshot[] }
@@ -50,6 +55,7 @@ function bucket(
     "allowRequestReset",
     "startAt",
     "resetAt",
+    "providerScope",
   ])
   if (Object.keys(value).some((key) => !fields.has(key))) return false
   if (
@@ -70,6 +76,7 @@ function bucket(
     typeof value.allowRequestReset !== "boolean" ||
     !validUsageDate(value.startAt) ||
     !validUsageDate(value.resetAt) ||
+    (value.providerScope !== undefined && !bounded(value.providerScope, 64)) ||
     (value.timeframe !== "day" && value.timeframe !== "week" && value.timeframe !== "month")
   )
     return false
@@ -133,6 +140,7 @@ export function validateUsageSnapshot(
     return invalid()
   if (new Set(value.buckets.map((row) => row.timeframe)).size !== value.buckets.length)
     return invalid()
+  if (new Set(value.buckets.map((row) => row.providerScope ?? "")).size > 1) return invalid()
   return value.version === 2
     ? {
         version: 2,
@@ -166,9 +174,15 @@ export function sameUsageSnapshot(left: GatewayUsageSnapshot, right: GatewayUsag
           b.baseAllowanceMicroUsd,
           b.hardLimit,
           b.allowRequestReset,
+          b.providerScope ?? "",
         ]),
     ])
   return signature(left) === signature(right)
+}
+
+/** The provider scope a snapshot's buckets belong to ('' = default). */
+export function snapshotScope(snapshot: Pick<GatewayUsageSnapshot, "buckets">): string {
+  return snapshot.buckets[0]?.providerScope ?? ""
 }
 
 export function snapshotAdmission(snapshot: GatewayUsageSnapshot, requestStartedAt: Date) {

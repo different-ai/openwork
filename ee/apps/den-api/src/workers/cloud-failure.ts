@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { runtimeProviderErrorCode } from "@openwork-ee/cloud-runtime/contract"
+import { runtimeProviderErrorCode } from "@openwork/sandbox"
 import { cloudRuntimeErrorCode } from "@openwork-ee/cloud-runtime/orchestrator"
 import type { WorkerTable } from "@openwork-ee/den-db/schema"
 import { OpenWorkWebAccessRequiredError } from "../openwork-web-access-error.js"

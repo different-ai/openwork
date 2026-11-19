@@ -1,4 +1,5 @@
 import { Tool, toolError } from "@openwork/codemode"
+import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { Effect } from "effect"
 import type { Hono } from "hono"
@@ -20,6 +21,7 @@ import {
   buildExternalCapabilityName,
   executeExternalCapability,
   EXTERNAL_MCP_SEARCH_CONCURRENCY,
+  parseExternalCapabilityName,
   providerMarksReadOnly,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
@@ -52,6 +54,16 @@ export type BuiltCodemodeTools = {
   manifest: CodemodeManifestEntry[]
 }
 
+export type RequiredCapability = Pick<CodemodeManifestEntry, "capabilityName">
+
+/**
+ * Builds the tools a script can call. A saved Workflow passes the capabilities
+ * it declared, so a run waits only on the connections it uses. With none
+ * passed, every connection is listed, which saving a Workflow needs to resolve
+ * the tools it calls.
+ */
+export type BuildCodemodeTools = (required?: readonly RequiredCapability[]) => Promise<BuiltCodemodeTools>
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -74,7 +86,7 @@ function isCodemodeJsonSchema(value: unknown): value is Tool.JsonSchema {
   return isRecord(value)
 }
 
-function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
+export function denInputJsonSchema(operation: McpToolOperation): Tool.JsonSchema {
   const serialized = JSON.stringify(z.toJSONSchema(operation.inputSchema), (key, value: unknown) => key === "~standard" ? undefined : value)
   const schema: unknown = JSON.parse(serialized)
   return isCodemodeJsonSchema(schema) ? schema : {}
@@ -211,6 +223,8 @@ export async function buildNativeProviderToolTree(input: {
   organizationId: string
   member: McpMemberIdentity | null
   namespaceContext?: CodemodeConnectionNamespaceContext
+  /** What starts these calls, recorded with each Library usage event. */
+  usageSource: CapabilityUsageSource
 }): Promise<BuiltCodemodeTools> {
   if (!input.member) return { tools: {}, manifest: [] }
   const memberIdentity = input.member
@@ -219,10 +233,11 @@ export async function buildNativeProviderToolTree(input: {
     member: memberIdentity,
   })
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
+  const catalog = input.catalog
   const namespaceEntries = namespaceContext.codemodeNativeProviderEntries.flatMap((connection) => {
     const namespace = namespaceContext.namespaces.native.get(connection.id)
     if (!namespace) return []
-    const definitions = nativeOperations(input.catalog, connection.nativeProviderKey).map((operation) => [operation.name, Tool.make({
+    const definitions = nativeOperations(catalog, connection.nativeProviderKey).map((operation) => [operation.name, Tool.make({
       description: operation.operation.summary ?? operation.operation.description ?? operation.name,
       input: denInputJsonSchema(operation),
       output: operation.outputSchema,
@@ -238,6 +253,7 @@ export async function buildNativeProviderToolTree(input: {
         path: normalizeToolRecord(isRecord(toolInput) ? toolInput.path : undefined),
         query: normalizeToolRecord(isRecord(toolInput) ? toolInput.query : undefined),
         body: normalizeToolBody(isRecord(toolInput) ? toolInput.body : undefined),
+        usageSource: input.usageSource,
       })).pipe(Effect.flatMap((result) => !result || result.isError
         ? Effect.fail(toolError(toolResultError(result)))
         : Effect.succeed(toolResultValue(result)))),
@@ -249,13 +265,13 @@ export async function buildNativeProviderToolTree(input: {
     tools: Object.fromEntries(namespaceEntries),
     manifest: buildNativeProviderManifest({
       connections: namespaceContext.codemodeNativeProviderEntries,
-      catalog: input.catalog,
+      catalog,
       namespaces: namespaceContext.namespaces.native,
     }),
   }
 }
 
-async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
+export async function mapConcurrent<T, R>(items: readonly T[], limit: number, visit: (item: T) => Promise<R>): Promise<Array<R | undefined>> {
   const results: Array<R | undefined> = Array.from({ length: items.length })
   let nextIndex = 0
   const worker = async () => {
@@ -284,12 +300,22 @@ function isListedExternalConnection(value: ListedExternalConnection | undefined)
   return value !== undefined
 }
 
+/** The connections to list: all of them, or only those the required capabilities name. */
+export function connectionsRequiredBy<Connection extends { id: string }>(connections: Connection[], required: readonly RequiredCapability[] | undefined): Connection[] {
+  if (!required) return connections
+  const ids = new Set(required.flatMap(({ capabilityName }) => parseExternalCapabilityName(capabilityName)?.connectionId ?? []))
+  return connections.filter((connection) => ids.has(connection.id))
+}
+
 export async function buildExternalMcpToolTree(input: {
   organizationId: string
   member: McpMemberIdentity | null
   scopes: ReadonlySet<string>
   redirectUriBase: string
   namespaceContext?: CodemodeConnectionNamespaceContext
+  required?: readonly RequiredCapability[]
+  /** What starts these calls, recorded with each Library usage event. */
+  usageSource: CapabilityUsageSource
 }): Promise<BuiltCodemodeTools> {
   if (!input.member) return { tools: {}, manifest: [] }
   const memberIdentity = input.member
@@ -297,7 +323,8 @@ export async function buildExternalMcpToolTree(input: {
     organizationId: input.organizationId,
     member: memberIdentity,
   })
-  const connections = namespaceContext.codemodeExternalMcpConnections
+  // Namespaces stay computed from every connection, so script paths do not change.
+  const connections = connectionsRequiredBy(namespaceContext.codemodeExternalMcpConnections, input.required)
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {
     try {
@@ -332,6 +359,7 @@ export async function buildExternalMcpToolTree(input: {
         toolName: tool.name,
         args: stripUndefinedEntries(args),
         redirectUriBase: input.redirectUriBase,
+        usageSource: input.usageSource,
       })).pipe(Effect.flatMap((result) => result.ok
         ? Effect.succeed(toolResultValue(result.result))
         : Effect.fail(toolError(result.message)))),

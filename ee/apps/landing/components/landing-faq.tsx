@@ -2,14 +2,20 @@ import { homeFaq, type FaqEntry } from "../lib/faq";
 
 type LandingFaqProps = {
   entries?: FaqEntry[];
+  /** "product" matches the medium-weight headings of the product pages. */
+  tone?: "home" | "product";
 };
 
-export function LandingFaq({ entries = homeFaq }: LandingFaqProps) {
+export function LandingFaq({ entries = homeFaq, tone = "home" }: LandingFaqProps) {
   return (
     <section aria-labelledby="faq-heading">
       <h2
         id="faq-heading"
-        className="mb-10 text-[36px] font-light leading-[42px] tracking-[-0.015em] text-[var(--lp-ink)] md:text-[44px] md:leading-[50px]"
+        className={
+          tone === "product"
+            ? "mb-8 text-[32px] font-medium leading-[38px] tracking-[-0.03em] text-[var(--lp-ink)]"
+            : "mb-10 text-[36px] font-light leading-[42px] tracking-[-0.015em] text-[var(--lp-ink)] md:text-[44px] md:leading-[50px]"
+        }
       >
         Frequently asked questions
       </h2>

@@ -1,0 +1,123 @@
+---
+title: "Connectors"
+sidebarTitle: "Connectors overview"
+description: "Let your team's AI read and act in the apps you already use. Add an app once in Manage › Connectors, choose how people sign in and who can use it."
+keywords: ["connectors", "Manage Connectors", "add connector", "who can use it", "each person signs in", "one account for everyone", "Google Workspace", "Microsoft 365", "Use in another app", "MCP"]
+---
+
+A connector is an app your organization's AI can use, such as Google Workspace,
+Microsoft 365, Slack, Notion, Linear, or GitHub. You add it once in OpenWork
+Cloud, choose how people sign in and who can use it, and it shows up in their
+Library. Members don't install anything.
+
+This page is the short version. For every step and setting, see
+[Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections).
+
+## Where to find it
+
+In OpenWork Cloud, open **Manage › Connectors**. The list shows what needs
+attention first, then what's connected.
+
+Adding connectors and changing who can use them needs the **Manage connections**
+permission. Organization owners and admins have it by default. Members can
+still add some apps for themselves in **My Library**.
+
+## Add a connector
+
+<Steps>
+  <Step title="Pick an app">
+    Click **Add connector** (or **Add** once you have some) and pick an app from
+    the list. For an app that isn't listed, paste its MCP address.
+  </Step>
+  <Step title="Let OpenWork check it">
+    OpenWork makes sure it can reach the app, knows how you sign in, can sign
+    in, and can see what the AI can do. Finish any check that asks for
+    something, like a key or a sign-in.
+  </Step>
+  <Step title="Choose how people connect">
+    Under **How people connect**, choose one of the options below.
+  </Step>
+  <Step title="Choose who can use it">
+    Under **Who can use it**, turn on **Everyone in the organization**, or add
+    people and teams. At first, only you can use it.
+  </Step>
+  <Step title="Add it">
+    Click **Add** followed by the app's name. People you chose find it in their
+    Library.
+  </Step>
+</Steps>
+
+Full walkthrough, with a 2-minute video and screenshots of each step:
+[Add a connector](/cloud/share-with-your-team/shared-mcp-connections#add-a-connector).
+
+## How people connect
+
+| Option | What happens | Good for |
+| --- | --- | --- |
+| **Each person signs in** | Everyone uses their own account. The AI acts as that person, with their permissions. | Most apps: email, documents, issue trackers. |
+| **One account for everyone** | You sign in once. Everyone who can use the connector acts as that account. | A bot or service account. |
+| **Each person adds a key** | One connection; each person pastes their own API key. | Apps that use API keys instead of sign-in. |
+| **One key for everyone** | You add one API key that everyone uses. | A shared API account. |
+
+Apps that use sign-in offer the first two; apps that use API keys offer the last
+two. Some apps need no sign-in at all.
+
+With **Each person signs in** or **Each person adds a key**, each member
+connects their own account once. See
+[Connect your own account](/cloud/share-with-your-team/connect-your-own-account).
+
+## Who can use it
+
+Open the connector from **Manage › Connectors**. Under **Who can use it**:
+
+- Turn on **Everyone in the organization**, or
+- Add people and teams.
+
+Changes apply right away, on every device. Removing someone's access, or
+removing the connector, takes it away from their AI immediately.
+
+## Google Workspace and Microsoft 365
+
+Both are in the **Add a connector** list:
+
+- **Google Workspace**: Gmail, Drive, Calendar, Sheets and Chat. It uses your
+  organization's own Google Cloud OAuth client. See
+  [Google Workspace](/start-here/connect-your-stack/connect-services#google-workspace).
+- **Microsoft 365**: Outlook, Calendar, OneDrive and Teams. An admin registers
+  an app in Microsoft Entra once. See
+  [Connect Microsoft 365](/cloud/share-with-your-team/microsoft-365).
+
+In both cases, each member then signs in with their own work account.
+
+## Where connectors show up
+
+- **OpenWork desktop app**: in **Settings › Library**, under the **Connectors**
+  filter. People who need to sign in see **Sign in**.
+- **OpenWork Cloud**: in **My Library** and on **Your Connections**.
+- **Claude, Cursor, and other MCP apps**: open the connector, expand **Use in
+  another app** and click **Turn on**. People who can use it then copy its
+  address and add it to their app, signing in with OpenWork. Your access rules
+  still apply. See
+  [Use a connector in other AI apps](/cloud/share-with-your-team/shared-mcp-connections#use-a-connector-in-other-ai-apps).
+
+Then people just ask their AI for something the app can do. It uses the
+connector with their account.
+
+## Keep connectors healthy
+
+On a connector's page, the **⋯** menu has:
+
+- **Edit settings**: change its name, address, sign-in, or key.
+- **Test tools**: try its tools before members use them. See
+  [Test tools](/cloud/share-with-your-team/shared-mcp-connections#test-tools).
+- **Sign everyone out**: each person signs in again. Its setup and who can use
+  it stay the same.
+- **Remove**: nobody can use it anymore.
+
+## Related
+
+- [Connect your own account](/cloud/share-with-your-team/connect-your-own-account)
+- [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections)
+- [Connect Slack](/slack/connect-slack)
+- [Make your MCP server work with OpenWork](/cloud/share-with-your-team/mcp-server-compatibility)
+- [Plugins](/cloud/share-with-your-team/plugins): bundle a connector with the skills that use it

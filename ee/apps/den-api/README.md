@@ -32,13 +32,13 @@ Default owner login: `alex@acme.test` / `OpenWorkDemo123!`.
 - `otel`: initializes the OpenTelemetry Node SDK before Hono/DB imports, exports OTLP HTTP/protobuf traces, metrics, and logs from standard `OTEL_*` variables, and uses `@hono/otel` for normalized request spans/metrics without inbound HTTP auto-instrumentation.
 - `sentry`: initializes `@sentry/hono/node` before app imports and uses the official Hono middleware for errors/tracing/Sentry Logs. Do not combine it with the OTEL backend.
 
-The request access log records request id, method, normalized route, status, and duration, and omits health/readiness noise. Health/readiness requests also skip den-api's Hono observability middleware. Authorization, cookie, body, and query values are redacted from app telemetry. `OTEL_SERVICE_NAME` overrides the default `den-api` service name. Daytona's own OTEL bootstrap remains disabled; do not set Daytona OTEL enable variables from den-api.
+The request access log records request id, method, normalized route, status, duration and the number of database statements the request issued (`db_queries`, a count only), and omits health/readiness noise. Health/readiness requests also skip den-api's Hono observability middleware. Authorization, cookie, body, and query values are redacted from app telemetry. `OTEL_SERVICE_NAME` overrides the default `den-api` service name. Daytona's own OTEL bootstrap remains disabled; do not set Daytona OTEL enable variables from den-api.
 
 Builds generate source maps. Sentry source maps are uploaded only when `DEN_OBSERVABILITY_BACKEND=sentry` and `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_RELEASE` are present; `SENTRY_DIST` is passed through when set. The auth token must stay in secret storage and is never written to env examples or logs.
 
 ## Approved web origins
 
-Organization owners and super-admins approve self-hosted OpenWork Web instances in the Den dashboard under **Org settings → Approved web origins** (`/v1/org/web-origins`). Each entry is an **exact HTTPS origin** — scheme, host, and optional port, with no path, query, fragment, credentials, or wildcard — and an organization can approve up to 20. An approved origin can receive web sign-in handoffs back to `/signin` only while that organization is active, and is allowed for credentialed browser requests to Den API. Handoff approval is checked on every request; CORS approval is cached per process and takes effect within about 30 seconds on every Den API replica. If `DEN_CORS_HANDLED_BY_EDGE=true`, the edge must also allow the same exact origin and the `Authorization` preflight.
+Organization owners and admins approve self-hosted OpenWork Web instances in the Den dashboard under **Org settings → Approved web origins** (`/v1/org/web-origins`). Each entry is an **exact HTTPS origin** — scheme, host, and optional port, with no path, query, fragment, credentials, or wildcard — and an organization can approve up to 20. An approved origin can receive web sign-in handoffs back to `/signin` only while that organization is active, and is allowed for credentialed browser requests to Den API. Handoff approval is checked on every request; CORS approval is cached per process and takes effect within about 30 seconds on every Den API replica. If `DEN_CORS_HANDLED_BY_EDGE=true`, the edge must also allow the same exact origin and the `Authorization` preflight.
 
 ## Current routes
 
@@ -50,7 +50,7 @@ Organization owners and super-admins approve self-hosted OpenWork Web instances 
 - organization routes under `/v1/orgs*`
 - active-organization SCIM management routes under `/v1/scim*`
 - admin routes under `/v1/admin*`
-- worker lifecycle and billing routes under `/v1/workers*`
+- worker list, delete, and activity heartbeat routes under `/v1/workers*` (OpenWork Web instances are worker rows; their lifecycle lives under `/v1/cloud/*`)
 
 ## Folder map
 
@@ -58,7 +58,7 @@ Organization owners and super-admins approve self-hosted OpenWork Web instances 
 - `src/routes/me/`: current user and current user's org resolution routes
 - `src/routes/org/`: organization CRUD-ish surfaces, split by area
 - `src/routes/admin/`: admin-only reporting endpoints
-- `src/routes/workers/`: worker lifecycle, billing, runtime, and heartbeat endpoints
+- `src/routes/workers/`: worker list, delete, and activity heartbeat endpoints
 - `src/middleware/`: reusable Hono middleware for auth context, org context, teams, and validation
 - `src/cache.ts`: shared Redis-backed read-through cache. Add expensive read helpers here, keyed as `cache:${cacheParent}:${cacheChild}:${id}`; for example `cache.auth.session(token)` and `cache.org.members(orgId)`. Redis is optional, so every helper must fall back to the DB loader.
 
@@ -135,7 +135,7 @@ OAuth, or require real credentials.
 
 ## OpenAPI contract
 
-- `packages/docs/openapi.json` is the published contract, regenerated with `pnpm api:snapshot` and linted with `pnpm api:lint` (Spectral, ruleset in `.spectral.yaml`). The API Contract workflow fails on snapshot drift, on any lint error, and when warnings exceed `.spectral-baseline.json`.
+- `packages/docs/openapi.json` is an ignored build artifact generated by `pnpm den:contract` and linted with `pnpm api:lint`. CI generates OpenAPI/SDK from source and fails on generation/type errors, Spectral errors, or warnings above `.spectral-baseline.json`. Hosted docs read the same normalized public contract from `/openapi.json?public=1`; `.github/workflows/refresh-api-docs.yml` rebuilds them once production serves a contract change.
 - Every route registration carries a `describeRoute()` with `summary`, `tags`, `security` and `responses`; conventions and documented exceptions are in [`docs/api-style.md`](../../../docs/api-style.md).
 
 ## Migration approach

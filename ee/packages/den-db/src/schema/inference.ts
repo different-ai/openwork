@@ -201,6 +201,8 @@ export const GatewayRequestLogTable = mysqlTable(
     org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
     inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id"),
     gateway_key_id: denTypeIdColumn("gatewayKey", "gateway_key_id"),
+    // Set instead of gateway_key_id when a member's own API key made the request.
+    gateway_api_key_id: denTypeIdColumn("gatewayApiKey", "gateway_api_key_id"),
     gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
     gateway_provider_credential_id: denTypeIdColumn(
       "inferenceProviderCredential",
@@ -506,6 +508,8 @@ export const AnonymousInferenceUsageTable = mysqlTable("anonymous_inference_usag
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   /** No usage report arrived, so the fixed estimate was charged. */
   estimated: boolean("estimated").notNull().default(false),
@@ -555,6 +559,8 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
+  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
+  cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,

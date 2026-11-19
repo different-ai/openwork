@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { devOpenworkProxy } from "./dev-openwork-proxy";
 import { devDenProxy } from "./dev-den-proxy";
+import { MCP_APP_SANDBOX_PROXY_VERSION } from "../server/src/mcp-app-sandbox";
 
 const portValue = Number.parseInt(process.env.PORT ?? "", 10);
 const devPort = Number.isFinite(portValue) && portValue > 0 ? portValue : 5173;
@@ -100,7 +102,12 @@ export default defineConfig(({ command, isPreview }) => {
     define: {
       "import.meta.env.VITE_OPENWORK_APP_VERSION": JSON.stringify(buildAppVersion),
       "import.meta.env.VITE_OPENWORK_BUILD_SHA": JSON.stringify(shortBuildSha),
+      // Names the MCP App sandbox page built from this source; a server serving it lets Apps load it from the browser cache.
+      "import.meta.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION": JSON.stringify(MCP_APP_SANDBOX_PROXY_VERSION),
     },
+    // The compiler injects this import after Vite's initial dependency scan.
+    // Prebundle it before the first navigation to avoid a startup-time reload.
+    optimizeDeps: { include: ["react/compiler-runtime"] },
     plugins: [
       {
         name: "openwork-dev-server-id",
@@ -114,7 +121,7 @@ export default defineConfig(({ command, isPreview }) => {
       tailwindcss(),
       react({
         babel: {
-          plugins: [["babel-plugin-react-compiler", { compilationMode: "annotation" }]],
+          plugins: [[createRequire(import.meta.url).resolve("babel-plugin-react-compiler"), { compilationMode: "annotation" }]],
         },
       }),
     ],

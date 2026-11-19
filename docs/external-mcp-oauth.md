@@ -61,7 +61,11 @@ challenge nor the administrator selects scopes, OpenWork falls back to the
 provider's advertised `scopes_supported` set; this preserves compatibility
 with providers that reject scope-less authorization requests. A configured
 scope set still takes precedence. `offline_access` is requested only when both
-that scope and refresh-token support are advertised.
+that scope and refresh-token support are advertised. Google does not advertise
+`offline_access` and issues refresh tokens only for `access_type=offline` on a
+fresh consent, so sign-in URLs on `accounts.google.com` get
+`access_type=offline` and `prompt=consent` unless the configured sign-in
+address already sets them.
 
 ## Callback routing
 
@@ -70,6 +74,22 @@ route accepts only shared-callback transactions; the per-connection route
 accepts only transactions for that connection whose signed mode is
 `legacy-v1`. Version-one transactions already in flight remain bound to the
 legacy verifier for their original ten-minute lifetime.
+
+Signed state says who started a connection, not who approved it at the
+provider, so the callback exchanges the code only for the starter:
+
+- A browser signed in to OpenWork as the member who started the connection
+  continues as before.
+- A browser signed in to OpenWork as a different account is refused, and
+  nothing is exchanged or stored.
+- A browser with no OpenWork session (the desktop app opens the system
+  browser) first sees a page naming the OpenWork account and organization the
+  connection will belong to. The code is exchanged only after Continue.
+
+The session cookie reaches the callback only when it covers the
+`DEN_API_PUBLIC_URL` host (see `DEN_BETTER_AUTH_COOKIE_DOMAIN`); otherwise
+every sign-in shows the confirmation page. Native Google Workspace and
+Microsoft 365 connections follow the same rule.
 
 The dashboard links to the redirect URL documentation from pre-registered OAuth
 app forms instead of repeating callback and client-metadata URLs on every

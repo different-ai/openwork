@@ -147,7 +147,7 @@ reconciles. It must not be presented as universal drift detection.
    Layers rather than branches spread through resource constructors.
 5. Determine with evidence whether Alchemy improves remote-resource recovery
    enough to justify its state and provider cost.
-6. Keep pnpm and Node.js 22+ as the supported eval toolchain. Bun must not
+6. Keep pnpm and stable Node.js 24.x (24.22.1 or newer within that major) as the supported eval toolchain. Bun must not
    become required.
 
 ## Non-goals
@@ -404,7 +404,7 @@ No production lifecycle moves in this phase.
    isolated `evals/` workspace; do not depend on `@next` and do not add
    `@effect/vitest` to OpenWork's runner.
 2. Use an Effect version satisfying Alchemy's reviewed
-   `>=4.0.0-beta.105` peer range. Verify pnpm + Node.js 22 execution,
+   `>=4.0.0-beta.105` peer range. Verify pnpm + stable Node.js 24.x (24.22.1 or newer within that major) execution,
    TypeScript 5.9, Vitest 3.2, ESM exports, and the existing eval tsconfig. Bun
    remains optional.
 3. Prove an internal Effect Scope can return an existing `AsyncDisposable`

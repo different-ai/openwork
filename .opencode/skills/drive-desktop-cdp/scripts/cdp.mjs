@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Drive a running OpenWork desktop window over CDP: evaluate, screenshot, open
-// a new session, send a prompt with a chosen model, refresh providers.
+// Drive the running OpenWork app over CDP (headless Chrome or a desktop
+// window): evaluate, screenshot, open a new session, send a prompt with a
+// chosen model, refresh providers.
 //
 //   CDP_URL=http://127.0.0.1:55322 node cdp.mjs eval '<js expression>'
 //   node cdp.mjs shot out.png
@@ -9,8 +10,9 @@
 //   node cdp.mjs wait-idle [timeoutSeconds]
 //   node cdp.mjs refresh-providers
 //
-// CDP_URL defaults to the `pnpm dev` port (9823). A world prints its own CDP
-// URL when it starts (`pnpm world up live-desktop` → "cdp http://…").
+// Set CDP_URL to the address a world prints: `pnpm world up dev-app-web
+// --detach -- --browser` (headless, the default choice) or `live-desktop`.
+// Without it, CDP_URL falls back to the `pnpm dev` desktop port (9823).
 import { writeFileSync } from "node:fs";
 
 const CDP_URL = (process.env.CDP_URL ?? "http://127.0.0.1:9823").replace(/\/$/, "");
@@ -58,13 +60,16 @@ async function screenshot(path) {
   }
 }
 
-// The current workspace id comes from the route, so nothing is hardcoded.
-const WORKSPACE = `(location.hash.match(/#\\/workspace\\/([^/]+)/) || [])[1]`;
+// The current workspace id comes from the route, so nothing is hardcoded. The
+// desktop routes by hash; the app in a browser (dev-app-web) routes by path.
+const WORKSPACE = `((location.hash || location.pathname).match(/\\/workspace\\/([^/]+)/) || [])[1]`;
 
 const newSession = () => evaluate(`(async () => {
   const workspace = ${WORKSPACE};
   if (!workspace) throw new Error("Open a workspace first");
-  location.hash = "#/workspace/" + workspace + "/session";
+  const route = "/workspace/" + workspace + "/session";
+  if (window.__OPENWORK_ELECTRON__) location.hash = "#" + route;
+  else { history.pushState(history.state, "", route); window.dispatchEvent(new PopStateEvent("popstate", { state: history.state })); }
   await new Promise((r) => setTimeout(r, 1500));
   return location.href;
 })()`);

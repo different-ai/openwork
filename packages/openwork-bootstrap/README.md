@@ -2,6 +2,12 @@
 
 Script-installable `openwork-bootstrap` command for agent-first onboarding.
 
+Requires stable Node.js 24.x, version 24.22.1 or newer within that major.
+Older releases and other majors (including 25+) are rejected before any command
+runs. This replaces the previous Node.js 20+ requirement. The installer reuses a
+supported system Node or downloads a private official Node.js 24.22.1 build,
+verified against its published SHA-256 checksum, without changing system Node.
+
 This package is intentionally small and does not assume npm is the install
 channel. A bootstrap script can place `bin/openwork.mjs` on disk, then run:
 

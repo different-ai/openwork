@@ -8,9 +8,13 @@ import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
 import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
+  withToolAttachmentOwner,
+  reasoningTime,
   STRUCTURED_OUTPUT_TOOL,
 } from "./parse-tool-parts";
 import { readComposerPill } from "../surface/composer/composer-pills";
+import { BACKGROUND_SHELL_NOTICE_KEY, readBackgroundShellNotice } from "../../../../app/lib/background-shell-tasks";
+import { SUBAGENT_NOTICE_KEY, readSubagentNotice } from "../../../../app/lib/subagent-notices";
 import {
   presentOpencodeSessionError,
   type OpencodeSessionErrorPresentation,
@@ -116,7 +120,7 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   if (!mapped) return [];
 
   if (part.state.status === "completed" && part.state.attachments) {
-    return [mapped, ...part.state.attachments.flatMap(mapFileParts)];
+    return [mapped, ...withToolAttachmentOwner(part.state.attachments.flatMap(mapFileParts), part.callID)];
   }
 
   return [mapped];
@@ -148,6 +152,8 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
   if (part.synthetic || part.ignored) return null;
   const composerToken = part.metadata?.openworkComposerToken;
   const composerPill = readComposerPill(part.metadata?.openworkComposerPill);
+  const backgroundShell = readBackgroundShellNotice(part.metadata?.[BACKGROUND_SHELL_NOTICE_KEY]);
+  const subagentNotice = readSubagentNotice(part.metadata?.[SUBAGENT_NOTICE_KEY]);
   return {
     type: "text",
     text: part.text,
@@ -156,7 +162,10 @@ export function textPartToUIPart(part: TextPart): UIMessage["parts"][number] | n
       partId: part.id,
       ...(typeof composerToken === "string" ? { composerToken } : {}),
       ...(composerPill ? { composerPill } : {}),
+      ...(backgroundShell ? { backgroundShell } : {}),
+      ...(subagentNotice ? { subagentNotice } : {}),
       ...(part.metadata?.openworkPastedText === true ? { pastedText: true } : {}),
+      ...(typeof part.metadata?.openworkFileMention === "string" ? { fileMention: part.metadata.openworkFileMention } : {}),
     } },
   };
 }
@@ -197,7 +206,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
             type: "reasoning",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...reasoningTime(part) } },
           }];
         }
         if (part.type === "file") {

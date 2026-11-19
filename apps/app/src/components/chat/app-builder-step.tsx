@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
-import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
+import { useEffect, useRef, useState } from "react";
+import { Blocks, CircleCheck, CircleDashed, CircleX } from "lucide-react";
 import { formatToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { useOptionalMessageList } from "./message-list-provider";
-import { useCurrentToolLifecycleResolver } from "./current-tool-lifecycle-context";
+import { useCurrentSessionActivityStatus } from "./current-tool-lifecycle-context";
 import {
   appCreationProgress,
+  appRead,
+  isAppGuidePart,
   type AppCreationRun,
 } from "@/react-app/domains/apps/app-creation-progress";
+import { appBuilderResultFailed } from "@/react-app/domains/apps/built-mcp-app-model";
 import { BuiltAppChatPreview } from "@/react-app/domains/apps/built-app-chat-preview";
 import { DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
 import type { DynamicToolUIPart } from "ai";
@@ -26,25 +29,123 @@ export function appBuildProblem(part: DynamicToolUIPart): string | null {
     .slice(0, 120) || null;
 }
 
+type StageState = "done" | "active" | "failed" | "pending";
+type Stage = { key: string; label: string; state: StageState; notes?: string[] };
+
+/**
+ * The fixed stages of making an App, each labelled from the agent's own
+ * calls: the tools it searched and prepare_app checked, the source it is
+ * writing, each problem it fixed, and the build. Edits read the App instead
+ * of finding and checking tools.
+ */
+function appCreationStages(
+  run: AppCreationRun,
+  progress: ReturnType<typeof appCreationProgress>,
+  editing: boolean,
+  fixedProblems: string[],
+  latestProblem: string | null,
+): Stage[] {
+  const discoveries = run.discoveries ?? [];
+  const searches = discoveries.filter((part) => /(?:^|_)search_capabilities$/.test(part.toolName));
+  const query = Reflect.get(Object(searches.at(-1)?.input), "query");
+  const build = progress.build;
+  const built = Boolean(progress.app || progress.builtUnrecorded);
+  const building = Boolean(build && build.state !== "input-streaming");
+  const writing = progress.stage === "writing" || Boolean(build) || (run.script !== undefined && run.script.kind !== "prepare");
+  const checking = Boolean(run.preparation) || run.script?.kind === "prepare"
+    || (discoveries.length > 0 && !searches.some(isToolPartInFlight));
+  const preparationFailed = Boolean(run.preparation && appBuilderResultFailed(run.preparation) && !progress.preparation);
+  // The stage the agent is on; every earlier one is done.
+  const current = built ? Infinity : building || progress.failed || progress.unavailable ? 3 : writing ? 2 : checking ? 1 : 0;
+  const stateOf = (index: number, failed = false): StageState => index < current
+    ? "done"
+    : index > current ? "pending" : failed ? "failed" : "active";
+  const buildFailed = progress.failed || progress.unavailable;
+  const buildStage: Stage = {
+    key: "build",
+    state: stateOf(3, buildFailed),
+    label: buildFailed
+      ? progress.unavailable ? "Built, but the preview is unavailable" : `Couldn’t build${latestProblem ? `: ${latestProblem}` : " it"}`
+      : current > 3 ? "Built and verified" : current === 3 ? "Building and verifying" : "Build and verify",
+    ...(fixedProblems.length > 0 ? { notes: fixedProblems.map((problem) => `Fixed: ${problem}`) } : {}),
+  };
+  const readyStage: Stage = { key: "ready", state: built ? "done" : "pending", label: built ? "Ready" : "Open beside the chat" };
+
+  if (editing) {
+    const read = discoveries.map(appRead).find(Boolean);
+    return [
+      { key: "read", state: "done", label: read?.title ? `Read “${read.title}”` : "Read the App" },
+      { key: "write", state: stateOf(2), label: current > 2 ? "Wrote the changes" : current === 2 ? "Writing the changes" : "Write the changes" },
+      buildStage,
+      readyStage,
+    ];
+  }
+  const count = progress.preparation?.tools.length;
+  return [
+    {
+      key: "find",
+      state: stateOf(0),
+      label: current > 0
+        ? searches.length === 1 && typeof query === "string" && query
+          ? `Searched your connections for “${query}”`
+          : searches.length > 1 ? `Searched your connections ${searches.length} times`
+            : discoveries.some(isAppGuidePart) ? "Read the build guide" : "Chose its tools"
+        : current === 0 ? "Finding the right tools" : "Find the right tools",
+    },
+    {
+      key: "check",
+      state: stateOf(1, preparationFailed),
+      label: preparationFailed
+        ? "Couldn’t check the tools"
+        : current > 1
+          ? count === undefined ? "Tools ready" : count === 0 ? "No tools needed" : `Checked ${count} ${count === 1 ? "tool" : "tools"}`
+          : current === 1 ? "Checking the tools" : "Check the tools",
+    },
+    { key: "write", state: stateOf(2), label: current > 2 ? "Wrote the App" : current === 2 ? "Writing the App" : "Write the App" },
+    buildStage,
+    readyStage,
+  ];
+}
+
+function StageMark({ state, running }: { state: StageState; running: boolean }) {
+  if (state === "done") {
+    return <CircleCheck className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.5} aria-hidden="true" />;
+  }
+  if (state === "failed") {
+    return <CircleX className="size-4 shrink-0 text-destructive" strokeWidth={1.5} aria-hidden="true" />;
+  }
+  if (state === "active") {
+    return <span className="inline-flex size-4 shrink-0 items-center justify-center gap-0.5 rounded-full border border-current text-foreground" aria-hidden="true">
+      {[0, 1, 2].map(dot => <span key={dot} className={`size-0.5 rounded-full bg-current ${running ? "ow-app-progress-dot" : ""}`} style={{ animationDelay: `${dot * 160}ms` }} />)}
+    </span>;
+  }
+  return <CircleDashed className="size-4 shrink-0 text-muted-foreground/60" strokeWidth={1.5} aria-hidden="true" />;
+}
+
 export function AppBuilderStep({
   run,
   active,
+  activity = null,
+  startedAt = null,
+  completedAt = null,
 }: {
   run: AppCreationRun;
   active: boolean;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  /** While the panel is live: the agent's latest thought or call, shown under the active stage. */
+  activity?: string | null;
 }) {
   const context = useOptionalMessageList();
-  const resolveLifecycle = useCurrentToolLifecycleResolver();
-  const latest = run.builds.at(-1) ?? run.preparation ?? run.discoveries?.at(-1);
-  const lifecycle = latest
-    ? resolveLifecycle(latest.toolCallId, isToolPartInFlight(latest))
-    : null;
+  const sessionActivity = useCurrentSessionActivityStatus();
+  const waiting = active && sessionActivity === "waiting";
+  // The App spans many tools. A finished/superseded tool is not a pause
+  // while the parent turn is still active; Stop is reflected by active.
   const progress = appCreationProgress(
     run,
     active &&
       !context?.syncDegraded &&
-      lifecycle !== "interrupted" &&
-      lifecycle !== "waiting",
+      !waiting,
   );
   const parts = [...(run.executions ?? []), ...(run.attempts ?? []), ...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
   const starts = parts.flatMap((part) =>
@@ -57,6 +158,10 @@ export function AppBuilderStep({
       ? [part.callProviderMetadata.openwork.toolCompletedAt]
       : [],
   );
+  // A persisted message timestamp also covers engines without per-tool timing.
+  // Keep the optimistic fallback stable for the lifetime of this App card.
+  const firstObservedAt = useRef(Date.now());
+  const beganAt = run.startedAt ?? (starts.length ? Math.min(...starts) : startedAt ?? firstObservedAt.current);
   const [now, setNow] = useState(Date.now);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Earlier rejected builds are progress on the same app, not new apps.
@@ -71,64 +176,107 @@ export function AppBuilderStep({
     const interval = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(interval);
   }, [progress.running]);
-  const terminal = progress.app || progress.failed || progress.unavailable;
-  const elapsed =
-    starts.length && (progress.running || (terminal && ends.length))
-      ? Math.max(
-          0,
-          (progress.running ? now : Math.max(...ends)) - Math.min(...starts),
-        )
+  const terminal = progress.app || progress.builtUnrecorded || progress.failed || progress.unavailable;
+  const endedAt = terminal ? (ends.length ? Math.max(...ends) : completedAt) : now;
+  const elapsed = endedAt === null ? null : Math.max(0, endedAt - beganAt);
+  const editing = Boolean(
+    run.intent?.kind === "edit" ||
+    run.script?.kind === "update" ||
+    (progress.build && /(?:^|_)update_app$/.test(progress.build.toolName)),
+  );
+  const built = Boolean(progress.app || progress.builtUnrecorded);
+  const title = progress.title ? ` “${progress.title}”` : "";
+  const state = progress.builtUnrecorded
+    ? "Open it from your Library"
+    : progress.unavailable
+      ? "Preview unavailable"
+      : !progress.running && !built && !progress.failed && !progress.unavailable
+      ? context?.syncDegraded ? "Reconnecting" : waiting ? "Waiting for your response" : "Paused"
       : null;
-  const editing =
-    progress.build && /(?:^|_)update_app$/.test(progress.build.toolName);
-  // One plain rail row, like every other step: what is happening to which
-  // app, a short state, Open when there is something to open, and the raw
-  // calls behind the details icon.
-  const title = `“${progress.title}”`;
-  const sentence = progress.app || progress.builtUnrecorded
-    ? `${editing ? "Updated" : "Created"} artifact ${title}`
-    : progress.failed
-      ? `Couldn’t ${editing ? "update" : "create"} artifact ${title}`
-      : progress.stage === "checking"
-        ? `Checking artifact ${title}`
-        : progress.stage === "writing"
-          ? `${editing ? "Updating" : "Writing"} artifact ${title}`
-          : `Preparing artifact ${title}`;
-  const state = progress.failed
-    ? latestProblem
-    : progress.builtUnrecorded
-      ? "Open it from your Library"
-      : progress.unavailable
-        ? "Preview unavailable"
-        : !progress.running && !progress.app
-          ? context?.syncDegraded ? "Reconnecting" : lifecycle === "waiting" ? "Waiting for approval" : "Paused"
-          : fixedProblems.length > 0 && progress.running
-            ? `fixed ${fixedProblems.length} ${fixedProblems.length === 1 ? "problem" : "problems"}`
-            : null;
-  const shownElapsed = elapsed !== null && (progress.running || terminal) ? formatToolCallDuration(elapsed) : null;
+  const shownElapsed = elapsed !== null && (active || terminal || starts.length > 0) ? formatToolCallDuration(elapsed) : null;
+
+  // The stages show while the agent works, or after it failed or paused; a
+  // ready App folds them into one row.
+  const stages = built ? [] : appCreationStages(run, progress, editing, fixedProblems, latestProblem);
+  const details = detailsOpen ? (
+    <div className="mt-2 flex flex-col gap-2">
+      {parts.map((part) => (
+        <TechnicalDetailsPanel key={part.toolCallId} part={part} />
+      ))}
+    </div>
+  ) : null;
+
+  const artifactSentence = built
+    ? `${editing ? "Updated" : "Created"} artifact${title}`
+    : progress.title ?? (editing ? "Artifact changes" : "Artifact");
+  const currentStage = stages.find((stage) => stage.state === "failed")
+    ?? stages.find((stage) => stage.state === "active");
+  const failedPart = [progress.build, run.preparation, run.script?.part].find(
+    (part) => part && appBuilderResultFailed(part),
+  );
+  const problem = failedPart ? appBuildProblem(failedPart) : null;
+  // A compiled view is not proof that its connected data has been read.
+  // Keep the summary factual; the original checklist remains in details.
+  const stageLabel = currentStage?.key === "write"
+    ? editing ? "Writing the changes" : "Writing the artifact"
+    : currentStage?.key === "build" ? "Building the artifact"
+    : currentStage?.key === "check" ? "Checking the connections"
+    : "Finding the right connections";
+  const subtitle = progress.failed
+    ? `${problem ?? (failedPart?.state === "output-denied" ? "Permission was denied" : `Couldn’t ${editing ? "update" : "create"} the artifact`)}. Review details before retrying.`
+    : progress.unavailable ? "Couldn’t open the preview. Review details."
+    : progress.builtUnrecorded ? "Open it from your Library"
+    : built ? null
+    : state === "Reconnecting" ? "Reconnecting — progress will resume when connected"
+    : state === "Waiting for your response" ? "Waiting for your response — review the request in chat"
+    : state === "Paused" ? "Paused — send a message to continue"
+    : stageLabel;
   return (
     <section
-      className="group/step min-w-0"
+      className="group/step w-full min-w-0"
       data-app-builder-step
+      data-artifact-progress
       data-app-creation-stage={progress.stage}
-      aria-label={sentence}
+      aria-label={artifactSentence}
     >
-      <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-        <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
-        <span className={`shrink-0 ${progress.running ? "ow-text-shimmer motion-reduce:animate-none" : ""}`}>{sentence}</span>
-        {state ? <span className="min-w-0 truncate text-xs text-muted-foreground">{state}</span> : null}
-        {shownElapsed ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{shownElapsed}</span> : null}
-        {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
-        <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={sentence} alwaysVisible={progress.failed} />
+      {/* Both lines and trailing slots stay mounted through tool/thought gaps.
+          Completion also keeps the same geometry instead of collapsing chat. */}
+      <div className="flex min-h-12 min-w-0 items-center gap-2 text-sm">
+        <span className="shrink-0" aria-hidden="true">
+          {built ? <Blocks className="size-4 text-muted-foreground" strokeWidth={1.5} />
+            : <StageMark state={progress.failed || progress.unavailable ? "failed" : "active"} running={progress.running} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className={`truncate ${built ? "text-muted-foreground" : "text-foreground"}`}>{artifactSentence}</div>
+          <div
+            className={`h-4 truncate text-xs ${progress.failed || progress.unavailable ? "text-destructive" : "text-muted-foreground"}`}
+            data-app-builder-activity
+            title={subtitle ?? undefined}
+          >
+            {subtitle}
+          </div>
+        </div>
+        <span className="flex shrink-0 items-center gap-1">
+          {shownElapsed ? <span className="text-xs tabular-nums text-muted-foreground/70" data-app-builder-elapsed>{shownElapsed}</span> : null}
+          {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
+          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={artifactSentence} alwaysVisible={!progress.running && !built} />
+        </span>
       </div>
       {detailsOpen ? (
-        <div className="mt-1 flex flex-col gap-2">
-          {fixedProblems.map((problem, index) => (
-            <p key={index} className="text-xs text-muted-foreground">Fixed: {problem}</p>
-          ))}
-          {parts.map((part) => (
-            <TechnicalDetailsPanel key={part.toolCallId} part={part} />
-          ))}
+        <div className="mt-2 min-w-0">
+          <ol className="flex flex-col gap-2 text-sm" aria-label={`Stages of ${artifactSentence}`} data-app-builder-checklist>
+            {appCreationStages(run, progress, editing, fixedProblems, latestProblem).map((stage) => (
+              <li key={stage.key} className="flex min-w-0 flex-col" data-checklist-state={stage.state}>
+                <span className="flex min-w-0 items-center gap-2">
+                  <StageMark state={stage.state} running={progress.running} />
+                  <span className={stage.state === "failed" ? "text-destructive" : "text-muted-foreground"}>{stage.label}</span>
+                </span>
+                {stage.notes?.map((note) => <span key={note} className="ml-6 text-muted-foreground">{note}</span>)}
+                {stage.state === "active" ? <span className="ml-6 h-4 truncate text-xs text-muted-foreground">{progress.running ? activity : null}</span> : null}
+              </li>
+            ))}
+          </ol>
+          {details}
         </div>
       ) : null}
     </section>

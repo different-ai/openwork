@@ -9,6 +9,7 @@ import {
   isQuestionToolPart,
   isReadToolPart,
   isSkillToolPart,
+  skillDisplayName,
   isTaskToolPart,
   isTodoWriteToolPart,
   isWebFetchToolPart,
@@ -65,7 +66,7 @@ export function getToolActivityLabel(part: AnyToolPart): string {
     return `Inspecting ${parseFilename(part.input?.filePath)}`
   }
   if (isSkillToolPart(part)) {
-    const name = part.input?.name?.trim()
+    const name = skillDisplayName(part.input)
     return name ? `Loading ${name} skill` : "Loading a skill"
   }
   if (isTodoWriteToolPart(part)) {

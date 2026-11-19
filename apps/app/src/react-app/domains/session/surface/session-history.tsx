@@ -684,12 +684,14 @@ export function SessionHistoryLoading({ saved, failed = false }: { saved: Sessio
   </div>;
 }
 
-export function SessionHistoryStatus({ complete, pending, loading, failed, onRetry }: {
+export function SessionHistoryStatus({ complete, pending, loading, failed, failedReason, onRetry }: {
   complete: boolean;
   pending: boolean;
   /** The uncapped read is in flight and may still add earlier messages. */
   loading: boolean;
   failed: boolean;
+  /** Why the read failed, when the server knows (e.g. a v1 chat not copied to v2 yet). */
+  failedReason?: string;
   onRetry: () => Promise<unknown>;
 }) {
   const [retrying, setRetrying] = useState(false);
@@ -700,10 +702,14 @@ export function SessionHistoryStatus({ complete, pending, loading, failed, onRet
   // report, and an announcement derived from missing history alone would stay
   // visible with nothing left to clear it.
   if (!loading && !failed && !retrying) return null;
+  if (!failed && !retrying) return <div data-thread-history-status className="relative z-10 h-0 shrink-0">
+    <span role="status" className="sr-only">Loading earlier messages…</span>
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-dls-accent/60 motion-safe:animate-pulse" />
+  </div>;
   return <div data-thread-history-status className="flex shrink-0 justify-center px-3 pt-2 sm:px-5">
     <TaskRecovery compact state={failed && !retrying ? "failed" : "retrying"}
       title={retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed
-        ? pending ? "This conversation could not be loaded." : "The rest of this conversation could not be loaded."
+        ? failedReason ?? (pending ? "This conversation could not be loaded." : "The rest of this conversation could not be loaded.")
         : "Loading earlier messages…"}
       retryLabel="Reload conversation" retryDisabled={retrying} onRetry={failed || retrying ? () => {
         if (retryPending.current) return;

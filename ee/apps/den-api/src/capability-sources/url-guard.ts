@@ -290,6 +290,7 @@ function createRedirectSafeFetch(
       }
       // A caller binding a credential to one exact destination can opt out of
       // redirects. The manual SSRF loop must not override that stricter policy.
+      if (init?.redirect === "manual") return normalizeResponseRealm(response)
       if (init?.redirect === "error") {
         await response.body?.cancel()
         throw new Error("MCP outbound request refused a redirect.")

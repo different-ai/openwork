@@ -1,0 +1,305 @@
+"use client";
+
+import Link from "next/link";
+import { Lock } from "lucide-react";
+import { useEffect, useId, useState } from "react";
+import type { WorkbotModelTest, WorkbotSettings } from "@openwork/types/den/workbot-settings";
+import {
+  getBrandAppearanceRoute,
+  getMcpConnectionsRoute,
+  getMembersTeamsRoute,
+  getOrgAccessFlags,
+  parseOrganizationMetadata,
+  permissionLockReason,
+} from "../../_lib/den-org";
+import { DenButton } from "../../_components/ui/button";
+import { ServiceReadinessNotice } from "../../_components/service-readiness-notice";
+import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenNotice } from "../../_components/ui/notice";
+import { DenCombobox } from "../../_components/ui/combobox";
+import { DenSkeleton } from "../../_components/ui/skeleton";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { effectiveWorkbotModel, isWorkbotModelListed, workbotDisplayName, workbotModelName, workbotModelOptions } from "./workbot-model-options";
+import { useSaveWorkbotModel, useTestWorkbotDefaultModel, useWorkbotSettings } from "./workbot-settings-data";
+import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactive-data";
+import { AgentCalendarPolicy, calendarStateLine } from "./workbot-proactive-sources";
+import { useWorkbotTeamSettings } from "./workbot-team-settings-data";
+import { workbotTeamsOverridingCount, workbotTeamsOverridingLabel } from "./workbot-team-settings-presentation";
+import { WorkbotProactiveSection } from "./workbot-proactive-section";
+import { WorkbotProactiveHealthSection } from "./workbot-proactive-health";
+import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
+import { WorkbotSettingsTabs } from "./workbot-settings-tabs";
+import { workbotSettingsParts, workbotSettingsTabForHash, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
+import { FeatureIntroGate, useFeatureIntroRuntime } from "../_features/feature-intros";
+import { useWorkbotIntroFacts } from "./workbot-intro-facts";
+
+function availabilityLabel(settings: WorkbotSettings, id: string): string {
+  if (!settings.runnerReachable) return "Couldn't check";
+  return isWorkbotModelListed(settings, id) ? "Available" : "Unavailable";
+}
+
+function modelTestLabel(result: WorkbotModelTest | null | undefined): string {
+  if (!result) return "Not tested (short paid request)";
+  if (result.status === "answered") return "Answered";
+  const messages = {
+    model_unavailable: "Model unavailable. Choose an available model.",
+    runner_unavailable: "Couldn't reach the runner. Ask your deployment admin.",
+    credentials_unavailable: "Model key missing. Ask your deployment admin.",
+    authentication_failed: "Access refused. Check the runner's model key.",
+    payment_required: "Payment required. Check the model account.",
+    provider_unavailable: "Model didn't answer. Try again later.",
+    timed_out: "Test timed out. Try again later.",
+    invalid_response: "No usable answer. Check the model route.",
+    busy: "Another test is running. Try again shortly.",
+  };
+  return messages[result.errorCode];
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+function SettingsRow({ label, labelId, stateLine, children }: { label: string; labelId?: string; stateLine?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="px-6 py-3">
+      <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
+        <span id={labelId} className="text-[13px] font-medium text-gray-900">{label}</span>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
+      </div>
+      {stateLine ? <p className="mt-2 text-[13px] text-gray-500">{stateLine}</p> : null}
+    </div>
+  );
+}
+
+export function WorkbotSettingsScreen() {
+  const { orgContext, orgSlug } = useOrgDashboard();
+  const orgId = orgContext?.organization.id ?? "";
+  const access = getOrgAccessFlags(
+    orgContext?.currentMember.role ?? "member",
+    orgContext?.currentMember.isOwner ?? false,
+    orgContext?.currentMember.permissions,
+  );
+  const canManage = access.canManageModelsSettings;
+  const query = useWorkbotSettings(orgId, Boolean(orgId));
+  const save = useSaveWorkbotModel(orgId);
+  const modelTest = useTestWorkbotDefaultModel(orgId);
+  // With settings per team on, the page says how many teams changed Workbot's settings for their members.
+  const teamSettings = useWorkbotTeamSettings(orgId, true);
+  const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
+  const resetTest = modelTest.reset;
+  const labelId = useId();
+  const [draft, setDraft] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ previous: string | null } | null>(null);
+
+  const settings = query.data;
+  const current = settings ? effectiveWorkbotModel(settings) : null;
+  const introFacts = useWorkbotIntroFacts(useFeatureIntroRuntime().enabled, settings);
+  useEffect(() => {
+    setDraft(current ?? "");
+  }, [current]);
+
+  useEffect(() => {
+    resetTest();
+  }, [orgId, current, draft, resetTest]);
+
+  const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
+  // Members' agents ride on Workbot: shown only when Workbot is deployed here.
+  const proactive = orgContext?.capabilities.workbot === true;
+  // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
+  const tabs = proactive;
+  // Whether members' agents read the calendar: the calendar setting of Everyone's policy, as a row on General.
+  const agentPolicy = useWorkbotProactive(orgId, proactive && Boolean(orgId));
+  const saveAgentPolicy = useSaveWorkbotProactive(orgId);
+  const [tab, setTab] = useState<WorkbotSettingsTab>("general");
+  const parts = workbotSettingsParts(tabs, tab);
+  // "See the last 7 days" on Everyone's page links to a section under Members' agents.
+  useEffect(() => {
+    const linked = workbotSettingsTabForHash(window.location.hash, AGENT_HEALTH_ANCHOR);
+    if (linked) setTab(linked);
+  }, []);
+  const savedModel = settings?.model ?? null;
+  const changed = draft !== (current ?? "");
+  const canChoose = canManage && settings?.runnerReachable === true && !save.isPending && !modelTest.isPending;
+
+  async function store(model: string | null, previous: string | null) {
+    setSaveError(null);
+    setSaved(null);
+    try {
+      await save.mutateAsync(model);
+      setSaved({ previous });
+    } catch (error) {
+      setSaveError(errorMessage(error, "Couldn't save the default model. Try again."));
+    }
+  }
+
+  const page = (
+    <div data-testid="workbot-settings-screen">
+      <DashboardPageTemplate
+        title="Workbot"
+        description={null}
+      >
+        <div className="grid gap-4">
+          <ServiceReadinessNotice capabilities={orgContext?.deploymentCapabilities} />
+          {settings && !settings.runnerReachable ? (
+            <DenNotice
+              tone="error"
+              message="Couldn't reach Workbot's models, so the model can't be changed right now."
+              action={(
+                <DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>
+                  Try again
+                </DenButton>
+              )}
+            />
+          ) : null}
+          {settings && settings.runnerReachable && current && !isWorkbotModelListed(settings, current) ? (
+            <DenNotice
+              tone="warning"
+              message={`Workbot can't use ${workbotModelName(settings, current) === "Unavailable model" ? "the saved model" : workbotModelName(settings, current)} right now, so new messages won't send. Choose an available model, or ask your model administrator to check your AI Gateway access. Existing conversations are kept.`}
+            />
+          ) : null}
+
+          {tabs ? <WorkbotSettingsTabs activeTab={tab} onChange={setTab} /> : null}
+          {!parts.general ? null : query.isError ? (
+            <DenNotice
+              tone="error"
+              message={errorMessage(query.error, "Couldn't load Workbot settings.")}
+              action={(
+                <DenButton variant="secondary" size="sm" loading={query.isFetching} onClick={() => void query.refetch()}>
+                  Try again
+                </DenButton>
+              )}
+            />
+          ) : (
+            <div id="workbot-default-model" className="scroll-mt-6 divide-y divide-gray-100 overflow-hidden rounded-2xl border border-gray-100 bg-white" data-section="workbot-default-model">
+              <SettingsRow label="Default model" labelId={labelId}>
+                {!settings ? (
+                  <DenSkeleton className="h-10 w-80 max-w-full" data-testid="workbot-model-skeleton" />
+                ) : (
+                  <>
+                    <div className="w-80 min-w-0 max-w-full" data-testid="workbot-model-picker">
+                      <DenCombobox
+                        ariaLabel="Default model"
+                        value={draft}
+                        options={workbotModelOptions(settings)}
+                        disabled={!canChoose}
+                        placeholder="Choose a model"
+                        searchPlaceholder="Search models"
+                        emptyLabel="No models match"
+                        onChange={(value) => {
+                          setDraft(value);
+                          setSaved(null);
+                          setSaveError(null);
+                        }}
+                      />
+                    </div>
+                    {draft || !settings.runnerReachable ? (
+                      <span role="status" className="text-[13px] text-gray-600" data-testid="workbot-default-readiness">
+                        {availabilityLabel(settings, draft)}
+                      </span>
+                    ) : null}
+                    <DenButton variant="secondary" size="sm" loading={query.isFetching && !save.isPending} disabled={save.isPending} onClick={() => void query.refetch()}>
+                      Check availability
+                    </DenButton>
+                    {canManage ? (
+                      <DenButton
+                        size="sm"
+                        loading={save.isPending && !saved}
+                        disabled={!canChoose || !changed || !draft}
+                        onClick={() => void store(draft, savedModel)}
+                      >
+                        Save model
+                      </DenButton>
+                    ) : null}
+                  </>
+                )}
+              </SettingsRow>
+              {settings ? (
+                <SettingsRow label="Completion check">
+                  <span role="status" className="text-[13px] text-gray-600" data-testid="workbot-model-test-result">
+                    {modelTest.isPending ? "Testing a short paid request"
+                      : modelTest.isError ? errorMessage(modelTest.error, "Couldn't test the model. Try again.")
+                      : modelTestLabel(modelTest.data)}
+                  </span>
+                  <DenButton variant="secondary" size="sm" loading={modelTest.isPending}
+                    disabled={!canManage || changed || save.isPending || modelTest.isPending}
+                    title="Sends a short synthetic prompt and may use paid inference. No chats or connected apps are used."
+                    onClick={() => modelTest.mutate()}>
+                    Test model
+                  </DenButton>
+                </SettingsRow>
+              ) : null}
+              {modelTest.data && settings ? (
+                <details className="px-6 py-3 text-[13px] text-gray-600">
+                  <summary className="cursor-pointer font-medium">Test details</summary>
+                  <dl className="mt-3 grid gap-2 [overflow-wrap:anywhere]">
+                    <div><dt className="font-medium">Requested model</dt><dd className="font-mono">{modelTest.data.requestedModel}</dd></div>
+                    <div><dt className="font-medium">Provider-reported model</dt><dd className="font-mono">{modelTest.data.reportedModel ?? "Not reported"}</dd></div>
+                  </dl>
+                </details>
+              ) : null}
+              <SettingsRow label="Name">
+                <span className="text-[13px] text-gray-900" data-testid="workbot-name">{name}</span>
+                <Link
+                  href={getBrandAppearanceRoute(orgSlug)}
+                  className="rounded text-[13px] text-gray-500 underline-offset-2 hover:text-gray-900 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
+                >
+                  Change in Brand appearance
+                </Link>
+              </SettingsRow>
+              {proactive && agentPolicy.data ? (
+                <SettingsRow label="Calendar" stateLine={<span data-testid="workbot-calendar-state">{calendarStateLine(agentPolicy.data)}</span>}>
+                  <AgentCalendarPolicy view={agentPolicy.data} disabled={!canManage || saveAgentPolicy.isPending} onChange={(change) => saveAgentPolicy.mutate(change)} />
+                </SettingsRow>
+              ) : null}
+            </div>
+          )}
+
+          {parts.general && saveError ? (
+            <p role="alert" className="px-1 text-[13px] text-red-700">{saveError}</p>
+          ) : null}
+          {parts.general && saved && settings ? (
+            <div role="status" className="flex items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
+              <span className="min-w-0 [overflow-wrap:anywhere]">Saved. New messages use {workbotModelName(settings, effectiveWorkbotModel(settings))}.</span>
+              <DenButton
+                variant="ghost"
+                size="xs"
+                loading={save.isPending}
+                onClick={() => void store(saved.previous, settings.model)}
+              >
+                Undo
+              </DenButton>
+            </div>
+          ) : null}
+          {parts.general && teamsOverriding > 0 ? (
+            <p className="px-1 text-[13px] text-gray-500" data-testid="workbot-team-settings-count">
+              {workbotTeamsOverridingLabel(teamsOverriding)}{" "}
+              <Link
+                href={getMembersTeamsRoute(orgSlug)}
+                className="rounded text-gray-700 underline underline-offset-2 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
+              >
+                See teams
+              </Link>
+            </p>
+          ) : null}
+          {proactive && orgId && parts.agents ? (
+            <WorkbotProactiveSection orgId={orgId} canManage={canManage} connectorsHref={getMcpConnectionsRoute(orgSlug)} show={parts.agents} />
+          ) : null}
+          {proactive && orgId && parts.agents && parts.agents !== "sources" ? (
+            <WorkbotProactiveHealthSection orgId={orgId} />
+          ) : null}
+          {!canManage && settings ? (
+            <p className="flex items-center gap-2 px-1 text-[13px] text-gray-500">
+              <Lock size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0" />
+              {`Read only. ${permissionLockReason("inference.manage")}`}
+            </p>
+          ) : null}
+        </div>
+      </DashboardPageTemplate>
+    </div>
+  );
+
+  // With feature intros on, the Workbot intro replaces the page while Workbot has nothing to answer with
+  // (DESIGN.md I1, I2); with the flag off, the page renders as before.
+  return <FeatureIntroGate introKey="workbot" facts={introFacts}>{page}</FeatureIntroGate>;
+}

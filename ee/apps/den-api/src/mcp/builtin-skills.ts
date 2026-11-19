@@ -1,17 +1,25 @@
+import { env } from "../env.js"
 import { SLACK_ASSISTANT_INSTRUCTIONS } from "../slack-assistant/protocol.js"
+import { buildAnAppSkillSource, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
+import { newWorkflowLanguage } from "./workflow-service.js"
 
 export type BuiltinSkillDefinition = {
   descriptor: RemoteSkillDescriptor
-  source: string
+  /** A function when the text depends on the organization's Workflow language. */
+  source: string | ((language: CodemodeLanguage) => string)
   searchExtraTokens: string
+  /** Listed only while the tools it teaches exist on this deployment. */
+  available?: () => boolean
 }
 
 export const BUILTIN_CREATE_SKILL_CAPABILITY = "skill:create-skill"
 export const BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY = "skill:add-to-marketplace"
 export const BUILTIN_ADD_USER_TO_MARKETPLACE_CAPABILITY = "skill:add-user-to-marketplace"
 export const BUILTIN_SHARE_PLUGIN_CAPABILITY = "skill:share-plugin"
+export const BUILTIN_DRIVE_FILES_CAPABILITY = "skill:drive-files"
 
 const CREATE_SKILL_SOURCE = `---
 name: create-skill
@@ -43,6 +51,18 @@ Produce one complete \`SKILL.md\` with:
 - non-empty trigger-oriented \`description\`
 - non-empty Markdown instruction body
 - no secrets
+
+## Make it replayable
+
+When the skill captures work you just finished in this conversation, write it so the next run can go straight to the result instead of rediscovering it:
+
+- **Inputs:** the few values that change per use (for example customer, use case, recipient) and how to read them from a short request.
+- **Sources:** the exact pages, files or records you used (titles plus IDs or links). Tell the next run to read them directly instead of searching.
+- **Steps:** the shortest sequence of calls that worked, in order.
+- **Assets:** if you wrote a script or template that produced the output, save it in the workspace (for example \`tools/<skill-name>.py\`) and include a verbatim copy in a fenced code block, with how to run it on new inputs. The next run reuses the workspace file when it exists.
+- **Output:** file name pattern, location and format, any reply or draft template, and the one check to run before reporting.
+
+Keep it general: don't present one customer's results as facts for another.
 
 ## Workflow
 
@@ -199,6 +219,65 @@ The recipient is the named person or team. NEVER invent ids. Resolve a person or
 7. Stop. Do not attach marketplaces in this flow.
 `
 
+const DRIVE_FILES_SOURCE = `---
+name: drive-files
+description: |
+  Read, analyze or edit whole Google Drive, OneDrive and SharePoint files (Excel, Word,
+  PowerPoint, PDF, CSV, images, and Docs, Sheets or Slides as Office files) without loading
+  them into the conversation.
+
+  Triggers when the user wants to:
+  - open, analyze or summarize a Drive, OneDrive or SharePoint file that is not short plain text
+  - change an .xlsx, .docx, .pptx, .csv or other such file and save it back
+---
+
+# Drive files
+
+Work on a local copy with shell tools; never paste file bytes or base64 into a tool call or reply.
+
+## Pick the tool
+
+| Need | Use |
+|---|---|
+| Find a OneDrive, SharePoint or Teams file | Microsoft 365 file search, folder listing, SharePoint site and link capabilities; each result has driveId and id |
+| Summarize a short Google Doc or text file | The Drive or OneDrive file read capability (small inline text) |
+| Analyze or edit Office, PDF, CSV, images, or any large file | Pull it, then work on it with bash |
+| Change a few cells in a native Google Sheet | The Sheets values capabilities (keeps formulas, comments, history) |
+| Create a new file | Make it locally, then upload it |
+
+## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
+
+1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Leave out \`path\` to save under drive/; Desktop asks the person first for any other folder. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+2. Inspect and edit the file with bash (recipes below). Load only the part you need.
+3. \`drive_file_status\` shows what changed locally and in Drive.
+4. Only when the user asked to save it: \`drive_push_file\`, which the person approves. A stored file, including Office files in OneDrive and SharePoint, is replaced in place: same link and sharing, with the previous version in the version history. A Google Docs, Sheets or Slides file (or a PDF converted from an Office file) is saved as a new file next to the original unless the user asked for something else.
+5. On \`drive_conflict\`, someone changed the file since the pull. Pull it again (\`overwrite: true\` replaces only your local copy) and reapply your edits, or save as a copy. Newer Drive changes are never overwritten.
+
+## With a shell but no OpenWork tools (Workbot computer, coding agents)
+
+1. Execute \`createGoogleDriveDownloadLink\` with the file ID. It returns a \`downloadUrl\` (also as an MCP resource link) that works for five minutes: save it with \`curl -fsSL -o <file> '<downloadUrl>'\` and check the size and md5. Never print or share the URL.
+2. Edit with bash as below.
+3. Only when asked to save: execute \`createGoogleDriveUploadSession\` with \`fileId\`, \`baseRevision\` (the link result's revision), \`name\`, \`size\` and \`mimeType\`, then upload with \`curl -fsS -X PUT -H 'Content-Type: <mimeType>' --data-binary @<file> '<uploadUrl>'\`. For a new file or a copy, omit \`fileId\`; \`convertTo\` keeps a copy as a Google file.
+
+For OneDrive and SharePoint files use \`createMicrosoft365DriveDownloadLink\` (\`driveId\`, \`itemId\`) and \`createMicrosoft365DriveUploadSession\` (\`driveId\`, \`itemId\`, \`baseRevision\`, \`size\`, or \`name\` and \`folderId\` for a new file); follow the upload instructions it returns, which send a Content-Range header and never an Authorization header.
+
+## Bash recipes
+
+Drive file names can hold spaces, quotes and other shell characters. Put the path from \`drive_pull_file\` in a variable once, single-quoted (write a quote inside it as \`'\\''\`), then pass it only as \`"$f"\`. Never paste a file name into a command unquoted.
+
+- Set the path: \`f='drive/Supplier entry.xlsx'\`
+- What is it: \`file -- "$f"; ls -l -- "$f"\`
+- Spreadsheet overview: \`python3 -c "import openpyxl,sys; wb=openpyxl.load_workbook(sys.argv[1], read_only=True); [print(ws.title, ws.max_row, ws.max_column) for ws in wb]" "$f"\`
+- Read a sheet: pandas \`read_excel(sys.argv[1], sheet_name=..., nrows=20)\` with the path passed as \`"$f"\`; print only what you need.
+- Edit cells and keep formatting: openpyxl \`load_workbook(path)\`, set cells, \`save(path)\`, with the path from \`sys.argv\`. openpyxl drops charts, images and pivot tables from files it saves: check first, and use LibreOffice (\`soffice --headless --convert-to xlsx -- "$f"\`) or the Sheets values capabilities for those files.
+- CSV: \`head -- "$f"\`, \`wc -l -- "$f"\`, csvkit or pandas.
+- Word: \`python-docx\`, or \`pandoc -t markdown -- "$f"\` to read.
+- PDF: \`pdftotext -layout -- "$f" - | head -100\`, \`pdfinfo -- "$f"\`.
+- Install a missing tool with pip or apt when the computer allows it.
+
+Tell the user what changed and where it was saved, with the Drive link from the push result.
+`
+
 export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
   {
     descriptor: { name: "slack-assistant", title: "Slack assistant", description: "Respond to Slack requests as the invoking member, with audience and thread isolation.", capability: "skill:slack-assistant", location: "skill://slack-assistant/SKILL.md" },
@@ -249,9 +328,34 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
     source: SHARE_PLUGIN_SOURCE,
     searchExtraTokens: "share give grant access person member team plugin skill viewer editor",
   },
+  {
+    descriptor: {
+      name: "build-an-app",
+      title: "Build an artifact",
+      description: "Build or change an artifact, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
+      capability: BUILTIN_BUILD_AN_APP_CAPABILITY,
+      location: "skill://build-an-app/SKILL.md",
+    },
+    source: buildAnAppSkillSource,
+    searchExtraTokens: "app apps build make create edit update dashboard tracker calculator form lookup interactive view mcp artifact",
+    available: () => env.appMcpServersEnabled,
+  },
+  {
+    descriptor: {
+      name: "drive-files",
+      title: "Drive Files",
+      description: "Pull Google Drive, OneDrive and SharePoint files into a local copy, edit them with shell tools, and save them back without loading them into context.",
+      capability: BUILTIN_DRIVE_FILES_CAPABILITY,
+      location: "skill://drive-files/SKILL.md",
+    },
+    source: DRIVE_FILES_SOURCE,
+    searchExtraTokens: "google drive onedrive sharepoint microsoft 365 teams file files download pull push sync edit excel xlsx docx pptx pdf csv spreadsheet bash shell workspace",
+  },
 ]
 
-export const BUILTIN_SKILL_DESCRIPTORS: RemoteSkillDescriptor[] = BUILTIN_SKILLS.map((skill) => skill.descriptor)
+function availableBuiltinSkills(): BuiltinSkillDefinition[] {
+  return BUILTIN_SKILLS.filter((skill) => skill.available?.() ?? true)
+}
 
 export type BuiltinSkillCapabilityMatch = CapabilityMatch & {
   kind: "skill"
@@ -266,11 +370,11 @@ export type BuiltinSkillExecutePayload = {
 }
 
 function findBuiltinSkill(capability: string): BuiltinSkillDefinition | undefined {
-  return BUILTIN_SKILLS.find((skill) => skill.descriptor.capability === capability)
+  return availableBuiltinSkills().find((skill) => skill.descriptor.capability === capability)
 }
 
 export function listBuiltinSkillDescriptors(): RemoteSkillDescriptor[] {
-  return BUILTIN_SKILL_DESCRIPTORS
+  return availableBuiltinSkills().map((skill) => skill.descriptor)
 }
 
 export function searchBuiltinSkillCapabilities(query: string, limit = 5): BuiltinSkillCapabilityMatch[] {
@@ -278,7 +382,7 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
   if (queryTokens.length === 0) return []
 
   const matches: BuiltinSkillCapabilityMatch[] = []
-  for (const skill of BUILTIN_SKILLS) {
+  for (const skill of availableBuiltinSkills()) {
     const score = scoreText(
       tokenize(`${skill.descriptor.name} ${skill.descriptor.title}`),
       tokenize(skill.descriptor.description),
@@ -304,7 +408,8 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit) || 5)))
 }
 
-export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecutePayload | null {
+/** The organization's Workflow language is read only for a skill whose text depends on it. */
+export async function executeBuiltinSkillCapability(name: string, organizationId: string): Promise<BuiltinSkillExecutePayload | null> {
   const skill = findBuiltinSkill(name)
   if (!skill) return null
   return {
@@ -312,6 +417,6 @@ export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecute
     name: skill.descriptor.title,
     description: skill.descriptor.description,
     provenance: "Built into OpenWork Cloud.",
-    content: skill.source,
+    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage()),
   }
 }

@@ -1,6 +1,9 @@
 import type { DynamicToolUIPart } from "ai"
 import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 import { connectionActionPayloadSchema, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
+import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
+import { CONNECT_STATUS_TOOL, connectActionToolName } from "@/lib/capability-call"
+import { DROPPED_CONNECTION_REASON, isDroppedConnection } from "@/lib/code-mode-summary"
 
 export type ToolErrorAttribution = {
   label: string
@@ -32,6 +35,18 @@ const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork_get_skill",
   "openwork_connection_action",
 ])
+
+/**
+ * The tool name an App's own call result is read as. An App built in OpenWork is
+ * served by the desktop's private OpenWork Connect host, and each of its tools
+ * runs one OpenWork Cloud capability, so its failures carry the same connection
+ * cards as execute_capability. Any other App's results stay its own.
+ */
+export function appToolResultConnectionToolName(app: { serverName: string; resourceUri: string }, toolName: string): string {
+  return parseMcpAppResourceUri(app.resourceUri) && app.serverName.startsWith("openwork-app-host-connect-")
+    ? "openwork-cloud_execute_capability"
+    : toolName
+}
 
 export function isConnectionDiscoveryTool(toolName: string): boolean {
   return toolName === "openwork_search_capabilities" || toolName === "openwork-cloud_search_capabilities"
@@ -98,8 +113,21 @@ const CONNECTION_ACTION_LABELS = {
   contact_openwork: "Contact OpenWork support",
 }
 
+/** OpenWork Cloud's own capability tools, whose results the host may present natively. */
+export function isOpenworkCloudCapabilityTool(toolName: string): boolean {
+  return isConnectionTool(toolName)
+}
+
+/**
+ * Tools whose result may report a connection: the capability tools, and what
+ * Connect lists when every action is its own tool (`linear_list_issues`,
+ * `connection_status`), which answers as execute_capability does.
+ */
 function isConnectionTool(toolName: string): boolean {
-  return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName) || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
+  return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)
+    || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
+    || toolName === CONNECT_STATUS_TOOL
+    || connectActionToolName(toolName) !== null
 }
 
 /**
@@ -170,6 +198,29 @@ export function connectionCardPayloadFromChatToolResult(
   options?: ChatConnectionTargetOptions,
 ): ConnectionActionPayload | null {
   return chatConnectionTarget(toolName, result, input, options)?.connection ?? null
+}
+
+/**
+ * The one connection an MCP tool result reports, read from the result itself,
+ * its structured content, its metadata, or the JSON in its text parts, with
+ * the part it was found in for the card to render.
+ */
+export function connectionCardFromMcpToolResult(
+  toolName: string,
+  value: unknown,
+  input?: unknown,
+): { connection: ConnectionActionPayload; output: unknown } | null {
+  const outputs: unknown[] = [value]
+  if (isRecord(value)) {
+    outputs.push(value.structuredContent, value._meta)
+    if (Array.isArray(value.content)) outputs.push(...value.content.filter(isRecord).filter(item => item.type === "text").map(item => item.text))
+  }
+  const matches = new Map<string, { connection: ConnectionActionPayload; output: unknown }>()
+  for (const output of outputs) {
+    const connection = connectionCardPayloadFromChatToolResult(toolName, output, input)
+    if (connection) matches.set(connection.connectionId, { connection, output })
+  }
+  return matches.size === 1 ? matches.values().next().value ?? null : null
 }
 
 export function reconnectActionFromChatToolResult(
@@ -297,6 +348,7 @@ export function describeChatToolFailure(errorText: string): string {
   if (/timeout|timed out|deadline|\b504\b/i.test(errorText)) return "The service didn’t respond in time. Check whether the action finished before trying again."
   if (/\b401\b|unauthorized|invalid[_ ]token|authentication required/i.test(errorText)) return "This connection needs attention. Check its sign-in settings."
   if (/\b403\b|forbidden|access[_ ]denied|insufficient[_ ]scope/i.test(errorText)) return "This connection doesn’t have access to the requested action."
-  if (/\b50[0234]\b|internal[_ ]server[_ ]error|bad gateway|service unavailable|fetch failed|ECONNRESET|ENOTFOUND/i.test(errorText)) return "The service couldn’t complete this action. Check its status before trying again."
+  if (isDroppedConnection(errorText)) return DROPPED_CONNECTION_REASON
+  if (/\b50[0234]\b|internal[_ ]server[_ ]error|bad gateway|service unavailable|fetch failed|ENOTFOUND/i.test(errorText)) return "The service couldn’t complete this action. Check its status before trying again."
   return "This action couldn’t finish. Check the details before trying again."
 }

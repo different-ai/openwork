@@ -39,6 +39,7 @@ export function createMcpAppPresentationCache(scope: Scope, workspaceId: string)
     async read(launch: OpenworkMcpAppLaunchReference): Promise<OpenworkMcpAppResource | null> {
       const revision = parseMcpAppResourceUri(launch.resourceUri);
       if (!scope.current() || !revision || !("connectionId" in launch) || revision.appId !== launch.connectionId) return null;
+      await chatPresentationStore.loadDocument(CHAT_PRESENTATION_STORAGE_KEY, entryId(scope, launch.resourceUri));
       const stored = chatPresentationStore.read(CHAT_PRESENTATION_STORAGE_KEY, entryId(scope, launch.resourceUri));
       if (!stored || stored.workspaceId !== workspaceId || stored.app.toolName !== launch.toolName
         || stored.app.resourceUri !== launch.resourceUri || stored.argumentsSignature !== await resourceDigest(stored.app)
@@ -67,6 +68,7 @@ export function scheduleCachedMcpAppDiscovery(
   origin: McpAppOrigin, toolName: string, launch: OpenworkMcpAppLaunchReference | null, manual: boolean,
   receive: (app: OpenworkMcpAppResource | null) => void, fail: (cause: unknown) => void,
   preview: (app: OpenworkMcpAppResource) => void,
+  credentialRevision = 0,
   scope = mcpAppPresentationScope(origin),
 ) {
   let cancelled = false;
@@ -80,7 +82,7 @@ export function scheduleCachedMcpAppDiscovery(
     settled = true;
     if (launch) void cache.then(store => store?.remove(launch)).catch(() => undefined);
     fail(cause);
-  });
+  }, credentialRevision);
   if (launch) void cache.then(async store => {
     const app = await store?.read(launch);
     if (app && !cancelled && !settled) preview(app);

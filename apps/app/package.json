@@ -2,6 +2,9 @@
   "name": "@openwork/app",
   "private": true,
   "version": "0.0.0-dev",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 vite",
@@ -15,13 +18,13 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",
-    "test:boot": "bun test tests/app-boot.test.tsx",
     "test:mention-send": "node scripts/mention-send.mjs",
     "test:sessions": "node scripts/sessions.mjs",
     "test:refactor": "pnpm typecheck && pnpm test:health && pnpm test:sessions",
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
+    "test:approval-panel": "bun test tests/permission-approval-panel.test.tsx",
     "test:session-switch": "node scripts/session-switch.mjs",
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
@@ -39,9 +42,10 @@
     "@heroicons/react": "^2.2.0",
     "@lexical/react": "^0.35.0",
     "@modelcontextprotocol/ext-apps": "^1.7.5",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/browser-tabs": "workspace:*",
+    "@openwork/product-analytics": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
@@ -55,14 +59,13 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "ai": "^6.0.146",
-    "boring-avatars": "^2.0.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.16",
-    "emojilib": "^4.0.3",
+    "dompurify": "^3.4.17",
     "fuzzysort": "^3.1.0",
+    "gemoji": "^8.1.0",
     "jsonc-parser": "^3.2.1",
-    "katex": "^0.18.1",
+    "katex": "^0.18.2",
     "lexical": "^0.35.0",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.1",
@@ -80,10 +83,11 @@
     "tailwind-merge": "^3.6.0",
     "tw-animate-css": "^1.4.0",
     "zustand": "^5.0.12",
-    "zod": "^4.3.6"
+    "@openwork-ee/telemetry-contracts": "workspace:*",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "20.12.0",
+    "@happy-dom/global-registrator": "21.0.4",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.2",
@@ -93,7 +97,7 @@
     "htmlparser2": "8.0.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
-    "vite": "^6.4.3"
+    "vite": "^6.4.5"
   },
   "packageManager": "pnpm@10.27.0"
 }

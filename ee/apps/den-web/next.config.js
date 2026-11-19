@@ -64,13 +64,18 @@ const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
   poweredByHeader: false,
-  transpilePackages: ["@openwork/ui", "@openwork-ee/utils"],
+  transpilePackages: ["@openwork/ui", "@openwork-ee/utils", "@openwork-ee/telemetry-contracts"],
   outputFileTracingRoot: path.join(__dirname, "../../.."),
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
   async redirects() {
-    return [...legacyConnectorRedirects(), ...denApiRedirects(process.env)];
+    return [
+      ...legacyConnectorRedirects(),
+      // Settings › Services moved into Settings › Diagnostics › Installation.
+      { source: "/dashboard/services", destination: "/dashboard/diagnostics", permanent: false },
+      ...denApiRedirects(process.env),
+    ];
   },
   async rewrites() {
     return [

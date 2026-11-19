@@ -83,9 +83,9 @@ export async function waitForEngineSkillChanges(
     }
     if (!record(payload) || !Array.isArray(payload.data)) return false;
     const native = await Promise.all(payload.data.filter(record)
-      .filter((skill) => typeof skill.location === "string" && typeof skill.content === "string")
+      .filter((skill) => typeof skill.path === "string" && typeof skill.content === "string")
       .map(async (skill) => ({
-        path: await canonical(String(skill.location)),
+        path: await canonical(String(skill.path)),
         name: typeof skill.name === "string" ? skill.name : undefined,
         content: String(skill.content).trim(),
       })));

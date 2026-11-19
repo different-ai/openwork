@@ -6,9 +6,10 @@ import { DenBadge } from "../../_components/ui/badge";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
+import type { GatewayUsageBucket, GatewayUsageLimitPolicy, GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits";
 import { getAiGatewayLimitRoute, getAiGatewayProvidersRoute, getAiGatewayUsersTeamsRoute, getNewAiGatewayLimitRoute, type DenOrgMember, type DenOrgTeam } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { formatUsageCost } from "../_features/gateway-usage/stacked-daily-chart";
+import { formatUsageCost } from "../_features/analytics/stacked-daily-chart";
 import { accessReason, directoryAccess, memberSubject, providerAudienceLabel } from "./gateway-directory-data";
 import { initials, ModelMark, ShareBar } from "./gateway-spend-breakdown";
 import { useGatewayAccessProviders } from "./gateway-subject-access-data";
@@ -102,10 +103,37 @@ function PersonAccess({ orgId, orgSlug, member, teams, members }: { orgId: strin
   );
 }
 
+function stateLabel(state: GatewayUsageStatus["state"]) {
+  return state === "blocked" ? "Paused" : state === "over_limit" ? "Over the limit" : "Within the limit";
+}
+
+function LimitRows({ buckets, active, orgSlug }: { buckets: GatewayUsageBucket[]; active: GatewayUsageLimitPolicy[]; orgSlug: string | null | undefined }) {
+  return (
+    <ul className="divide-y divide-gray-100">
+      {buckets.map((bucket) => (
+        <li key={bucket.id} className="flex flex-wrap items-center gap-3 py-2.5" data-testid="gateway-person-limit-row">
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-medium text-gray-900">{formatLimitMoney(bucket.allowanceMicroUsd)} {timeframePeriods[bucket.timeframe]}</span>
+            <span className="block text-[12px] text-gray-500">{bucket.policyName} · {bucket.hardLimit ? "pauses at the limit" : "only warns"}</span>
+          </span>
+          <span className="flex w-36 flex-col gap-1">
+            <ShareBar value={Math.min(bucket.usedMicroUsd, bucket.allowanceMicroUsd)} max={bucket.allowanceMicroUsd} label={`${formatLimitMoney(bucket.usedMicroUsd)} of ${formatLimitMoney(bucket.allowanceMicroUsd)} used`} />
+            <span className="text-[11px] tabular-nums text-gray-500">{formatLimitMoney(bucket.usedMicroUsd)} used</span>
+          </span>
+          {active.some((policy) => policy.id === bucket.policyId)
+            ? <Link href={getAiGatewayLimitRoute(orgSlug, bucket.policyId)} className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link>
+            : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function PersonLimit({ orgId, orgSlug, memberId, name, teams }: { orgId: string; orgSlug: string | null | undefined; memberId: string; name: string; teams: DenOrgTeam[] }) {
   const status = useGatewayMemberUsage(orgId, memberId);
   const policies = useGatewayPolicies(orgId);
   const active = policies.data?.policies.filter((policy) => !policy.archivedAt) ?? [];
+  const providers = status.data?.providers ?? [];
   return (
     <section className={CARD} aria-label="Spend limit" data-testid="gateway-person-limit">
       <h3 className={CARD_TITLE}>Spend limit</h3>
@@ -113,47 +141,44 @@ function PersonLimit({ orgId, orgSlug, memberId, name, teams }: { orgId: string;
         <GatewayLimitsQueryFeedback query={status} label="spend limit" />
       </div>
       {!status.isError && status.data ? (
-        status.data.state === "unlimited" ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <DenBadge>No limit</DenBadge>
-            <span className="min-w-0 flex-1 text-[13px] text-gray-500">Nothing pauses {name}&apos;s models.</span>
-            <Link href={getNewAiGatewayLimitRoute(orgSlug, { memberId })} className={buttonVariants({ variant: "secondary", size: "sm" })} data-testid="gateway-person-set-limit">Set a limit</Link>
-          </div>
-        ) : (
-          <>
-            <div className="mb-2 flex items-center gap-2">
-              <DenBadge tone={status.data.state === "within_limit" ? "neutral" : "warning"}>
-                {status.data.state === "blocked" ? "Paused" : status.data.state === "over_limit" ? "Over the limit" : "Within the limit"}
-              </DenBadge>
+        <>
+          {providers.length && status.data.state === "unlimited" ? <h4 className="mb-2 mt-1 text-[12px] font-medium text-gray-700">Other providers</h4> : null}
+          {status.data.state === "unlimited" ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <DenBadge>No limit</DenBadge>
+              <span className="min-w-0 flex-1 text-[13px] text-gray-500">{providers.length ? `Nothing pauses ${name}'s other providers.` : `Nothing pauses ${name}'s models.`}</span>
+              <Link href={getNewAiGatewayLimitRoute(orgSlug, { memberId })} className={buttonVariants({ variant: "secondary", size: "sm" })} data-testid="gateway-person-set-limit">Set a limit</Link>
             </div>
-            <ul className="divide-y divide-gray-100">
-              {status.data.buckets.map((bucket) => (
-                <li key={bucket.id} className="flex flex-wrap items-center gap-3 py-2.5" data-testid="gateway-person-limit-row">
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[13px] font-medium text-gray-900">{formatLimitMoney(bucket.allowanceMicroUsd)} {timeframePeriods[bucket.timeframe]}</span>
-                    <span className="block text-[12px] text-gray-500">{bucket.policyName} · {bucket.hardLimit ? "pauses at the limit" : "only warns"}</span>
-                  </span>
-                  <span className="flex w-36 flex-col gap-1">
-                    <ShareBar value={Math.min(bucket.usedMicroUsd, bucket.allowanceMicroUsd)} max={bucket.allowanceMicroUsd} label={`${formatLimitMoney(bucket.usedMicroUsd)} of ${formatLimitMoney(bucket.allowanceMicroUsd)} used`} />
-                    <span className="text-[11px] tabular-nums text-gray-500">{formatLimitMoney(bucket.usedMicroUsd)} used</span>
-                  </span>
-                  {active.some((policy) => policy.id === bucket.policyId)
-                    ? <Link href={getAiGatewayLimitRoute(orgSlug, bucket.policyId)} className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link>
-                    : null}
-                </li>
-              ))}
-            </ul>
+          ) : (
+            <>
+              <div className="mb-2 flex items-center gap-2">
+                {providers.length ? <h4 className="text-[12px] font-medium text-gray-700">Other providers</h4> : null}
+                <DenBadge tone={status.data.state === "within_limit" ? "neutral" : "warning"}>{stateLabel(status.data.state)}</DenBadge>
+              </div>
+              <LimitRows buckets={status.data.buckets} active={active} orgSlug={orgSlug} />
+            </>
+          )}
+          {providers.map((provider) => (
+            <div key={provider.providerId} className="mt-3 border-t border-gray-100 pt-3" data-testid="gateway-person-provider-limit">
+              <div className="mb-2 flex items-center gap-2">
+                <h4 className="text-[12px] font-medium text-gray-700">Only {provider.providerName}</h4>
+                <DenBadge tone={provider.state === "within_limit" ? "neutral" : "warning"}>{stateLabel(provider.state)}</DenBadge>
+              </div>
+              <LimitRows buckets={provider.buckets} active={active} orgSlug={orgSlug} />
+            </div>
+          ))}
+          {status.data.state !== "unlimited" ? (
             <details className="group mt-2 text-[12px] text-gray-500">
               <summary className="flex cursor-pointer list-none items-center gap-1.5 [&::-webkit-details-marker]:hidden">
                 <ChevronRight className="h-3.5 w-3.5 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
                 Technical details
               </summary>
               <div className="pt-3">
-                <GatewayMemberUsageDetails status={status.data} policies={active} teams={teams} />
+                <GatewayMemberUsageDetails status={status.data} policies={active.filter((policy) => !policy.providerId)} teams={teams} />
               </div>
             </details>
-          </>
-        )
+          ) : null}
+        </>
       ) : null}
     </section>
   );

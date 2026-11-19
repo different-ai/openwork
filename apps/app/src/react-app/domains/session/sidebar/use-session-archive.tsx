@@ -5,7 +5,7 @@ import { Archive, ArchiveRestore } from "lucide-react";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { hasTerminalSessionReply, holdSessionWork, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop } from "@/app/lib/opencode-interruption";
 import { setSessionArchived } from "@/app/lib/opencode-session";
-import { isOpencodeV2BaseUrl, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { readSessionTree } from "@/app/lib/session-ownership";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +26,9 @@ import { dispatchQueuedDrain, getQueuedDrainState, hasPendingQueuedAdmission } f
 import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
+
+/** Archive or unarchive the open session: one toggle shared by the thread header, palette and shortcut. */
+export type SessionArchiveToggle = { archived: boolean; toggle: () => void };
 
 /** The agent conversation that asked, when the request came through the agent bridge. */
 export type ArchiveRequester = { sessionId: string; title: string | null };
@@ -48,10 +51,18 @@ export type ArchiveSessionOptions = {
   refuseWorking?: boolean;
 };
 
+/** Archive through the engine that owns the session; v1 keeps the desktop main-process transport. */
+function archiveClient(endpoint: ResolvedWorkspaceEndpoint, directory: string) {
+  return isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
+    ? createClientV2(endpoint.opencodeBaseUrl, directory, { token: endpoint.token })
+    : createClient(endpoint.opencodeBaseUrl, directory, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
+}
+
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
   sessionsByWorkspaceId: Record<string, RouteSession[]>;
-  endpointForWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
+  /** The engine that owns the workspace's sessions: v2 (`/opencode2`) when its server routes chat there. */
+  endpointForSessionWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
   draftScope: string | null;
@@ -103,7 +114,7 @@ export function useSessionArchive(input: {
   async function restore(target: ArchiveTarget, announce: boolean, undo?: typeof undoNavigation.current) {
     const { workspace, endpoint, sessionId } = target;
     try {
-      await setSessionArchived(createClient(endpoint.opencodeBaseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" }), sessionId, false, workspace.path);
+      await setSessionArchived(archiveClient(endpoint, workspace.path), sessionId, false, workspace.path);
       await Promise.all([...new Set([workspace.id, endpoint.workspaceId])].map(id => applySessionArchived(id, sessionId, false)));
       const now = current.current;
       if (mounted.current) now.input.onArchivedChange(workspace.id, sessionId, false);
@@ -131,7 +142,7 @@ export function useSessionArchive(input: {
       icon: archived ? Archive : ArchiveRestore,
       undo: { label: t("common.undo"), onClick: () => {
         if (archived) void restore(target, false, undo);
-        else if (mounted.current) void archiveSession(target.sessionId, true);
+        else if (mounted.current) void archiveSessionInWorkspace(target.workspace.id, target.sessionId, true);
       } },
       view: { label: t("common.view"), onClick: () => {
         if (mounted.current) current.current.input.navigateToWorkspaceSession(target.workspace.id, target.sessionId);
@@ -154,7 +165,7 @@ export function useSessionArchive(input: {
     const baseUrl = endpoint.opencodeBaseUrl;
     // Finite archive verification must not queue behind retained renderer SSEs.
     // Keep the same safety checks; only the desktop HTTP transport changes.
-    const client = createClient(baseUrl, workspace.path, { token: endpoint.token, mode: "openwork" }, { desktopTransport: "main" });
+    const client = archiveClient(endpoint, workspace.path);
     const releases = new Map<string, () => void>();
     const controller = new AbortController();
     activeController.current = controller;
@@ -206,7 +217,6 @@ export function useSessionArchive(input: {
     let patchDispatched = false;
     try {
       checkDeadline();
-      if (isOpencodeV2BaseUrl(baseUrl)) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
       const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
       // Native Stop reaches the root immediately, concurrent with discovery.
       // Archive also accounts for older/background subtasks that would be hidden.
@@ -336,21 +346,31 @@ export function useSessionArchive(input: {
     return null;
   }
 
-  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions): ArchiveTarget | { error: string } {
-    const workspace = input.workspaces.find(workspace => input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
+  function resolveTarget(sessionId: string, options?: ArchiveSessionOptions, workspaceId?: string): ArchiveTarget | { error: string } {
+    const workspace = input.workspaces.find(workspace => (!workspaceId || workspace.id === workspaceId)
+      && input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
     if (!workspace) return { error: "Session was not found in the current session list" };
-    const endpoint = input.endpointForWorkspace(workspace);
+    const endpoint = input.endpointForSessionWorkspace(workspace);
     if (!endpoint) return { error: "The session's workspace is not connected." };
-    if (isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)) return { error: V2_SESSION_ARCHIVE_UNAVAILABLE };
-    const title = sessionTitle(sessionId) ?? t("session.default_title");
+    const title = input.sessionsByWorkspaceId[workspace.id]?.find(session => session.id === sessionId)?.title?.trim() || t("session.default_title");
     const requester = options?.requester?.sessionId.trim();
     const requestedBy = requester ? { sessionId: requester, title: sessionTitle(requester) } : null;
     return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
   }
 
-  async function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+  // Explicit UI owner; the agent's existing archiveSession contract stays unchanged.
+  function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean): Promise<ArchiveSessionOutcome> {
+    if (!workspaceId) return Promise.resolve({ kind: "verification_failed", message: "The session's workspace is missing." });
+    return archiveOwnedSession(sessionId, archived, undefined, workspaceId);
+  }
+
+  function archiveSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions): Promise<ArchiveSessionOutcome> {
+    return archiveOwnedSession(sessionId, archived, options);
+  }
+
+  async function archiveOwnedSession(sessionId: string, archived: boolean, options?: ArchiveSessionOptions, workspaceId?: string): Promise<ArchiveSessionOutcome> {
     if (busy.current || pending.current) return settle("cancelled");
-    const target = resolveTarget(sessionId, options);
+    const target = resolveTarget(sessionId, options, workspaceId);
     if ("error" in target) {
       toast.error(target.error);
       return { kind: "verification_failed", message: target.error };
@@ -364,6 +384,7 @@ export function useSessionArchive(input: {
 
   return {
     archiveSession,
+    archiveSessionInWorkspace,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">

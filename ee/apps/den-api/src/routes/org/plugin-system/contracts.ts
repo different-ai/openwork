@@ -3,6 +3,7 @@ const orgBasePath = "/v1"
 export const pluginArchRoutePaths = {
   configObjects: `${orgBasePath}/config-objects`,
   configObject: `${orgBasePath}/config-objects/:configObjectId`,
+  configObjectKey: `${orgBasePath}/config-objects/:configObjectId/key`,
   configObjectArchive: `${orgBasePath}/config-objects/:configObjectId/archive`,
   configObjectDelete: `${orgBasePath}/config-objects/:configObjectId/delete`,
   configObjectRestore: `${orgBasePath}/config-objects/:configObjectId/restore`,
@@ -27,6 +28,7 @@ export const pluginArchRoutePaths = {
   pluginConfigObject: `${orgBasePath}/plugins/:pluginId/config-objects/:configObjectId`,
   pluginMcpConnections: `${orgBasePath}/plugins/:pluginId/mcp-connections`,
   pluginResolved: `${orgBasePath}/plugins/:pluginId/resolved`,
+  resolvedPlugins: `${orgBasePath}/resolved-plugins`,
   pluginReleases: `${orgBasePath}/plugins/:pluginId/releases`,
   pluginAccess: `${orgBasePath}/plugins/:pluginId/access`,
   pluginAccessGrant: `${orgBasePath}/plugins/:pluginId/access/:grantId`,

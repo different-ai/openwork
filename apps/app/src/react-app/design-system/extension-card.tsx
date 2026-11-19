@@ -1,29 +1,14 @@
 /** @jsxImportSource react */
 import { useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
 import type { EnablementResult } from "../../app/extensions";
-import { t } from "../../i18n";
 import {
   extensionTaxonomyLabel,
   type ExtensionTaxonomy,
 } from "../domains/settings/extension-taxonomy";
 import { resolveExtensionIconUrl } from "./extension-icon-src";
-import { ExtensionMeshAvatar } from "./extension-mesh-avatar";
-
-/**
- * Column widths shared by every Library row and the column header above
- * them, so names, kinds, sources and actions form straight lanes. Short,
- * fixed columns come first and the long "What it does" text comes last and
- * takes the remaining width, so a wide window never opens a gap between a
- * row's name and its kind. Below `lg` a row reads Name · Kind · caption.
- */
-export const libraryRowLanes = {
-  name: "w-[150px] md:w-[190px] 2xl:w-[220px]",
-  kind: "hidden w-[84px] sm:block",
-  from: "min-w-0 flex-1 lg:w-[160px] lg:flex-none",
-  description: "hidden min-w-0 flex-1 lg:block",
-  action: "min-w-[96px]",
-} as const;
 
 export type ExtensionCardProps = {
   name: string;
@@ -38,7 +23,6 @@ export type ExtensionCardProps = {
   taxonomy?: ExtensionTaxonomy;
   /** Whether the extension is already installed/connected. */
   connected?: boolean;
-  connectedLabel?: string;
   /** Per-condition enablement results. When provided, overrides `connected`. */
   enablement?: EnablementResult[];
   /** Whether a connect operation is in progress. */
@@ -47,14 +31,8 @@ export type ExtensionCardProps = {
   disabled?: boolean;
   /** Whether this item is hidden from the normal catalog view. */
   hidden?: boolean;
-  /** Whether this extension is still in preview. */
-  preview?: boolean;
-  /** Whether this extension is beta / untested. */
-  beta?: boolean;
   /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
-  /** Where the row came from, e.g. "From Acme". Shown in the From column. */
-  meta?: string | null;
   /** Optional primary next-step label (signin/connect). */
   nextActionLabel?: string;
   /** Click handler for nextActionLabel; falls back to onClick. */
@@ -71,7 +49,6 @@ type ReadinessState = "ready" | "partial" | "none";
 
 function ExtensionIcon(props: {
   name: string;
-  taxonomy: ExtensionTaxonomy;
   iconSrc: string | null;
   connecting: boolean;
 }) {
@@ -84,27 +61,12 @@ function ExtensionIcon(props: {
         <div className="flex size-5 items-center justify-center rounded-md bg-white">
           <img src={props.iconSrc} alt="" width={16} height={16} loading="lazy" style={{ display: "block" }} onError={() => setFailedSrc(props.iconSrc)} />
         </div>
-      ) : (
-        <ExtensionMeshAvatar
-          name={props.name}
-          category={props.taxonomy}
-          className="size-6 rounded-md shadow-inner"
-        />
-      )}
+      ) : <span aria-hidden className="text-[13px] font-medium text-muted-foreground">{props.name.trim().charAt(0).toUpperCase()}</span>}
     </div>
   );
 }
 
-/** Skills and plugins are simply there once added; only things that reach another service show a live dot. */
-function connectsToSomething(taxonomy: ExtensionTaxonomy) {
-  return taxonomy === "connection" || taxonomy === "mcp" || taxonomy === "app";
-}
-
-/**
- * One Library row: logo tile, name with a ready dot, what it does (wide
- * screens), kind, where it came from, and one trailing action. Fixed lanes
- * from `libraryRowLanes` keep rows aligned with the column header.
- */
+/** One Library row: logo tile, name, what it does, its state, and one trailing action. */
 export function ExtensionCard(props: ExtensionCardProps) {
   const {
     name,
@@ -114,15 +76,11 @@ export function ExtensionCard(props: ExtensionCardProps) {
     url,
     taxonomy = "mcp",
     connected: connectedProp = false,
-    connectedLabel = "Connected",
     enablement,
     connecting = false,
     disabled = false,
     hidden = false,
-    preview = false,
-    beta = false,
     disabledReason = null,
-    meta = null,
     nextActionLabel,
     onNextAction,
     onClick,
@@ -133,57 +91,22 @@ export function ExtensionCard(props: ExtensionCardProps) {
   const someMet = enablement ? enablement.some((r) => r.met) && !allMet : false;
   const readiness: ReadinessState = allMet ? "ready" : someMet ? "partial" : "none";
   const resolvedIconSrc = resolveExtensionIconUrl({ iconSrc, iconSlug, serviceUrl: url }) ?? null;
-  const readyDot = readiness === "ready" && connectsToSomething(taxonomy) ? (
-    <span data-library-ready role="img" aria-label={connectedLabel} className="size-1.5 shrink-0 rounded-full bg-green-9" />
-  ) : readiness === "partial" ? (
-    <span className="size-1.5 shrink-0 rounded-full bg-amber-9" />
-  ) : null;
   const summary = disabledReason ?? description;
 
   return (
-    <div className={`group flex h-[52px] w-full items-center gap-3 ${hidden ? "opacity-60" : ""}`}>
-      <button
-        type="button"
-        disabled={disabled || connecting}
-        onClick={onClick}
-        data-library-row={name}
-        title={summary || undefined}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <ExtensionIcon name={name} taxonomy={taxonomy} iconSrc={resolvedIconSrc} connecting={connecting} />
-        <div className={`flex shrink-0 items-center gap-1.5 ${libraryRowLanes.name}`}>
-          <h4 className="min-w-0 truncate text-[13px] font-medium text-dls-text group-hover:underline group-hover:decoration-dls-border group-hover:underline-offset-4">{name}</h4>
-          {readyDot}
-          {props.statusChip ? (
-            <span data-library-status={props.statusChip.label} className="sr-only">{props.statusChip.label}</span>
-          ) : null}
-          {preview ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">Preview</span> : null}
-          {beta ? <span className="shrink-0 rounded-md bg-dls-hover px-1.5 py-0.5 text-[11px] text-dls-secondary">{t("common.beta")}</span> : null}
-        </div>
-        <span data-library-kind className={`shrink-0 text-xs text-dls-secondary ${libraryRowLanes.kind}`}>{extensionTaxonomyLabel(taxonomy)}</span>
-        {meta ? (
-          <p data-library-caption className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>{meta}</p>
-        ) : (
-          // Nothing to say about the source: narrow rows fall back to what it
-          // does, wide rows keep the empty lane so the next column stays aligned.
-          <p className={`truncate text-xs text-dls-secondary ${libraryRowLanes.from}`}>
-            <span className="lg:hidden">{summary}</span>
-          </p>
-        )}
-        <p data-library-description className={`truncate text-xs text-dls-secondary ${libraryRowLanes.description}`}>{summary}</p>
+    <div className="group flex h-[52px] w-full items-center gap-3" data-library-integrated-row>
+      <button type="button" disabled={disabled || connecting} onClick={onClick} data-library-row={name} title={summary || undefined} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <ExtensionIcon name={name} iconSrc={resolvedIconSrc} connecting={connecting} />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-[13px] font-medium text-foreground">{name}</span>
+          <span data-library-description className="truncate text-xs text-muted-foreground">{summary || extensionTaxonomyLabel(taxonomy)}</span>
+        </span>
       </button>
-      <div className={`flex shrink-0 items-center justify-end gap-1 ${libraryRowLanes.action}`}>
-        {!disabledReason && !connecting && nextActionLabel ? (
-          <button
-            type="button"
-            className="inline-flex h-7 shrink-0 items-center rounded-lg px-3 text-xs text-dls-text shadow-[0_0_0_1px_var(--dls-border)] transition-colors hover:bg-dls-hover"
-            onClick={() => (onNextAction ? onNextAction() : onClick?.())}
-          >
-            {nextActionLabel}
-          </button>
-        ) : null}
+      <span data-library-status className="w-14 shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">{hidden ? "Hidden" : disabledReason ? "Blocked" : props.statusChip?.label ?? (readiness === "ready" ? "Ready" : "Set up")}</span>
+      <span data-library-action className="flex min-w-[72px] shrink-0 items-center justify-end gap-1">
+        {!disabledReason && !connecting && nextActionLabel ? <Button variant="outline" size="icon-sm" aria-label={nextActionLabel} onClick={() => (onNextAction ? onNextAction() : onClick?.())}><ArrowRight data-icon="inline-start" /></Button> : null}
         {props.trailing}
-      </div>
+      </span>
     </div>
   );
 }

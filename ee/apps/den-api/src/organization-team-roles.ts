@@ -1,6 +1,8 @@
-import { and, eq, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { and, eq, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
+import { InvitationTable, MemberTable, OrganizationTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
+import { randomUUID } from "node:crypto"
 import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
 import { pruneUnreachableMemberApiKeys } from "./capability-sources/external-mcp-connections.js"
@@ -18,7 +20,12 @@ export function withOrganizationTeamMutation<T>(
   return db.transaction(async (tx) => {
     await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId)).for("update")
-    return mutation(tx)
+    const result = await mutation(tx)
+    // Version and source rows commit together. Redis failure, eviction or
+    // snapshot rollback cannot resurrect entries keyed by the old revision.
+    await tx.update(OrganizationTable).set({ teamMembershipRevision: randomUUID() })
+      .where(eq(OrganizationTable.id, organizationId))
+    return result
   })
 }
 
@@ -55,55 +62,35 @@ export async function invitationHasAdminTeam(tx: TeamMutationTransaction, invita
 }
 
 // Never cache authority: IdP removals and designation changes apply on the next check.
+// The SCIM projection filter lives in den-db (listAuthoritativeTeamMemberships)
+// so team permission sets and desktop policies apply the same rule.
 export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId, database: typeof db | TeamMutationTransaction = db) {
-  return database.select({ memberId: MemberTable.id, id: TeamTable.id, name: TeamTable.name })
-    .from(TeamTable)
-    .innerJoin(TeamMemberTable, eq(TeamMemberTable.teamId, TeamTable.id))
-    .innerJoin(MemberTable, and(
-      eq(MemberTable.id, TeamMemberTable.orgMembershipId),
-      eq(MemberTable.organizationId, TeamTable.organizationId),
-      isNull(MemberTable.removedAt),
-    ))
-    .leftJoin(ScimGroupTable, and(eq(ScimGroupTable.teamId, TeamTable.id), eq(ScimGroupTable.organizationId, organizationId)))
-    .leftJoin(ScimProviderTable, and(
-      eq(ScimProviderTable.providerId, ScimGroupTable.providerId),
-      eq(ScimProviderTable.organizationId, organizationId),
-    ))
-    .leftJoin(ScimGroupMemberTable, and(
-      eq(ScimGroupMemberTable.groupId, ScimGroupTable.id),
-      eq(ScimGroupMemberTable.providerId, ScimProviderTable.providerId),
-      eq(ScimGroupMemberTable.organizationId, organizationId),
-      eq(ScimGroupMemberTable.teamMemberId, TeamMemberTable.id),
-      eq(ScimGroupMemberTable.orgMembershipId, MemberTable.id),
-      eq(ScimGroupMemberTable.remoteUserId, MemberTable.userId),
-    ))
-    .where(and(
-      eq(TeamTable.organizationId, organizationId),
-      eq(TeamTable.grantsOrganizationAdmin, true),
-      // A mapped team projection is not itself authority. Orphaned projections
-      // fail closed; disconnected teams require their own manual reapproval.
-      or(
-        isNull(ScimGroupTable.id),
-        eq(ScimProviderTable.groupMappingMode, "metadata_only"),
-        and(eq(ScimProviderTable.groupMappingMode, "create_teams"), isNotNull(ScimGroupMemberTable.id)),
-      ),
-    ))
+  const grants = await listAuthoritativeTeamMemberships(database, { organizationId, adminTeamsOnly: true })
+  return grants.map((grant) => ({ memberId: grant.memberId, id: grant.teamId, name: grant.teamName }))
+}
+
+/** One member's Admin teams, under the same rule as listOrganizationAdminTeamGrants. */
+export async function listMemberAdminTeams(input: {
+  organizationId: typeof TeamTable.$inferSelect.organizationId
+  memberId: typeof MemberTable.$inferSelect.id
+}): Promise<OrganizationAdminTeam[]> {
+  const grants = await listAuthoritativeTeamMemberships(db, { ...input, adminTeamsOnly: true })
+  return grants.map((grant) => ({ id: grant.teamId, name: grant.teamName }))
 }
 
 export async function resolveOrganizationMemberAuthority(input: {
   organizationId: typeof MemberTable.$inferSelect.organizationId
   memberId: typeof MemberTable.$inferSelect.id
 }) {
-  const [members, grants] = await Promise.all([
+  const [members, adminTeams] = await Promise.all([
     db.select().from(MemberTable).where(and(
       eq(MemberTable.id, input.memberId),
       eq(MemberTable.organizationId, input.organizationId),
       isNull(MemberTable.removedAt),
     )).limit(1),
-    listOrganizationAdminTeamGrants(input.organizationId),
+    listMemberAdminTeams(input),
   ])
   const member = members[0]
   if (!member?.userId) return null
-  const adminTeams = grants.filter((grant) => grant.memberId === member.id).map(({ id, name }) => ({ id, name }))
   return { ...member, directRole: member.role, role: effectiveOrganizationRole(member.role, adminTeams), adminTeams }
 }

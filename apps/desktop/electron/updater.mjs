@@ -80,8 +80,31 @@ async function writeElectronUpdaterChannel(app, channel, manifestChannel = "late
   return normalized;
 }
 
+const LOOPBACK_FEED_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/**
+ * Release feed an eval serves on this machine, or null. The packaged-update
+ * journey installs a newer build from a local feed, and nothing else may
+ * redirect the updater: only plain-HTTP loopback URLs are honoured, so the
+ * override can never point an installation at a remote host. On macOS
+ * Squirrel still refuses any bundle whose signature does not satisfy the
+ * running app's designated requirement.
+ */
+export function evalUpdaterFeedUrl(env = process.env) {
+  const raw = typeof env.OPENWORK_EVAL_UPDATE_FEED_URL === "string" ? env.OPENWORK_EVAL_UPDATE_FEED_URL.trim() : "";
+  if (!raw) return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" || !LOOPBACK_FEED_HOSTS.has(url.hostname) || url.username || url.password) return null;
+  return url.href.replace(/\/+$/, "");
+}
+
 function electronUpdaterFeedUrl(channel, manifestChannel = "latest") {
-  return ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel, manifestChannel)];
+  return evalUpdaterFeedUrl() ?? ELECTRON_UPDATER_FEEDS[normalizeElectronUpdaterChannel(channel, manifestChannel)];
 }
 
 function normalizeStableTargetVersion(value) {
@@ -322,6 +345,8 @@ export function registerUpdaterIpc({
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
+  // Set once Windows starts ending the session; never cleared for this process.
+  let sessionEnding = false;
 
   function queueUpdaterOperation(operation) {
     const result = updaterOperationQueue.then(operation, operation);
@@ -367,7 +392,7 @@ export function registerUpdaterIpc({
           autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
           if (autoUpdaterInstance) {
             autoUpdaterInstance.autoDownload = false;
-            autoUpdaterInstance.autoInstallOnAppQuit = true;
+            autoUpdaterInstance.autoInstallOnAppQuit = !sessionEnding;
             // Differential (blockmap) downloads reconstruct the update zip from the
             // installed app + a diff. On macOS that reconstructed bundle is what
             // feeds Squirrel's fragile move-based install, and is a common trigger
@@ -411,7 +436,7 @@ export function registerUpdaterIpc({
 
   async function downloadAndStageUpdate(updater, version) {
     if (platform !== "darwin") {
-      updater.autoInstallOnAppQuit = true;
+      updater.autoInstallOnAppQuit = !sessionEnding;
       await updater.downloadUpdate();
       return;
     }
@@ -812,6 +837,9 @@ export function registerUpdaterIpc({
       await downloadAndStageUpdate(updater, checkedUpdateVersion);
       stagedUpdate = { version: checkedUpdateVersion, channel: channelState.channel };
       updateDownloaded = true;
+      // The main-process log is the only place an installed app records this;
+      // support and the packaged-update journey read it.
+      console.info(`[updater] update ${checkedUpdateVersion} is staged and installs on quit`);
       return { ok: true };
     } catch (error) {
       updateDownloaded = false;
@@ -835,5 +863,16 @@ export function registerUpdaterIpc({
     }
   }));
 
-  return { ensureAutoUpdater };
+  // Windows is shutting down, restarting or signing out. Windows does not wait
+  // for the silent NSIS installer, so starting it now can kill it after the old
+  // version's files are already removed (#6627). Keep the update downloaded and
+  // let a later, normal quit install it instead. Must stay synchronous: it has to
+  // run before Electron's quit handler starts the installer.
+  function holdInstallForSessionEnd() {
+    if (platform !== "win32") return;
+    sessionEnding = true;
+    preventPendingUpdaterInstall(autoUpdaterInstance);
+  }
+
+  return { ensureAutoUpdater, holdInstallForSessionEnd };
 }

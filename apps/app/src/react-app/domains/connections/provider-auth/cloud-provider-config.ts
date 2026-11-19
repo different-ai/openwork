@@ -1,8 +1,10 @@
+import { buildManagedProviderConfig, readProviderEnvNames, selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config";
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
 import type { GatewayUsableModel } from "@openwork/types/den/gateway";
+import { AUTO_ROUTER_PROVIDER_ID } from "@openwork/types/den/auto-router";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { catalogFastVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
+import { catalogModelVariants, CLOUD_MODEL_CONFIG_VERSION } from "@openwork/types/cloud-model-fast";
 
 import type {
   DenOrgLlmProvider,
@@ -30,30 +32,6 @@ const sameStringList = (a: string[], b: string[]) =>
 const escapeRegExp = (value: string) =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const credentialEnvRank = (name: string) => {
-  const normalized = name.trim().toUpperCase();
-  if (/(^|_)API_KEY$/.test(normalized)) return 0;
-  if (/(^|_)ACCESS_KEY_ID$/.test(normalized)) return 1;
-  if (/(^|_)BEARER_TOKEN(_|$)/.test(normalized) || /(^|_)TOKEN$/.test(normalized)) return 2;
-  if (/(^|_)KEY$/.test(normalized)) return 3;
-  return null;
-};
-
-const selectPrimaryCredentialEnvName = (
-  envNames: string[],
-  availableNames: string[],
-) => {
-  const available = new Set(availableNames.filter((name) => name.trim().length > 0));
-  const orderedNames = envNames.filter((name) => available.has(name));
-  const ranked = orderedNames
-    .map((name, index) => ({ name, index, rank: credentialEnvRank(name) }))
-    .filter((entry): entry is { name: string; index: number; rank: number } => entry.rank !== null)
-    .sort((left, right) => left.rank - right.rank || left.index - right.index);
-  if (ranked[0]) return ranked[0].name;
-  if (envNames.length > 1 && envNames.some((name) => credentialEnvRank(name) !== null)) return null;
-  return orderedNames[0] ?? null;
-};
-
 const removeCloudProviderComment = (raw: string, providerId: string) =>
   raw.replace(
     new RegExp(
@@ -63,8 +41,7 @@ const removeCloudProviderComment = (raw: string, providerId: string) =>
     "$1",
   );
 
-export const getCloudProviderEnv = (config: Record<string, unknown>) =>
-  getStringList(config.env);
+export const getCloudProviderEnv = readProviderEnvNames;
 
 /**
  * Split a connect payload's credential into the opencode auth.json entry and
@@ -107,13 +84,14 @@ export const getCloudManagedProviderId = (
 /**
  * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
  * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
- * the OpenWork inference gateway) and the `openwork` hosted provider.
+ * the OpenWork inference gateway), the `openwork` hosted provider and the
+ * organization's Smart Routers (`openwork-auto`).
  * These keys are never hand-authored, so re-importing over an existing block
  * with one of these ids is a safe reconcile (recovers a lost import baseline)
  * rather than a clobber of a user's manual provider (#2346).
  */
 export const isCloudManagedProviderKey = (providerId: string) =>
-  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork";
+  /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork" || providerId.trim() === AUTO_ROUTER_PROVIDER_ID;
 
 export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
 /** Badge copy for providers routed through the OpenWork inference gateway. */
@@ -171,6 +149,63 @@ export const resolveGatewayConnectProviders = (
       name: provider.name,
       authUrl: provider.authUrl ?? null,
     }));
+
+/** The fields of a Den Gateway provider the live-sync helpers below read. */
+export type LiveGatewayProvider = {
+  id: string;
+  providerId: string;
+  name: string;
+  credentialStatus: "ready" | "member_auth_required" | "org_credential_missing";
+  updatedAt: string;
+  models: GatewayUsableModel[];
+  authorizationRequests: { credentialSetId: string; name: string; authUrl: string; models?: GatewayUsableModel[] }[];
+};
+
+/**
+ * Sign-in rows for live provider sync, built from Den's Gateway list the same
+ * way the server sync derives its `member_auth_required` skips.
+ */
+export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatewayProvider[]): GatewayConnectProvider[] =>
+  providers.flatMap((provider) => {
+    const requests = provider.authorizationRequests.map((request) => ({
+      cloudProviderId: provider.id,
+      credentialSetId: request.credentialSetId,
+      ...(request.models === undefined ? {} : { models: request.models }),
+      providerId: provider.id,
+      name: `${provider.name} / ${request.name}`,
+      authUrl: null,
+    }));
+    if (requests.length > 0 || provider.models.length > 0 || provider.credentialStatus !== GATEWAY_MEMBER_AUTH_REQUIRED_REASON) return requests;
+    return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
+  });
+
+/**
+ * Ready Gateway providers in the shape Settings lists synced providers, for
+ * live provider sync where the engine (not the server sync) delivers them.
+ */
+export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGatewayProvider[]): Record<string, CloudImportedProvider> =>
+  Object.fromEntries(providers.filter((provider) => provider.models.length > 0).map((provider) => [provider.id, {
+    cloudProviderId: provider.id,
+    providerId: provider.id,
+    sourceProviderId: provider.providerId,
+    name: provider.name,
+    source: OPENWORK_GATEWAY_PROVIDER_SOURCE,
+    updatedAt: provider.updatedAt || null,
+    modelIds: provider.models.map((model) => model.id).sort(),
+    importedAt: null,
+  } satisfies CloudImportedProvider]));
+
+/** Whether Den no longer asks this member to sign in to the row's provider or credential set. */
+export function isLiveGatewaySetConnected(provider: GatewayConnectProvider, providers: readonly LiveGatewayProvider[]) {
+  const live = providers.find((entry) => entry.id === provider.cloudProviderId);
+  if (!live) return false;
+  if (provider.credentialSetId) {
+    const suffix = provider.credentialSetId.slice(4);
+    return !live.authorizationRequests.some((request) => request.credentialSetId === provider.credentialSetId)
+      && live.models.some((model) => model.id.split("_")[2] === suffix);
+  }
+  return live.models.length > 0;
+}
 
 export function pendingGatewayModelOptions(providers: readonly GatewayConnectProvider[]): ModelOption[] {
   return providers.flatMap((provider) => (provider.models ?? []).flatMap((model) => {
@@ -255,6 +290,16 @@ export const resolveGatewayProviderIds = (
   );
 
 
+/** OpenCode provider id → the organization's Gateway provider id, for per-provider usage limits. */
+export const resolveGatewayCloudProviderIds = (
+  importedCloudProviders: Record<string, Pick<CloudImportedProvider, "providerId" | "source" | "cloudProviderId">> | undefined,
+): Map<string, string> =>
+  new Map(
+    Object.values(importedCloudProviders ?? {})
+      .filter((provider) => provider.source === OPENWORK_GATEWAY_PROVIDER_SOURCE)
+      .map((provider) => [provider.providerId, provider.cloudProviderId]),
+  );
+
 export const getProviderModelIds = (
   provider: Pick<DenOrgLlmProvider, "models">,
 ) =>
@@ -270,7 +315,7 @@ export const isCloudProviderOutOfSync = (
   importedProvider: CloudImportedProvider,
 ) =>
   (importedProvider.modelConfigVersion !== CLOUD_MODEL_CONFIG_VERSION
-    && provider.models.some((model) => catalogFastVariants(model.config, provider.providerConfig.npm) !== undefined)) ||
+    && provider.models.some((model) => catalogModelVariants(model.config, provider.providerConfig.npm) !== undefined)) ||
   importedProvider.providerId !== getCloudManagedProviderId(provider) ||
   importedProvider.sourceProviderId !== provider.providerId ||
   (importedProvider.source ?? null) !== provider.source ||
@@ -285,74 +330,14 @@ export const isCloudProviderOutOfSync = (
 export const buildCloudProviderConfig = (
   provider: DenOrgLlmProviderConnection,
 ): ProviderConfig => {
-  const models = Object.fromEntries(
-    provider.models.map((model) => {
-      const next: NonNullable<ProviderConfig["models"]>[string] = {
-        id: model.id,
-        name: model.name,
-      };
-      const raw = model.config;
-      for (const key of [
-        "family",
-        "release_date",
-        "attachment",
-        "reasoning",
-        "temperature",
-        "tool_call",
-        "interleaved",
-        "cost",
-        "limit",
-        "modalities",
-        "status",
-        "options",
-        "headers",
-        "provider",
-        "variants",
-      ] as const) {
-        const value = raw[key];
-        if (value !== undefined) {
-          (next as Record<string, unknown>)[key] = value;
-        }
-      }
-      const variants = catalogFastVariants(raw, provider.providerConfig.npm);
-      if (variants) Object.assign(next, { variants });
-      return [model.id, next];
-    }),
-  );
-
-  const next: ProviderConfig = {
-    id: provider.providerId,
-    name: provider.name,
-    env: getCloudProviderEnv(provider.providerConfig),
-  };
-
-  // OpenWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
-  // the provider + key with zero model rows — writing `models: {}` can prevent
-  // the engine from keeping catalog models, so omit an empty map for openwork.
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
-    next.models = models;
+  const next: ProviderConfig = buildManagedProviderConfig(provider);
+  // Keep the renderer adapter's existing treatment of optional values.
+  for (const key of ["npm", "api"] as const) {
+    const value = provider.providerConfig[key];
+    if (typeof value === "string" && value.trim()) next[key] = value;
   }
-
-  if (
-    typeof provider.providerConfig.npm === "string" &&
-    provider.providerConfig.npm.trim()
-  ) {
-    next.npm = provider.providerConfig.npm;
-  }
-  if (
-    typeof provider.providerConfig.api === "string" &&
-    provider.providerConfig.api.trim()
-  ) {
-    next.api = provider.providerConfig.api;
-  }
-  if (
-    provider.providerConfig.options &&
-    typeof provider.providerConfig.options === "object"
-  ) {
+  if (provider.providerConfig.options && typeof provider.providerConfig.options === "object") {
     next.options = provider.providerConfig.options as Record<string, unknown>;
-  }
-  if (Array.isArray(provider.providerConfig.whitelist)) {
-    next.whitelist = getStringList(provider.providerConfig.whitelist);
   }
   if (Array.isArray(provider.providerConfig.blacklist)) {
     next.blacklist = getStringList(provider.providerConfig.blacklist);

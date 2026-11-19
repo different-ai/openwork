@@ -1,59 +1,43 @@
 # AGENTS.md
 
-OpenWork is a free, open-source desktop app (macOS, Windows, Linux) for doing
-work with AI agents on your own files — an open-source alternative to Claude
-Cowork and Codex, built on OpenCode, running any model from 50+ providers.
-Desktop mode keeps files local; cloud is optional. Three surfaces live in this
-repo:
+OpenWork is an open-source desktop app for doing work with AI agents on your
+own files, built on OpenCode. This repo is public.
 
-* **Desktop app** (`apps/`, `packages/`) — local-first agent workspace: chat on
-  files, skills, browser automation, scheduled automations, Anthropic-compatible
-  plugins.
-* **OpenWork MCP gateway** (`ee/apps/den-api`) — one URL
-  (`api.openworklabs.com/mcp/agent`) that brings org-assigned skills, plugins,
-  and connections (Google Workspace, Microsoft 365, MCPs) into Codex, Claude
-  Code, Cursor, or any MCP client via `search_capabilities` /
-  `execute_capability`.
-* **OpenWork Den** (`ee/apps/den-*`) — the org control plane: provision
-  inference, manage teams and access, set desktop policies, publish skills and
-  plugins through marketplaces.
+* `apps/`, `packages/`: the desktop app.
+* `ee/apps/den-api`: the MCP gateway.
+* `ee/apps/den-*`: Den, the org control plane.
 
-The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
-inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
-even before a dedicated UI exists.
+## Rules
 
-## Confidentiality (hard rule — this repo is public)
+* **Confidentiality.** Never let a branch name, commit, PR text, comment,
+  fixture, or evidence identify a customer, prospect, partner, or outside
+  person, or expose internal ticket IDs. Escalate a leak instead of rewriting
+  history.
+* **Feature flags.** Any change to product behavior that users can see goes
+  behind a flag (`add-a-feature`). When unsure, flag.
+* **UI follows `DESIGN.md`.** Cite its rule ids in the PR and attach
+  screenshots.
+* **Generated contracts.** Never commit or hand-edit OpenAPI or
+  `packages/sdk/src/gen/**`. Never regenerate a Drizzle migration snapshot to
+  resolve a conflict.
+* **Code.** pnpm only. No `any`, typecasts, or `as` unless unavoidable. Reuse
+  `@/components`; end users are non-technical.
+* **Fix the root cause.** A workaround you find is debt to remove, not a
+  pattern to copy. Never write a comment or doc that justifies a shortcut.
+* **Checks.** Run `pnpm check` before you say you are done. It is the
+  required PR checks, and the pre-push hook runs it too.
 
-Never let a branch name, commit, PR text, comment, fixture, or evidence identify
-a customer, prospect, partner, or outside person; use internal ticket IDs, and
-escalate any leak instead of rewriting history.
+## Prove it works
 
-## Generated API contracts
+A change is done when it is proven on the real product, not when it compiles
+(`verify-openwork`, `write-a-spec`, `run-tests`). Check UI headless:
+`pnpm world up dev-app-web --detach -- --browser`, then `drive-desktop-cdp`.
+Open a desktop window only when the user asks or the change needs the desktop
+shell, and prefer `--daytona`.
 
-After changing Den routes or their shared schemas, run `pnpm den:contract` and
-include `packages/docs/openapi.json` and `packages/sdk/src/gen/**` in the same
-commit. The command builds once and generates both outputs from one snapshot.
-After merging/rebasing `dev`, regenerate rather than choosing ours/theirs for
-conflicted generated files. Never hand-edit them or regenerate a Drizzle migration
-snapshot to resolve an API conflict.
+## Keep this file small
 
-Optional: `pnpm hooks:install` enables a pre-commit hook that skips unrelated
-commits and regenerates/stages only contract outputs for API changes. It refuses
-unstaged/untracked contract inputs or outputs, so finish partial staging first.
-Hooks never commit, push, or change CI/Warden policy; CI remains authoritative.
-
-## Coding
-
-* pnpm only, never npm/yarn. TypeScript: never `any`, typecasts, or `as` unless
-  100% necessary or instructed.
-* Prefer Tailwind, React, shadcn/ui (Base UI), TanStack Query, Zustand, Zod,
-  Drizzle, Better-Auth. Reuse `@/components`; end users are non-technical.
-* New feature or a change users would notice? Declare it, off, in
-  `packages/features/src/registry.ts` before writing the code, make it safe
-  to turn off, then roll it out from `/admin`. Follow
-  `.opencode/skills/add-a-feature`.
-* Any user-facing UI (desktop app, Den web, MCP Apps, artifact views) follows
-  `DESIGN.md`: read it before designing, cite its rule ids in PRs, and attach
-  screenshots of new UI. The optional
-  `.warden/skills/design-spec-review` skill can review these rules locally.
-
+Prose is the weakest guardrail. When an agent gets something wrong, make the
+mistake impossible in code, or catch it with a lint rule, type, or test. Add a
+line here or a skill only for judgment no check can encode, and delete it when
+a check replaces it.

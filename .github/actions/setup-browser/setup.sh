@@ -7,7 +7,12 @@ case "$OAUTH_HANDOFF" in
 esac
 
 sudo apt-get update -qq
-sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1 ca-certificates curl gnupg
+# Ubuntu 24 renamed ALSA for time64; the Ubuntu 22 unit-test runner uses libasound2.
+asound_package=libasound2
+if apt-cache show libasound2t64 >/dev/null 2>&1; then
+  asound_package=libasound2t64
+fi
+sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 "$asound_package" libgbm1 ca-certificates curl gnupg
 chrome="$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)"
 if [ -z "$chrome" ]; then
   curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \

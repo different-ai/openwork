@@ -5,7 +5,7 @@ export default function AiGatewayPeopleLayout({ children }: { children: React.Re
   return (
     <AiGatewayScreen
       pageTab="users-and-teams"
-      pageContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}
+      pageContent={<GatewayDashboardCapabilityGuard area="people">{children}</GatewayDashboardCapabilityGuard>}
     />
   );
 }

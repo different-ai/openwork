@@ -4,7 +4,8 @@ import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { signedWebhookRoute } from "../../middleware/index.js"
 import { captureException } from "../../observability/runtime.js"
-import { handleStripeWebhook } from "../../stripe-billing.js"
+import { handleStripeWebhook, StripeWebhookAuditBlockedError } from "../../stripe-billing.js"
+import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { jsonResponse } from "../../openapi.js"
 
 const stripeWebhookResponseSchema = z.object({
@@ -29,9 +30,22 @@ export function registerStripeWebhookRoutes<T extends Env>(app: Hono<T>) {
     async (c) => {
       const payload = await c.req.raw.text()
       const signature = c.req.raw.headers.get("stripe-signature")
+      let auditBlocked: Response | null = null
       try {
-        return c.json(await handleStripeWebhook({ payload, signature }))
+        return c.json(await handleStripeWebhook({ payload, signature }, {
+          // Signature verified and our subscription row maps the event: attribute
+          // to that organization before applying it (after, for a first checkout).
+          onOrganization: async (organizationId, phase) => {
+            const audited = await attributeAuditRequest(c, { organizationId, ...auditServiceAttribution("stripe", null), origin: "webhook", phase })
+            if (audited.ok) return true
+            auditBlocked = audited.response
+            return false
+          },
+        }))
       } catch (error) {
+        if (error instanceof StripeWebhookAuditBlockedError) {
+          return auditBlocked ?? c.json({ error: "audit_unavailable" }, 503)
+        }
         if (error instanceof ManagedModelsPolicyError) {
           return c.json({ error: error.code, message: error.message }, error.status)
         }

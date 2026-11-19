@@ -1,5 +1,6 @@
 import { readReview } from "@openwork/review/storage";
-import { CheckpointCapacity, CheckpointUnavailable, forkEvidenceCheckpoint } from "@openwork/freestyle/checkpoints";
+import { CheckpointCapacity, CheckpointUnavailable } from "@openwork/evidence-provider/review";
+import { reviewProvider } from "../../../../../lib/providers.ts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -36,7 +37,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: "No checkpoint was saved for this image." }, { status: 404, headers });
   if (Date.parse(image.checkpoint.expiresAt) <= Date.now())
     return Response.json({ error: "This checkpoint has expired. The screenshot is still available." }, { status: 410, headers });
-  if (!process.env.FREESTYLE_API_KEY?.trim())
+  // The provider that saved the checkpoint opens it, whatever the current default is.
+  const provider = reviewProvider(image.checkpoint.provider);
+  if (!provider.configured())
     return Response.json({ error: "Checkpoint access is not configured. Contact the review app owner." }, { status: 503, headers });
   let requestId: string;
   try {
@@ -47,13 +50,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     requestId = body.requestId;
   } catch { return Response.json({ error: "Reload this page and try again." }, { status: 400, headers }); }
   try {
-    const fork = await forkEvidenceCheckpoint(image.checkpoint, id, requestId);
-    // CDP cookie and provider identifiers are deliberately not returned to UI.
-    return Response.json({ url: fork.url, expiresAt: fork.expiresAt }, { status: 201, headers });
+    const copy = await provider.openCheckpoint({ checkpoint: image.checkpoint, reportId: id, requestId });
+    return Response.json({ url: copy.url, expiresAt: copy.expiresAt }, { status: 201, headers });
   } catch (error) {
     if (error instanceof CheckpointUnavailable) return Response.json({ error: "This checkpoint is no longer available. The screenshot is still available." }, { status: 410, headers });
     if (error instanceof CheckpointCapacity) return Response.json({ error: "Three copies are already open. Try again after one expires." }, { status: 429, headers });
-    console.error("Evidence checkpoint launch failed", { reportId: id, evidenceId });
+    console.error("Evidence checkpoint launch failed", { reportId: id, evidenceId, provider: provider.id });
     return Response.json({ error: "The checkpoint could not open. Try again." }, { status: 502, headers });
   }
 }

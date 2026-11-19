@@ -1,3 +1,6 @@
 export const AUDIT_ALERT_OPERATIONAL_MARKER = "[audit-alert]"
 export const SCIM_SYNC_FAILURE_RECORDED_OPERATIONAL_MARKER = "[scim][sync_failure_recorded]"
 export const SCIM_MAINTENANCE_FAILED_OPERATIONAL_MARKER = "[scim][maintenance_failed]"
+export const AUDIT_OUTCOME_LOST_OPERATIONAL_MARKER = "[audit-outcome-lost]"
+export const PLATFORM_AUDIT_LOST_OPERATIONAL_MARKER = "[platform-audit-lost]"
+export const AUDIT_APPEND_RETRY_OPERATIONAL_MARKER = "[audit-append-retry]"

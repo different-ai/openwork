@@ -26,7 +26,7 @@ export const libraryModelQueryKeys = {
   connections: (orgId: string | null) => ["me", "library", "models", "connections", orgId] as const,
 };
 
-/** How long we wait for Google before offering to try again. */
+/** How long we wait for the sign-in (Google, AWS or Microsoft) before offering to try again. */
 const SIGN_IN_WAIT_MS = 10 * 60 * 1000;
 const SIGN_IN_POLL_MS = 2000;
 

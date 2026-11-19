@@ -1,0 +1,27 @@
+diff --git a/dist/interpreter/objects.js b/dist/interpreter/objects.js
+index 702a490bb177561d76fc3e9fff2758be3489ef44..c3c643d3db8cb5701dfaaf8ed762d1c06e8fbd1e 100644
+--- a/dist/interpreter/objects.js
++++ b/dist/interpreter/objects.js
+@@ -260,7 +260,8 @@ export class RegExpObj extends Wrapper {
+     regex;
+     constructor(proto, pattern, flags) {
+         super(proto);
+-        this.regex = new RegExp(pattern, flags);
++        // OpenWork: a host may install a RegExp subclass, for example one that limits match time.
++        this.regex = new (globalThis.__openworkCodemodeRegExp ?? RegExp)(pattern, flags);
+     }
+     toString() {
+         return `/${this.regex.source}/${this.regex.flags}`;
+diff --git a/dist/stdlib/regexp.js b/dist/stdlib/regexp.js
+index 4caa44f962e5bcd6d84788a86b2fdd8d1c925779..a17e5a294bf37d0a176edc52982f88b1c4bb008b 100644
+--- a/dist/stdlib/regexp.js
++++ b/dist/stdlib/regexp.js
+@@ -19,7 +19,7 @@ export const toHostRegex = (arg, method, extraFlags = "") => {
+     // Anything else is a pattern string, as `new RegExp(arg)` would read it: undefined is the empty pattern.
+     const source = arg === undefined ? "" : coerceToString(arg);
+     try {
+-        return new RegExp(source, extraFlags);
++        return new (globalThis.__openworkCodemodeRegExp ?? RegExp)(source, extraFlags);
+     }
+     catch (error) {
+         throw syntaxError(`String.${method} received the string ${JSON.stringify(source)}, which is not a valid regular expression pattern (${regexFailureReason(error)}). ${escapeRegexHint}`);

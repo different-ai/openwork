@@ -1,12 +1,12 @@
 ---
 name: write-a-spec
-description: Write or extend an E2E journey spec in evals/specs that proves a PR's change to a human reviewer. Use when a PR changes user-visible behaviour, when a reviewer asks "show me", or when the coverage decision says a journey is missing.
+description: Extend a core journey in evals/core or write a one-off proof in evals/proofs that proves a PR's change to a human reviewer. Use when a PR changes user-visible behaviour, when a reviewer asks "show me", or when the coverage decision says a journey is missing.
 ---
 
 # Skill: Write a Spec
 
-Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes runs in CI on the PR
-head and is published as that PR's proof (private report + one PR comment).
+Every `evals/core/*.e2e.test.ts` or `evals/proofs/*.proof.test.ts` a PR adds or
+changes runs in CI on the PR head and is published as that PR's proof (private report + one PR comment).
 Write the spec for the person who will read that report in thirty seconds,
 not for the machine that runs it.
 
@@ -16,10 +16,8 @@ not for the machine that runs it.
 | --- | --- | --- |
 | Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
 | Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
-| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
+| Let a reviewer click through the change | `pnpm world help` (preview worlds) | a sandbox link in the report's **Show sandbox** panel |
 | Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
-| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
-| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
 
 ### Which lane runs your spec (and when to tag)
 
@@ -28,16 +26,15 @@ it decides the world you can build.
 
 | If the spec… | Name / tag | CI lane |
 | --- | --- | --- |
-| runs in a browser or local world with no secrets (default) | `evals/specs/<journey>.e2e.test.ts` | PR change proof, unprotected |
-| must boot the packaged desktop binary | `evals/specs/packaged-<journey>.e2e.test.ts` | packaged smoke runner |
-| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle |
-| needs Windows and a published installer | the existing `windows-published-preview` spec only | Daytona Windows, protected |
+| proves your change (default) | `evals/proofs/<name>.proof.test.ts` | on demand only, with `PR change proof` |
+| changes one of the nine core journeys in `evals/journeys.ts` | `evals/core/<journey>.e2e.test.ts` | core journeys nightly and on demand |
+| needs a reviewer to reopen the *running* browser at a screenshot | add `{ tags: ["checkpoints"] }` to the `test(...)` options | protected checkpoint lane on Freestyle (not run by manual proof runs) |
 
 Tag `checkpoints` only when a still image cannot show what the reviewer has to
 check: an open stream, a populated workspace to explore, a state that costs
 minutes to reach. The tag moves the spec to a protected lane that uses a
-secret, where fork PRs cannot run. It saves the end state of each tagged test,
-plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
+secret, where fork PRs cannot run. It saves each tagged test's world as
+launched for the commit (before the body acts) and its end state, plus every `user.checkpoint("caption")` and every `step(..., { checkpoint: true })`.
 Plain `user.screenshot()` never saves one. Say why in a comment beside the
 tag. Checkpoints cost VM snapshots, so capture the one or two moments a
 reviewer would open, not every step. Run it locally with
@@ -45,15 +42,22 @@ reviewer would open, not every step. Run it locally with
 
 ## Do not write one when…
 
-- An existing journey covers the behaviour: extend it. One spec per user
-  journey, not per PR; bug fixes add a step to the journey they escaped from.
-- The change is a pure function: write a colocated unit test, not evidence.
+- A core journey covers the behaviour and the change broke or extends it: add a
+  step there instead.
+- The change is a pure function or a server rule (permissions, isolation,
+  validation): write a colocated unit or API test (`ee/apps/den-api/test/api`
+  for Den security rules), not an e2e proof.
 - You would import `../../apps|packages|ee`, read source files, or spawn another
-  runner. That is a unit test in disguise; the boundary ratchet rejects it.
+  runner. That is a unit test in disguise; `pnpm --dir evals lint:specs`
+  rejects it and names the core journey to extend instead.
 
 No UI does not mean no spec. A server, proxy, or protocol bug gets a
-browser-less world (see `evals/specs/session-title-recovery.test.ts`); the
+browser-less world whose steps are the requests a real client makes; the
 steps still read as one person's before → after.
+
+Core journey or proof? There are nine core journeys (`evals/journeys.ts`);
+adding a tenth is a review decision. Almost every PR writes a one-off proof in
+`evals/proofs/<name>.proof.test.ts`: it runs on your PR and is not maintained.
 
 ## The proof shape
 
@@ -179,7 +183,17 @@ Rules of thumb:
 - The world runs the code on the runtime it ships on. A spec that passes on
   the wrong runtime proves nothing (`run-tests` → Match the runtime).
 - Prefer `seed.appWeb` (headless Chrome, real app). Use `seed.desktop` only for
-  a native capability a browser cannot show, and say why in `nativeReason`.
+  a native capability a browser cannot show, and say why in `nativeReason`:
+  the titlebar and window controls, native menus and dialogs, `openwork://`
+  links and the OAuth hand-off, the built-in browser pane, the updater, quit
+  and relaunch, the desktop runtime's own settings, or packaged builds. A
+  desktop world opens a window on whoever runs it locally.
+- Signed in to a Den: `denForAppWeb` then `signedInAppWeb`
+  (`evals/worlds/signed-in-app-web.ts`) replace `seed.desktop({ den, as })`.
+- Extending a journey whose world uses `seed.desktop` for none of those
+  reasons? Move that world to `seed.appWeb` rather than adding to it. The app
+  in a browser routes by path, not hash: use `go()` and `probe.hash()`, which
+  handle both.
 - No `seed.evalIn` / `probe.eval` in new specs. If you need one, comment why.
 
 ## Use the testkit channels
@@ -232,6 +246,15 @@ placeholder, or test id. Bound every wait; declare external requirements in
   If the screenshots would not convince you, they will not convince the reviewer.
   Read the captions in `index.html` top to bottom: they should tell the
   before → after story on their own.
-- In CI the spec runs on `PR change proof`, one job per spec; the trusted
-  publisher aggregates every changed spec's records into one report. Failed,
+- Your own eye passes what you designed. Run the design review on the same
+  record before pushing and fix its `medium` notes, or say in the PR why the
+  screen is right (`evals/design-review/README.md`; on a PR, the
+  notes are in the Evidence preview check):
+
+  ```sh
+  pnpm --dir evals design:review -- --test-run latest
+  ```
+- PRs do not run specs automatically. Run yours with `run-tests`, or by hand in
+  CI: `gh workflow run pr-proof.yml --ref <branch> -f pr=<number>` runs each
+  changed spec in its own job and keeps the records as artifacts. Failed,
   skipped, and cancelled runs stay visible as such; nothing substitutes for them.

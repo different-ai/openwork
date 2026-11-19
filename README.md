@@ -1,5 +1,9 @@
 # OpenWork
 
+<p align="center">
+  <img src="./docs/images/model-picker.png" width="560" alt="The OpenWork composer with its model picker open: pinned, recent and per-provider models from Anthropic, OpenAI, Google and a local Ollama model" />
+</p>
+
 OpenWork is the free, open-source alternative to Claude Cowork and Codex: a desktop app for macOS, Windows, and Linux where AI agents do real work on your own files. It is built on [OpenCode](https://opencode.ai), works with any model — 50+ providers, your own API keys, or local models via Ollama — and lets teams share skills and MCP servers.
 
 [**Download OpenWork**](https://openworklabs.com/download) · [GitHub releases](https://github.com/different-ai/openwork/releases) · [Docs](https://openworklabs.com/docs)
@@ -110,7 +114,6 @@ The fastest path from a fresh clone to a running dev build.
 
 - **Node 24** — pinned in [`.nvmrc`](./.nvmrc) (`nvm use` picks it up).
 - **pnpm 11** — pinned in `package.json` (`packageManager`); run `corepack enable` to use the pinned version automatically. Never use npm or yarn.
-- **Git with DCO sign-off** — every commit needs a `Signed-off-by` trailer (`git commit -s`). See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ### First run
 
@@ -122,6 +125,10 @@ pnpm install
 pnpm dev   # launches the Electron desktop app with hot reload
 ```
 
+Coding agents and tests should not open that window on your screen: they use
+the app in headless Chrome instead (see [Headless web](#headless-web-no-electron)
+and `AGENTS.md`).
+
 ### Repository layout
 
 | Path | What lives there |
@@ -132,7 +139,7 @@ pnpm dev   # launches the Electron desktop app with hot reload
 | `evals/` | executable test specs built on `@openwork/testkit` — see [`evals/README.md`](./evals/README.md) |
 | `worlds/` | declarative dev/test environment definitions for `pnpm world` |
 | `docs/` | operator, feature, and release docs |
-| `.opencode/skills/` | repository agent skills (testing, release, Daytona, and more) |
+| `.opencode/skills/` | repository agent skills (verification, testing, feature flags, PRs) |
 
 ### Testing
 
@@ -149,9 +156,8 @@ Runtime-observable changes need test evidence on the PR. `AGENTS.md` and [`evals
 ### Sending a pull request
 
 1. Branch from `dev` (the default branch) and open your PR against `dev`.
-2. Sign off every commit: `git commit -s`.
-3. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
-4. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the DCO and licensing rules — contributions under `ee/` additionally require a CLA.
+2. Keep the diff as small as possible, and include or update test evidence for runtime-observable changes.
+3. Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the licensing terms. By contributing you agree to the DCO, or under `ee/` to the [CLA](./legal/individual-contributor-license-agreement.md); there is nothing separate to sign.
 
 ## Local development
 
@@ -177,6 +183,7 @@ To run the OpenWork UI in a browser against a local `openwork-server` (no deskto
 
 ```bash
 pnpm world up dev-app-web --detach
+pnpm world up dev-app-web --detach -- --browser   # also opens it in headless Chrome and prints a cdp address
 ```
 
 `pnpm dev:headless-web` is a compatibility alias for the same script. The alias

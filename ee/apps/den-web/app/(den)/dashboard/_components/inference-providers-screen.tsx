@@ -1,23 +1,62 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ArrowRight, Box, Plus, Search } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Plus, Sparkles } from "lucide-react";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
-import { buttonVariants } from "../../_components/ui/button";
-import { DenInput } from "../../_components/ui/input";
+import { DenButton, buttonVariants } from "../../_components/ui/button";
+import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
 import { DenNotice } from "../../_components/ui/notice";
-import { getAiGatewayProviderRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
+import { autoRouterModelName, type AutoRouter, type AutoRouterRoutingState } from "@openwork/types/den/auto-router";
+import { getAiGatewayProviderRoute, getAiGatewaySmartRouterRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { FeatureIntroGate, useFeatureIntro } from "../_features/feature-intros";
+import { useAutoRouters } from "./auto-router-data";
+import { assignmentIsEmpty, assignmentSummary } from "./auto-router-model";
+import { AddSmartRouterButton } from "./auto-router-screen";
+import { StatusDot } from "../_features/computers/computer-parts";
+import type { DeviceTone } from "../_features/computers/computers-format";
+import { RowLane, RowLaneLabel, RowList, RowListHeader, RowListSkeleton, RowTile } from "../_features/computers/computer-rows";
+import { GATEWAY_LANE, GatewayRow, RowListNote } from "./gateway-rows";
+import { FilterInput } from "./item-list";
 import { GatewayWhoCanUseModels } from "./gateway-who-can-use-models";
 import { useOrgInferenceProviders } from "./inference-provider-data";
 import { describeGatewayAccess, type DenInferenceProvider } from "./inference-provider-request";
 import { getProviderDocUrl, getProviderIconSlug } from "./llm-provider-data";
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers";
 import { LITELLM_DOC_URL, liteLlmAccessGroupId } from "./litellm-provider-data";
+import { TRUEFOUNDRY_DOC_URL, trueFoundryAccessGroupId } from "./truefoundry-provider-data";
 
-const ROW = "flex items-center gap-4 px-4 py-3";
+const MUTED = "text-[color:var(--dls-text-secondary)]";
+
+type RowStatus = { label: string; tone: DeviceTone };
+
+/** The lanes a provider and a Smart Router share: models, who can use it, status, then Manage or Set up. */
+function ProviderLanes({ models, audience, nobody, audienceTestId, status, open }: {
+  models: string;
+  audience: string;
+  nobody: boolean;
+  audienceTestId: string;
+  status: RowStatus;
+  open: ReactNode;
+}) {
+  return <>
+    <RowLane lane={GATEWAY_LANE.models} className={MUTED}>{models}</RowLane>
+    <RowLane lane={GATEWAY_LANE.audience} className={`truncate ${MUTED}`} title={nobody ? undefined : audience}>
+      <span data-testid={audienceTestId}>{nobody ? "No one yet" : audience}</span>
+    </RowLane>
+    <RowLane lane={GATEWAY_LANE.status} className="items-center">
+      <span className="inline-flex min-w-0 items-center gap-2" aria-label={`Status: ${status.label}`} data-status={status.tone}>
+        <StatusDot tone={status.tone} />
+        <span className="truncate">{status.label}</span>
+      </span>
+    </RowLane>
+    <RowLane lane={GATEWAY_LANE.open}>{open}</RowLane>
+  </>;
+}
 
 function modelsLabel(provider: DenInferenceProvider) {
+  if (provider.custom) return `${provider.custom.models.length} ${provider.custom.models.length === 1 ? "model" : "models"}`;
   if (provider.modelIds === null) return `${provider.models.length} models`;
   if (provider.modelIds.length === 0) return "All models";
   return `${provider.modelIds.length} ${provider.modelIds.length === 1 ? "model" : "models"}`;
@@ -25,8 +64,8 @@ function modelsLabel(provider: DenInferenceProvider) {
 
 function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
   const { orgContext } = useOrgDashboard();
-  // LiteLLM per-person keys add automatic member grants; only the access group says who may use it.
-  const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : null;
+  // LiteLLM and TrueFoundry per-person keys add automatic member grants; only the access group says who may use it.
+  const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : provider.truefoundry ? trueFoundryAccessGroupId(provider) : null;
   const audience = describeGatewayAccess(accessGroupId ? { ...provider, accessGrants: (provider.accessGrants ?? []).filter((grant) => grant.modelGroupId === accessGroupId) } : provider, {
     organization: null,
     teamName: (teamId) => orgContext?.teams.find((team) => team.id === teamId)?.name,
@@ -34,128 +73,175 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   });
   const nobody = audience === "No one has access yet";
   const litellm = provider.litellm;
+  const truefoundry = provider.truefoundry;
+  const syncError = litellm?.lastSyncError ?? truefoundry?.lastSyncError ?? null;
+  const customProvider = isGatewayCustomProviderId(provider.providerId);
   // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
-  const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready") : provider.credentialStatus === "ready";
-  const ready = provider.status === "active" && keyReady && !litellm?.lastSyncError && !nobody;
-  const status = provider.status === "disabled"
-    ? { label: "Off", dot: "bg-gray-300", text: "text-gray-500" }
-    : litellm?.lastSyncError
-      ? { label: "Sync failed", dot: "bg-amber-500", text: "text-amber-700" }
+  // LiteLLM with Microsoft sign-in has no key: it is ready once its sign-in settings are saved.
+  // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
+  const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
+    : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
+      : truefoundry ? truefoundry.hasAdminKey : provider.credentialStatus === "ready";
+  const ready = provider.status === "active" && keyReady && !syncError && !nobody;
+  const status: RowStatus = provider.status === "disabled"
+    ? { label: "Off", tone: "neutral" }
+    : syncError
+      ? { label: "Sync failed", tone: "warning" }
       : !keyReady
-      ? { label: "Add a key", dot: "bg-amber-500", text: "text-amber-700" }
+      ? { label: "Add a key", tone: "warning" }
       : nobody
-        ? { label: "Give access", dot: "bg-amber-500", text: "text-amber-700" }
-        : { label: "Ready", dot: "bg-emerald-500", text: "text-gray-600" };
+        ? { label: "Give access", tone: "warning" }
+        : { label: "Ready", tone: "success" };
   return (
-    <div className={ROW} data-testid="gateway-provider-row">
-      <DenBrandMark
-        name={provider.providerId}
-        simpleIconSlug={getProviderIconSlug(provider.providerId)}
-        serviceUrl={litellm ? LITELLM_DOC_URL : getProviderDocUrl(provider.providerConfig)}
-        className="h-8 w-8 shrink-0 rounded-[8px]"
+    <GatewayRow
+      rowTestId="gateway-provider-row"
+      lead={<DenBrandMark
+        name={customProvider ? provider.name : provider.providerId}
+        simpleIconSlug={customProvider ? undefined : getProviderIconSlug(provider.providerId)}
+        serviceUrl={customProvider ? null : litellm ? LITELLM_DOC_URL : truefoundry ? TRUEFOUNDRY_DOC_URL : getProviderDocUrl(provider.providerConfig)}
+        className="size-8 shrink-0 rounded-lg"
         imageClassName="h-4 w-4"
-      />
-      <div className="min-w-0 w-[200px] shrink-0">
-        <p className="truncate text-[13px] font-medium text-gray-900">{provider.name}</p>
-        <p className="truncate font-mono text-[11px] text-gray-400">{provider.providerId}</p>
-      </div>
-      <p className="w-[140px] shrink-0 text-[13px] text-gray-600">{modelsLabel(provider)}</p>
-      <p className={`min-w-0 flex-1 truncate text-[13px] ${nobody ? "text-gray-400" : "text-gray-600"}`} data-testid="gateway-provider-audience">
-        {nobody ? "No one yet" : audience}
-      </p>
-      <p className={`flex w-[110px] shrink-0 items-center gap-2 text-[12px] ${status.text}`} aria-label={`Status: ${status.label}`}>
-        <span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} aria-hidden="true" />
-        {status.label}
-      </p>
-      <Link
-        href={getAiGatewayProviderRoute(orgSlug, provider.id)}
-        data-testid="gateway-provider-open"
-        aria-label={`Manage ${provider.name}`}
-        className={buttonVariants({ variant: "secondary", size: "sm" })}
-      >
-        {ready ? "Manage" : "Set up"}
-      </Link>
-    </div>
+      />}
+      name={provider.name}
+      lanes={<ProviderLanes
+        models={modelsLabel(provider)}
+        audience={audience}
+        nobody={nobody}
+        audienceTestId="gateway-provider-audience"
+        status={status}
+        open={<Link
+          href={getAiGatewayProviderRoute(orgSlug, provider.id)}
+          data-testid="gateway-provider-open"
+          aria-label={`Manage ${provider.name}`}
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
+        >
+          {ready ? "Manage" : "Set up"}
+        </Link>}
+      />}
+    />
+  );
+}
+
+/** A Smart Router, listed above providers and laid out like one. */
+function SmartRouterRow({ router, routing, orgSlug }: { router: AutoRouter; routing: AutoRouterRoutingState; orgSlug: string | null }) {
+  const { orgContext } = useOrgDashboard();
+  const nobody = assignmentIsEmpty(router.assignment);
+  const audience = assignmentSummary(router.assignment, { members: orgContext?.members ?? [], teams: orgContext?.teams ?? [] });
+  const name = autoRouterModelName(router.name);
+  const status: RowStatus = routing === "missing_key"
+    ? { label: "Paused", tone: "warning" }
+    : nobody
+      ? { label: "Give access", tone: "warning" }
+      : { label: "Ready", tone: "success" };
+  return (
+    <GatewayRow
+      rowTestId="auto-router-row"
+      rowData={{ "data-router-id": router.id }}
+      lead={<RowTile icon={Sparkles} />}
+      name={name}
+      secondLine="Smart Router"
+      lanes={<ProviderLanes
+        models={router.models.length === 1 ? "1 model" : `${router.models.length} models`}
+        audience={audience}
+        nobody={nobody}
+        audienceTestId="auto-router-audience"
+        status={status}
+        open={<Link
+          href={getAiGatewaySmartRouterRoute(orgSlug, router.id, nobody ? "access" : undefined)}
+          data-testid="auto-router-open"
+          aria-label={`Manage ${name}`}
+          className={buttonVariants({ variant: "secondary", size: "sm" })}
+        >
+          {nobody ? "Set up" : "Manage"}
+        </Link>}
+      />}
+    />
   );
 }
 
 function EmptyState({ orgSlug }: { orgSlug: string | null }) {
-  const steps = [
-    ["Pick a provider", "OpenRouter, Anthropic, OpenAI, Google…"],
-    ["Paste its key, pick models", "All of them, or just the ones you want"],
-    ["Choose who gets them", "Everyone, specific teams, or specific people"],
-  ];
   return (
-    <div data-testid="gateway-providers-empty" className="rounded-[16px] border border-dashed border-gray-200 bg-white px-8 py-12">
-      <div className="mx-auto flex max-w-[420px] flex-col items-center text-center">
-        <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-gray-100 text-gray-500"><Box className="h-4 w-4" aria-hidden="true" /></span>
-        <h2 className="mt-5 text-[15px] font-medium text-gray-900">No providers yet</h2>
-        <p className="mt-2 text-[13px] leading-5 text-gray-500">Add a provider once. Its models show up in the picker for whoever you choose. Nobody but you sees the key.</p>
-        <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", className: "mt-6" })} data-testid="gateway-provider-create">
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Add a provider
-        </Link>
-      </div>
-      <ol className="mx-auto mt-10 flex max-w-[640px] items-start justify-between gap-2">
-        {steps.map(([title, detail], index) => (
-          <li key={title} className="flex flex-1 items-start gap-2">
-            <div className="flex flex-1 flex-col items-center text-center">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[11px] font-medium text-gray-600">{index + 1}</span>
-              <p className="mt-3 text-[12px] font-medium text-gray-900">{title}</p>
-              <p className="mt-1 text-[11px] leading-4 text-gray-400">{detail}</p>
-            </div>
-            {index < steps.length - 1 ? <ArrowRight className="mt-1 h-3.5 w-3.5 shrink-0 text-gray-300" aria-hidden="true" /> : null}
-          </li>
-        ))}
-      </ol>
+    <div data-testid="gateway-providers-empty" className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-12 text-center`}>
+      <h2 className={CARD_TITLE_CLASS}>No providers yet</h2>
+      <Link href={getNewAiGatewayProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary", size: "sm" })} data-testid="gateway-provider-create">
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Add a provider
+      </Link>
     </div>
   );
 }
 
 /** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
 export function GatewayProvidersSection() {
-  const { orgId, orgSlug } = useOrgDashboard();
-  const { inferenceProviders, busy, error } = useOrgInferenceProviders(orgId);
+  const { orgId, orgSlug, orgContext } = useOrgDashboard();
+  const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
+  // Smart Routers are listed first, like providers.
+  const smartRouters = useAutoRouters(orgId ?? "");
   const [query, setQuery] = useState("");
-  const modelCount = inferenceProviders.reduce((total, provider) => total + provider.models.length, 0);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return normalized ? inferenceProviders.filter((provider) => provider.name.toLowerCase().includes(normalized) || provider.providerId.includes(normalized)) : inferenceProviders;
   }, [inferenceProviders, query]);
-  const empty = !busy && inferenceProviders.length === 0;
+  const routers = smartRouters.data?.routers ?? [];
+  const filteredRouters = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return normalized ? routers.filter((router) => autoRouterModelName(router.name).toLowerCase().includes(normalized)) : routers;
+  }, [routers, query]);
+  const routing = smartRouters.data?.routing ?? "unknown";
+  const canAddSmartRouter = smartRouters.data?.canEdit === true;
+  const empty = !busy && !error && inferenceProviders.length === 0;
+  const loaded = !busy && !error;
+  // Feature intros: providers but no Smart Router yet → a banner above the list.
+  const smartRouterIntro = useFeatureIntro(
+    "ai-gateway.smart-routers",
+    loaded && smartRouters.data ? { providers: inferenceProviders.length, smartRouters: smartRouters.data.routers.length } : null,
+  );
 
   return (
     <div>
-      {error ? <DenNotice message={error} tone="error" className="mb-6" /> : null}
+      {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
-      {empty ? <EmptyState orgSlug={orgSlug} /> : (
-        <>
-          <GatewayWhoCanUseModels />
+      {/* Who can use models also governs personal keys and local models, so it
+          is reachable before any provider exists. */}
+      {empty ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
+      {/* With feature intros on, the AI providers intro replaces the empty state (DESIGN.md I1). */}
+      <FeatureIntroGate introKey="ai-gateway.ai-providers" facts={loaded ? { providers: inferenceProviders.length } : null}>
+        {empty ? <EmptyState orgSlug={orgSlug} /> : (
+          <>
+            {smartRouterIntro.size === "banner" ? <div className="mb-6">{smartRouterIntro.element}</div> : null}
+            <GatewayWhoCanUseModels />
 
-          <section aria-labelledby="gateway-providers-heading" className="mt-8">
-            <div className="mb-3 flex items-center justify-between gap-4">
-              <h2 id="gateway-providers-heading" className="text-[14px] font-medium text-gray-900">
-                Providers
-                {!busy ? <span className="ml-2 font-normal text-gray-400">{inferenceProviders.length} · {modelCount} models</span> : null}
-              </h2>
-              <div className="flex items-center gap-2">
-                <div className="w-[200px]">
-                  <DenInput type="search" icon={Search} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by name" className="h-8 text-[12px]" />
+            <section aria-labelledby="gateway-providers-heading" className="mt-8">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <h2 id="gateway-providers-heading" className="sr-only">Providers</h2>
+                <FilterInput value={query} onChange={setQuery} className="w-64 max-w-full" />
+                <div className="flex flex-wrap items-center gap-2">
+                  {canAddSmartRouter ? <AddSmartRouterButton missingKey={routing === "missing_key"} /> : null}
+                  <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                    Add a provider
+                  </Link>
                 </div>
-                <Link href={getNewAiGatewayProviderRoute(orgSlug)} data-testid="gateway-provider-create" className={buttonVariants({ variant: "primary", size: "sm" })}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  Add provider
-                </Link>
               </div>
-            </div>
-            <div className="divide-y divide-gray-100 rounded-[12px] border border-gray-100 bg-white">
-              {busy ? <p className="px-4 py-6 text-[13px] text-gray-500">Loading providers…</p>
-                : filtered.length === 0 ? <p className="px-4 py-6 text-[13px] text-gray-500">No providers match that filter.</p>
-                : filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
-            </div>
-          </section>
-        </>
-      )}
+              <RowList label="Providers" busy={busy} header={<RowListHeader lead="Provider">
+                <RowLaneLabel lane={GATEWAY_LANE.models}>Models</RowLaneLabel>
+                <RowLaneLabel lane={GATEWAY_LANE.audience}>Who can use it</RowLaneLabel>
+                <RowLaneLabel lane={GATEWAY_LANE.status}>Status</RowLaneLabel>
+                <span role="columnheader" className={`shrink-0 ${GATEWAY_LANE.open}`}><span className="sr-only">Manage</span></span>
+              </RowListHeader>}>
+                {busy && inferenceProviders.length === 0 ? <RowListSkeleton rows={3} />
+                  : filtered.length === 0 && filteredRouters.length === 0 ? !error && !busy ? <RowListNote>No providers match that filter. Try another name.</RowListNote> : null
+                  : (
+                    <>
+                      {filteredRouters.map((router) => <SmartRouterRow key={router.id} router={router} routing={routing} orgSlug={orgSlug} />)}
+                      {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
+                    </>
+                  )}
+              </RowList>
+            </section>
+          </>
+        )}
+      </FeatureIntroGate>
     </div>
   );
 }

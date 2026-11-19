@@ -1,3 +1,4 @@
+import { deriveConnectionState } from "@openwork/types/den/connection-state"
 import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -11,6 +12,7 @@ import {
   ConnectorSourceBindingTable,
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
+  ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   ExternalMcpConnectionAccessGrantTable,
   ExternalMcpConnectionTable,
@@ -31,8 +33,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import { isAuthoredMcpAppVersion, redactMcpAppRevision } from "@openwork/types/mcp-app"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { isPluginArchOrgAdmin, PluginArchAuthorizationError, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
-import { memberHasRole } from "../shared.js"
+import { canManageAllPluginArchResources, PluginArchAuthorizationError, pluginArchHasPermission, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -63,6 +64,7 @@ import {
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem } from "./external-keys.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -74,9 +76,14 @@ import {
   RETIRED_STARTER_MARKETPLACE_NAME,
   RETIRED_STARTER_PLUGIN_NAMES,
 } from "./default-marketplaces.js"
+import { cache, type CachedOrgMember } from "../../../cache.js"
 import { db } from "../../../db.js"
+import { withPrimaryReads } from "../../../read-routing.js"
+import { requestReadFor } from "../../../request-reads.js"
+import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
+import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
 import { env } from "../../../env.js"
 import { appLogger } from "../../../observability/logger.js"
 import { roleIncludesOwner } from "../../../orgs.js"
@@ -117,7 +124,7 @@ import {
 import { resolveImportedConnectorTarget } from "../../../capability-sources/claude-connector-aliases.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../../../capability-sources/provider-registry.js"
 import type { MemberUsableConnectionFacts } from "../mcp-connections.js"
-import { organizationFeatureEnabled } from "../../../features.js"
+import { getOrganizationFeatures } from "../../../features.js"
 
 type OrganizationId = PluginArchActorContext["organizationContext"]["organization"]["id"]
 const logger = appLogger.child({ component: "plugin_system_store" })
@@ -773,24 +780,7 @@ function pageItems<TItem extends { id: string }>(items: TItem[], cursor: string 
 }
 
 async function getLatestVersions(configObjectIds: ConfigObjectId[]) {
-  if (configObjectIds.length === 0) {
-    return new Map<string, ConfigObjectVersionRow>()
-  }
-
-  const rows = await db
-    .select()
-    .from(ConfigObjectVersionTable)
-    .where(inArray(ConfigObjectVersionTable.configObjectId, configObjectIds))
-    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id))
-
-  const latestByObjectId = new Map<string, ConfigObjectVersionRow>()
-  for (const row of rows) {
-    if (!latestByObjectId.has(row.configObjectId)) {
-      latestByObjectId.set(row.configObjectId, row)
-    }
-  }
-
-  return latestByObjectId
+  return latestConfigObjectVersions(configObjectIds)
 }
 
 function serializeVersion(row: ConfigObjectVersionRow) {
@@ -827,6 +817,7 @@ function serializeConfigObject(row: ConfigObjectRow, latestVersion: ConfigObject
     currentRelativePath: row.currentRelativePath,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     latestVersion: latestVersion ? serializeVersion(latestVersion) : null,
     objectType: row.objectType,
@@ -854,14 +845,14 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     icon: { src: "/openwork-mark.svg" },
     composer: { prompt: "Use the OpenWork Browser extension to " },
     setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "opencode-chrome-devtools", packageName: "opencode-chrome-devtools", required: true }],
+    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
     contributions: [
       { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
       { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
       { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
     ],
     enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
+    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
     defaultEnabled: true,
   },
   {
@@ -1023,6 +1014,7 @@ function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: Plu
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     extension: serializePluginExtension(row, componentCounts),
     marketplaces,
@@ -1111,8 +1103,8 @@ function serializeConnectorAccount(row: ConnectorAccountRow, creatorName: string
   }
 }
 
-function resolveCreatorName(context: PluginArchActorContext, memberId: string) {
-  const member = context.organizationContext.members.find((entry) => entry.id === memberId)
+function resolveCreatorName(members: readonly CachedOrgMember[], memberId: string) {
+  const member = members.find((entry) => entry.id === memberId)
   if (!member) return null
   return member.user.name?.trim() || member.user.email || null
 }
@@ -1415,7 +1407,8 @@ async function upsertGrant(input: ResourceTarget & {
   const organizationId = input.context.organizationContext.organization.id
 
   if (input.resourceKind === "config_object") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(ConfigObjectAccessGrantTable)
       .where(and(
@@ -1459,7 +1452,8 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "marketplace") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(MarketplaceAccessGrantTable)
       .where(and(
@@ -1503,7 +1497,8 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "plugin") {
-    const existing = await db
+    // primary: insert-vs-update must see a grant written moments ago.
+    const existing = await db.$primary
       .select()
       .from(PluginAccessGrantTable)
       .where(and(
@@ -1546,7 +1541,8 @@ async function upsertGrant(input: ResourceTarget & {
     return serializeAccessGrant({ ...row, removedAt: null })
   }
 
-  const existing = await db
+  // primary: insert-vs-update must see a grant written moments ago.
+  const existing = await db.$primary
     .select()
     .from(ConnectorInstanceAccessGrantTable)
     .where(and(
@@ -1698,6 +1694,10 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
+  /** The object's stable key (config-blob imports keep the source's); a slug of the title otherwise. */
+  externalKey?: string
+  /** Use this id for the new object (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
   /** Where an imported object came from in its source repository; a re-import matches and prunes on it. */
@@ -1718,7 +1718,7 @@ export async function createConfigObject(input: {
   const projection = deriveProjection({ objectType: input.objectType, value: input.value })
   const organizationId = input.context.organizationContext.organization.id
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const configObjectId = createDenTypeId("configObject")
+  const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
 
   await db.transaction(async (tx) => {
@@ -1792,6 +1792,7 @@ export async function createConfigObject(input: {
     }
   })
 
+  await firstExternalKey({ kind: "config_object", organizationId, id: configObjectId }, projection.title, input.externalKey)
   return getConfigObjectDetail(input.context, configObjectId)
 }
 
@@ -1885,6 +1886,31 @@ export async function createConfigObjectVersion(input: {
   })
 
   return getConfigObjectDetail(input.context, row.id)
+}
+
+/** Change (or clear, with null) the stable key a configuration import finds this object by. */
+export async function setConfigObjectExternalKey(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; externalKey: string | null }) {
+  const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+  }
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  if (input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "config_object", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
+  return getConfigObjectDetail(input.context, row.id)
+}
+
+/** The key a new item starts with: the one asked for when it is free, else a slug of its name. */
+async function firstExternalKey(item: KeyedItem, name: string, wanted: string | undefined): Promise<string | null> {
+  if (wanted && await setExternalKey(item, wanted, { onlyWhenUnset: true })) return wanted
+  return assignDefaultExternalKey(item, name)
+}
+
+async function changeExternalKey(item: KeyedItem, key: string | null) {
+  if (!await setExternalKey(item, key)) {
+    throw new PluginArchRouteFailure(409, "external_key_taken", `Another ${item.kind === "plugin" ? "plugin" : "skill, agent or command"} in this organization already has the key "${key}".`)
+  }
 }
 
 export async function setConfigObjectLifecycle(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; action: "archive" | "delete" | "restore" }) {
@@ -2061,7 +2087,7 @@ export async function listTeamEffectivePluginAccess(input: { context: PluginArch
   if (!teams[0]) {
     throw new PluginArchRouteFailure(404, "team_not_found", "Team not found.")
   }
-  if (!isPluginArchOrgAdmin(input.context) && !input.context.memberTeams.some((team) => team.id === input.teamId)) {
+  if (!input.context.memberTeams.some((team) => team.id === input.teamId) && !(await pluginArchHasPermission(input.context, "teams.view"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization admins and team members can view this team's plugin access.")
   }
 
@@ -2249,8 +2275,14 @@ const mePluginAccessEdgeOrder: Record<MePluginAccessEdge["kind"], number> = {
   catalog: 5,
 }
 
-async function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
+/** Callers holding the same request context share one read (the library's loaders call it concurrently). */
+function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
+  return requestReadFor(input.context, "me-effective-plugin-access", () => loadMeEffectivePluginAccessWithComponentKinds(input))
+}
+
+async function loadMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
   const organizationId = input.context.organizationContext.organization.id
+  await retireEmptyStarterPlugins(organizationId)
   const memberId = input.context.organizationContext.currentMember.id
   const teamIds = input.context.memberTeams.map((team) => team.id)
   const activePlugins = await db
@@ -2492,27 +2524,6 @@ export async function listMeLibraryPluginItems(input: { context: PluginArchActor
   }))
 }
 
-function memberConnectionState(connection: MemberUsableConnectionFacts) {
-  if (
-    connection.setupRequired
-    || connection.issuerReviewRequired
-    || connection.reconnectActionOwner === "organization_admin"
-    || connection.authPolicyConfirmed === false
-    || connection.authTypeMismatch
-    || (connection.oauthClientRequired && !connection.oauthClientConfigured)
-    || (connection.credentialMode === "shared" && !connection.connectedForMe)
-  ) {
-    return "needs_admin_setup"
-  }
-  if (connection.credentialMode === "per_member" && (!connection.connectedForMe || connection.needsReconnect)) {
-    return "needs_signin"
-  }
-  if (connection.connectedForMe || (connection.credentialMode === "shared" && connection.connected)) {
-    return "connected"
-  }
-  return "available"
-}
-
 export async function listMeLibraryConnectionItems(input: {
   connections: MemberUsableConnectionFacts[]
   context: PluginArchActorContext
@@ -2588,7 +2599,7 @@ export async function listMeLibraryConnectionItems(input: {
       description: null,
       transport: connection.nativeProviderKey !== null ? "native" : "mcp",
       provider: connection.nativeProviderKey,
-      state: memberConnectionState(connection),
+      state: deriveConnectionState(connection).member,
       connectedAt: connection.connectedAt,
       edges,
     }
@@ -2598,7 +2609,7 @@ export async function listMeLibraryConnectionItems(input: {
 export async function createResourceAccessGrant(input: { context: PluginArchActorContext; value: AccessGrantWrite } & ResourceTarget) {
   await ensureResourceInOrganization(input.context, input)
   await requirePluginArchResourceRole({ context: input.context, resourceId: input.resourceId, resourceKind: input.resourceKind, role: "manager" })
-  if (input.value.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
+  if (input.value.orgWide === true && !(await pluginArchHasPermission(input.context, "sharing.share_org_wide"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can grant org-wide access.")
   }
   await ensureGrantTargetsInOrganization(input.context, input.value)
@@ -2712,8 +2723,30 @@ function pluginAudienceCondition(organizationId: OrganizationId, memberId?: Memb
   )`
 }
 
+/**
+ * Whether a member (not necessarily the caller) holds `sharing.manage_all`,
+ * i.e. sees every plugin. Joined members resolve fully (Admin teams and team
+ * permission sets included); a member who has not joined yet resolves from
+ * their stored role alone, as before.
+ */
+async function memberManagesAllSharedResources(input: { organizationId: OrganizationId; memberId: MemberId; role: string; joined: boolean }) {
+  if (roleIncludesOwner(input.role)) return true
+  const permissions = input.joined
+    ? await resolvePermissionsForMember({ organizationId: input.organizationId, memberId: input.memberId })
+    : await resolveMemberPermissions({
+      organizationId: input.organizationId,
+      memberId: input.memberId,
+      isOwner: false,
+      directRole: input.role,
+      adminTeamIds: [],
+      teamIds: [],
+    })
+  return permissions.has("sharing.manage_all")
+}
+
 export async function listPlugins(input: { context: PluginArchActorContext; cursor?: KeysetCursor; includeAccess?: boolean; includeTotal?: boolean; includeFacets?: boolean; limit?: number; q?: string; name?: string; status?: PluginRow["status"]; teamId?: TeamId; memberId?: MemberId; ownerId?: MemberId }) {
   const organizationId = input.context.organizationContext.organization.id
+  await retireEmptyStarterPlugins(organizationId)
   const limit = input.limit ?? 50
   const [targetMember] = input.memberId ? await db.select({ role: MemberTable.role, userId: MemberTable.userId }).from(MemberTable).where(and(
     eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt),
@@ -2722,14 +2755,13 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
     eq(TeamTable.id, input.teamId), eq(TeamTable.organizationId, organizationId),
   )).limit(1) : []
   if ((input.memberId && !targetMember) || (input.teamId && !targetTeam)) return { items: [], nextCursor: null, ...(input.includeTotal ? { total: 0 } : {}) }
-  const effectiveMember = input.memberId && targetMember?.userId && !roleIncludesOwner(targetMember.role) && !memberHasRole(targetMember.role, "admin")
-    ? await resolveOrganizationMemberAuthority({ organizationId, memberId: input.memberId })
-    : null
-  const adminAudience = targetMember && (roleIncludesOwner(targetMember.role) || memberHasRole(targetMember.role, "admin") || (effectiveMember ? memberHasRole(effectiveMember.role, "admin") : false))
+  const adminAudience = input.memberId && targetMember
+    ? await memberManagesAllSharedResources({ organizationId, memberId: input.memberId, role: targetMember.role, joined: Boolean(targetMember.userId) })
+    : false
   const audience = adminAudience ? undefined : input.memberId || input.teamId
     ? pluginAudienceCondition(organizationId, input.memberId, input.teamId)
     : undefined
-  const caller = isPluginArchOrgAdmin(input.context)
+  const caller = await canManageAllPluginArchResources(input.context)
     ? undefined
     : pluginAudienceCondition(organizationId, input.context.organizationContext.currentMember.id)
   const baseFilters = and(
@@ -2785,6 +2817,10 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 export async function createPlugin(input: {
   context: PluginArchActorContext
   description?: string | null
+  /** The plugin's stable key (config-blob imports keep the source's); a slug of the name otherwise. */
+  externalKey?: string
+  /** Use this id for the new plugin (config-blob imports reuse the source id); a fresh one otherwise. */
+  id?: PluginId
   name: string
   sourceFormat?: string | null
   sourceRepositoryUrl?: string | null
@@ -2814,7 +2850,8 @@ export async function createPlugin(input: {
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("plugin"),
+    externalKey: null,
+    id: input.id ?? createDenTypeId("plugin"),
     name,
     organizationId: input.context.organizationContext.organization.id,
     sourceFormat: normalizeOptionalString(input.sourceFormat ?? undefined),
@@ -2839,7 +2876,7 @@ export async function createPlugin(input: {
     })
   })
 
-  return serializePlugin(row, 0)
+  return serializePlugin({ ...row, externalKey: await firstExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, name, input.externalKey) }, 0)
 }
 
 function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
@@ -2878,7 +2915,7 @@ export async function createPluginBundle(input: {
   orgWide?: boolean
   sourceRepositoryUrl?: string | null
 }) {
-  if (input.orgWide === true && !isPluginArchOrgAdmin(input.context)) {
+  if (input.orgWide === true && !(await pluginArchHasPermission(input.context, "sharing.share_org_wide"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
   }
 
@@ -2911,7 +2948,7 @@ export async function createPluginBundle(input: {
         throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
       }
       // Members bundle only connectors they added themselves from My Library.
-      if (!isPluginArchOrgAdmin(input.context) && connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id) {
+      if (connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id && !(await pluginArchHasPermission(input.context, "connections.manage"))) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
       }
       const value: ConfigObjectInput = {
@@ -2939,7 +2976,7 @@ export async function createPluginBundle(input: {
     }
     deriveProjection({ objectType: component.type, value: component.value })
     if (component.connection) {
-      if (!isPluginArchOrgAdmin(input.context)) {
+      if (!(await pluginArchHasPermission(input.context, "connections.manage"))) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")
       }
       validatePluginMcpRequirementAuth(pluginMcpConnectionSetupInput(component.connection))
@@ -3032,8 +3069,11 @@ export async function createPluginBundle(input: {
   return getPluginDetail(input.context, plugin.id)
 }
 
-export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
+export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; externalKey?: string | null; name?: string; pluginId: PluginId }) {
   const row = await ensureEditablePlugin(input.context, input.pluginId)
+  if (input.externalKey !== undefined && input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -3066,10 +3106,49 @@ export async function listPluginMemberships(input: { context: PluginArchActorCon
     .select()
     .from(PluginConfigObjectTable)
     .where(input.onlyActive ? and(eq(PluginConfigObjectTable.pluginId, input.pluginId), isNull(PluginConfigObjectTable.removedAt)) : eq(PluginConfigObjectTable.pluginId, input.pluginId))
-    .orderBy(desc(PluginConfigObjectTable.createdAt))
+    .orderBy(desc(PluginConfigObjectTable.createdAt), desc(PluginConfigObjectTable.id))
 
+  return { items: await serializePluginMemberships(memberships, input), nextCursor: null }
+}
+
+/**
+ * GET /v1/plugins/:pluginId/resolved for many plugins in one request: the same
+ * viewer check and the same body per plugin, read with one query per table
+ * instead of one set of queries per plugin.
+ */
+export async function listResolvedPlugins(input: { context: PluginArchActorContext; pluginIds: PluginId[] }) {
+  const pluginIds = [...new Set(input.pluginIds)]
+  const roles = await resolvePluginArchPluginRoles(input.context, pluginIds)
+  const visibleIds = pluginIds.filter((pluginId) => roles.has(pluginId))
+  const hiddenIds = pluginIds.filter((pluginId) => !roles.has(pluginId))
+  const existingHiddenIds = new Set(hiddenIds.length === 0 ? [] : (await db
+    .select({ id: PluginTable.id })
+    .from(PluginTable)
+    .where(and(eq(PluginTable.organizationId, input.context.organizationContext.organization.id), inArray(PluginTable.id, hiddenIds))))
+    .map((row) => row.id))
+
+  const memberships = visibleIds.length === 0 ? [] : await db
+    .select()
+    .from(PluginConfigObjectTable)
+    .where(and(inArray(PluginConfigObjectTable.pluginId, visibleIds), isNull(PluginConfigObjectTable.removedAt)))
+    .orderBy(desc(PluginConfigObjectTable.createdAt), desc(PluginConfigObjectTable.id))
+  const items = await serializePluginMemberships(memberships, { includeConfigObjects: true, legacyWorkflowObjectType: true, onlyActive: true })
+
+  const plugins: Record<string, { items: typeof items; nextCursor: null }> = {}
+  for (const pluginId of visibleIds) plugins[pluginId] = { items: [], nextCursor: null }
+  for (const item of items) plugins[item.pluginId]?.items.push(item)
+  const failures: Record<string, { status: 403 | 404; error: string; message: string }> = {}
+  for (const pluginId of hiddenIds) {
+    failures[pluginId] = existingHiddenIds.has(pluginId)
+      ? { status: 403, error: "forbidden", message: "Missing viewer access for plugin." }
+      : { status: 404, error: "plugin_not_found", message: "Plugin not found." }
+  }
+  return { plugins, failures }
+}
+
+async function serializePluginMemberships(memberships: PluginMembershipRow[], input: { includeConfigObjects?: boolean; legacyWorkflowObjectType?: boolean; onlyActive?: boolean }) {
   if (!input.includeConfigObjects) {
-    return { items: memberships.map((membership) => serializeMembership(membership)), nextCursor: null }
+    return memberships.map((membership) => serializeMembership(membership))
   }
 
   const configObjects = await db.select().from(ConfigObjectTable).where(inArray(ConfigObjectTable.id, memberships.map((membership) => membership.configObjectId)))
@@ -3087,7 +3166,7 @@ export async function listPluginMemberships(input: { context: PluginArchActorCon
       ? { ...serialized, objectType: "script" }
       : serialized]
   }))
-  return { items: resolvedMemberships.map((membership) => serializeMembership(membership, byId.get(membership.configObjectId))), nextCursor: null }
+  return resolvedMemberships.map((membership) => serializeMembership(membership, byId.get(membership.configObjectId)))
 }
 
 export async function addPluginMembership(input: { configObjectId: ConfigObjectId; context: PluginArchActorContext; membershipSource?: PluginMembershipRow["membershipSource"]; pluginId: PluginId }) {
@@ -3099,8 +3178,12 @@ export async function removePluginMembership(input: { configObjectId: ConfigObje
 }
 
 export async function listMarketplaces(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: MarketplaceRow["status"] }) {
-  await ensureDefaultOpenWorkMarketplace(input.context)
+  // A first visit seeds the default marketplace; list it from the primary then.
+  if (await ensureDefaultOpenWorkMarketplace(input.context)) return withPrimaryReads(() => listSeededMarketplaces(input))
+  return listSeededMarketplaces(input)
+}
 
+async function listSeededMarketplaces(input: Parameters<typeof listMarketplaces>[0]) {
   const rows = await db
     .select()
     .from(MarketplaceTable)
@@ -3140,7 +3223,7 @@ export async function listMarketplaces(input: { context: PluginArchActorContext;
 async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext) {
   const organizationId = context.organizationContext.organization.id
   if (await defaultOpenWorkMarketplaceSeedComplete(organizationId)) {
-    return
+    return false
   }
 
   await db.transaction(async (tx) => {
@@ -3172,6 +3255,7 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
       marketplaceId: marketplace.id,
     })
   })
+  return true
 }
 
 async function defaultOpenWorkMarketplaceSeedComplete(organizationId: OrganizationId) {
@@ -3266,6 +3350,31 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     ))
   const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
   return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+}
+
+/**
+ * Plugins and My Library can be the first thing an older organization opens,
+ * so they retire empty starter and built-in placeholders too, not only the
+ * marketplace list. Two indexed reads when there is nothing to retire.
+ */
+async function retireEmptyStarterPlugins(organizationId: OrganizationId) {
+  const retirable = await findRetirableStarterPlaceholders(db, organizationId)
+  if (retirable.memberships.length === 0 && retirable.emptyMarketplaceIds.length === 0
+    && (await findRetirableDefaultOpenWorkPluginIds(db, organizationId)).length === 0) {
+    return
+  }
+
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: OrganizationTable.id })
+      .from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId))
+      .limit(1)
+      .for("update")
+    const now = new Date()
+    await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
+    await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
+  })
 }
 
 /**
@@ -3430,6 +3539,7 @@ async function ensureDefaultMarketplacePlugins(input: {
         createdByOrgMembershipId,
         deletedAt: null,
         description: entry.description,
+        externalKey: null,
         id: createDenTypeId("plugin"),
         name: entry.name,
         organizationId,
@@ -3597,7 +3707,8 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string }) {
+/** `id`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string; id?: MarketplaceId }) {
   const now = new Date()
   const row = {
     externalKey: input.externalKey ?? null,
@@ -3605,7 +3716,7 @@ export async function createMarketplace(input: { context: PluginArchActorContext
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
-    id: createDenTypeId("marketplace"),
+    id: input.id ?? createDenTypeId("marketplace"),
     logoUrl: normalizeOptionalString(input.logoUrl ?? undefined),
     name: input.name.trim(),
     organizationId: input.context.organizationContext.organization.id,
@@ -3757,17 +3868,15 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
     counts.set(objectType, (counts.get(objectType) ?? 0) + 1)
   }
 
-  const cloudReadinessByPlugin = (await organizationFeatureEnabled(input.context.organizationContext.organization.id, "mcpConnections"))
-    ? await resolveMarketplacePluginCloudReadiness({
-        organizationId,
-        member: {
-          orgMembershipId: input.context.organizationContext.currentMember.id,
-          teamIds: input.context.memberTeams.map((team) => team.id),
-        },
-        pluginIds,
-        desktopManifestPluginIds: pluginRows.flatMap((row) => defaultOpenWorkManifestForPlugin(row) ? [row.id] : []),
-      })
-    : new Map<string, never>()
+  const cloudReadinessByPlugin = await resolveMarketplacePluginCloudReadiness({
+    organizationId,
+    member: {
+      orgMembershipId: input.context.organizationContext.currentMember.id,
+      teamIds: input.context.memberTeams.map((team) => team.id),
+    },
+    pluginIds,
+    desktopManifestPluginIds: pluginRows.flatMap((row) => defaultOpenWorkManifestForPlugin(row) ? [row.id] : []),
+  })
 
   const plugins = pluginRows.map((row) => {
     const componentCounts = Object.fromEntries(componentCountsByPlugin.get(row.id) ?? new Map())
@@ -3889,12 +3998,13 @@ export async function listConnectorAccounts(input: { context: PluginArchActorCon
     .from(ConnectorAccountTable)
     .where(eq(ConnectorAccountTable.organizationId, input.context.organizationContext.organization.id))
     .orderBy(desc(ConnectorAccountTable.updatedAt), desc(ConnectorAccountTable.id))
+  const members = await cache.org.members(input.context.organizationContext.organization.id)
 
   const filtered = rows
     .filter((row) => !input.connectorType || row.connectorType === input.connectorType)
     .filter((row) => !input.status || row.status === input.status)
     .filter((row) => !input.q || `${row.displayName}\n${row.remoteId}\n${row.externalAccountRef ?? ""}`.toLowerCase().includes(input.q.toLowerCase()))
-    .map((row) => serializeConnectorAccount(row, resolveCreatorName(input.context, row.createdByOrgMembershipId)))
+    .map((row) => serializeConnectorAccount(row, resolveCreatorName(members, row.createdByOrgMembershipId)))
 
   return pageItems(filtered, input.cursor, input.limit)
 }
@@ -3923,7 +4033,7 @@ export async function getConnectorAccountDetail(context: PluginArchActorContext,
   if (!row) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
   }
-  return serializeConnectorAccount(row, resolveCreatorName(context, row.createdByOrgMembershipId))
+  return serializeConnectorAccount(row, resolveCreatorName(await cache.org.members(context.organizationContext.organization.id), row.createdByOrgMembershipId))
 }
 
 export async function disconnectConnectorAccount(input: { connectorAccountId: ConnectorAccountId; context: PluginArchActorContext; reason?: string }) {
@@ -3997,6 +4107,10 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
     }
 
     if (instanceIds.length > 0) {
+      await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+        ConnectorTargetReconcileTable.connectorTargetId,
+        tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds)),
+      ))
       await tx.delete(ConnectorTargetTable).where(inArray(ConnectorTargetTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceAccessGrantTable).where(inArray(ConnectorInstanceAccessGrantTable.connectorInstanceId, instanceIds))
       await tx.delete(ConnectorInstanceTable).where(inArray(ConnectorInstanceTable.id, instanceIds))
@@ -4044,7 +4158,7 @@ export async function listConnectorInstances(input: { connectorAccountId?: Conne
   return pageItems(filtered, input.cursor, input.limit)
 }
 
-export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; name: string; remoteId?: string | null }) {
+export async function createConnectorInstance(input: { connectorAccountId: ConnectorAccountId; connectorType: ConnectorInstanceRow["connectorType"]; config?: Record<string, unknown>; context: PluginArchActorContext; id?: ConnectorInstanceId; name: string; remoteId?: string | null }) {
   const account = await getConnectorAccountRow(input.context.organizationContext.organization.id, input.connectorAccountId)
   if (!account) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
@@ -4055,7 +4169,7 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
     connectorType: input.connectorType,
     createdAt: now,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
-    id: createDenTypeId("connectorInstance"),
+    id: input.id ?? createDenTypeId("connectorInstance"),
     instanceConfigJson: input.config ?? null,
     lastSyncCursor: null,
     lastSyncStatus: null,
@@ -4475,6 +4589,10 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
       await tx.delete(ConnectorMappingTable).where(inArray(ConnectorMappingTable.id, mappingIds))
     }
 
+    await tx.delete(ConnectorTargetReconcileTable).where(inArray(
+      ConnectorTargetReconcileTable.connectorTargetId,
+      tx.select({ id: ConnectorTargetTable.id }).from(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id)),
+    ))
     await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.connectorInstanceId, instance.id))
     await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, instance.id))
@@ -5516,7 +5634,7 @@ async function derivePluginMcpRequirementAccess(input: {
   }
 }
 
-async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
+export async function syncPluginMcpRequirementBindingAccess(row: PluginMcpRequirementBindingRow) {
   const access = await derivePluginMcpRequirementAccess({
     configObjectId: row.configObjectId,
     organizationId: row.organizationId,
@@ -5629,7 +5747,7 @@ function validatePluginMcpRequirementAuth(input: {
   authType: PluginMcpRequirementAuthType
   credentialMode: PluginMcpRequirementCredentialMode
   oauthClient?: { clientId: string; clientSecret?: string }
-}) {
+}, options: { awaitingKey?: boolean } = {}) {
   const apiKey = normalizedPluginMcpApiKey(input.apiKey)
   if (input.oauthClient && input.authType !== "oauth") {
     throw new PluginArchRouteFailure(400, "invalid_mcp_auth", "oauthClient is only allowed when authType is oauth.")
@@ -5640,7 +5758,7 @@ function validatePluginMcpRequirementAuth(input: {
   if (input.authType === "apikey" && input.credentialMode !== "shared") {
     throw new PluginArchRouteFailure(400, "invalid_mcp_auth", "authType apikey requires credentialMode shared.")
   }
-  if (input.authType === "apikey" && !apiKey) {
+  if (input.authType === "apikey" && !apiKey && !options.awaitingKey) {
     throw new PluginArchRouteFailure(400, "invalid_mcp_auth", "authType apikey requires apiKey.")
   }
   if (input.credentialMode === "per_member" && input.authType !== "oauth") {
@@ -5739,16 +5857,22 @@ async function validateConfiguredPluginMcpConnection(input: {
     )
   } catch (error) {
     const diagnostic = externalMcpDiagnosticForResponse(error, input.connection.id, "MCP_INITIALIZE")
+    // Provider text can repeat a just-entered key; keep only server-owned fields.
     console.error("plugin_mcp_connection_validation_failed", {
       connectionId: input.connection.id,
       organizationId: input.connection.organizationId,
       connectionEndpoint: safeExternalMcpEndpointForLog(input.connection.url),
-      ...externalMcpDiagnosticForLog(error, input.connection.id, "MCP_INITIALIZE"),
+      category: diagnostic.category,
+      httpStatus: diagnostic.httpStatus ?? null,
+      referenceId: diagnostic.referenceId,
     })
+    if (diagnostic.httpStatus === 401 || diagnostic.httpStatus === 403) {
+      throw new PluginArchRouteFailure(400, "credential_rejected", `${input.connection.name} did not accept this key.`)
+    }
     throw new PluginArchRouteFailure(
       502,
       "connection_validation_failed",
-      `Could not validate "${input.connection.name}": ${diagnostic.message} Reference: ${diagnostic.referenceId}.`,
+      `Could not reach ${input.connection.name} to check it. Reference: ${diagnostic.referenceId}.`,
     )
   }
 
@@ -5919,7 +6043,7 @@ export async function previewGithubPluginMcpImport(input: { context: PluginArchA
   // Only admins import, and only they see which organization connections an import would use.
   return computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
-    organizationId: isPluginArchOrgAdmin(input.context) ? input.context.organizationContext.organization.id : undefined,
+    organizationId: await pluginArchHasPermission(input.context, "plugins.import") ? input.context.organizationContext.organization.id : undefined,
   })
 }
 
@@ -5932,8 +6056,11 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   oauthClient?: { clientId: string; clientSecret?: string }
   pluginId: PluginId
   serverName: string
+  /** Set up a shared API-key connection now; a person adds the key in a private field next. */
+  awaitKey?: boolean
 }) {
-  validatePluginMcpRequirementAuth(input)
+  const awaitingKey = input.awaitKey === true && input.authType === "apikey" && !normalizedPluginMcpApiKey(input.apiKey)
+  validatePluginMcpRequirementAuth(input, { awaitingKey })
   const organizationId = input.context.organizationContext.organization.id
   const requirement = await activePluginMcpRequirement({
     configObjectId: input.configObjectId,
@@ -5990,7 +6117,8 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   const connection = connectionResult.connection
 
   try {
-    await validateConfiguredPluginMcpConnection({ authType: input.authType, connection })
+    // A connection still waiting for its key is checked when the key is saved.
+    if (!(awaitingKey && !connection.apiKey)) await validateConfiguredPluginMcpConnection({ authType: input.authType, connection })
   } catch (error) {
     if (connectionResult.created) {
       await deleteExternalMcpConnection({ connectionId: connection.id, organizationId })
@@ -6036,6 +6164,8 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   const refreshedConnection = await getExternalMcpConnection({ connectionId: connection.id, organizationId })
 
   return {
+    awaitingKey: awaitingKey && !(refreshedConnection ?? connection).apiKey,
+    connectionRow: refreshedConnection ?? connection,
     binding: serializePluginMcpRequirementBinding(binding),
     connection: serializePluginMcpRequirementConnection(refreshedConnection ?? connection),
     links: {
@@ -6234,7 +6364,7 @@ export async function importGithubPluginMcps(input: {
   selectedServerKeys?: string[]
   selectedServerNames?: string[]
 }) {
-  if (!isPluginArchOrgAdmin(input.context)) {
+  if (!(await pluginArchHasPermission(input.context, "plugins.import"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can import plugins from GitHub.")
   }
 
@@ -6639,9 +6769,17 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
   if (!member.userId) {
     throw new PluginArchRouteFailure(404, "member_not_joined", "Connector creator member has not joined the organization.")
   }
+  const features = await getOrganizationFeatures(organization.id, { userId: member.userId })
+
+  // The automation acts with the connector creator's own permissions.
+  const memberPermissions = await resolvePermissionsForMember({
+    organizationId: organization.id,
+    memberId: member.id,
+  })
 
   return {
     automation: true,
+    memberPermissions,
     memberTeams: [],
     session: null,
     organizationContext: {
@@ -6654,9 +6792,8 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         directRole: member.directRole,
         adminTeams: member.adminTeams,
         userId: member.userId,
+        openworkWeb: member.openworkWeb,
       },
-      invitations: [],
-      members: [],
       organization: {
         allowedEmailDomains: organization.allowedEmailDomains ?? null,
         createdAt: organization.createdAt,
@@ -6667,8 +6804,7 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
         slug: organization.slug,
         updatedAt: organization.updatedAt,
       },
-      roles: [],
-      teams: [],
+      features,
     },
   } satisfies PluginArchActorContext
 }
@@ -6744,7 +6880,12 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   }
 }
 
-export async function executeGithubConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId }) {
+/** Runs on the primary: the worker just claimed the event, and the import reads back what it creates. */
+export function executeGithubConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId }) {
+  return withPrimaryReads(() => executeGithubConnectorSyncEventOnPrimary(input))
+}
+
+async function executeGithubConnectorSyncEventOnPrimary(input: { connectorSyncEventId: ConnectorSyncEventId }) {
   const eventRows = await db
     .select()
     .from(ConnectorSyncEventTable)
@@ -7761,7 +7902,7 @@ export async function getGithubConnectorDiscoveryTree(input: { connectorInstance
 }
 
 export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugins: boolean; connectorInstanceId: ConnectorInstanceId; connectorSyncEventId?: ConnectorSyncEventId; context: PluginArchActorContext; forceRefresh?: boolean; selectedKeys: string[] }) {
-  if (!isPluginArchOrgAdmin(input.context)) {
+  if (!(await pluginArchHasPermission(input.context, "connectors.manage"))) {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can apply connector discovery.")
   }
 
@@ -8326,7 +8467,8 @@ export async function enqueueGithubWebhookSync(input: {
       continue
     }
 
-    const existing = await db
+    // primary: dedupes webhook redeliveries that can arrive back to back.
+    const existing = await db.$primary
       .select({ id: ConnectorSyncEventTable.id })
       .from(ConnectorSyncEventTable)
       .where(and(

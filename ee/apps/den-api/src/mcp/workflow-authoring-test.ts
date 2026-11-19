@@ -11,16 +11,16 @@ import {
 } from "../workflow-authoring-receipts.js"
 import type { RecordWorkflowRunInput } from "../workflow-runs.js"
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
-import { runCodemodeScript } from "./codemode-run.js"
+import { runCodemodeScript, type CodemodeRuntime } from "./codemode-run.js"
 import { validateCodemodeScriptInput, validateCodemodeScriptOutput } from "./codemode-script-object.js"
 import type { BuiltCodemodeTools } from "./codemode-tools.js"
 import { normalizeToolBody } from "./invoke.js"
 
 export const workflowAuthoringTestInputSchema = z.object({
-  code: z.string().min(1),
-  mode: z.enum(["adhoc", "live"]).default("adhoc"),
+  code: z.string().min(1).describe("JavaScript function body using input and discovered tools; return the JSON-safe value to inspect or save as a Workflow result."),
+  mode: z.enum(["adhoc", "live"]).default("adhoc").describe("Execution input model: adhoc uses caller parameters; live uses only server-supplied clock and time-zone runtime values for a reusable live Workflow."),
   input: z.unknown().optional().describe("Adhoc parameters, normalized from JSON if needed. Live rejects any caller input, including runtime."),
-  timeZone: artifactRunInputSchema.shape.timeZone.describe("IANA time zone for live mode only; defaults to UTC."),
+  timeZone: artifactRunInputSchema.shape.timeZone.describe("Time zone used to compute input.runtime's calendar date and day boundaries during live execution."),
   inputSchema: z.record(z.string(), z.unknown()).optional().describe("JSON Schema object checked against script input before any tool dispatch."),
   outputSchema: z.record(z.string(), z.unknown()).optional().describe("JSON Schema object checked against the returned value. Discover capability outputSchema to design this contract."),
 }).strict().superRefine((value, context) => {
@@ -32,9 +32,32 @@ export const workflowAuthoringTestInputSchema = z.object({
   }
 })
 
+export const workflowAuthoringTestOutputSchema = z.object({
+  value: z.unknown().describe("JSON-safe value returned by the script, with the shape defined by the caller's outputSchema when supplied."),
+  metadata: z.object({
+    receiptId: z.string().nullable(),
+    mode: z.enum(["adhoc", "live"]),
+    executionType: z.literal("authoring-test"),
+    verification: z.enum(["schema", "not-requested"]),
+    executedAt: z.string(),
+    fetchedAt: z.string(),
+    timeZone: z.string().optional(),
+    retention: z.object({
+      scope: z.enum(["shared", "process", "unavailable"]),
+      ttlMs: z.number(),
+      available: z.boolean(),
+      canSaveByReceipt: z.boolean(),
+      error: z.string().optional(),
+      message: z.string().optional(),
+    }),
+  }),
+})
+
 export async function executeWorkflowAuthoringTest(request: unknown, context: {
   organizationId: DenTypeId<"organization">
   orgMembershipId?: DenTypeId<"member">
+  /** The Code Mode a Workflow saved from this test would run on. */
+  runtime?: CodemodeRuntime
   buildTools: () => Promise<BuiltCodemodeTools>
   recordRun: (input: RecordWorkflowRunInput) => Promise<DenTypeId<"workflowRun"> | null>
   retainSource?: (input: WorkflowAuthoringSourceInput) => Promise<boolean>
@@ -78,7 +101,7 @@ export async function executeWorkflowAuthoringTest(request: unknown, context: {
   // Live and adhoc tests see the same tools; live only fixes the input to server-supplied runtime values.
   const built = await context.buildTools()
   const startedAt = new Date()
-  const result = await runCodemodeScript({ code, scriptInput, readOnlyInput: mode === "live", tools: built.tools, timeoutMs: 170_000 })
+  const result = await runCodemodeScript({ code, scriptInput, readOnlyInput: mode === "live", tools: built.tools, timeoutMs: 170_000, runtime: context.runtime })
   const finishedAt = new Date()
   if (!result.ok) {
     const receiptId = await record({ ...receipt, status: "failed", errorKind: result.error.kind,

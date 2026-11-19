@@ -4,7 +4,8 @@ import { z } from "zod";
 
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
-import { dispatchNewProviders, subscribeProviderCatalogChanges } from "../../app/lib/provider-events";
+import { dispatchNewProviders, subscribeProviderCatalogChanges, type ProviderCatalogScope } from "../../app/lib/provider-events";
+import { liveProviderSyncStatusQueryKey, usesLiveProviderSync, type LiveProviderSyncStatus } from "../domains/connections/provider-auth/live-provider-sync";
 import type { ConfigProvidersResponse, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
@@ -116,12 +117,21 @@ export function ensureProviderCatalogQuery(
     directory?: string | null;
   },
 ) {
-  return queryClient.ensureQueryData({
+  const options = {
     queryKey: providerCatalogQueryKey(input),
     queryFn: () => fetchProviderCatalog(input),
     gcTime: PROVIDER_LIST_CACHE_MS,
-    staleTime: PROVIDER_LIST_CACHE_MS,
+  };
+  const state = queryClient.getQueryState(options.queryKey);
+  const baseUrl = input.baseUrl ?? "";
+  const liveProviderSync = usesLiveProviderSync({
+    baseUrl,
+    status: queryClient.getQueryData<LiveProviderSyncStatus>(liveProviderSyncStatusQueryKey(baseUrl)),
   });
+  if (liveProviderSync && (state?.isInvalidated || state?.fetchStatus === "fetching")) {
+    return queryClient.fetchQuery({ ...options, staleTime: 0 });
+  }
+  return queryClient.ensureQueryData({ ...options, staleTime: PROVIDER_LIST_CACHE_MS });
 }
 
 const savedProviderSchema = z.custom<ProviderListItem>(
@@ -348,6 +358,41 @@ export function ensureProviderListQuery(
   });
 }
 
+const pendingCatalogInvalidations = new WeakMap<QueryClient, Set<string>>();
+
+/** Many model/provider events and mounted pickers can describe one catalog write. */
+function invalidateProviderCatalogScope(queryClient: QueryClient, scope: {
+  baseUrl: string;
+  directory?: string;
+}) {
+  let pending = pendingCatalogInvalidations.get(queryClient);
+  if (!pending) {
+    pending = new Set();
+    pendingCatalogInvalidations.set(queryClient, pending);
+  }
+  const key = JSON.stringify(providerListQueryKey(scope));
+  if (pending.has(key)) return;
+  pending.add(key);
+  setTimeout(() => {
+    pending.delete(key);
+    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope), exact: true });
+    void queryClient.invalidateQueries({ queryKey: providerCatalogQueryKey(scope), exact: true });
+  }, 50);
+}
+
+export function handleProviderCatalogChange(queryClient: QueryClient, scope: ProviderCatalogScope) {
+  if (!scope.reason) {
+    // Existing catalog.updated behavior is unchanged, including when off.
+    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
+    return;
+  }
+  if (!usesLiveProviderSync({
+    baseUrl: scope.baseUrl,
+    status: queryClient.getQueryData<LiveProviderSyncStatus>(liveProviderSyncStatusQueryKey(scope.baseUrl)),
+  })) return;
+  invalidateProviderCatalogScope(queryClient, scope);
+}
+
 export function useProviderListQuery(input: {
   client: Client | null;
   baseUrl?: string | null;
@@ -363,7 +408,7 @@ export function useProviderListQuery(input: {
   const queryClient = useQueryClient();
   useEffect(() => subscribeProviderCatalogChanges((scope) => {
     if (scope.baseUrl !== input.baseUrl || (scope.directory ?? "") !== (input.directory ?? "")) return;
-    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
+    handleProviderCatalogChange(queryClient, scope);
   }), [input.baseUrl, input.directory, queryClient]);
   return useQuery({
     queryKey: providerListQueryKey(input),

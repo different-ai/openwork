@@ -1,5 +1,5 @@
 import type { RuntimeInstanceRecord, RuntimeInstanceStore } from "@openwork-ee/cloud-runtime/orchestrator"
-import type { ProviderEndpointKind } from "@openwork-ee/cloud-runtime/contract"
+import type { ProviderEndpointKind } from "@openwork/sandbox"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { CloudRuntimeInstanceTable, DaytonaSandboxTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -45,7 +45,8 @@ async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
     signed_preview_url_expires_at: record.endpointExpiresAt,
     region: record.region,
   }
-  const existing = await db
+  // Primary: existence decides insert vs update; a stale miss would insert a duplicate.
+  const existing = await db.$primary
     .select({ id: DaytonaSandboxTable.id })
     .from(DaytonaSandboxTable)
     .where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
@@ -64,7 +65,8 @@ async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
 export function createDatabaseRuntimeInstanceStore(input: { endpointKind: ProviderEndpointKind }): RuntimeInstanceStore {
   return {
     async get(id) {
-      const rows = await db
+      // Primary: provisioning and endpoint refreshes read back the record they just wrote.
+      const rows = await db.$primary
         .select()
         .from(CloudRuntimeInstanceTable)
         .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(id)))
@@ -83,7 +85,7 @@ export function createDatabaseRuntimeInstanceStore(input: { endpointKind: Provid
         endpoint_kind: input.endpointKind,
         region: record.region,
       }
-      const existing = await db
+      const existing = await db.$primary
         .select({ id: CloudRuntimeInstanceTable.id })
         .from(CloudRuntimeInstanceTable)
         .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(record.workerId)))

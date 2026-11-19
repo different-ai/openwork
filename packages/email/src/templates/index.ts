@@ -28,7 +28,7 @@ export type EmailTemplate = keyof EmailTemplateProps
 export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string } = {
   verification: ({ verificationCode }) => `Your OpenWork verification code is ${verificationCode}`,
   passwordReset: () => "Reset your OpenWork password",
-  organizationInvite: ({ organizationName }) => `You're invited to join ${organizationName} on OpenWork`,
+  organizationInvite: ({ invitedByName, organizationName }) => `${invitedByName} invited you to join ${organizationName} on OpenWork`,
   downloadLink: () => "Your OpenWork download link",
   feedback: ({ name, source }) => `OpenWork feedback from ${name}${source ? ` (${source})` : ""}`,
   claimReminder: ({ organizationName }) => `Claim ${organizationName} before it expires`,
@@ -38,7 +38,8 @@ export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplate
 export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string | undefined } = {
   verification: () => undefined,
   passwordReset: () => undefined,
-  organizationInvite: () => undefined,
+  // Replies reach support when the deployment has an address, otherwise the inviter.
+  organizationInvite: ({ supportEmail, invitedByEmail }) => supportEmail || invitedByEmail || undefined,
   downloadLink: () => undefined,
   feedback: ({ email }) => email,
   claimReminder: () => undefined,

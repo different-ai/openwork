@@ -1,4 +1,5 @@
 import { appLogger } from "./observability/logger.js"
+import { captureException } from "./observability/runtime.js"
 
 export type LinearConfig = {
   apiKey?: string
@@ -153,7 +154,7 @@ async function createLinearIssueStrict(input: CreateLinearIssueInput & { teamId:
   const data = recordField(isRecord(payload) ? payload : null, "data")
   const issueCreate = recordField(data, "issueCreate")
   if (issueCreate?.success !== true) {
-    return null
+    throw new Error("Linear did not create the issue")
   }
   return parseLinearIssue(issueCreate.issue)
 }
@@ -177,7 +178,9 @@ export async function createLinearIssue(input: CreateLinearIssueInput, config: L
   try {
     return await createLinearIssueStrict({ ...input, teamId }, config)
   } catch (error) {
-    logger.warn("failed to create Linear issue", { error })
+    // Callers carry on without the issue, so report it where someone will see it.
+    logger.error("failed to create Linear issue", { error })
+    captureException(error, { component: "linear" })
     return null
   }
 }

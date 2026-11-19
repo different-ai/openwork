@@ -1,0 +1,112 @@
+---
+title: "Connect your own account"
+description: "When a connector uses each person's own account, sign in once (or add your key) so your AI works in that app with your permissions."
+keywords: ["connect your account", "sign in", "per-person sign-in", "each person signs in", "Your Connections", "My Library", "reconnect", "add key", "sign out"]
+---
+
+Some connectors your organization shares use **each person's own account**.
+Before your AI can use one, you sign in to that app once. After that, the AI
+works there as you: it sees what you can see and can do what you can do, and
+nothing more.
+
+You only do this once. Your sign-in is kept in OpenWork Cloud, not on your
+computer, so every device you use is connected.
+
+<Note>
+Admins choose how each connector signs in. See
+[Connectors](/cloud/share-with-your-team/connectors#how-people-connect). If a
+connector uses one account for everyone, there's nothing for you to do.
+</Note>
+
+## In the desktop app
+
+<Steps>
+  <Step title="Sign in to OpenWork Cloud">
+    If you haven't yet, click **Sign in to OpenWork Cloud** and pick your
+    organization.
+  </Step>
+  <Step title="Open your Library">
+    Open **Settings › Library** and choose the **Connectors** filter.
+  </Step>
+  <Step title="Sign in">
+    Click **Sign in** next to the app. Your browser opens the app's own sign-in
+    page. Approve access, then come back to OpenWork. The status updates on its
+    own.
+  </Step>
+</Steps>
+
+More detail: [Connect your services](/start-here/connect-your-stack/connect-services).
+
+## In OpenWork Cloud
+
+**My Library** shows how many connectors need your sign-in. Click **Sign in**
+on a connector, or open **Your Connections**, which lists every connector you
+can use and what it needs:
+
+| Status | What to do |
+| --- | --- |
+| **Connect your account** | Click **Connect** and sign in with your own account. |
+| **Reconnect required** | Click **Reconnect** and sign in again. |
+| **Connected as you** | Ready. Your AI uses your account. |
+| **Org account connected** | Ready. This connector uses one shared account. |
+| **Waiting for an admin to connect** | An admin still needs to sign in with the shared account. |
+| **Waiting for an admin to finish setup** | An admin still needs to finish setting it up. |
+
+### Connectors that use your own key
+
+Some apps use an API key instead of a sign-in. For these, you paste your own
+key:
+
+| Status | What to do |
+| --- | --- |
+| **No key** | Click **Add key** and paste the key from your account in that app. |
+| **Key saved** | Ready. |
+| **Key rejected** | The app didn't accept it. Click **Replace key**. |
+
+Paste the key exactly as the app gives it to you. Keys stay on OpenWork's
+servers and aren't shown again.
+
+## Use it
+
+Ask your AI for something the app can do:
+
+> Find the "Q3 launch" page in Notion and summarize it.
+
+There's nothing to restart. If a connector needs you to sign in again, the AI
+tells you which one.
+
+## Use it in Claude, Cursor or another MCP app
+
+If your admin turned on **Use in another app** for a connector:
+
+1. Open **Your Connections** in OpenWork Cloud.
+2. Expand **Use in another app** and click **Copy**.
+3. In your other app, add the address as a remote MCP server, choose OAuth, and
+   sign in to OpenWork.
+
+You may still need to connect your account in OpenWork first.
+
+## Sign out or remove your key
+
+Open the connector in **My Library** and use the **⋯** menu: choose **Sign out**
+or **Remove key**. Everyone else stays signed in. You can connect again at any
+time.
+
+If an admin chooses **Sign everyone out**, you'll see **Sign in** again the next
+time you need it.
+
+## Troubleshooting
+
+- **The connector isn't in my Library.** Ask an admin to give you access in
+  **Manage › Connectors**.
+- **It shows Set up.** An admin still needs to finish it.
+- **Sign-in fails or keeps asking again.** Try **Reconnect**. If it still fails,
+  send your admin the error and the time it happened.
+- **I can't add a key.** You may not have access yet. Ask an admin to give you
+  access directly, through your team, or for everyone.
+
+## Related
+
+- [Connectors](/cloud/share-with-your-team/connectors)
+- [Connect your services](/start-here/connect-your-stack/connect-services)
+- [Sharing MCP connections with your team](/cloud/share-with-your-team/shared-mcp-connections)

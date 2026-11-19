@@ -33,6 +33,7 @@ const usageSchema = z.object({
   requests: z.number().int().nonnegative(),
   estimatedRequests: z.number().int().nonnegative().describe("Requests charged the fixed estimate because OpenAI reported no usage."),
   inputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative().describe("The part of inputTokens served from OpenAI's prompt cache, charged at the cached input price. Not recorded before cached pricing, so older requests count as uncached."),
   outputTokens: z.number().int().nonnegative(),
 })
 
@@ -87,13 +88,14 @@ function microUsd(amount: number): number {
   return Math.round(amount * 1_000_000 / INFERENCE_USAGE_CONVERSION_FACTOR)
 }
 function emptyUsage(): Usage {
-  return { costMicroUsd: 0, requests: 0, estimatedRequests: 0, inputTokens: 0, outputTokens: 0 }
+  return { costMicroUsd: 0, requests: 0, estimatedRequests: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
 }
 function addUsage(target: Usage, source: Usage) {
   target.costMicroUsd += source.costMicroUsd
   target.requests += source.requests
   target.estimatedRequests += source.estimatedRequests
   target.inputTokens += source.inputTokens
+  target.cachedInputTokens += source.cachedInputTokens
   target.outputTokens += source.outputTokens
 }
 /** The driver returns an aggregated TIMESTAMP as a Date or as a "YYYY-MM-DD HH:MM:SS" string. */
@@ -124,12 +126,13 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
     requests: count(),
     estimatedRequests: sql<number>`coalesce(sum(case when ${table.estimated} then 1 else 0 end), 0)`,
     inputTokens: sql<number>`coalesce(sum(${table.input_tokens}), 0)`,
+    cachedInputTokens: sql<number>`coalesce(sum(${table.cached_input_tokens}), 0)`,
     outputTokens: sql<number>`coalesce(sum(${table.output_tokens}), 0)`,
     amount: sql<number>`coalesce(sum(${table.amount}), 0)`,
   })
-  const readUsage = (row: { requests: unknown; estimatedRequests: unknown; inputTokens: unknown; outputTokens: unknown; amount: unknown }): Usage => ({
+  const readUsage = (row: { requests: unknown; estimatedRequests: unknown; inputTokens: unknown; cachedInputTokens: unknown; outputTokens: unknown; amount: unknown }): Usage => ({
     costMicroUsd: microUsd(number(row.amount)), requests: number(row.requests), estimatedRequests: number(row.estimatedRequests),
-    inputTokens: number(row.inputTokens), outputTokens: number(row.outputTokens),
+    inputTokens: number(row.inputTokens), cachedInputTokens: number(row.cachedInputTokens), outputTokens: number(row.outputTokens),
   })
 
   const [memberDaily, guestDaily, perOrganization, peopleTotals, weekPeople, weekAtLimit] = await Promise.all([

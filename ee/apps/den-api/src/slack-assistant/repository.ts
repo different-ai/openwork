@@ -20,23 +20,17 @@ import {
   readConnectedAccountForExternalMcpIdentity,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
-import { getOrganizationFeatures, organizationFeatureEnabled } from "../features.js"
-import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
 import { listTeamsForMember } from "../orgs.js"
-import { canUseSlackAssistant, scopeKey, slackClient, type SlackEvent } from "./protocol.js"
-import { slackRuntimeForOrganization, type SlackRuntime } from "./headless.js"
+import { canUseSlackAssistant, isSandboxSlackToken, scopeKey, slackClient, type SlackCall, type SlackEvent } from "./protocol.js"
+import { sandboxSlackApiBase } from "./sandbox-api.js"
+import { CLAIMABLE_STATUSES, THREAD_ACTIVE_STATUSES } from "./statuses.js"
 
 export type InstallationRow = typeof Installation.$inferSelect
 export type EventRow = typeof Event.$inferSelect
 export type ThreadRow = typeof Thread.$inferSelect
-export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">) {
-  return (await db.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
-}
-export async function slackAssistantEnabledForInstallation(installation: InstallationRow) {
-  return organizationFeatureEnabled(installation.organizationId, "slackAssistant")
-}
-export async function slackRuntimeForInstallation(installation: InstallationRow): Promise<SlackRuntime> {
-  return slackRuntimeForOrganization(await getOrganizationFeatures(installation.organizationId))
+/** Pass `db.$primary` when the installation may have been written moments ago. */
+export async function getInstallation(connectionId: DenTypeId<"externalMcpConnection">, database: typeof db.$primary = db) {
+  return (await database.select().from(Installation).where(eq(Installation.connectionId, connectionId)).limit(1))[0] ?? null
 }
 export function isSlackConnection(connection: ExternalMcpConnectionRow) {
   return (
@@ -46,6 +40,29 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
     new URL(connection.url).hostname === "mcp.slack.com"
   )
 }
+/**
+ * A connection the assistant can answer and message members from: Slack's own, or a sandbox's sample Slack, whose
+ * installation holds a sample bot token (only sandbox setup writes one). The setup and install routes keep the
+ * stricter isSlackConnection, so a real Slack app is never installed on a sample connector.
+ */
+export function isSlackAssistantConnection(connection: ExternalMcpConnectionRow, installation: Pick<InstallationRow, "botToken"> | null | undefined) {
+  if (isSlackConnection(connection)) return true
+  return (
+    isSandboxSlackToken(installation?.botToken) &&
+    connection.credentialMode === "per_member" &&
+    connection.authType === "oauth" &&
+    connection.oauthIssuerReviewRequiredAt === null
+  )
+}
+/**
+ * A member's own Slack calls with their connector token: Slack's API, or the sandbox's sample Slack when the
+ * installation is a sample app. Null when that sample Slack can't be used now.
+ */
+async function memberSlackCall(installation: InstallationRow, token: string, client: (token: string) => SlackCall): Promise<SlackCall | null> {
+  if (!isSandboxSlackToken(installation.botToken)) return client(token)
+  const baseUrl = await sandboxSlackApiBase(installation.connectionId)
+  return baseUrl ? slackClient(token, fetch, baseUrl) : null
+}
 
 // Called only after the member completes the existing user OAuth flow. MCP's
 // oauth.v2.user.access has a standard token response; auth.test recovers the
@@ -54,16 +71,18 @@ export function isSlackConnection(connection: ExternalMcpConnectionRow) {
 export async function bindSlackOAuthMember(
   connection: ExternalMcpConnectionRow,
   memberId: DenTypeId<"member">,
-  client = slackClient,
+  client: (token: string) => SlackCall = slackClient,
 ) {
-  if (!isSlackConnection(connection)) return
   const installation = await getInstallation(connection.id)
+  if (!isSlackAssistantConnection(connection, installation)) return
   if (!installation?.teamId) return
   const account = await readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: memberId })
   if (!account.current || !account.value?.accessToken) return
+  const slack = await memberSlackCall(installation, account.value.accessToken, client)
+  if (!slack) return
   const actor = z
     .object({ user_id: z.string(), team_id: z.string(), bot_id: z.string().optional() })
-    .parse(await client(account.value.accessToken)("auth.test", {}))
+    .parse(await slack("auth.test", {}))
   if (actor.bot_id || actor.team_id !== installation.teamId) throw new Error("slack_assistant_wrong_workspace")
   await db.transaction(async (tx) => {
     // Share the connector deletion lock so a late OAuth callback cannot
@@ -73,13 +92,14 @@ export async function bindSlackOAuthMember(
       .from(ExternalMcpConnectionTable)
       .where(eq(ExternalMcpConnectionTable.id, connection.id))
       .for("update")
-    if (!current || !isSlackConnection(current)) throw new Error("slack_assistant_connection_changed")
+    if (!current) throw new Error("slack_assistant_connection_changed")
     const [installed] = await tx
       .select()
       .from(Installation)
       .where(eq(Installation.connectionId, connection.id))
       .for("update")
-    if (!installed || installed.teamId !== actor.team_id) throw new Error("slack_assistant_connection_changed")
+    if (!installed || !isSlackAssistantConnection(current, installed) || installed.teamId !== actor.team_id)
+      throw new Error("slack_assistant_connection_changed")
     const existing = await tx
       .select()
       .from(Identity)
@@ -125,7 +145,7 @@ const lastLinkBackfill = new Map<string, number>()
  * (auth.test through bindSlackOAuthMember, which also replays their pending requests). Runs at most once
  * per installation every ten minutes per process. Returns how many members were newly linked.
  */
-export async function linkConnectedSlackMembers(installation: InstallationRow, client = slackClient, now = Date.now) {
+export async function linkConnectedSlackMembers(installation: InstallationRow, client: (token: string) => SlackCall = slackClient, now = Date.now) {
   const last = lastLinkBackfill.get(installation.connectionId)
   if (last !== undefined && now() - last < LINK_BACKFILL_INTERVAL_MS) return 0
   lastLinkBackfill.set(installation.connectionId, now())
@@ -133,7 +153,7 @@ export async function linkConnectedSlackMembers(installation: InstallationRow, c
     organizationId: installation.organizationId,
     connectionId: installation.connectionId,
   })
-  if (!connection || !isSlackConnection(connection) || !installation.teamId) return 0
+  if (!connection || !isSlackAssistantConnection(connection, installation) || !installation.teamId) return 0
   const [accounts, linked] = await Promise.all([
     db
       .select({ memberId: ConnectedAccountTable.orgMembershipId })
@@ -166,8 +186,9 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     organizationId: installation.organizationId,
     connectionId: installation.connectionId,
   })
-  if (!connection || !isSlackConnection(connection)) return null
-  const identities = await db
+  if (!connection || !isSlackAssistantConnection(connection, installation)) return null
+  // primary: events re-queued by bindSlackOAuthMember run right away, and a revoked identity must stop at once.
+  const identities = await db.$primary
     .select()
     .from(Identity)
     .where(
@@ -193,16 +214,12 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     .limit(1)
   const member = members[0]
   if (!member?.userId) return null
-  const [organizations, teams, account, access, features] = await Promise.all([
+  const [organizations, teams, account] = await Promise.all([
     db.select().from(OrganizationTable).where(eq(OrganizationTable.id, installation.organizationId)).limit(1),
     listTeamsForMember({ organizationId: installation.organizationId, memberId: member.id }),
     readConnectedAccountForExternalMcpIdentity({ connection, orgMembershipId: member.id }),
-    getOpenWorkWebRuntimeAccess(installation.organizationId),
-    getOrganizationFeatures(installation.organizationId),
   ])
   const organization = organizations[0]
-  // The headless runner needs no per-member OpenWork Web computer.
-  const runtime = slackRuntimeForOrganization(features)
   const granted = await memberCanUseExternalMcpConnection({
     connectionId: connection.id,
     orgMembershipId: member.id,
@@ -211,11 +228,8 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
   if (
     !organization ||
     !canUseSlackAssistant({
-      capabilityEnabled: features.slackAssistant,
       enabled: installation.enabled,
       individualAccounts: true,
-      mcpEnabled: features.mcpConnections,
-      webAccess: runtime === "headless" || access.hasAccess,
       activeMember: true,
       granted,
       connected: account.current && Boolean(account.value?.accessToken),
@@ -230,7 +244,6 @@ export async function resolveSlackActor(installation: InstallationRow, slackUser
     organizationId: organization.id,
     connection,
     userToken: account.value.accessToken,
-    runtime,
   }
 }
 export type SlackActor = NonNullable<Awaited<ReturnType<typeof resolveSlackActor>>>
@@ -279,6 +292,7 @@ export async function enqueueSlackEvent(installation: InstallationRow, eventId: 
   })
 }
 
+
 export async function claimSlackEvent(): Promise<EventRow | null> {
   return db.transaction(async (tx) => {
     const now = new Date()
@@ -287,7 +301,7 @@ export async function claimSlackEvent(): Promise<EventRow | null> {
       .from(Event)
       .where(
         and(
-          inArray(Event.status, ["pending", "running"]),
+          inArray(Event.status, CLAIMABLE_STATUSES),
           lte(Event.availableAt, now),
           or(isNull(Event.leaseUntil), lte(Event.leaseUntil, now)),
         ),
@@ -343,7 +357,7 @@ export async function lockSlackThread(event: EventRow, actor: SlackActor) {
             eq(Event.slackUserId, event.slackUserId),
             eq(Event.channelId, event.channelId),
             eq(Event.threadTs, event.threadTs),
-            inArray(Event.status, ["pending", "running"]),
+            inArray(Event.status, THREAD_ACTIVE_STATUSES),
             eq(Event.cancelled, false),
             or(lt(Event.createdAt, event.createdAt), and(eq(Event.createdAt, event.createdAt), lt(Event.id, event.id))),
           ),
@@ -359,21 +373,26 @@ export async function releaseSlackThread(event: EventRow) {
   await renewSlackLease(event)
   await db.update(Thread).set({ activeEventId: null }).where(eq(Thread.activeEventId, event.id))
 }
-export async function saveSlackSession(threadId: string, sessionId: string, workspaceId: string) {
-  await db.update(Thread).set({ sessionId, workspaceId }).where(eq(Thread.id, threadId))
+export async function saveSlackSession(threadId: string, sessionId: string) {
+  await db.update(Thread).set({ sessionId, workspaceId: "headless" }).where(eq(Thread.id, threadId))
+}
+/** The thread's runner session is gone: its next message starts a fresh one. */
+export async function clearSlackSession(threadId: string) {
+  await db.update(Thread).set({ sessionId: null, workspaceId: null }).where(eq(Thread.id, threadId))
 }
 export async function cancelSlackThread(installation: InstallationRow, event: SlackEvent) {
   if (!event.user || !event.channel || !event.thread_ts) return
   // Private replies may run in a DM while the source mention was in a channel.
   // Search only this signed actor's active events, then match source or output.
-  const candidates = await db
+  // primary: Stop must see the event that started running moments ago.
+  const candidates = await db.$primary
     .select()
     .from(Event)
     .where(
       and(
         eq(Event.connectionId, installation.connectionId),
         eq(Event.slackUserId, event.user),
-        inArray(Event.status, ["pending", "running"]),
+        inArray(Event.status, THREAD_ACTIVE_STATUSES),
       ),
     )
   const matches = candidates.filter((candidate) => {
@@ -400,7 +419,7 @@ export async function revokeSlackInstallation(connectionId: DenTypeId<"externalM
   await db
     .update(Event)
     .set({ cancelled: true, availableAt: new Date() })
-    .where(and(eq(Event.connectionId, connectionId), inArray(Event.status, ["pending", "running", "awaiting_link"])))
+    .where(and(eq(Event.connectionId, connectionId), inArray(Event.status, ["pending", "running", "watching", "awaiting_link"])))
 }
 
 function updatedRows(result: unknown): number {
@@ -440,7 +459,8 @@ export async function removeSlackIdentities(connectionId: DenTypeId<"externalMcp
 export async function findSlackThread(event: EventRow, actor: SlackActor) {
   return (
     (
-      await db
+      // primary: lockSlackThread/saveSlackSession wrote this row moments ago.
+      await db.$primary
         .select()
         .from(Thread)
         .where(
@@ -481,7 +501,10 @@ export async function admitSlackRun(event: EventRow, installation: InstallationR
           eq(Event.connectionId, event.connectionId),
           eq(Event.slackUserId, event.slackUserId),
           gt(Event.createdAt, new Date(Date.now() - 86_400_000)),
-          or(eq(Event.status, "running"), and(inArray(Event.status, ["done", "failed"]), isNotNull(Event.checkpoint))),
+          or(
+            inArray(Event.status, ["running", "watching"]),
+            and(inArray(Event.status, ["done", "failed"]), isNotNull(Event.checkpoint)),
+          ),
         ),
       )
     if ((row?.total ?? 0) >= installation.dailyLimit) return false
@@ -508,7 +531,8 @@ export async function pruneSlackEvents() {
     )
 }
 export async function latestSlackContext(event: EventRow) {
-  const rows = await db
+  // primary: the context event is enqueued just before the invocation that reads it.
+  const rows = await db.$primary
     .select({ payload: Event.payload })
     .from(Event)
     .where(
@@ -550,7 +574,7 @@ export async function slackAssistantMetrics(connectionId: DenTypeId<"externalMcp
   return {
     completed,
     failed: rows.filter((r) => r.status === "failed").length,
-    active: rows.filter((r) => r.status === "running").length,
+    active: rows.filter((r) => r.status === "running" || r.status === "watching").length,
     awaitingConnection: rows.filter((r) => r.status === "awaiting_link").length,
     helpful: rows.filter((r) => r.status === "feedback_positive").length,
     needsWork: rows.filter((r) => r.status === "feedback_negative").length,

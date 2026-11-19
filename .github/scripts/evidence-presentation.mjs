@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { updatePreviewCard } from "./evidence-preview-card.mjs";
+import { renderDesignNotes, validateDesignDigest } from "./design-notes.mjs";
+import { association, authorEvidenceNotice, producers } from "./evidence-association.mjs";
 
 const checkName = "Evidence preview";
 const validId = value => Number.isSafeInteger(value) && value > 0;
@@ -19,16 +21,14 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
   const root = `repos/${repo}`;
   const source = await api(`${root}/actions/runs/${runId}`);
   const workflow = await api(`${root}/actions/workflows/pr-proof.yml`);
-  if (source.id !== Number(runId) || source.workflow_id !== workflow.id || workflow.path !== ".github/workflows/pr-proof.yml"
-    || source.path !== workflow.path || source.name !== "PR change proof" || source.event !== "pull_request"
-    || source.repository?.full_name !== repo || source.head_repository?.full_name !== repo
-    || !validId(source.repository?.id) || source.head_repository.id !== source.repository.id
-    || !validId(source.run_attempt) || (runAttempt && source.run_attempt !== Number(runAttempt))
-    || source.pull_requests?.length !== 1) return { skipped: true };
-  const stub = source.pull_requests[0];
-  const sha = stub.head?.sha;
-  if (!validId(stub.number) || !/^[a-f0-9]{40}$/.test(sha ?? "") || source.head_sha !== sha
-    || stub.head.repo?.id !== source.repository.id || stub.base?.repo?.id !== source.repository.id) return { skipped: true };
+  if (source.id !== Number(runId) || !validId(workflow.id) || workflow.path !== ".github/workflows/pr-proof.yml"
+    || !validId(source.run_attempt) || (runAttempt && source.run_attempt !== Number(runAttempt))) return { skipped: true };
+  const workflows = producers.map(producer => ({ ...producer, id: workflow.id }));
+  // Presentation also covers queued/running and interrupted runs; publication requires success/failure.
+  const identity = await association(source, repo, workflows, api, false);
+  if (identity.reason) return { skipped: true };
+  const stub = { number: identity.pr };
+  const sha = identity.sha;
   const externalId = `evidence:${source.id}:${source.run_attempt}`;
   const logUrl = `https://github.com/${repo}/actions/runs/${source.id}/attempts/${source.run_attempt}`;
   const environment = `Evidence / PR ${stub.number}`;
@@ -37,9 +37,13 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     const fresh = await api(`${root}/actions/runs/${source.id}`);
     if (pr.state !== "open" || pr.head?.sha !== sha || pr.head?.repo?.id !== source.repository.id || pr.base?.repo?.id !== source.repository.id
       || fresh.run_attempt !== source.run_attempt) return false;
-    const latest = await api(`${root}/actions/workflows/${workflow.id}/runs?event=pull_request&head_sha=${sha}&per_page=100`);
+    const latest = await api(`${root}/actions/workflows/${workflow.id}/runs?head_sha=${sha}&per_page=100`);
     if (!Array.isArray(latest.workflow_runs) || latest.total_count > 100) throw new Error("Incomplete evidence producer history");
-    return !latest.workflow_runs.some(run => run.id > source.id && run.pull_requests?.some(pr => pr.number === stub.number));
+    for (const run of latest.workflow_runs.filter(run => run.id > source.id)) {
+      const newer = await association(run, repo, workflows, api, false);
+      if (newer.pr === stub.number && newer.sha === sha) return false;
+    }
+    return true;
   }
   if (!await current()) return { skipped: true };
   const deployments = await api(`${root}/deployments?environment=${encodeURIComponent(environment)}&per_page=100`);
@@ -65,6 +69,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
   let detailsUrl = logUrl;
   let summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · [Run ${source.id}, attempt ${source.run_attempt}](${logUrl})\n\nEvidence is being prepared for this commit. Earlier reports do not verify this revision.`;
   let reportUrl;
+  let designNotes;
   if (phase === "complete") {
     if (source.status !== "completed") throw new Error("Producer is not complete");
     status = "completed";
@@ -83,6 +88,13 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
       conclusion = evidence.verdict === "Passed" && source.conclusion === "success" ? "success" : "failure";
       title = `Published · ${sha.slice(0, 7)} · ${source.conclusion === "success" ? evidence.verdict : "Source run failed"}`;
       summary = `Commit [\`${sha}\`](https://github.com/${repo}/commit/${sha}) · Published ${new Date().toISOString()}\n\n${evidence.passedTests}/${evidence.tests} selected tests · ${evidence.passedAssertions}/${evidence.assertions} assertions passed.\n\n[Open evidence and launch your own sandbox](${reportUrl}) · [Source run](${logUrl})\n\nSelected evidence only; this is not human approval or a claim that all required verification passed.`;
+      // Advisory design notes ride along in this same check: a summary line, and
+      // the notes as the check's text. They never change the conclusion above.
+      const digest = validateDesignDigest(receipt.design);
+      if (digest) {
+        designNotes = renderDesignNotes(digest);
+        summary += `\n\n${designNotes.line}`;
+      }
     } else if (receipt?.state === "skipped" && receipt.noEvidence === true && source.conclusion === "success") {
       conclusion = "neutral";
       title = "No change-specific evidence selected";
@@ -98,7 +110,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     status = "queued";
     title = "Evidence queued";
   }
-  const output = { title, summary };
+  const output = { title, summary, ...(designNotes?.text ? { text: designNotes.text } : {}) };
   if (!await current()) return { skipped: true };
   if (!check) check = await api(`${root}/check-runs`, "POST", { name: checkName, head_sha: sha, external_id: externalId, status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
   else await api(`${root}/check-runs/${check.id}`, "PATCH", { status, ...(conclusion ? { conclusion, completed_at: new Date().toISOString() } : {}), details_url: detailsUrl, output });
@@ -110,7 +122,7 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     state: status !== "completed" ? "pending" : ["success", "neutral"].includes(conclusion) ? "success" : "failure",
     description: title.slice(0, 140), target_url: detailsUrl,
   });
-  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl }, api, current);
+  await updatePreviewCard({ repo, pr: stub.number, sha, status, conclusion, title, reportUrl, logUrl, reviewUrl, notice: authorEvidenceNotice(source) }, api, current);
   if (!reportUrl || !await current()) return { checkId: check.id };
   // Each publication is immutable and tied to the tested SHA. Do not let a
   // late deployment automatically deactivate a newer commit's preview.

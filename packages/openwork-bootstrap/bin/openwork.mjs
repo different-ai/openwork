@@ -7,6 +7,16 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "0.1.0"
+const MIN_NODE_VERSION = "24.22.1"
+
+// Keep this file dependency-free: install.sh downloads it as a single file.
+// Accept patched Node 24 releases only; future majors need an explicit review.
+function nodeVersionSupported(version) {
+  const match = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version)
+  if (!match) return false
+  const [, major, minor, patch] = match.map(Number)
+  return major === 24 && (minor > 22 || (minor === 22 && patch >= 1))
+}
 // The installed command name. Keep it explicit so setup guides can distinguish
 // bootstrap actions from other OpenWork commands a user may already have.
 const COMMAND_NAME = "openwork-bootstrap"
@@ -253,6 +263,17 @@ async function fetchMe(baseUrl, token) {
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms))
 
+function retryAfterMs(value) {
+  if (!value) return 0
+  const trimmed = value.trim()
+  // Clamp large values before they reach a timer. The code deadline also limits the wait.
+  if (/^\d+$/.test(trimmed)) return Math.min(Number(trimmed) * 1000, Number.MAX_SAFE_INTEGER)
+  // HTTP dates can use current or legacy formats. Do not parse numeric junk as a date.
+  if (!/^(?:[A-Za-z]{3}, |[A-Za-z]+, \d{2}-|[A-Za-z]{3} [A-Za-z]{3} )/.test(trimmed)) return 0
+  const date = Date.parse(/^[A-Za-z]{3} [A-Za-z]{3} /.test(trimmed) ? `${trimmed} GMT` : trimmed)
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0
+}
+
 /**
  * OAuth 2.0 Device Authorization Grant (RFC 8628). Shows the code and link on
  * stderr so --json stdout stays machine-readable, then polls until the person
@@ -277,12 +298,24 @@ async function deviceLogin(baseUrl, { json, log = (line) => console.error(line) 
     log(`Open this link to sign in:\n\n  ${verificationUriComplete}\n\nand confirm the code ${displayCode}. Waiting for approval...`)
   }
 
+  let delayMs = intervalMs
   while (Date.now() < deadline) {
-    await sleep(intervalMs)
-    const polled = await request(baseUrl, "/api/auth/device/token", {
-      method: "POST",
-      body: JSON.stringify({ grant_type: DEVICE_CODE_GRANT, device_code: deviceCode, client_id: DEVICE_CLIENT_ID }),
-    })
+    await sleep(Math.min(delayMs, deadline - Date.now()))
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    const signal = AbortSignal.timeout(Math.ceil(remainingMs))
+    let polled
+    try {
+      polled = await request(baseUrl, "/api/auth/device/token", {
+        method: "POST",
+        body: JSON.stringify({ grant_type: DEVICE_CODE_GRANT, device_code: deviceCode, client_id: DEVICE_CLIENT_ID }),
+        signal,
+      })
+    } catch (error) {
+      if (signal.aborted) break
+      throw error
+    }
+    if (Date.now() >= deadline) break
     if (polled.status === 200 && typeof polled.body?.access_token === "string") {
       const expiresIn = Number(polled.body.expires_in)
       return {
@@ -291,13 +324,16 @@ async function deviceLogin(baseUrl, { json, log = (line) => console.error(line) 
       }
     }
     const error = polled.body?.error
-    if (error === "authorization_pending") continue
-    if (error === "slow_down") {
-      intervalMs += 5000
-      continue
-    }
     if (error === "access_denied") throw new Error("login_denied: the sign-in request was denied in the browser")
     if (error === "expired_token") break
+    if (polled.status === 429 || error === "slow_down") {
+      intervalMs += 5000
+      // Keep this code. Better Auth uses X-Retry-After; proxies can use Retry-After.
+      delayMs = Math.max(intervalMs, retryAfterMs(polled.headers.get("retry-after")), retryAfterMs(polled.headers.get("x-retry-after")))
+      continue
+    }
+    delayMs = intervalMs
+    if (error === "authorization_pending") continue
     throw new Error(`login_failed: ${polled.status} ${JSON.stringify(polled.body)}`)
   }
   throw new Error("login_expired: the code expired before it was approved; run login again")
@@ -726,7 +762,7 @@ async function runDoctor(args) {
   const json = hasFlag(args.flags, "json")
   const checks = []
 
-  checks.push({ name: "node", ok: Number(process.versions.node.split(".")[0]) >= 20, value: process.versions.node })
+  checks.push({ name: "node", ok: nodeVersionSupported(process.versions.node), value: process.versions.node })
   checks.push({ name: "installDir", ok: existsSync(installDir), value: installDir })
   checks.push({ name: "binDir", ok: existsSync(binDir), value: binDir })
 
@@ -796,7 +832,7 @@ async function request(baseUrl, path, options = {}) {
       body = text
     }
   }
-  return { status: response.status, body }
+  return { status: response.status, body, headers: response.headers }
 }
 
 // Hosted OpenWork Cloud requires a 6-digit email code before the first
@@ -1745,6 +1781,9 @@ async function runCloud(args) {
 }
 
 async function main() {
+  if (!nodeVersionSupported(process.versions.node)) {
+    throw new Error(`openwork-bootstrap needs Node.js 24.x, version ${MIN_NODE_VERSION} or newer within that major (found ${process.versions.node}). Install a supported Node.js 24 release or re-run https://openworklabs.com/install.sh.`)
+  }
   const args = parseArgs(process.argv.slice(2))
   if (hasFlag(args.flags, "help") || args.positionals[0] === "help") {
     printHelp()

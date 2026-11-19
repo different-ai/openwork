@@ -1,11 +1,12 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { KeyRound, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenPageHeader } from "../../_components/ui/page-header";
+import { UnderlineTabs } from "../../_components/ui/tabs";
 import {
   getLibraryAddConnectorRoute,
   getLibraryConnectorRoute,
@@ -13,15 +14,16 @@ import {
   getLibraryNewPluginRoute,
   getLibraryPluginRoute,
   getLibraryPluginShareRoute,
+  getLibraryLlmProviderRoute,
+  getLibraryRoute,
   getYourConnectionsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { ownedAccessStatus } from "./access-summary";
-import { draftFromPluginGrants } from "./item-sharing";
-import { FilterInput, ItemFlatList, ItemMenu, LibraryListRow, removeEntry, ItemSection, ItemSectionSkeleton } from "./item-list";
+import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
 import { ItemPage } from "./item-header";
-import { ConnectorLogo, LetterTile } from "./item-logo";
-import { LibraryAddDialog, type LibraryAddChoice, ConnectorLogoStrip } from "./library-add-dialog";
+import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { RowTile } from "../_features/computers/computer-rows";
+import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
   groupLibrary,
@@ -29,25 +31,34 @@ import {
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
+  libraryFilterOf,
   libraryItemReady,
-  libraryKindLabel,
-  NEEDS_SIGN_IN_STATUS,
   needsViewerSignIn,
   parseLibraryFilter,
   parseNeedsSignIn,
   receivedStatus,
+  workflowFailureSummary,
+  workflowLastRunFailed,
 } from "./library-view";
-import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
+import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, LibraryCompactSurface, LibraryKindIcon } from "./library-compact";
+import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 import { usePrefetchConnectorCatalog } from "./connector-catalog-screen";
 import { useMemberSignIn } from "./connector-setup";
 import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
 import { LibraryModelRow } from "./library-models-ui";
 import { MemberApiKeyDialog } from "./member-api-key-dialog";
-import { usePluginAccess } from "./plugin-access-data";
+import { MemberGatewayApiKeysSection } from "./member-gateway-api-keys-section";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
-import { pluginQueryKeys, usePluginSummaries } from "./plugin-data";
+import { pluginQueryKeys } from "./plugin-data";
+import { useOrgLlmProviders } from "./llm-provider-data";
+import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
+import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
+import { libraryIntroFacts } from "./library-intro-facts";
+
+/** Show the name filter once a Library holds more than this many items. */
+const FILTER_AFTER = 10;
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
@@ -55,36 +66,30 @@ function itemHref(orgSlug: string | null, item: LibraryItem): string {
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
 }
 
-function ItemLogo({ item }: { item: LibraryItem }) {
-  if (item.type === "connection") return <ConnectorLogo name={item.name} url={item.url} />;
-  return <LetterTile name={item.name} />;
+/**
+ * A saved workflow whose last run failed says so in its description slot: one
+ * red word and the reason, never a tinted panel (DESIGN V2, T2).
+ */
+function WorkflowFailedDescription({ reason }: { reason: string | null }) {
+  const summary = workflowFailureSummary(reason);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" data-workflow-last-run="failed">
+      <span className="size-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+      <span className="shrink-0 font-medium text-red-600">Last run failed</span>
+      <span className="min-w-0 truncate" title={summary}>{summary}</span>
+    </span>
+  );
 }
 
-function OwnedConnectionStatus({ connection }: { connection: ExternalMcpConnection | undefined }) {
-  const { orgContext } = useOrgDashboard();
-  if (!orgContext) return null;
-  return <>{ownedAccessStatus(connection?.access ?? null, orgContext, orgContext.currentMember.id)}</>;
-}
-
-function OwnedPluginStatus({ pluginId }: { pluginId: string }) {
-  const { orgContext } = useOrgDashboard();
-  const summaries = usePluginSummaries();
-  const listed = summaries.data?.some((plugin) => plugin.id === pluginId && plugin.accessIncluded) ?? false;
-  const access = usePluginAccess(pluginId, { enabled: !summaries.isPending && !listed });
-  if (!orgContext || !access.data) return null;
-  return <>{ownedAccessStatus(draftFromPluginGrants(access.data), orgContext, orgContext.currentMember.id)}</>;
-}
-
-function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
+function LibraryItemRow({ item, mine, signIn }: {
   item: LibraryItem;
   mine: boolean;
-  ownedConnection: ExternalMcpConnection | undefined;
   signIn: ReturnType<typeof useMemberSignIn>;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const toast = useDenToast();
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
   const deleteConnection = useDeleteMcpConnection();
   const href = itemHref(orgSlug, item);
 
@@ -100,18 +105,15 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
     toast({ title: `${item.name} is removed`, description: "Nobody can use it anymore." });
   }
 
-  const status = mine
-    ? item.type === "connection" ? <OwnedConnectionStatus connection={ownedConnection} />
-      : item.type === "plugin" ? <OwnedPluginStatus pluginId={item.id} /> : "Only you"
-    : receivedStatus(item.edges);
-
   const needsSignIn = item.type === "connection" && item.state === "needs_signin";
+  const ready = libraryItemReady(item);
+  const status = ready ? "Ready" : item.type !== "plugin" && item.state === "needs_signin" ? "Sign in" : "Set up";
   const apiKeyStatus = item.type === "connection" ? signIn.apiKeyStatus(item.id) : null;
   const action = needsSignIn && item.type === "connection" ? (
     item.transport === "native" ? (
-      <DenButton variant="secondary" size="xs" href={`${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`}>Sign in</DenButton>
+      <DenButton variant="secondary" size="xs" aria-label="Sign in" href={`${getYourConnectionsRoute(orgSlug)}?connectionId=${encodeURIComponent(item.id)}`}>Sign in</DenButton>
     ) : (
-      <DenButton variant="secondary" size="xs" loading={signIn.pendingId === item.id} onClick={() => void signIn.signIn(item)}>
+      <DenButton variant="secondary" size="xs" aria-label={apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : "Sign in"} loading={signIn.pendingId === item.id} onClick={() => void signIn.signIn(item)}>
         {apiKeyStatus === "reconnect_required" ? "Replace key" : apiKeyStatus === "missing" ? "Add key" : "Sign in"}
       </DenButton>
     )
@@ -120,6 +122,7 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
       label={`More for ${item.name}`}
       entries={[
         { label: "Open", onSelect: () => router.push(href) },
+        ...(item.type === "workflow" ? [{ label: "See runs", onSelect: () => router.push(`${href}?tab=runs`) }] : []),
         ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
@@ -128,33 +131,51 @@ function LibraryItemRow({ item, mine, ownedConnection, signIn }: {
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type} title={libraryItemDescription(item)}>
-      <LibraryListRow
-        href={href}
-        logo={<ItemLogo item={item} />}
-        title={item.name}
-        ready={libraryItemReady(item)}
-        kind={libraryKindLabel(item)}
-        status={status}
-        action={action}
-      />
-    </div>
+    <LibraryCompactRow
+      href={href}
+      kind={item.type}
+      testName={item.name}
+      logo={item.type === "connection"
+        ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
+        : item.type === "workflow" || libraryFilterOf(item) === "skills"
+          ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
+          // A plugin wears the same tile as on Manage › Plugins and on its own page.
+          : <PluginLogo name={item.name} />}
+      name={item.name}
+      description={workflowLastRunFailed(item)
+        ? <WorkflowFailedDescription reason={item.failureReason} />
+        : item.description ? libraryItemDescription(item) : undefined}
+      source={mine ? "You" : receivedStatus(item.edges)}
+      action={needsSignIn ? action : ready || item.type === "plugin" ? action : <span className="text-[12px] text-[var(--dls-text-secondary)]">{status}</span>}
+      revealAction={!needsSignIn && (ready || item.type === "plugin")}
+    />
+  );
+}
+
+/** No saved workflows yet: say where they come from, in the person's words. */
+function WorkflowsEmpty() {
+  return (
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-2 px-5 py-8 text-center" data-testid="library-workflows-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">No saved workflows yet</h2>
+        <p className="max-w-sm text-[13px] text-[var(--dls-text-secondary)]">
+          Ask OpenWork to do something in chat, like a morning brief from your email and calendar. When it works, say “save this” and it shows up here.
+        </p>
+      </div>
+    </ItemPanel>
   );
 }
 
 function LibraryEmpty({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="flex w-full flex-col items-center gap-5 rounded-2xl border border-gray-100 bg-white px-6 pb-14 pt-16 text-center" data-testid="library-empty">
-        <ConnectorLogoStrip size="md" />
-        <div className="flex flex-col gap-1.5">
-          <p className="text-[15px] font-semibold leading-5 text-gray-900">Nothing in your Library yet</p>
-          <p className="text-[13px] leading-[18px] text-gray-500">Add a connector, a skill or a plugin. Only you can use it until you share it.</p>
-        </div>
-        <DenButton icon={Plus} onClick={onAdd}>Add to your Library</DenButton>
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-3 px-5 py-8 text-center" data-testid="library-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">Nothing in your Library yet</h2>
+        <p className="text-[13px] text-[var(--dls-text-secondary)]">Add a connector, skill or plugin.</p>
+        <DenButton icon={Plus} onClick={onAdd}>Add to library</DenButton>
+        <p className="text-xs text-[var(--dls-text-secondary)]">Only you can use it until you share it.</p>
       </div>
-      <p className="text-[12px] leading-4 text-gray-400">Things your organization gives you show up here too.</p>
-    </div>
+    </ItemPanel>
   );
 }
 
@@ -174,8 +195,6 @@ function LibraryContent() {
   const searchParams = useSearchParams();
   const { orgSlug, orgContext } = useOrgDashboard();
   const library = useLibrary();
-  // Carries who can use each plugin the viewer manages, so rows need no request each.
-  usePluginSummaries();
   const usable = useMcpConnections("usable");
   const signIn = useMemberSignIn();
   const prefetchCatalog = usePrefetchConnectorCatalog();
@@ -184,7 +203,14 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const introUnseen = useFeatureIntroUnseen();
+  // With feature intros on, the viewer's own keys load on every tab: they count toward "anything in my Library".
+  const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
+  const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
+  const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
+  const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -205,14 +231,6 @@ function LibraryContent() {
     router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
   }
 
-  function toggleNeedsSignIn() {
-    const params = new URLSearchParams(searchParams.toString());
-    if (onlyNeedsSignIn) params.delete("status");
-    else params.set("status", NEEDS_SIGN_IN_STATUS);
-    const suffix = params.toString();
-    router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
-  }
-
   function openAdd() {
     prefetchCatalog();
     setAddOpen(true);
@@ -227,105 +245,110 @@ function LibraryContent() {
   const modelRows = showModels
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
-  const needsSignInCount = items.filter(needsViewerSignIn).length
-    + (models.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const hasModels = (models.data ?? []).length > 0;
-  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
+  // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
+  const personalPending = introsEnabled && !personal.loaded && !personal.error;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
+  // Feature intros: null while anything is loading or failed, so the page shows as before.
+  const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
+    ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
+    : null;
+  // A short Library is read at a glance; the filter earns its place once the list runs long.
+  const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
-  return (
-    <ItemPage testId="library-screen">
+  // What waits on you first, then one section per kind.
+  const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
+  const visible = [...groups.mine, ...groups.received].sort((left, right) => left.name.localeCompare(right.name));
+  const kindSections: { key: string; title: string; match: (item: LibraryItem) => boolean }[] = [
+    { key: "connectors", title: "Connectors", match: (item) => libraryFilterOf(item) === "connectors" },
+    { key: "skills", title: "Skills", match: (item) => libraryFilterOf(item) === "skills" },
+    { key: "plugins", title: "Plugins", match: (item) => libraryFilterOf(item) === "plugins" },
+    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === "workflows" },
+  ];
+  const sections = [
+    { key: "attention", title: "Needs your sign-in", items: visible.filter(needsViewerSignIn), models: modelRows.filter((provider) => provider.state === "needs_signin") },
+    ...kindSections.map((section) => ({ ...section, items: visible.filter((item) => !needsViewerSignIn(item) && section.match(item)), models: [] as typeof modelRows })),
+    { key: "models", title: "Models", items: [] as LibraryItem[], models: modelRows.filter((provider) => provider.state !== "needs_signin") },
+  ].filter((section) => section.items.length + section.models.length > 0);
+
+  const listBody = (
+    <>
+      {library.isLoading || (personalPending && items.length === 0 && !hasModels) ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+
+      {filter === "models" && personalRows.length > 0 ? (
+        <LibraryCompactSurface>
+          <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
+            {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
+              logo={<RowTile icon={KeyRound} />} name={provider.name} source="You" />)}
+          </LibraryCompactSection>
+        </LibraryCompactSurface>
+      ) : null}
+
+      {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
+        {sections.map((section) => (
+          <LibraryCompactSection key={section.key} title={section.title} count={section.items.length + section.models.length} tone={section.key === "attention" ? "attention" : "default"} testId={`library-section-${section.key}`}>
+            {section.items.map((item) => (
+              <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={mineKeys.has(`${item.type}:${item.id}`)} signIn={signIn} />
+            ))}
+            {section.models.map((provider) => (
+              <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
+            ))}
+          </LibraryCompactSection>
+        ))}
+      </LibraryCompactSurface> : null}
+
+      {filter === "models" && models.error ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
+          {models.error instanceof Error ? models.error.message : "Your models did not load."}
+        </p>
+      ) : null}
+
+      {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
+          Your organization hasn't given you any models yet.
+        </p>
+      ) : null}
+
+      {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
+
+      {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
+      ) : null}
+    </>
+  );
+
+  const page = (
+    <ItemPage testId="library-screen" wide>
       <DenPageHeader
         title="My Library"
-        action={empty ? undefined : <DenButton icon={Plus} onClick={openAdd}>Add to your Library</DenButton>}
+        size="compact"
+        action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
       {library.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {library.error instanceof Error ? library.error.message : "Your Library did not load."}
         </p>
       ) : null}
 
-      {empty ? <LibraryEmpty onAdd={openAdd} /> : null}
-
-      {!empty && !library.error ? (
+      {empty && filter !== "models" ? <LibraryEmpty onAdd={openAdd} /> : null}
+      {filter === "models" && personal.error ? <p role="alert" className="text-sm text-red-600">{personal.error}</p> : null}
+      {(!empty || filter === "models") && !library.error ? (
         <>
-          <div className="-mt-1 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-1.5" role="tablist" aria-label="Show">
-              {LIBRARY_FILTERS.map((entry) => {
-                const active = entry.value === filter;
-                return (
-                  <button
-                    key={entry.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setFilter(entry.value)}
-                    className={`h-7 rounded-full px-3 text-[12px] transition-colors ${active ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200/70"}`}
-                  >
-                    {entry.label}
-                  </button>
-                );
-              })}
-              {needsSignInCount > 0 || onlyNeedsSignIn ? (
-                <>
-                  <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
-                  <button
-                    type="button"
-                    aria-pressed={onlyNeedsSignIn}
-                    onClick={toggleNeedsSignIn}
-                    data-testid="library-needs-sign-in-filter"
-                    className={`flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
-                    Needs sign-in
-                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-400"}>{needsSignInCount}</span>
-                  </button>
-                </>
-              ) : null}
-            </div>
-            <FilterInput value={query} onChange={setQuery} className="w-[200px]" />
+          <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
+            <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
+            {showFilter ? (
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
+                <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
+              </div>
+            ) : null}
           </div>
 
-          {library.isLoading ? <ItemSectionSkeleton label="Loading your Library" /> : null}
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
-          {groups.mine.length > 0 ? (
-            <ItemSection title="Added by you" meta={String(groups.mine.length)} testId="library-section-mine" variant="rule">
-              <ItemFlatList>
-                {groups.mine.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine ownedConnection={ownedConnections.get(item.id)} signIn={signIn} />
-                ))}
-              </ItemFlatList>
-            </ItemSection>
-          ) : null}
-
-          {groups.received.length > 0 || modelRows.length > 0 ? (
-            <ItemSection title="From OpenWork" meta={`${groups.received.length + modelRows.length} shared with you`} testId="library-section-received" variant="rule">
-              <ItemFlatList>
-                {groups.received.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} ownedConnection={undefined} signIn={signIn} />
-                ))}
-                {modelRows.map((provider) => (
-                  <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
-                ))}
-              </ItemFlatList>
-            </ItemSection>
-          ) : null}
-
-          {filter === "models" && models.error ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
-              {models.error instanceof Error ? models.error.message : "Your models did not load."}
-            </p>
-          ) : null}
-
-          {filter === "models" && !models.isLoading && !models.error && !hasModels ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
-              Your organization hasn't given you any models yet.
-            </p>
-          ) : null}
-
-          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
-          ) : null}
+          {filter === "all" || filter === "workflows"
+            ? listBody
+            : <FeatureIntroGate introKey={LIBRARY_TAB_INTROS[filter]} facts={introFacts}>{listBody}</FeatureIntroGate>}
         </>
       ) : null}
 
@@ -333,4 +356,8 @@ function LibraryContent() {
       <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>
   );
+
+  // With feature intros on, the Library intro replaces the page while the viewer has nothing at all, and each
+  // tab with nothing of its kind shows its box (DESIGN.md I1, I2); with the flag off the page renders as before.
+  return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

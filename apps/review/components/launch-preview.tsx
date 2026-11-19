@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { CopyButton } from "./copy-button";
 import { BuildReadiness, advance, startTracking, type BuildStepView, type BuildTracker } from "./build-readiness";
 import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/freestyle/outputs";
+import { previewAccessUrl, type PreviewProviderOption } from "../lib/preview-options";
 
-interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string }
+interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string; providerLabel: string }
 
 // A first launch builds the commit's snapshot after the POST returns 202.
 const BUILD_POLL_MS = 4_000;
@@ -31,15 +32,22 @@ function progressOf(body: object): Pick<BuildPoll, "layer" | "steps"> {
   return { ...(layer ? { layer } : {}), steps };
 }
 
-async function buildState(id: string, world: string): Promise<BuildPoll> {
-  const response = await fetch(`/r/${id}/launch?world=${encodeURIComponent(world)}`, { cache: "no-store" });
-  if (!response.ok) return { ready: false, building: true, steps: [] };
+async function buildState(id: string, world: string, provider?: string): Promise<BuildPoll> {
+  const query = new URLSearchParams({ world, ...(provider ? { provider } : {}) });
+  const response = await fetch(`/r/${id}/launch?${query}`, { cache: "no-store" });
+  if (response.status === 503) throw new Error("launch-unavailable");
+  if (!response.ok) throw new Error("launch-status-failed");
   const body: unknown = await response.json();
-  if (typeof body !== "object" || body === null) return { ready: false, building: true, steps: [] };
+  if (typeof body !== "object" || body === null || !("ready" in body) || typeof body.ready !== "boolean"
+    || !("building" in body) || typeof body.building !== "boolean") throw new Error("launch-status-failed");
   return { ready: "ready" in body && body.ready === true, building: "building" in body && body.building === true, ...progressOf(body) };
 }
 
-export function LaunchPreview({ id, connected }: { id: string; connected: boolean }) {
+export function LaunchPreview({ id, connected, providerLabel, providers }: { id: string; connected: boolean; providerLabel: string; providers?: readonly PreviewProviderOption[] }) {
+  const [providerId, setProviderId] = useState(() => providers?.find((provider) => provider.connected)?.id ?? providers?.[0]?.id);
+  const provider = providers?.find((option) => option.id === providerId);
+  const label = provider?.label ?? providerLabel;
+  const available = provider?.connected ?? connected;
   const [world, setWorld] = useState("app-web");
   const [reveal, setReveal] = useState(false);
   const [expired, setExpired] = useState(false);
@@ -69,7 +77,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     try {
       const requestedWorld = world === "acme-desktop" ? "acme-web" : world;
       const desktop = world === "desktop" || world === "acme-desktop";
-      const request = () => fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world: requestedWorld }) });
+      const request = () => fetch(`/r/${id}/launch`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ world: requestedWorld, ...(provider ? { provider: provider.id } : {}) }) });
       let response = await request();
       if (response.status === 202) {
         const started = Date.now();
@@ -77,7 +85,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         setBuild({ tracker, world: requestedWorld });
         let idlePolls = 0;
         while (true) {
-          const state = await buildState(id, requestedWorld);
+          const state = await buildState(id, requestedWorld, provider?.id);
           if (!mounted.current) return;
           if (state.ready) break;
           tracker = advance(tracker, state, Date.now());
@@ -95,6 +103,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         setBuild(null);
         response = await request();
       }
+      if (response.status === 503) throw new Error("launch-unavailable");
       if (!response.ok) throw new Error("The sandbox could not launch. Try again.");
       const data: unknown = await response.json();
       if (typeof data !== "object" || data === null || !("url" in data) || typeof data.url !== "string"
@@ -102,15 +111,17 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         || !Number.isFinite(Date.parse(data.expiresAt))
         || Date.parse(data.expiresAt) <= Date.now()
         || !("world" in data) || data.world !== requestedWorld) throw new Error("The launch could not be verified. Try again.");
-      const url = new URL(data.url);
-      const host = world === "desktop" ? /^desktop-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/ : /^ow-[a-f0-9]{32}\.(?:style\.dev|preview\.openwork\.software)$/;
-      if (url.protocol !== "https:" || !host.test(url.hostname)) throw new Error("The launch could not be verified. Try again.");
-      const outputs = parsePreviewOutputs("outputs" in data ? data.outputs : {});
-      if (desktop && !outputs.desktopUrl) throw new Error("The desktop could not launch. Try again.");
-      setSession({ url: desktop ? outputs.desktopUrl.value : data.url, expiresAt: data.expiresAt, outputs, desktop, world });
+      const requestedProvider = provider?.id ?? "freestyle";
+      if ((provider && (!("provider" in data) || data.provider !== provider.id))
+        || !previewAccessUrl(requestedProvider, data.url, world === "desktop")) throw new Error("The launch could not be verified. Try again.");
+      const outputs = parsePreviewOutputs("outputs" in data ? data.outputs : {}, requestedProvider);
+      if (desktop && (!outputs.desktopUrl || !previewAccessUrl(requestedProvider, outputs.desktopUrl.value, true))) throw new Error("The desktop could not launch. Try again.");
+      setSession({ url: desktop ? outputs.desktopUrl.value : data.url, expiresAt: data.expiresAt, outputs, desktop, world, providerLabel: label });
       setReveal(false); setExpired(false);
     } catch (failure) {
-      setError(buildOutcome === "still-building" ? "This commit's sandbox is still building. Try again in a few minutes."
+      if (!buildOutcome) setBuild(null);
+      setError(failure instanceof Error && failure.message === "launch-unavailable" ? `${label} launches are unavailable. Reload to check access, or ask the review app owner to check provider configuration.`
+        : buildOutcome === "still-building" ? "This commit's sandbox is still building. Try again in a few minutes."
         : buildOutcome === "failed" ? "This commit's sandbox could not be built. Try again; if it fails again, ask the review app owner to check the review app logs."
         : failure instanceof TypeError ? "The reviewer could not be reached. Reload this page and try again."
         : "The sandbox could not launch. Try again.");
@@ -131,20 +142,27 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
     <div className="preview-launch">
       <h2>Your sandbox</h2>
 
-      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => { setWorld(event.target.value); setError(null); }}>
-        <option value="app-web">OpenWork web</option>
-        <option value="desktop">Desktop only (signed out)</option>
-        <option value="acme-web">ACME web (full stack)</option>
-        <option value="acme-desktop">ACME desktop (full stack)</option>
+      {providers && providers.length > 1 && <label>Provider <select aria-label="Sandbox provider" value={providerId} disabled={busy} onChange={(event) => {
+        const next = providers.find((option) => option.id === event.target.value);
+        if (!next) return;
+        setProviderId(next.id); setWorld("app-web"); setError(null); setBuild(null);
+      }}>
+        {providers.map((option) => <option key={option.id} value={option.id}>{option.label}{option.connected ? "" : " (unavailable)"}</option>)}
+      </select></label>}
+      <label>World <select aria-label="Preview world" value={world} disabled={busy} onChange={(event) => { setWorld(event.target.value); setError(null); setBuild(null); }}>
+        <option value="app-web" disabled={provider && !provider.worlds.includes("app-web")}>OpenWork web</option>
+        <option value="desktop" disabled={provider && !provider.worlds.includes("desktop")}>Desktop only (signed out)</option>
+        <option value="acme-web" disabled={provider && !provider.worlds.includes("acme-web")}>ACME web (full stack)</option>
+        <option value="acme-desktop" disabled={provider && (provider.id === "daytona" || !provider.worlds.includes("acme-web"))}>ACME desktop (full stack)</option>
       </select></label>
       <div className="preview-launch-actions">
         {session && !expired && <a className="preview-open" href={session.url} target="_blank" rel="noreferrer">{session.desktop ? "Open desktop" : "Open sandbox"}</a>}
-        <button type="button" className={session && !expired ? "quiet" : "primary"} onClick={launch} disabled={!connected || busy} aria-busy={busy} aria-describedby="preview-state">{expired ? "Launch again" : session ? "Launch another" : "Launch in Freestyle"}</button>
+        <button type="button" className={session && !expired ? "quiet" : "primary"} onClick={launch} disabled={!available || busy} aria-busy={busy} aria-describedby="preview-state">{expired ? "Launch again" : session ? "Launch another" : `Launch in ${label}`}</button>
       </div>
       {(!build || error) && <p id="preview-state" className={error ? "preview-error" : "preview-state"} role={error ? "alert" : "status"}>
-        {!connected ? "Freestyle is not connected. The review app owner can connect it."
+        {!available ? provider?.reason ?? `${label} is not connected. The review app owner can connect it.`
           : error ?? (busy ? "Your new sandbox is starting. This can take a few minutes."
-            : expired ? "Expired. Launch again to create a fresh sandbox." : session ? `${session.world} · Expires ${new Date(session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fresh sandbox per launch · 2-hour lifetime")}
+            : expired ? "Expired. Launch again to create a fresh sandbox." : session ? `${session.providerLabel} · ${session.world} · Expires ${new Date(session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Fresh sandbox per launch · 2-hour lifetime")}
       </p>}
       {build && <BuildReadiness tracker={build.tracker} world={build.world} worldName={WORLD_NAMES[build.world] ?? build.world} />}
       {session && !expired && <section aria-label="Your connection details">
@@ -175,7 +193,7 @@ export function LaunchPreview({ id, connected }: { id: string; connected: boolea
         </details>
       </section>}
       <details className="preview-details"><summary>Sandbox details</summary>
-        <p>OpenWork web runs the OpenWork web app and its local engine. Desktop only opens the real desktop app from this commit with a fresh, signed-out profile: no Den, databases, AI Gateway, demo accounts, or separate web preview. Its local engine and internal renderer belong to the desktop app. ACME web and ACME desktop keep the full stack with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox; the first launch of a commit builds that snapshot (usually about 2 minutes for OpenWork web and 6 for ACME) unless its evidence report already prepared it. Sandboxes expire after two hours; work is not saved.</p>
+        {provider?.id === "daytona" ? <p>Daytona opens a fresh OpenWork web app and local engine from this report’s commit. Desktop and ACME worlds are not available on Daytona yet. Each launch has private access and a two-hour lifetime. Launching a sandbox does not run verification tests.</p> : <p>OpenWork web runs the OpenWork web app and its local engine. Desktop only opens the real desktop app from this commit with a fresh, signed-out profile: no Den, databases, AI Gateway, demo accounts, or separate web preview. Its local engine and internal renderer belong to the desktop app. ACME web and ACME desktop keep the full stack with demo accounts and a simulated model upstream. Each launch restores this commit’s snapshot into a separate sandbox; the first launch of a commit builds that snapshot (usually about 2 minutes for OpenWork web and 6 for ACME) unless its evidence report already prepared it. Sandboxes expire after two hours; work is not saved. Launching a sandbox does not run verification tests.</p>}
       </details>
     </div>
   );

@@ -10,11 +10,25 @@ export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1"
 export const CONNECT_MCP_SERVER_INDEX_MAX_SERVERS = 100
 const INDEX_DESCRIPTION_MAX_CHARS = 1_024
 
-export function supportsConnectMcpAppHost(value: string | undefined): boolean {
+/**
+ * OpenWork's OpenCode v2 engine lists the member's skills as native skills
+ * from the skill index, so Connect's server instructions need not list them too.
+ */
+export const CONNECT_NATIVE_SKILLS_CAPABILITY = "native-skills-v1"
+
+function hasClientCapability(value: string | undefined, capability: string): boolean {
   return value
     ?.split(",")
-    .map((capability) => capability.trim())
-    .includes(CONNECT_MCP_APP_HOST_CAPABILITY) ?? false
+    .map((entry) => entry.trim())
+    .includes(capability) ?? false
+}
+
+export function supportsConnectMcpAppHost(value: string | undefined): boolean {
+  return hasClientCapability(value, CONNECT_MCP_APP_HOST_CAPABILITY)
+}
+
+export function supportsConnectNativeSkills(value: string | undefined): boolean {
+  return hasClientCapability(value, CONNECT_NATIVE_SKILLS_CAPABILITY)
 }
 
 export type ConnectMcpServerIndexEntry = {
@@ -30,16 +44,13 @@ export type ConnectMcpServerIndexEntry = {
  * Which member-usable connections an index reader may see. The App host sees
  * every ready connection; an ordinary client sees only the ones an
  * administrator exposed directly, because those are the only per-connection
- * URLs that serve it a provider catalog, and none at all while the
- * organization has member-facing MCP connections disabled.
+ * URLs that serve it a provider catalog.
  */
 export function selectConnectMcpServerIndexConnections(input: {
   appHostClient: boolean
-  memberFacingMcpConnectionsEnabled: boolean
   connections: ExternalMcpConnectionRow[]
 }): ExternalMcpConnectionRow[] {
   if (input.appHostClient) return input.connections
-  if (!input.memberFacingMcpConnectionsEnabled) return []
   return input.connections.filter((connection) => connection.exposeDirectly)
 }
 
@@ -63,12 +74,11 @@ export function connectMcpServerIndexAppCapacity(connectionCount: number): numbe
  * connection index it has always been.
  */
 export function buildConnectMcpServerIndex(input: {
-  enabled: boolean
   connections: ExternalMcpConnectionRow[]
   apps?: McpAppEntry[]
   publicOrigin: string
 }) {
-  const connections = (input.enabled ? input.connections : [])
+  const connections = input.connections
     .map((connection): ConnectMcpServerIndexEntry => ({
       connectionId: connection.id,
       name: connection.name,
@@ -77,7 +87,7 @@ export function buildConnectMcpServerIndex(input: {
       exposeDirectly: connection.exposeDirectly,
     }))
     .sort(byName)
-  const apps = (input.enabled ? input.apps ?? [] : [])
+  const apps = (input.apps ?? [])
     .map((app): ConnectMcpServerIndexEntry => ({
       connectionId: app.appId,
       name: app.title,
@@ -95,7 +105,6 @@ export function buildConnectMcpServerIndex(input: {
 
 export function registerConnectMcpServerIndex(input: {
   server: McpServer
-  enabled: boolean
   connections: ExternalMcpConnectionRow[]
   apps?: McpAppEntry[]
   publicOrigin: string

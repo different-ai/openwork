@@ -1,12 +1,15 @@
 import type { ReactNode } from "react";
+import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { LocalProviderEngineState } from "../../connections/provider-auth/local-provider-engine-state";
+import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
 // Shared rows for Settings › AI Providers and the Connect a provider sheet,
 // so both surfaces render a provider the same way (Paper boards 09–11).
 
-export type ProviderStatusTone = "ready" | "attention" | "neutral" | "error";
+export type ProviderStatusTone = "ready" | "attention" | "neutral" | "locked" | "error";
 
 /** A provider mark in a rounded tile; OpenWork's own mark sits on a filled tile. */
 export function ProviderTile({ providerId, name, size = "md" }: { providerId: string; name?: string; size?: "sm" | "md" }) {
@@ -24,10 +27,13 @@ export function ProviderTile({ providerId, name, size = "md" }: { providerId: st
   );
 }
 
-/** "● Ready to use" style status; attention renders as a soft pill. */
+/** "● Ready to use" style status; attention renders as a soft pill, locked as neutral ink with a lock (blocked is not an error). */
 export function ProviderStatus({ tone, children }: { tone: ProviderStatusTone; children: ReactNode }) {
   if (tone === "attention") {
     return <span className="rounded-full bg-amber-3 px-2 py-0.5 text-xs font-medium text-amber-11">{children}</span>;
+  }
+  if (tone === "locked") {
+    return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><Lock aria-hidden className="size-3" />{children}</span>;
   }
   return (
     <span className={cn(
@@ -41,6 +47,24 @@ export function ProviderStatus({ tone, children }: { tone: ProviderStatusTone; c
       {children}
     </span>
   );
+}
+
+/**
+ * A provider on this device as the engine chat runs on sees it: ready, held
+ * back by the organization (a lock in neutral ink), or not usable on the new
+ * engine yet. Never "Ready to use" for a provider the engine skipped.
+ */
+export function CredentialHealthStatus({ health }: { health: ProviderCredentialHealth }) {
+  if (health === "rejected") return <ProviderStatus tone="attention">Key not accepted</ProviderStatus>;
+  if (health === "unverified") return <ProviderStatus tone="neutral">Not checked yet</ProviderStatus>;
+  return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
+}
+
+export function LocalProviderStatus({ state, organizationName, credentialHealth }: { state?: LocalProviderEngineState; organizationName?: string; credentialHealth?: ProviderCredentialHealth }) {
+  if (state === "managed_by_organization") return <ProviderStatus tone="locked">{organizationName || "Your organization"} manages AI providers</ProviderStatus>;
+  if (state === "not_on_engine") return <ProviderStatus tone="neutral">Not available on the new engine yet</ProviderStatus>;
+  if (credentialHealth) return <CredentialHealthStatus health={credentialHealth} />;
+  return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
 }
 
 /** One meta line: an optional monospace id, then plain parts joined by middle dots. */

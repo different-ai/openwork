@@ -46,6 +46,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     pickingFolder,
     showProgressDetails,
     now,
+    projectLabel,
   } = localState;
   const setLocal = <K extends keyof CreateWorkspaceLocalState>(
     key: K,
@@ -56,6 +57,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
   const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
   const setNow = (value: SetStateAction<number>) => setLocal("now", value);
+  const setProjectLabel = (value: SetStateAction<string>) => setLocal("projectLabel", value);
   const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
@@ -63,6 +65,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const workerSubmitting = props.workerSubmitting ?? false;
   const progress = props.submittingProgress ?? null;
   const workerDisabled = Boolean(props.workerDisabled);
+  const showProjectLabel = props.showProjectLabel ?? true;
   const workerDisabledReason = (props.workerDisabledReason ?? "").trim();
   const workerDebugLines = useMemo(
     () => (props.workerDebugLines ?? []).flatMap((line) => {
@@ -137,7 +140,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   };
 
   const handleLocalSubmit = async () => {
-    props.onConfirm(preset, selectedFolder);
+    props.onConfirm(preset, selectedFolder, {
+      projectLabel: projectLabel.trim() || null,
+    });
   };
 
   return (
@@ -222,6 +227,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             hasSelectedFolder={hasSelectedFolder}
             pickingFolder={pickingFolder}
             onPickFolder={() => void handlePickFolder()}
+            projectLabel={showProjectLabel ? projectLabel : ""}
+            onProjectLabelInput={setProjectLabel}
+            showProjectLabel={showProjectLabel}
             submitting={submitting}
             localError={localError}
             onClose={props.onClose}

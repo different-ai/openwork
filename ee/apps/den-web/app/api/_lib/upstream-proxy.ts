@@ -4,6 +4,7 @@ import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 import { denWebLogger, reportScimProxyFailure } from "../../../observability/runtime-logger";
 import { canonicalScimProxyPath, scimProxyFailureFields } from "../../../observability/scim-proxy-failure";
 import { readPublicWebOrigin } from "../../_lib/public-web-origin";
+import { applySignedClientIp } from "./signed-client-ip";
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const HOP_BY_HOP_HEADERS = new Set([
@@ -40,7 +41,7 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-request-id",
   "x-vercel-id",
 ]);
-const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-sequence", "x-audit-resource-scope"]);
+const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options", "x-audit-next-cursor", "x-audit-snapshot-at", "x-audit-resource-scope"]);
 const AUTH_COOKIE_PREFIXES = [
   "openwork-den.",
   "__Secure-openwork-den.",
@@ -300,6 +301,7 @@ async function cloneRequestHeaders(
   headers.set("x-forwarded-proto", publicOrigin.protocol.replace(/:$/, ""));
   headers.set("x-forwarded-prefix", routePrefix);
   headers.set("x-request-id", referenceId);
+  applySignedClientIp(headers, request.headers);
   await injectActiveTraceContext(headers);
   return headers;
 }

@@ -33,13 +33,60 @@ export type GoogleWorkspaceActionDependencies = {
   token: (input: {
     organizationId: NonNullable<OrgRouteVariables["organizationContext"]>["organization"]["id"]
     orgMembershipId: NonNullable<OrgRouteVariables["organizationContext"]>["currentMember"]["id"]
+    /** Omitted: the signed capability header or the default. null: always the default. */
+    connectionId?: string | null
   }) => Promise<GoogleWorkspaceAccessToken>
   fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Read Google's legacy `errors[]` and google.rpc `details[]` error shapes. */
+export function parseGoogleError(body: unknown): { reasons: Set<string>; status?: string; message?: string; service?: string } {
+  const reasons = new Set<string>()
+  if (!isRecord(body) || !isRecord(body.error)) return { reasons }
+  const error = body.error
+  let service: string | undefined
+  for (const entry of [...(Array.isArray(error.errors) ? error.errors : []), ...(Array.isArray(error.details) ? error.details : [])]) {
+    if (!isRecord(entry)) continue
+    if (typeof entry.reason === "string") reasons.add(entry.reason)
+    if (isRecord(entry.metadata) && typeof entry.metadata.serviceTitle === "string") service ??= entry.metadata.serviceTitle
+  }
+  return {
+    reasons,
+    status: typeof error.status === "string" ? error.status : undefined,
+    message: typeof error.message === "string" ? error.message.slice(0, 300) : undefined,
+    service,
+  }
+}
+
+/** Only a rejected or under-scoped token is fixed by reconnecting. */
+export function isGoogleAuthorizationFailure(status: number, reasons: ReadonlySet<string>): boolean {
+  if (status === 401) return true
+  return status === 403 && (reasons.has("authError") || reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+}
+
+function googleFailureMessage(status: number, google: ReturnType<typeof parseGoogleError>, url: URL, method: string | undefined): string {
+  let hint = ""
+  if (google.reasons.has("SERVICE_DISABLED") || google.reasons.has("accessNotConfigured")) {
+    hint = ` An organization admin must enable ${google.service ?? "this Google API"} in the Google Cloud project that owns the Google Workspace connector's OAuth client; reconnecting does not help.`
+  } else if (google.reasons.has("exportSizeLimitExceeded")) {
+    hint = " Google exports Docs, Sheets and Slides files only up to 10 MB. Export a smaller format such as csv or txt, or split the file."
+  } else if (google.status === "FAILED_PRECONDITION" && url.pathname.includes("/v4/spreadsheets/")) {
+    hint = " Sheets actions only work on native Google Sheets. To work on an Office file such as .xlsx, pull it into the workspace with the drive_pull_file tool and edit it there, or save it as a Google Sheet in Drive first."
+  } else if (status === 404 || (status === 403 && google.reasons.size === 0)) {
+    hint = " The connected Google account may not have access to this item, or the ID may be wrong."
+  }
+  const uncertain = method && method !== "GET" && status >= 500 ? " Check whether the operation completed before retrying." : ""
+  const detail = google.message ? `: ${google.message}${/[.!?]$/.test(google.message) ? "" : "."}` : "."
+  return `Google returned HTTP ${status}${detail}${hint}${uncertain}`
+}
+
 /** Reuse the selected credential; require both account grants and current connector permissions. */
 export async function requestGoogleAction(
-  c: Context<{ Variables: OrgRouteVariables }>,
+  c: Pick<Context<{ Variables: OrgRouteVariables }>, "get" | "json" | "req" | "header">,
   dependencies: GoogleWorkspaceActionDependencies,
   scopes: readonly string[],
   url: URL,
@@ -74,13 +121,14 @@ export async function requestGoogleAction(
     }, 502) }
   }
   if (!response.ok) {
-    const authorizationFailure = response.status === 401 || response.status === 403
-    return { ok: false, reply: c.json({
-      error: authorizationFailure ? "needs_connection" : "google_api_error",
-      message: authorizationFailure
-        ? "Google rejected this account's permissions. Check access to the item and reconnect with the required permissions."
-        : `Google returned HTTP ${response.status}.${init.method && init.method !== "GET" && response.status >= 500 ? " Check whether the operation completed before retrying." : ""}`,
-    }, authorizationFailure ? 409 : 502) }
+    const google = parseGoogleError(await readGoogleActionJson(response))
+    if (isGoogleAuthorizationFailure(response.status, google.reasons)) {
+      return { ok: false, reply: c.json({
+        error: "needs_connection",
+        message: "Google rejected this connection's authorization. Reconnect Google Workspace and grant the enabled permissions, then retry.",
+      }, 409) }
+    }
+    return { ok: false, reply: c.json({ error: "google_api_error", message: googleFailureMessage(response.status, google, url, init.method) }, 502) }
   }
   return { ok: true, response }
 }

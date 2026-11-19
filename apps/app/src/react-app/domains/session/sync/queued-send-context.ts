@@ -3,6 +3,7 @@ import type { ModelRef } from "@/app/types";
 import type { RejectedTurnOwner } from "./draft-store";
 
 export type QueuedSendContext = {
+  owner?: string;
   workspaceId: string;
   workspaceRoot: string;
   opencodeBaseUrl: string;

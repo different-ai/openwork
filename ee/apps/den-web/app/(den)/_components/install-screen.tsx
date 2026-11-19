@@ -7,11 +7,13 @@ import { useSearchParams } from "next/navigation";
 import { requestJson } from "../_lib/den-flow";
 import { getInstallConfigErrorMessage } from "../_lib/install-errors";
 import { LINK_STEP, parseGuideStep, type GuideStep } from "../_lib/install-guide";
-import { buildBrowserInstallDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
+import { installDownloadHref, type InstallPlatform, installerFileName } from "../_lib/install-download";
 import { isMobileUserAgent } from "../_lib/platform";
 import { InstallVisual } from "./install-visual";
-import { OnboardingShell } from "./onboarding-shell";
-import { OrganizationBrandIdentity } from "./organization-brand-identity";
+import type { OrganizationBrand } from "./organization-brand-identity";
+import { JoinHeading, JoinPanel, JoinText } from "./join-frame";
+import { SetupQuietButton } from "./setup-frame-parts";
+import { DenButton } from "./ui/button";
 
 type InstallConfig = {
   appName: string;
@@ -153,15 +155,14 @@ function parseInstallConfig(value: unknown): InstallConfig | null {
   };
 }
 
-async function fetchInstallConfig(token: string | null) {
-  const path = token ? `/v1/install-config?token=${encodeURIComponent(token)}` : "/v1/me/install-config";
+async function fetchInstallConfig() {
   const { response, payload } = await requestJson(
-    path,
+    "/v1/me/install-config",
     { method: "GET" },
     12000,
   );
   if (!response.ok) {
-    if (!token && response.status === 401) {
+    if (response.status === 401) {
       throw new Error("Sign in to your Den portal to install OpenWork.");
     }
     throw new Error(getInstallConfigErrorMessage(payload, response.status));
@@ -171,10 +172,6 @@ async function fetchInstallConfig(token: string | null) {
     throw new Error("This install link returned incomplete setup details.");
   }
   return parsed;
-}
-
-function installHref(config: InstallConfig, platform: InstallPlatform, token: string | null) {
-  return buildBrowserInstallDownloadHref(config.apiUrl, platform, token);
 }
 
 type StepState = "complete" | "active" | "pending";
@@ -224,7 +221,6 @@ function InstallStep({
 
 export function InstallScreen() {
   const searchParams = useSearchParams();
-  const token = searchParams.get("token")?.trim() ?? "";
   const [config, setConfig] = useState<InstallConfig | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -245,7 +241,14 @@ export function InstallScreen() {
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
-    setCurrentLink(window.location.href);
+    // Install pages once carried a one-off token; it is ignored now, so drop
+    // it from the address before anyone copies and shares it again.
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("token")) {
+      url.searchParams.delete("token");
+      window.history.replaceState(null, "", url);
+    }
+    setCurrentLink(url.toString());
     let cancelled = false;
     void detectPlatform().then((platform) => {
       if (!cancelled) setDetected(platform);
@@ -262,7 +265,7 @@ export function InstallScreen() {
       setBusy(true);
       setError(null);
       try {
-        const parsed = await fetchInstallConfig(token || null);
+        const parsed = await fetchInstallConfig();
         if (cancelled) {
           return;
         }
@@ -283,7 +286,7 @@ export function InstallScreen() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, []);
 
   useEffect(() => () => {
     if (downloadStartedTimer.current !== null) {
@@ -301,34 +304,34 @@ export function InstallScreen() {
         os: "macos",
         title: "macOS",
         options: [
-          { href: installHref(config, "mac-arm64", token), label: "Apple Silicon (M1+)", arch: "arm64" },
-          { href: installHref(config, "mac-x64", token), label: "Intel", arch: "x64" },
+          { href: installDownloadHref("mac-arm64"), label: "Apple Silicon (M1+)", arch: "arm64" },
+          { href: installDownloadHref("mac-x64"), label: "Intel", arch: "x64" },
         ],
       },
       {
         os: "windows",
         title: "Windows",
         options: [
-          { href: installHref(config, "win-x64", token), label: "x64 app", arch: "x64" },
+          { href: installDownloadHref("win-x64"), label: "x64 app", arch: "x64" },
         ],
       },
       {
         os: "linux",
         title: "Linux",
         options: [
-          { href: installHref(config, "linux-x64", token), label: "AppImage (x64)", arch: "x64" },
-          { href: installHref(config, "linux-arm64", token), label: "AppImage (ARM64)", arch: "arm64" },
+          { href: installDownloadHref("linux-x64"), label: "AppImage (x64)", arch: "x64" },
+          { href: installDownloadHref("linux-arm64"), label: "AppImage (ARM64)", arch: "arm64" },
         ],
       },
     ];
-  }, [config, token]);
+  }, [config]);
 
   const platformByHref = useMemo<Record<string, InstallPlatform>>(() => {
     if (!config) {
       return {};
     }
-    return Object.fromEntries(INSTALL_PLATFORMS.map((platform) => [installHref(config, platform, token), platform]));
-  }, [config, token]);
+    return Object.fromEntries(INSTALL_PLATFORMS.map((platform) => [installDownloadHref(platform), platform]));
+  }, [config]);
 
 
 
@@ -365,11 +368,7 @@ export function InstallScreen() {
     setGuideStep(nextStep);
     setExpandedStep(nextStep);
     const url = new URL(window.location.href);
-    if (token) {
-      url.searchParams.set("step", String(nextStep));
-    } else {
-      url.search = "";
-    }
+    url.search = "";
     window.history.replaceState(null, "", url);
   }
 
@@ -390,62 +389,45 @@ export function InstallScreen() {
 
   if (busy) {
     return (
-      <OnboardingShell state="install-loading" width="wide" background="surface">
-        <section className="grid gap-4 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
-          <p className="den-eyebrow">OpenWork Desktop</p>
-          <h1 className="den-title-lg">Loading your install link.</h1>
-          <p className="den-copy">Checking your team's OpenWork setup...</p>
-        </section>
-      </OnboardingShell>
+      <JoinPanel state="install-loading">
+        <div className="grid gap-[18px]" data-testid="install-page">
+          <JoinHeading title="Loading your install link." copy="Checking your team's OpenWork setup..." />
+        </div>
+      </JoinPanel>
     );
   }
 
   if (!config) {
     return (
-      <OnboardingShell state="install-error" width="wide" background="surface">
-        <section className="grid gap-6 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 md:p-8" data-testid="install-page">
-          <div className="grid gap-2">
-            <p className="den-eyebrow">OpenWork Desktop</p>
-            <h1 className="den-title-lg">This install link can't be opened.</h1>
-            <p className="den-copy">{error ?? "Ask your workspace admin for a fresh install link."}</p>
-          </div>
-        </section>
-      </OnboardingShell>
+      <JoinPanel state="install-error">
+        <div className="grid gap-[18px]" data-testid="install-page">
+          <JoinHeading title="This install link can't be opened." copy={error ?? "Ask your workspace admin for a fresh install link."} />
+        </div>
+      </JoinPanel>
     );
   }
 
   if (config.distribution === "cloud") {
     return (
-      <OnboardingShell state="install" width="full" background="surface">
-        <section data-testid="install-page">
-          <div className="grid gap-6 rounded-[1.75rem] border border-[#e7eaef] bg-[#fcfcfd] p-5 text-center sm:p-6 md:p-8" data-testid="install-card">
-            <div className="grid justify-items-center gap-3">
-              <h1 className="m-0 text-[2rem] font-semibold leading-[1.04] tracking-[-0.05em] text-slate-950 sm:text-[2.4rem]">
-                Download OpenWork
-              </h1>
-              <p className="den-copy max-w-2xl">Choose the version for your computer, install it, and open OpenWork.</p>
+      <JoinPanel state="install">
+        <div className="grid gap-[18px]" data-testid="install-page">
+          <JoinHeading title="Download OpenWork." copy="Choose the version for your computer, install it, and open OpenWork." />
+          {isMobile ? (
+            <div className="grid gap-3" data-testid="install-mobile-note">
+              <JoinText muted>OpenWork runs on your computer. Open this link on your Mac, Windows, or Linux machine.</JoinText>
+              <DenButton variant="secondary" className="w-full" onClick={() => void copyCurrentLink()}>{copied ? "Copied" : "Copy install link"}</DenButton>
             </div>
-
-            {isMobile ? (
-              <div className="den-frame-inset grid gap-3 rounded-[1.5rem] p-5 text-left" data-testid="install-mobile-note">
-                <p className="m-0 text-base font-medium text-[var(--dls-text-primary)]">OpenWork Cloud runs on your computer.</p>
-                <p className="den-copy">Open this link on your Mac, Windows, or Linux machine.</p>
-                <button type="button" className="den-button-secondary w-full sm:w-auto" onClick={() => void copyCurrentLink()}>
-                  {copied ? "Copied" : "Copy install link"}
-                </button>
-              </div>
-            ) : (
-              <div className="grid gap-5 text-left">
-                <DownloadPlatformGrid groups={downloadGroups} />
-                {/* Reload so the auth provider reads the desktop handoff parameters on mount. */}
-                <a className="den-button-secondary w-fit" href={token ? new URL(DESKTOP_SIGN_IN_PATH, config.webUrl).toString() : DESKTOP_SIGN_IN_PATH}>
-                  I already installed OpenWork
-                </a>
-              </div>
-            )}
-          </div>
-        </section>
-      </OnboardingShell>
+          ) : (
+            <>
+              <DownloadPlatformGrid groups={downloadGroups} variant="flat" stacked />
+              {/* Reload so the auth provider reads the desktop handoff parameters on mount. */}
+              <SetupQuietButton className="self-center rounded-md px-2 py-1" onClick={() => window.location.assign(DESKTOP_SIGN_IN_PATH)}>
+                I already installed OpenWork
+              </SetupQuietButton>
+            </>
+          )}
+        </div>
+      </JoinPanel>
     );
   }
 
@@ -456,20 +438,8 @@ export function InstallScreen() {
   const guidance = openGuidance(installerOsFor(downloadPlatform, detected), installerFile);
 
   return (
-    <OnboardingShell state="install" width="enterprise" background="surface">
-      <section data-testid="install-page">
-        <div className="grid gap-2 rounded-[1.75rem] border border-slate-200/80 bg-white p-6 text-left sm:p-8 md:px-10 md:py-9" data-testid="install-card">
-          <div className="grid justify-items-start gap-2 border-b border-slate-100 pb-6">
-            <span className="text-[13px] font-medium text-slate-500">
-              <OrganizationBrandIdentity
-                organizationName={config.clientName}
-                brand={{ appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl }}
-              />
-            </span>
-            <h1 className="m-0 text-[1.5rem] font-semibold leading-tight tracking-[-0.03em] text-slate-950 sm:text-[1.7rem]">
-              Set up OpenWork Enterprise
-            </h1>
-          </div>
+    <InstallGuideFrame organization={{ name: config.clientName, brand: { appName: config.appName, logoUrl: config.logoUrl, iconUrl: config.iconUrl } }}>
+          <div className="pb-3"><JoinHeading title="Set up OpenWork Enterprise." copy={`For ${config.clientName}.`} /></div>
 
         {isMobile ? (
           <div className="grid gap-3 border-t border-slate-200 pt-5" data-testid="install-mobile-note">
@@ -494,6 +464,7 @@ export function InstallScreen() {
                     recommendedTestId="install-download-primary"
                     onDownload={(option: DownloadPlatformOption) => beginDownload(option.label, option.href)}
                     variant="flat"
+                    stacked
                   />
                   <button
                     type="button"
@@ -588,7 +559,7 @@ export function InstallScreen() {
                       </div>
 
                       <p className="m-0 max-w-xl text-[13px] leading-5 text-slate-500">
-                        Then choose Continue — sign-in finishes in this browser and sends you back to the app.
+                        Then choose Sign in — sign-in finishes in this browser and sends you back to the app.
                       </p>
 
                       {connectError ? <p className="m-0 text-sm text-red-600" role="alert">{connectError}</p> : null}
@@ -596,8 +567,14 @@ export function InstallScreen() {
             </InstallStep>
           </ol>
         )}
-        </div>
-      </section>
-    </OnboardingShell>
+    </InstallGuideFrame>
+  );
+}
+
+function InstallGuideFrame({ organization, children }: { organization: { name: string; brand: OrganizationBrand }; children: ReactNode }) {
+  return (
+    <JoinPanel state="install" organization={organization}>
+      <div className="grid gap-2 text-left" data-testid="install-page">{children}</div>
+    </JoinPanel>
   );
 }

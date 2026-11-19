@@ -1,4 +1,4 @@
-import { checkpointSchema } from "@openwork/review";
+import { checkpointSchema, evidenceFocusSchema, screenChangeSchema } from "@openwork/review";
 import type { ReviewEvidence } from "@openwork/review";
 type ImageEvidence = Extract<ReviewEvidence, { kind: "image" }>;
 
@@ -30,6 +30,12 @@ export interface TestArtifact {
   checkpoint?: ImageEvidence["checkpoint"];
   checkpointMatch?: ImageEvidence["checkpointMatch"];
   checkpointError?: string;
+  /** The step this was recorded in; harnesses before it was added leave it out. */
+  step?: string;
+  change?: ImageEvidence["change"];
+  focus?: ImageEvidence["focus"];
+  settle?: { ms: number; settled: boolean };
+  failure?: boolean;
 }
 
 export interface TestRunSummary {
@@ -170,7 +176,19 @@ function parseArtifact(value: unknown): TestArtifact | null {
   if (checkpoint && (!checkpoint.success || checkpoint.data.imageHash !== value.hash)) return null;
   if (value.checkpointError !== undefined && typeof value.checkpointError !== "string") return null;
   if (value.checkpointMatch !== undefined && (!checkpoint?.success || (value.checkpointMatch !== "exact" && value.checkpointMatch !== "approximate"))) return null;
+  // What a newer harness measured about the image. Optional and read leniently: a
+  // malformed measurement drops out instead of rejecting the whole run.
+  const change = screenChangeSchema.safeParse(value.change);
+  const focus = evidenceFocusSchema.array().max(8).safeParse(value.focus);
+  const settle = isRecord(value.settle) && typeof value.settle.ms === "number" && typeof value.settle.settled === "boolean"
+    ? { ms: value.settle.ms, settled: value.settle.settled }
+    : undefined;
   return {
+    ...(typeof value.step === "string" ? { step: value.step } : {}),
+    ...(change.success ? { change: change.data } : {}),
+    ...(focus.success && focus.data.length > 0 ? { focus: focus.data } : {}),
+    ...(settle ? { settle } : {}),
+    ...(value.failure === true ? { failure: true } : {}),
     ...(checkpoint?.success ? { checkpoint: checkpoint.data } : {}),
     ...(value.checkpointMatch === "exact" || value.checkpointMatch === "approximate" ? { checkpointMatch: value.checkpointMatch } : {}),
     ...(typeof value.checkpointError === "string" ? { checkpointError: value.checkpointError } : {}),

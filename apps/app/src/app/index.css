@@ -352,6 +352,18 @@ select:disabled {
   }
 }
 
+/* Startup motion signals preparation, then the same bars show actual audio. */
+@keyframes dictation-warmup {
+  0%, 100% { transform: scaleY(0.12); opacity: 0.4; }
+  50% { transform: scaleY(0.55); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  [data-dictation-preparing] rect {
+    animation: dictation-warmup 1080ms ease-in-out infinite;
+  }
+}
+
 @utility animate-progress-shimmer {
   animation: progress-shimmer 2s infinite linear;
 }
@@ -667,4 +679,36 @@ select:disabled {
     min-height: 100%;
     min-height: 100dvh;
   }
+}
+
+/* One active checklist mark; completed and waiting steps stay still. */
+@keyframes ow-app-progress-dot {
+  0%, 65%, 100% { opacity: .3; }
+  30% { opacity: 1; }
+}
+.ow-app-progress-dot { animation: ow-app-progress-dot 1.2s ease-in-out infinite; }
+
+/* Shared tracks move neighboring tiles without changing their grid order. */
+@keyframes ow-app-loading-grid {
+  0%, 100% { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+  25% { grid-template-columns: 1.6fr .7fr .7fr; grid-template-rows: .7fr 1.6fr .7fr; }
+  50% { grid-template-columns: .7fr .7fr 1.6fr; grid-template-rows: 1.6fr .7fr .7fr; }
+  75% { grid-template-columns: .7fr 1.6fr .7fr; grid-template-rows: .7fr .7fr 1.6fr; }
+}
+.ow-app-loading-grid {
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr 1fr 1fr;
+  animation: ow-app-loading-grid 4.8s cubic-bezier(.34,1.25,.64,1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ow-app-progress-dot, .ow-app-loading-grid { animation: none; }
+}
+
+/* Find on a settings page: every match, and the one being visited. The
+   colors match the marks "Find in conversation" draws. */
+::highlight(settings-find) {
+  background-color: color-mix(in srgb, var(--amber-4) 70%, transparent);
+}
+::highlight(settings-find-current) {
+  background-color: var(--amber-7);
 }

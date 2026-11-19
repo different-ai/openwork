@@ -42,6 +42,7 @@ type SurfaceObservation = {
 
 declare global {
   interface Window {
+    __chatEngineCut?: () => void;
     __chatContinuity?: { state: SurfaceObservation; stop(): void };
     __chatCreation?: {
       workspaceLists: number; creates: number; reblocked: boolean; expired: boolean;
@@ -92,6 +93,12 @@ function deferred() {
 /** Faults and observers only; navigation and creation remain trusted user actions. */
 export function chatContinuity(app: Surface, workspaceId: string) {
   return {
+    async reconnectEvents() {
+      await evaluate(app.client, () => {
+        if (!window.__chatEngineCut) throw new Error("Event transport fault is not installed");
+        window.__chatEngineCut();
+      });
+    },
     async assistantText(sessionId: string, messageId: string) {
       return evaluate(app.client, browserScript((workspaceId, sessionId, messageId) => {
         const pane = document.querySelector('[data-workbench-pane="primary"]');
@@ -146,6 +153,12 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           }
         };
         const originalFetch = window.fetch.bind(window);
+        const connections = new Set<AbortController>();
+        window.__chatEngineCut = () => {
+          if (connections.size === 0) throw new Error("No event connection was interrupted");
+          for (const controller of connections) controller.abort();
+          connections.clear();
+        };
         window.__chatEngineHttp = state;
         window.fetch = async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
@@ -163,7 +176,15 @@ export function chatContinuity(app: Surface, workspaceId: string) {
           if (history?.[1]) state.historyReads.push({
             sessionId: decodeURIComponent(history[1]), at: Date.now(), limit: new URL(url, location.href).searchParams.get("limit"),
           });
-          const response = await originalFetch(input, init);
+          const controller = method === "GET" && /\/(?:event|events)$/.test(path) ? new AbortController() : null;
+          if (controller) connections.add(controller);
+          const originalSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+          const response = await originalFetch(input, controller ? {
+            ...init, signal: AbortSignal.any([controller.signal, ...(originalSignal ? [originalSignal] : [])]),
+          } : init).catch((error: unknown) => {
+            if (controller) connections.delete(controller);
+            throw error;
+          });
           if (response.headers.get("content-type")?.includes("text/event-stream") && /\/(?:event|events)(?:\?|$)/.test(url)) {
             const body = response.clone().body;
             if (body) {
@@ -186,6 +207,8 @@ export function chatContinuity(app: Surface, workspaceId: string) {
                   }
                 } catch {
                   state.errors += 1;
+                } finally {
+                  if (controller) connections.delete(controller);
                 }
               })();
             }

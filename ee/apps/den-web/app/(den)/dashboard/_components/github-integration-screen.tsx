@@ -82,7 +82,6 @@ export function GithubIntegrationScreen() {
       icon={Github}
       title="Connect GitHub"
       description="Choose a connected account from the Integrations page to continue."
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       <StatePanel
         title="Nothing to do here"
@@ -117,7 +116,6 @@ function GithubInstallCompletionRedirect({ installationId, state }: { installati
       icon={Github}
       title="Finishing GitHub connection"
       description="OpenWork is finalizing the GitHub App installation for this organization."
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       {completionQuery.error ? (
         <StatePanel
@@ -192,7 +190,6 @@ function ConfigurationLoadingState() {
       icon={Puzzle}
       title="Loading…"
       description="OpenWork is loading this repository's connector configuration."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center shadow-xs">
         <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-gray-400" />
@@ -273,7 +270,6 @@ function GithubConnectorInstanceManagePhase({
       icon={Puzzle}
       title={repoName}
       description="Manage which plugins OpenWork imports from this repository."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <button
@@ -682,7 +678,6 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
       description={ownerLogin
         ? `Pick one of the repositories the @${ownerLogin} installation can already read.`
         : "Pick one of the repositories this GitHub installation can already read."}
-      colors={["#E2E8F0", "#0F172A", "#111827", "#94A3B8"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link
@@ -1007,7 +1002,6 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
       icon={Sparkles}
       title={repoName ?? "Discover repository"}
       description="Pick which plugins OpenWork should import from this repository."
-      colors={["#DBEAFE", "#0F172A", "#1D4ED8", "#BFDBFE"]}
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <button

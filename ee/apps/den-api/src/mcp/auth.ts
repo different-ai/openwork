@@ -134,6 +134,21 @@ function readStringClaim(payload: Record<string, unknown>, claim: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
+/**
+ * Non-secret identifier of the credential behind a principal, for audit
+ * attribution: the OAuth grant id, else the headless-run token row id, else the
+ * OAuth client id (JWT `client_id`/`azp`). Never token material.
+ */
+export function mcpPrincipalCredentialId(principal: McpPrincipal): string | null {
+  const payload = principal.payload
+  const grantId = readStringClaim(payload, DEN_MCP_GRANT_ID_CLAIM)
+  if (grantId) return `grant:${grantId}`
+  const runTokenId = payload.client_id === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? readStringClaim(payload, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM) : null
+  if (runTokenId) return `run_token:${runTokenId}`
+  const clientId = readStringClaim(payload, "client_id") ?? readStringClaim(payload, "azp")
+  return clientId ? `client:${clientId}` : null
+}
+
 function readTokenAudiences(payload: Record<string, unknown>) {
   const audience = payload.aud
   if (typeof audience === "string" && audience.trim()) return [audience.trim()]
@@ -182,6 +197,12 @@ function isFirstPartyMcpToken(payload: Record<string, unknown>, source: McpToken
   }
 
   const clientId = readStringClaim(payload, "client_id")
+  return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
+}
+
+/** The caller holds a token Den minted for OpenWork itself (its app or a headless run), not an outside client's OAuth token. */
+export function isFirstPartyMcpPrincipal(principal: McpPrincipal): boolean {
+  const clientId = readStringClaim(principal.payload, "client_id")
   return clientId !== null && FIRST_PARTY_OPAQUE_CLIENT_IDS.has(clientId)
 }
 
@@ -284,9 +305,16 @@ async function getJwks() {
   }
 }
 
+// Better Auth keeps the signing keys under this key for five minutes and
+// refetches at once when a token names a key it has not seen, so a rotated key
+// verifies immediately. Without it the keys are read from the database on
+// every MCP request.
+const MCP_JWKS_CACHE_KEY = {}
+
 async function verifyJwtMcpToken(token: string) {
   const payload: unknown = await verifyJwsAccessToken(token, {
     jwksFetch: getJwks,
+    jwksCacheKey: MCP_JWKS_CACHE_KEY,
     verifyOptions: getMcpJwtVerifyOptions(),
   })
   return isRecord(payload) ? payload : null
@@ -298,11 +326,14 @@ async function verifyOpaqueMcpToken(token: string) {
   }
 
   const storedToken = hashOpaqueMcpSecret(token.slice(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX.length))
-  const [accessToken] = await db
+  const lookup = (database: typeof db.$primary) => database
     .select()
     .from(OAuthAccessTokenTable)
     .where(eq(OAuthAccessTokenTable.token, storedToken))
     .limit(1)
+  // A run token is used the moment it is minted; on a replica miss, ask the primary.
+  const fromReplica = await lookup(db)
+  const [accessToken] = fromReplica[0] ? fromReplica : await lookup(db.$primary)
 
   if (!accessToken || accessToken.expiresAt <= new Date()) {
     return null

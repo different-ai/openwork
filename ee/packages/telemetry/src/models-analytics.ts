@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto"
 import type { createDenDb } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
-import { parseFeatureEnvironment } from "@openwork/features"
 import { ModelsAnalyticsEventTable, ModelsAnalyticsSettingsTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import { modelsAnalyticsEventSchema, type ModelsAnalyticsEvent } from "@openwork-ee/telemetry-contracts"
 
@@ -20,13 +18,10 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const [subscription] = await db.select({ status: OrgSubscriptionTable.status })
     .from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, orgId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
   const metadata = record(org?.metadata)
-  // Shared by den-api and the gateway, which receive the same DEN_DEPLOYMENT /
-  // DEN_FEATURE_* configuration; den-api validates it at boot.
-  const available = org ? (await readFeatures(db, orgId, parseFeatureEnvironment(process.env))).modelsAnalytics : false
+  const available = org !== undefined
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
-  // Unreleased organizations do not touch the new tables. This also keeps
-  // existing Models traffic working during an application-first rollout.
+  // An unknown organization does not touch the tables.
   const settings = available ? (await db.select().from(ModelsAnalyticsSettingsTable)
     .where(eq(ModelsAnalyticsSettingsTable.org_id, orgId)).limit(1))[0] : undefined
   return {

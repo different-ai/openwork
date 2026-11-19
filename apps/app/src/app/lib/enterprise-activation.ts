@@ -40,3 +40,7 @@ export function outboundEgressAllowed(
   return !enterpriseActivationRequired(distribution, bootstrap)
     && (!DESKTOP_POLICY_ENFORCEMENT_ENABLED || options.desktopConfigLoading !== true);
 }
+
+export function externalTelemetryAllowed(distribution: Pick<DesktopDistributionInfo, "flavor">): boolean {
+  return distribution.flavor !== "enterprise";
+}

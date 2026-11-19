@@ -18,7 +18,9 @@ import {
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  CdpPageError,
   addInitScript,
+  attachFiles,
   callFunction, connect, debuggerUrlFor, listTargets,
   clickTarget,
   dumpScreenState,
@@ -42,6 +44,7 @@ import {
   mcpMock,
   server,
   requestBrowserTask,
+  requestComputerProgram,
   readBrowserFixtureState,
   setBrowserFixtureDiscovery,
   requireWorldResource,
@@ -50,7 +53,7 @@ import {
 import type { App, Den, EvalEngine, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
-import { findCheckpointCapability, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
+import { findCheckpointCapability, redactText, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
 import type { CheckpointCapability, ScreenshotArtifact } from "@openwork/test-evidence";
 import type {
   StepRecord,
@@ -61,7 +64,7 @@ import type {
   TraceEntry,
   TraceEntryInput,
 } from "@openwork/test-evidence";
-import { eventually } from "../eventually.ts";
+import { eventually } from "@openwork/env";
 import { denLink as startDenLink } from "../link.ts";
 import { readConnectState } from "../state.ts";
 import type {
@@ -87,6 +90,7 @@ interface EvidenceSink {
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
   setEngine(engine: EvalEngine): void;
+  setActiveStep?(name: string | undefined): void;
 }
 
 export class BufferedEvidenceSink implements EvidenceSink {
@@ -156,11 +160,7 @@ function messageText(error: unknown): string {
 }
 
 function redacted(value: string): string {
-  return value
-    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "<email>")
-    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer <redacted>")
-    .replace(/((?:["']?[\w.-]*(?:token|secret|password)[\w.-]*["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}&]+)/gi, "$1<redacted>")
-    .slice(0, 240);
+  return redactText(value).slice(0, 240);
 }
 
 function isSurface(value: unknown): value is Surface {
@@ -269,7 +269,10 @@ async function createSessionWhenReady(surface: Surface): Promise<string> {
       if (attempt === 1) throw new Error("session.create_task returned no session ID after one retry.");
     } catch (error) {
       const emptyResult = /did not return a session ID|returned no session ID|invalid session ID/i.test(messageText(error));
-      if (attempt === 1 || !emptyResult) throw error;
+      // The action can turn disabled again between the readiness check and the
+      // call (the previous task is still being selected); nothing ran, so retry.
+      const disabledMeanwhile = /Action is disabled/i.test(messageText(error));
+      if (attempt === 1 || !(emptyResult || disabledMeanwhile)) throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, CONTROL_POLL_INTERVAL_MS));
   }
@@ -305,6 +308,11 @@ export class SpecRuntime {
   #capability: CheckpointCapability | undefined;
   #warnedNoCapture = false;
   #actedSinceCheckpoint = true;
+  /** The surface the person last acted on or looked at; a failed step's frame comes from it. */
+  #lastSurface: Surface | null = null;
+  #failureFramed = false;
+  /** What the running step verified with `user.see` since the last screenshot, to outline on the next one. */
+  #seen: { surface: Surface; target: Target }[] = [];
 
   /** Name of the innermost `step()` currently running; screenshots taken inside it are captioned with it. */
   currentStepName(): string | undefined {
@@ -370,6 +378,11 @@ export class SpecRuntime {
     return result;
   }
 
+  /** Tagged tests keep the world as launched, before the body acts, so it can be reopened as a clean start. */
+  async checkpointStartState(): Promise<void> {
+    await this.checkpoint(this.primary, "Start state", true);
+  }
+
   /** Tagged tests keep their end state, unless nothing changed since the last checkpoint. */
   async checkpointEndState(): Promise<void> {
     if (!this.#actedSinceCheckpoint) return;
@@ -399,6 +412,7 @@ export class SpecRuntime {
   async call<T>(channel: TraceChannel, verb: string, detail: string, surface: Surface | null, fn: () => Promise<T>): Promise<T> {
     const startedAt = Date.now();
     const safeDetail = redacted(detail);
+    if (surface && (channel === "user" || channel === "agent")) this.#lastSurface = surface;
     try {
       this.checkOrder(channel, verb);
       const result = await fn();
@@ -470,6 +484,8 @@ export class SpecRuntime {
     const depth = this.#stepDepth;
     this.#stepDepth += 1;
     this.#stepNames.push(name);
+    this.#seen = [];
+    this.sink.setActiveStep?.(name);
     const startedAt = Date.now();
     try {
       const result = await fn();
@@ -487,17 +503,70 @@ export class SpecRuntime {
       this.emit({ stage: "body", channel: "step", verb: "step", detail: name, ok: false, ms, error: failure });
       this.#stepBlocked = true;
       this.setOutcome("failed", failure);
+      await this.#failureFrame(name);
       throw error;
     } finally {
       this.#stepDepth -= 1;
       this.#stepNames.pop();
+      this.sink.setActiveStep?.(this.currentStepName());
     }
   };
+
+  noteSeen(surface: Surface, target: Target): void {
+    this.#seen = [...this.#seen.filter((entry) => entry.surface !== surface || targetDetail(entry.target) !== targetDetail(target)), { surface, target }];
+  }
+
+  /** Where the elements this step verified are now, most recent first; each is outlined on the screenshot once. */
+  async locateSeen(surface: Surface): Promise<{ label: string; rect: Located["rect"] }[]> {
+    const mine = this.#seen.filter((entry) => entry.surface === surface).slice(-4).reverse();
+    this.#seen = this.#seen.filter((entry) => entry.surface !== surface);
+    const found = await Promise.all(mine.map(async ({ target }) => {
+      try {
+        const located = await locate(surface, target);
+        return located.visible ? [{ label: redacted(focusLabel(target, located)), rect: located.rect }] : [];
+      } catch {
+        return [];
+      }
+    }));
+    return found.flat();
+  }
+
+  /**
+   * The screen at the moment a step failed, so a red run shows what went
+   * wrong and not only what came before. Best effort: never changes the
+   * outcome, never waits more than 5 s, and only once per test.
+   */
+  async #failureFrame(name: string): Promise<void> {
+    const surface = this.#lastSurface ?? this.primary;
+    if (this.#failureFramed || !surface || this.stage !== "body") return;
+    this.#failureFramed = true;
+    const capture = screenshot(surface, { caption: `failed: ${name}`, failure: true }).then(() => undefined, () => undefined);
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([capture, new Promise<void>((resolve) => { timer = setTimeout(resolve, 5_000); })]);
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** A reviewer-readable name for an outlined element: the words the test looked for. */
+function focusLabel(target: Target, located: Located): string {
+  if (typeof target === "string") return target;
+  const words = target.label ?? target.text ?? target.placeholder;
+  if (typeof words === "string") return words;
+  const name = (located.name || located.text).replace(/\s+/g, " ").trim();
+  return name ? (name.length > 60 ? `${name.slice(0, 59)}…` : name) : targetDetail(target);
 }
 
 function requireSurface(surface: Surface | null): Surface {
   if (!surface) throw new Error("This world has no primary surface; bind one with user.on(surface), agent.on(surface), or probe.on(surface).");
   return surface;
+}
+
+/** A request the page made itself failed (a stalled local server ends as "signal timed out"); say which one. */
+function namePageFailure(label: string): (error: unknown) => never {
+  return (error) => {
+    if (error instanceof CdpPageError) throw new Error(`${label} failed in the page: ${error.message}`, { cause: error });
+    throw error;
+  };
 }
 
 function sessionFromWebOptions(options: SeedWebOptions) {
@@ -789,8 +858,23 @@ export class UserChannel implements User {
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else await clickTarget(surface, target);
       if (options.sensitive) {
-        const masked = await callFunctionOnSurface(surface, () => document.activeElement instanceof HTMLInputElement && document.activeElement.type === 'password', []);
-        if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
+        // A password input, or a multi-line secret field (pasted key files) masked with text-security.
+        const maskedFocus = () => callFunctionOnSurface(surface, () => {
+          const active = document.activeElement;
+          if (active instanceof HTMLInputElement) return active.type === 'password' ? 'masked' : `input:${active.type}`;
+          if (!(active instanceof HTMLTextAreaElement)) return active ? active.tagName.toLowerCase() : 'nothing';
+          const style = getComputedStyle(active);
+          const security = style.getPropertyValue('-webkit-text-security') || style.getPropertyValue('text-security');
+          return security && security !== 'none' ? 'masked' : `textarea:${security || 'unmasked'}`;
+        }, []);
+        let masked = await maskedFocus();
+        if (masked !== 'masked' && masked !== null && typeof masked === 'string' && !masked.startsWith('input:') && !masked.startsWith('textarea:')) {
+          // Focus moved (the page re-rendered under the click); click the target once more.
+          if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
+          else await clickTarget(surface, target);
+          masked = await maskedFocus();
+        }
+        if (masked !== 'masked') throw new Error(`Sensitive typing requires a masked password input (focused: ${String(masked)})`);
       }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
@@ -815,6 +899,12 @@ export class UserChannel implements User {
         throw new Error("Typed field did not retain the expected value");
       }
     });
+  }
+
+  attachFiles(selector: string, files: string[]): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "attachFiles", `attachFiles(${selector}, ${files.length} files)`, surface,
+      () => attachFiles(surface, selector, files));
   }
 
   press(key: string): Promise<void> {
@@ -842,13 +932,25 @@ export class UserChannel implements User {
           if (found.visible
             && (options.editable === undefined || found.editable === options.editable)
             && (options.value === undefined || found.value === options.value)
-            && (options.text === undefined || textMatches(found.text, options.text))) return;
+            && (options.text === undefined || textMatches(found.text, options.text))) {
+            this.#runtime.noteSeen(surface, target);
+            return;
+          }
         } catch {
           found = null;
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       throw new Error(`Timed out after ${timeoutMs}ms seeing ${targetDetail(target)}${found ? `; last state ${JSON.stringify(found)}` : ""}. On screen: ${await dumpScreenState(surface)}.`);
+    });
+  }
+
+  wheelAt(input: { x: number; y: number; deltaY: number; deltaX?: number }): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("user", "wheelAt", `scroll(${input.deltaX ?? 0}, ${input.deltaY}) at (${input.x}, ${input.y})`, surface, async () => {
+      const { x, y, deltaY, deltaX = 0 } = input;
+      if (![x, y, deltaX, deltaY].every(Number.isFinite)) throw new Error("Wheel coordinates and deltas must be finite");
+      await surface.client.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX, deltaY });
     });
   }
 
@@ -881,7 +983,8 @@ export class UserChannel implements User {
   screenshot() {
     const surface = requireSurface(this.#surface);
     const caption = this.#runtime.currentStepName();
-    return this.#runtime.call("user", "screenshot", "screenshot", surface, () => screenshot(surface, { caption }));
+    return this.#runtime.call("user", "screenshot", "screenshot", surface, () =>
+      screenshot(surface, { caption, locateFocus: () => this.#runtime.locateSeen(surface) }));
   }
 
   checkpoint(caption?: string) {
@@ -910,6 +1013,12 @@ export class AgentChannel implements Agent {
 
   on(surface: Surface): Agent {
     return new AgentChannel(this.#runtime, surface);
+  }
+
+  computerProgram(input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }) {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "computerProgram", `computerProgram(${input.surface}, session=${input.sessionId})`, surface,
+      () => requestComputerProgram(surface, input));
   }
 
   browserTask(input: import("@openwork/behaviors").BrowserTaskInput) {
@@ -961,11 +1070,21 @@ export class AgentChannel implements Agent {
       if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) throw new Error("A root-relative server path is required.");
       const value = await callFunctionOnSurface(surface, async (path, encodedInput) => {
         const input = JSON.parse(encodedInput);
+        // Desktop: the bridge reports the embedded server. App in a browser:
+        // the app keeps the same address and token in localStorage.
         const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
-        const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+        let baseUrl = info?.running && info.baseUrl ? String(info.baseUrl) : "";
+        let token = baseUrl ? String(info?.ownerToken ?? info?.clientToken ?? "") : "";
+        if (!baseUrl) {
+          const override = (localStorage.getItem("openwork.server.urlOverride") ?? "").trim();
+          const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+          baseUrl = override || (port ? "http://127.0.0.1:" + port : "");
+          token = (localStorage.getItem("openwork.server.token") ?? "").trim();
+        }
+        if (!baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(baseUrl.replace(/\/+$/, "") + path, {
           method: input.method,
-          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""), "Content-Type": "application/json" },
+          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
           body: input.body === undefined ? undefined : JSON.stringify(input.body),
           redirect: "error", signal: AbortSignal.timeout(30_000),
         });
@@ -973,7 +1092,7 @@ export class AgentChannel implements Agent {
         let body = text;
         try { body = JSON.parse(text); } catch {}
         return { status: response.status, body };
-      }, [path, JSON.stringify(input)], { awaitPromise: true, timeoutMs: 35_000 });
+      }, [path, JSON.stringify(input)], { awaitPromise: true, timeoutMs: 35_000 }).catch(namePageFailure(`agent.desktopApi(${input.method} ${path})`));
       if (!isRecord(value) || typeof value.status !== "number") throw new Error("Invalid desktop API result");
       return { status: value.status, body: value.body };
     });
@@ -1138,10 +1257,44 @@ export class ProbeChannel implements Probe {
     return pick ? pick(value) : value;
   }
 
+  /** The page address, as shown in the browser's address bar. */
+  url(): Promise<string> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "url", "url", surface, async () => {
+      const value = await evaluateOnSurface(surface, () => window.location.href);
+      if (typeof value !== "string") throw new Error("location.href was not a string.");
+      return value;
+    });
+  }
+
+  /**
+   * What a person can read or copy from visible links and read-only fields
+   * matching `selector`: each link's destination and each field's shown text.
+   * Password and editable fields are never read.
+   */
+  linkTargets(selector: string): Promise<string[]> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "linkTargets", `linkTargets(${JSON.stringify(redacted(selector))})`, surface, async () => {
+      const values = await callFunctionOnSurface(surface, (input: string) => Array.from(document.querySelectorAll(input)).flatMap((element) => {
+        const box = element.getBoundingClientRect();
+        if (box.width === 0 || box.height === 0) return [];
+        if (element instanceof HTMLAnchorElement) return [element.href];
+        if (element instanceof HTMLInputElement && element.readOnly && element.type !== "password") return [element.value];
+        return [];
+      }), [selector]);
+      if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("linkTargets returned an invalid list.");
+      return values;
+    });
+  }
+
   hash(): Promise<string> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "hash", "hash", surface, async () => {
-      const value = await evaluateOnSurface(surface, () => (window.location.hash));
+      // The desktop routes by hash. The app in a browser routes by path, so its
+      // route is reported in the same "#/workspace/..." form.
+      const value = await evaluateOnSurface(surface, () => (
+        window.location.hash || (window.__OPENWORK_ELECTRON__ || window.location.pathname === "/" ? "" : `#${window.location.pathname}`)
+      ));
       if (typeof value !== "string") throw new Error("window.location.hash was not a string.");
       return value;
     });
@@ -1181,11 +1334,21 @@ export class ProbeChannel implements Probe {
         throw new Error("probe.desktopApi requires a root-relative server path.");
       }
       const value = await callFunctionOnSurface(surface, async (path) => {
+        // Desktop: the bridge reports the embedded server. App in a browser:
+        // the app keeps the same address and token in localStorage.
         const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
-        const response = await fetch(String(info.baseUrl).replace(/\/+$/, "") + path, {
+        let baseUrl = info?.running && info.baseUrl ? String(info.baseUrl) : "";
+        let token = baseUrl ? String(info?.ownerToken ?? info?.clientToken ?? "") : "";
+        if (!baseUrl) {
+          const override = (localStorage.getItem("openwork.server.urlOverride") ?? "").trim();
+          const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+          baseUrl = override || (port ? "http://127.0.0.1:" + port : "");
+          token = (localStorage.getItem("openwork.server.token") ?? "").trim();
+        }
+        if (!baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(baseUrl.replace(/\/+$/, "") + path, {
           method: "GET",
-          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          headers: { Authorization: "Bearer " + token },
           redirect: "error",
           signal: AbortSignal.timeout(15_000),
         });
@@ -1193,7 +1356,7 @@ export class ProbeChannel implements Probe {
         let body = text;
         try { body = text ? JSON.parse(text) : null; } catch {}
         return { status: response.status, body };
-      }, [path], { awaitPromise: true, timeoutMs: 20_000 });
+      }, [path], { awaitPromise: true, timeoutMs: 20_000 }).catch(namePageFailure(`probe.desktopApi(GET ${path})`));
       if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
         throw new Error("Invalid desktop API probe response.");
       }
@@ -1205,7 +1368,7 @@ export class ProbeChannel implements Probe {
     return this.#runtime.call("probe", "toolCalls", `toolCalls(${options.name ?? "any"})`, null, () => mock.toolCalls(options));
   }
 
-  eventually<T>(fn: () => Promise<T> | T, options: import("../eventually.ts").EventuallyOptions<T>): Promise<T> {
+  eventually<T>(fn: () => Promise<T> | T, options: import("@openwork/env").EventuallyOptions<T>): Promise<T> {
     return this.#runtime.call("probe", "eventually", `eventually(${options.label ?? "condition"})`, null, () => eventually(fn, options));
   }
 }
