@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { connectionBlockerFromToolCalls } from "@openwork/headless-threads"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -13,8 +14,9 @@ import {
   type RunnerRepeatLimits,
   type RunnerTurn,
 } from "../headless-runner/client.js"
+import { isModelAccessRefusal } from "../headless-runner/model-access-refusal.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
-import type { CloudAgentEvent, CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
+import { connectionBlockedExecution, type CloudAgentEvent, type CloudAgentExecution, type CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { cloudAutomationRuntime } from "./headless-runtime.js"
 import { organizationCloudModel } from "../workbot/model.js"
 import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
@@ -31,6 +33,8 @@ import { cloudAgentGatewayCatalog } from "../workbot/gateway-model.js"
  */
 
 const POLL_INTERVAL_MS = 2_000
+/** A send that never got an answer (a dropped connection, a timeout): the same shape as an answer the runner refused. */
+const RUNNER_UNREACHABLE = { ok: false as const, status: 503, error: "headless_send_unavailable" }
 const ABORT_SETTLE_TIMEOUT_MS = 15_000
 const MAX_CONSECUTIVE_READ_FAILURES = 30
 const RESULT_SUMMARY_LIMIT = 20_000
@@ -268,6 +272,9 @@ export async function executeHeadlessAgent(
     const runSessionId = sessionId
     // Read once per attempt; a resend keeps the mode the runner stored for the turn. A failed read runs it as before.
     const execution: "steps" | undefined = (await deps.stepTurns(input.organizationId).catch(() => false)) ? "steps" : undefined
+    // Sending mints the owner's token first, so it throws either a refusal of their model access (null: the run ends)
+    // or a network error. The second is the runner being unreachable, not a reason to send the owner to their model
+    // settings, and is handled like any other answer the runner could not give.
     const sendTurn = () => client.sendTurn(actor, {
       sessionId: runSessionId,
       messageId,
@@ -276,7 +283,7 @@ export async function executeHeadlessAgent(
       ttlMs,
       ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
       ...(execution ? { execution } : {}),
-    }).catch(() => null)
+    }).catch((error: unknown) => (isModelAccessRefusal(error) ? null : RUNNER_UNREACHABLE))
     const accessFailure = () => failure({ code: "provider_unavailable", message: "The cloud model is not available to the Automation owner. Check their model access and try again.", needsAttention: true })
 
     const sent = await sendTurn()
@@ -330,6 +337,10 @@ export async function executeHeadlessAgent(
       const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
       const resultSummary = (answer?.role === "assistant" ? answer.text : read.value.finalAssistantText).trim()
         || "The Automation run finished without a written result."
+      const blocker = connectionBlockerFromToolCalls(read.value.messages.flatMap((message) => message.role === "tool" ? [{ name: message.name, output: message.output }] : []))
+      if (blocker) {
+        return connectionBlockedExecution({ blocker, answer: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage, events: transcriptEvents(read.value.messages, usage) })
+      }
       return {
         ok: true,
         threadId: runSessionId,

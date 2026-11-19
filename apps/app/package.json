@@ -18,14 +18,13 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",
-    "test:boot": "bun test tests/app-boot.test.tsx",
-    "test:den-links": "bun test tests/den-dashboard-links.test.ts",
     "test:mention-send": "node scripts/mention-send.mjs",
     "test:sessions": "node scripts/sessions.mjs",
     "test:refactor": "pnpm typecheck && pnpm test:health && pnpm test:sessions",
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
+    "test:approval-panel": "bun test tests/permission-approval-panel.test.tsx",
     "test:session-switch": "node scripts/session-switch.mjs",
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
@@ -46,7 +45,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@opencode-ai/sdk": "^1.18.15",
     "@openwork/browser-tabs": "workspace:*",
-    "@openwork/calendar": "workspace:*",
+    "@openwork/product-analytics": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
@@ -98,7 +97,7 @@
     "htmlparser2": "8.0.2",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
-    "vite": "^6.4.4"
+    "vite": "^6.4.5"
   },
   "packageManager": "pnpm@10.27.0"
 }

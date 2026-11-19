@@ -1,9 +1,9 @@
 import type { TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerPart } from "@/app/types";
-import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
+import { computerMentionInstruction, isComputerTarget, searchFirstComputerMentionInstruction, type ComputerTarget } from "./computer-mentions";
 import { connectSkillPrompt, encodeConnectSkillToken, parseConnectSkillToken } from "./connect-skill-token";
-import { connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
+import { CONNECTOR_PROMPT_HISTORY, connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
 import {
   encodeSessionReferenceToken,
   parseSessionReferenceToken,
@@ -142,6 +142,21 @@ function skillInstruction(name: string) {
 }
 
 /**
+ * Metadata on a pill's visible text part. Every producer of a sent pill (the
+ * send paths, and engines that store a turn as one string and are decoded
+ * back into parts) tags the text the same way, so the transcript, prompt
+ * history and Edit read one shape.
+ */
+export function composerPillTextMetadata(pill: ComposerPill): Record<string, unknown> {
+  return {
+    openworkComposerPill: pill,
+    // Prompt history recalls a Connect skill or task reference from its durable token.
+    ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
+    ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
+  };
+}
+
+/**
  * The two prompt parts every send path emits for a pill: the visible text
  * (tagged with the pill so the transcript renders a chip) and the synthetic
  * instruction (hidden from the transcript).
@@ -150,12 +165,7 @@ export function composerPillPromptParts(pill: ComposerPill): [TextPartInput, Tex
   return [{
     type: "text",
     text: composerPillText(pill),
-    metadata: {
-      openworkComposerPill: pill,
-      // Prompt history recalls a Connect skill from its durable token.
-      ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
-      ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
-    },
+    metadata: composerPillTextMetadata(pill),
   }, {
     type: "text",
     text: composerPillInstruction(pill),
@@ -236,19 +246,37 @@ function getPillMatchers(): PillMatcher[] {
     // Instructions that older sends, or clients that flatten parts into one
     // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },
-    { re: templateRegExp(connectorPrompt), toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null },
-    // Both wordings: sent with the chat following the task, or not.
-    ...(["cloud", "desktop"] as const).flatMap((target) => [false, true].map((followed): PillMatcher => ({
-      re: new RegExp(escapeRegExp(computerMentionInstruction(target, followed)), "g"),
+    ...CONNECTOR_PROMPT_HISTORY.map((render): PillMatcher => ({
+      re: templateRegExp(render),
+      toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null,
+    })),
+    ...(["cloud", "desktop"] as const).flatMap((target) => computerInstructionHistory(target).map((instruction): PillMatcher => ({
+      re: new RegExp(escapeRegExp(instruction), "g"),
       toPill: () => ({ kind: "computer", target }),
     }))),
   ];
   return pillMatchers;
 }
 
+/** Decode exact historical sends without offering a retired instruction on new sends. */
+export function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
+  const searchFirst = searchFirstComputerMentionInstruction(target);
+  const pollingEnding = target === "cloud"
+    ? "Return the session link and use remote-session:read to check replies."
+    : "Use remote-session:read with commandId to check delivery. A delivered receipt means the task was started, not that it finished; return the desktop session reference.";
+  return [
+    computerMentionInstruction(target),
+    searchFirst,
+    searchFirst.replace(/OpenWork shows the started task.*(?=\]$)/, pollingEnding),
+  ];
+}
+
 function isInstructionMatch(pill: ComposerPill, text: string) {
   if (pill.kind === "computer") {
-    return text === computerMentionInstruction(pill.target, false) || text === computerMentionInstruction(pill.target, true);
+    return computerInstructionHistory(pill.target).includes(text);
+  }
+  if (pill.kind === "connector") {
+    return CONNECTOR_PROMPT_HISTORY.some((render) => render(pill.name) === text);
   }
   return text === composerPillInstruction(pill);
 }

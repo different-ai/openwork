@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { z } from "zod"
-import { toolCallSchema, type RepeatLimits, type ToolCall, type ToolResult } from "./types.js"
+import { toolAppSchema, toolCallSchema, type RepeatLimits, type ToolCall, type ToolResult } from "./types.js"
 
 /**
  * Step mode (`execution: "steps"`): a turn runs one step at a time from what is stored, instead of in one go.
@@ -14,7 +14,8 @@ import { toolCallSchema, type RepeatLimits, type ToolCall, type ToolResult } fro
  *   minutes, then its turn fails with `step_crash_loop`.
  * - **No repeated writes.** Once the model has answered with tool calls, the answer is kept (`pending`) before any
  *   call runs, and each result as it returns. A step that dies there finishes from it: a call without a recorded
- *   result is never run again, it gets an error result so the model can check its effect.
+ *   result is never run again, it gets an error result so the model can check its effect. A command on the
+ *   conversation's computer went on without the runner and kept its result there, so the computer is asked for it.
  * - **Stream checkpoints.** A long model call keeps its text so far (at most every 2 s). A step that restarts after a
  *   cancel continues that text where the provider accepts a partial answer (Anthropic Messages without extended
  *   thinking) and otherwise starts over. Nothing but text is kept, so a half-written tool call is never run.
@@ -44,6 +45,7 @@ const toolResultSchema = z.object({
   isError: z.boolean(),
   images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
   documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+  app: toolAppSchema.optional(),
 })
 const usageSchema = z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() })
 

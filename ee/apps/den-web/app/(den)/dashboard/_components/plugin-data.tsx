@@ -155,6 +155,8 @@ export type DenPlugin = {
    * - "bitbucket"→ only visible after a Bitbucket account is connected
    */
   requiresProvider: "any" | "github" | "bitbucket";
+  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
+  builtIn?: boolean;
 };
 
 // ── Display helpers ────────────────────────────────────────────────────────
@@ -205,9 +207,13 @@ export function getPluginComponentCount(plugin: DenPlugin): number {
 
 export function getPluginPartsSummary(plugin: DenPlugin): string {
   const parts: string[] = [];
-  const appCount = plugin.apps.length + plugin.authoredApps.length;
+  const artifactCount = plugin.authoredApps.length;
+  if (artifactCount > 0) {
+    parts.push(`${artifactCount} ${artifactCount === 1 ? "Artifact" : "Artifacts"}`);
+  }
+  const appCount = plugin.apps.length;
   if (appCount > 0) {
-    parts.push(`${appCount} ${appCount === 1 ? "App" : "Apps"}`);
+    parts.push(`${appCount} ${appCount === 1 ? "MCP App" : "MCP Apps"}`);
   }
   if (plugin.skills.length > 0) {
     parts.push(`${plugin.skills.length} ${plugin.skills.length === 1 ? "Skill" : "Skills"}`);
@@ -766,6 +772,7 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
     apps,
     authoredApps,
     author: "Connected repository",
+    builtIn: isBuiltInExtension(pluginItem),
     category: derivePluginCategory({ agents, apps, authoredApps, commands, hooks, mcps, skills, workflows }),
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
@@ -848,8 +855,19 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
   /** False when the server did not include access, so callers load it per plugin. */
   accessIncluded: boolean;
+  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
+  builtIn: boolean;
   updatedAt?: string;
 };
+
+function isBuiltInExtension(item: Record<string, unknown>): boolean {
+  const extension = item.extension;
+  if (!extension || typeof extension !== "object") return false;
+  const manifest = "manifest" in extension ? extension.manifest : null;
+  if (!manifest || typeof manifest !== "object") return false;
+  const source = "source" in manifest ? manifest.source : null;
+  return Boolean(source && typeof source === "object" && "origin" in source && source.origin === "builtin");
+}
 
 function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | null {
   const id = asString(item.id);
@@ -857,6 +875,7 @@ function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | n
   if (!id || !name) return null;
   return {
     accessIncluded: Array.isArray(item.access),
+    builtIn: isBuiltInExtension(item),
     updatedAt: asString(item.updatedAt) ?? undefined,
     createdByOrgMembershipId: asString(item.createdByOrgMembershipId),
     description: asString(item.description) ?? "",

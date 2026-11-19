@@ -17,12 +17,30 @@ export const DEN_DASHBOARD_LINKS = {
   gatewayLimits: "/dashboard/ai-gateway?tab=limits",
   /** Billing: the organization's plan and subscriptions. */
   billing: "/dashboard/billing",
+  /** My Usage: a member's own limits, 30-day usage and model prices. Only linked once Den has answered /v1/gateway/usage/me. */
+  myUsage: "/dashboard/my-usage",
 } as const;
 
 export type DenDashboardLink = keyof typeof DEN_DASHBOARD_LINKS;
 
 export function denDashboardUrl(baseUrl: string, link: DenDashboardLink): string {
   return new URL(DEN_DASHBOARD_LINKS[link], baseUrl).toString();
+}
+
+/** Your Connections, opened on one connection: where a member connects or reconnects it. */
+export const DEN_YOUR_CONNECTIONS_PATH = "/dashboard/your-connections";
+
+export function denYourConnectionUrl(baseUrl: string, connectionId: string): string | null {
+  const trimmed = baseUrl.trim();
+  if (!trimmed || !connectionId.trim()) return null;
+  try {
+    const url = new URL(DEN_YOUR_CONNECTIONS_PATH, trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.searchParams.set("connectionId", connectionId);
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 /** Den's admin setup for one catalog connector (Manage → Connectors → Add), where the organization's app is added. */

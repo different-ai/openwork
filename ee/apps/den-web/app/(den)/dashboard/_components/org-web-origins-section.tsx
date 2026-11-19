@@ -1,5 +1,6 @@
 "use client";
 
+import { COMPACT_INPUT_CLASS } from "../../_components/ui/dashboard-styles";
 import {
   ORGANIZATION_WEB_ORIGIN_LIMIT,
   normalizeExactHttpsOrigin,
@@ -9,7 +10,6 @@ import { ChevronRight, CircleAlert, Lock, X } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { permissionLockReason } from "../../_lib/den-org";
-import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenList, DenListRow } from "../../_components/ui/list-row";
 import {
@@ -118,9 +118,9 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
   );
 
   return (
-    <DenCard size="comfortable" className="mt-6 overflow-hidden !p-0" data-section="org-web-origins">
+    <div className="border-y border-[var(--den-list-line)]" data-section="org-web-origins">
       <details className="group">
-        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-4 px-6 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-gray-900 [&::-webkit-details-marker]:hidden">
+        <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-4 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-gray-900 [&::-webkit-details-marker]:hidden">
           <span className="flex min-w-0 items-center gap-2">
             <ChevronRight
               size={16}
@@ -128,7 +128,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
               aria-hidden="true"
               className="shrink-0 text-gray-400 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none"
             />
-            <span className="text-[13px] font-semibold text-gray-900">Approved web origins</span>
+            <span className="text-[13px] font-medium text-[var(--dls-text-primary)]">Approved web origins</span>
           </span>
           <span className="shrink-0 text-[13px] text-gray-500" data-testid="web-origins-summary-state">
             {query.isPending ? <span className="sr-only">Loading</span> : null}
@@ -136,7 +136,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
           </span>
         </summary>
 
-        <div className="grid gap-4 border-t border-gray-100 px-6 py-4 text-[13px] leading-5">
+        <div className="grid gap-4 border-t border-[var(--den-list-line)] py-4 text-[13px] leading-5">
           {query.isPending ? (
             <div aria-hidden="true" className="grid gap-2">
               {[0, 1].map((index) => (
@@ -204,7 +204,7 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
                   disabled={!canManage || atLimit || query.isPending}
                   aria-invalid={inputError ? true : undefined}
                   aria-describedby={inputError ? errorId : undefined}
-                  className="font-mono text-[13px]"
+                  className={`${COMPACT_INPUT_CLASS} font-mono`}
                   onChange={(event) => {
                     setDraft(event.target.value);
                     setInputError(null);
@@ -213,9 +213,10 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
                 <DenButton
                   type="submit"
                   variant="secondary"
+                  size="sm"
                   loading={approve.isPending && !removed}
                   disabled={!canManage || atLimit || query.isPending || busy}
-                  className="h-[42px] shrink-0"
+                  className="shrink-0"
                 >
                   Approve origin
                 </DenButton>
@@ -241,6 +242,6 @@ export function OrgWebOriginsSection({ orgId, canManage }: { orgId: string; canM
           ) : null}
         </div>
       </details>
-    </DenCard>
+    </div>
   );
 }

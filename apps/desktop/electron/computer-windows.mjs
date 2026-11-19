@@ -1,7 +1,8 @@
 // This PC as a Computer Use placement on Windows. The bundled helper
 // (packages/computer-use/windows/ComputerUse.cs, shipped as
-// helpers/openwork-computer-use.exe) lists windows, captures the selected one
-// and sends input; the shared runtime adds sessions, receipts, Take over,
+// helpers/openwork-computer-use.exe) lists windows and installed apps, captures
+// the selected window and sends input; an installed app that is not open is
+// started when the agent opens it; the shared runtime adds sessions, receipts, Take over,
 // Continue, Stop and watch frames. It needs no system permissions and does not
 // depend on the remoteComputers rollout. Main process only.
 import { existsSync } from "node:fs";
@@ -19,9 +20,12 @@ const helperName = "openwork-computer-use.exe";
  *   appRoot?: string,
  *   fileExists?: (candidate: string) => boolean,
  *   spawnChild?: typeof import("node:child_process").spawn,
+ *   startApp?: (file: string) => Promise<void>,
+ *   launchWaitMs?: number,
+ *   launchPollMs?: number,
  * }} [options]
  */
-export function createWindowsComputerAdapter({ resourcesPath = process.resourcesPath, appRoot = defaultAppRoot, fileExists = existsSync, spawnChild } = {}) {
+export function createWindowsComputerAdapter({ resourcesPath = process.resourcesPath, appRoot = defaultAppRoot, fileExists = existsSync, spawnChild, startApp, launchWaitMs, launchPollMs } = {}) {
   const binary = () => [
     process.env.OPENWORK_COMPUTER_USE_BINARY?.trim() || null,
     resourcesPath ? path.join(resourcesPath, "helpers", helperName) : null,
@@ -31,6 +35,8 @@ export function createWindowsComputerAdapter({ resourcesPath = process.resources
     id: "this-pc",
     label: "This PC",
     placement: "local",
-    driver: createWindowsDriver({ binary, ...(spawnChild ? { spawnChild } : {}) }),
+    driver: createWindowsDriver({ binary, ...(spawnChild ? { spawnChild } : {}), ...(startApp ? { startApp } : {}) }),
+    ...(launchWaitMs ? { launchWaitMs } : {}),
+    ...(launchPollMs ? { launchPollMs } : {}),
   });
 }

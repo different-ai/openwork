@@ -7,6 +7,8 @@ export const config = {
   matcher: [
     "/",
     "/connect",
+    "/ai-gateway",
+    "/desktop",
     "/cloud",
     "/pricing",
     "/enterprise",

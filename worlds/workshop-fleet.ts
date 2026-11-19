@@ -154,14 +154,15 @@ async function memberGet(member: DenSession, orgId: string, path: string): Promi
   if (!result.response.ok) throw new Error(`Workshop member verification failed: HTTP ${result.response.status}.`);
   return result.body;
 }
-export async function verifyMember(member: DenSession, orgId: string, memberId: string) {
+export async function verifyMember(member: DenSession, orgId: string, memberId: string, allowanceUsd = 5) {
+  const allowanceMicroUsd = Math.round(allowanceUsd * 1_000_000);
   const context = await memberGet(member, orgId, "/v1/org");
   const current = record(context) ? context.currentMember : undefined;
   if (!record(current) || current.id !== memberId || current.role !== "member" || current.isOwner !== false) throw new Error("Workshop desktop is not an ordinary member.");
   const status = await memberGet(member, orgId, "/v1/gateway/usage-limits/me");
   const bucket = record(status) && Array.isArray(status.buckets) && status.buckets.length === 1 ? status.buckets[0] : undefined;
-  if (!record(bucket) || bucket.baseAllowanceMicroUsd !== 5_000_000 || bucket.allowanceMicroUsd !== 5_000_000
-    || bucket.extensionMicroUsd !== 0 || bucket.hardLimit !== true) throw new Error("Workshop effective member budget is not $5.");
+  if (!record(bucket) || bucket.baseAllowanceMicroUsd !== allowanceMicroUsd || bucket.allowanceMicroUsd !== allowanceMicroUsd
+    || bucket.extensionMicroUsd !== 0 || bucket.hardLimit !== true) throw new Error(`Workshop effective member budget is not $${allowanceUsd}.`);
   return bucket;
 }
 
@@ -344,7 +345,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       den = stack.use(await server({ place, org: { name: `Workshop ${runId}`, admin: { email: hostEmail, password: hostPassword, name: "Workshop host" }, members },
         daytonaPrivate: true, daytonaSeedDemo: false, daytonaTtlMinutes: Math.floor(remainingSeconds(deadline) / 60),
         daytonaAutoStopMinutes: 0, daytonaPreviewExpirySeconds: remainingSeconds(deadline),
-        env: { OPENWORK_DEV_MODE: "0", OPENWORK_WORKSHOP_PRIVATE_COHOST: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", GATEWAY_ENABLED: "true", GATEWAY_PORT: "8791", GATEWAY_EGRESS_ALLOWED_ORIGINS: "https://api.openai.com",
+        env: { OPENWORK_DEV_MODE: "0", OPENWORK_WORKSHOP_PRIVATE_COHOST: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", GATEWAY_ENABLED: "true", GATEWAY_PORT: "8791", DEN_DASHBOARDS_ENABLED: "true", GATEWAY_EGRESS_ALLOWED_ORIGINS: "https://api.openai.com",
           DEN_DB_ENCRYPTION_KEY: randomSecret(), BETTER_AUTH_SECRET: randomSecret(), GATEWAY_WEBHOOK_SECRET: randomSecret(),
           DEN_DEMO_OWNER_EMAIL: hostEmail, DEN_DEMO_OWNER_PASSWORD: hostPassword, RESEND_API_KEY: "", SMTP_HOST: "", SMTP_USER: "", SMTP_PASS: "", EMAIL_FROM: "" },
       }));

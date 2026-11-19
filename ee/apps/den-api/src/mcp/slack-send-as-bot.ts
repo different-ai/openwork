@@ -4,7 +4,6 @@ import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { db } from "../db.js"
-import { markFeaturesUsed, type MarkFeaturesUsed } from "../feature-usage.js"
 import {
   defaultWorkbotChannelPostDeps,
   postWorkbotChannelMessage,
@@ -153,8 +152,6 @@ export type SlackSendAsBotDeps = {
   postChannel: (member: WorkbotSlackMember, message: { channelId: string; text: string; threadTs?: string }) => Promise<WorkbotChannelPostResult>
   limits: SlackSendAsBotLimitStore
   now: () => number
-  /** Records that the member used the feature, for /admin › Features (feature_usage). */
-  markUsed: MarkFeaturesUsed
 }
 
 function escapeLike(value: string) {
@@ -175,7 +172,6 @@ export const DEFAULT_SLACK_SEND_AS_BOT_DEPS: SlackSendAsBotDeps = {
   postChannel: (member, message) => postWorkbotChannelMessage(member, message, defaultWorkbotChannelPostDeps),
   limits: rateLimitStore,
   now: Date.now,
-  markUsed: markFeaturesUsed,
 }
 
 export type SlackSendAsBotToolResult = {
@@ -336,8 +332,6 @@ export async function executeSlackSendAsBot(
   }
   const destination = destinationFor(parsed.data)
   if (typeof destination === "string") return refusal("invalid_target", destination)
-  // A message the member asked for, often from a run nobody watches: no request marks that use.
-  deps.markUsed({ organizationId: input.organizationId, memberId: input.memberId, keys: ["slackSendAsBot"] })
 
   // Nothing is counted until the message could be sent: no Slack app or no linked account says so every time.
   const member = await deps.resolveMember({ organizationId: input.organizationId, userId: input.userId })

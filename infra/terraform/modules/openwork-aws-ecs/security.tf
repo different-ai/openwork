@@ -125,7 +125,8 @@ resource "terraform_data" "security_contract" {
         [local.den_api_image, local.den_web_image],
         local.web_enabled ? [local.den_gateway_image] : [],
         local.runner_managed ? [local.runner_image] : [],
-        local.workbot_enabled ? [local.workbot_image] : []
+        local.workbot_enabled ? [local.workbot_image] : [],
+        var.ai_gateway_enabled ? [var.ai_gateway_image] : []
       ) : can(regex("@sha256:[0-9a-f]{64}$", image))])
       error_message = "Every enabled image must be pinned with @sha256:<64 hex characters>; pass digest overrides for optional services."
     }

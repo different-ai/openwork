@@ -371,15 +371,12 @@ test("providers: false and mcp: false turn off either half", async () => {
 
 function liveDen() {
   const den = createFakeDen()
-  let enabled = true
   let empty = false
   const streams: ReadableStreamDefaultController<Uint8Array>[] = []
   let cancelled = 0
   let inventories = 0
   const fetcher: Fetch = async (url, init) => {
-    if (url.endsWith("/v1/org")) return Response.json({ features: { liveProviderSync: enabled } })
     if (url.endsWith("/inventory/events")) {
-      if (!enabled) return Response.json({ error: "feature_disabled", feature: "liveProviderSync" }, { status: 404 })
       return new Response(new ReadableStream<Uint8Array>({ start(controller) { streams.push(controller) }, cancel() { cancelled++ } }), { headers: { "content-type": "text/event-stream" } })
     }
     if (url.includes("inference-providers?")) {
@@ -392,7 +389,6 @@ function liveDen() {
     den, fetch: fetcher, streams,
     get inventories() { return inventories },
     get cancelled() { return cancelled },
-    set enabled(value: boolean) { enabled = value },
     set empty(value: boolean) { empty = value },
     emit() { streams.at(-1)?.enqueue(new TextEncoder().encode('event: inventory.changed\ndata: {"revision":"next"}\n\n')) },
   }
@@ -421,20 +417,6 @@ test("standalone live events bypass the fresh cache, withdraw removed models, an
   assert.equal(host.providers().size, 0)
   await cleanup?.()
   assert.equal(den.cancelled, 1)
-})
-
-test("standalone rollout off keeps login/MCP and never opens an inventory subscription", async () => {
-  const den = liveDen()
-  den.enabled = false
-  const host = createHost({ apiBaseUrl: API })
-  host.credentials.set("cred_1", signedIn())
-  const cleanup = await createPlugin({ fetch: den.fetch }).setup(host.ctx)
-  await settle()
-  assert.equal(den.streams.length, 0)
-  assert.equal(host.methods.length, 2)
-  assert.equal(host.providers().size, 1)
-  assert.ok(host.mcp().size)
-  await cleanup?.()
 })
 
 test("provider reload failure is retried for the same fingerprint", async () => {
@@ -487,7 +469,7 @@ test("desktop provider-only mode reacts to local org changes and sign-out withou
   const den = liveDen()
   const endpoint = "http://127.0.0.1:1234/session"
   let session: DenSession | null = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }
-  const host = createHost({ desktopSession: endpoint, liveProviderSync: true })
+  const host = createHost({ desktopSession: endpoint })
   for (const key of ["integration", "mcp", "event"]) Reflect.deleteProperty(host.ctx, key)
   const cleanup = await createDesktopProviderPlugin({
     capability: () => "capability", sessionIntervalMs: 5,
@@ -545,7 +527,7 @@ test("desktop sign-out fences and cancels an in-flight inventory response", asyn
   const den = createFakeDen()
   const endpoint = "http://127.0.0.1:1234/session"
   let session: DenSession | null = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }
-  const host = createHost({ desktopSession: endpoint, liveProviderSync: true })
+  const host = createHost({ desktopSession: endpoint })
   let release: (() => void) | undefined
   const waiting = new Promise<void>(resolve => { release = resolve })
   let requestSignal: AbortSignal | null | undefined
@@ -578,7 +560,7 @@ type SessionFailure = "stall" | "throw" | "500" | "invalid-json" | "invalid-shap
 async function desktopWithFlakySession(options: { sessionIntervalMs?: number } = {}) {
   const den = liveDen()
   const endpoint = "http://127.0.0.1:1234/session"
-  const host = createHost({ desktopSession: endpoint, liveProviderSync: true })
+  const host = createHost({ desktopSession: endpoint })
   const state: { session: DenSession | null; failure: SessionFailure | null } = {
     session: { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }, failure: null,
   }
@@ -717,7 +699,7 @@ test("desktop inventory stream reconnect during a failed session check keeps the
 test("desktop event inventory failures converge with bounded retries while the stream stays open", async () => {
   const den = liveDen()
   const endpoint = "http://127.0.0.1:1234/session"
-  const host = createHost({ desktopSession: endpoint, liveProviderSync: true })
+  const host = createHost({ desktopSession: endpoint })
   let failures = 0
   let attempts = 0
   const cleanup = await createDesktopProviderPlugin({
@@ -796,7 +778,7 @@ test("standalone event inventory failure retries before the periodic timer witho
 test("five desktop Locations share one session stream, fan out changes, and release independently", async () => {
   const den = liveDen()
   const endpoint = "http://127.0.0.1:1234/session"
-  const hosts = Array.from({ length: 5 }, () => createHost({ desktopSession: endpoint, liveProviderSync: true }))
+  const hosts = Array.from({ length: 5 }, () => createHost({ desktopSession: endpoint }))
   const plugin = createDesktopProviderPlugin({
     capability: () => "capability",
     fetch: async (url, init) => url === endpoint
@@ -825,7 +807,7 @@ test("five desktop Locations share one local session poll, all receive changes, 
   const endpoint = "http://127.0.0.1:1234/session"
   let session: DenSession | null = { apiBaseUrl: API, token: SESSION_TOKEN, orgId: ORG_ID }
   let checks = 0
-  const hosts = Array.from({ length: 5 }, () => createHost({ desktopSession: endpoint, liveProviderSync: true }))
+  const hosts = Array.from({ length: 5 }, () => createHost({ desktopSession: endpoint }))
   const plugin = createDesktopProviderPlugin({
     capability: () => "capability", sessionIntervalMs: 25,
     fetch: async (url, init) => {
@@ -889,7 +871,7 @@ test("desktop warm offline cache rebinds public catalogs to a new engine port/ke
       return Response.json({ inferenceProviders: [gatewaySummary()] })
     } })
   }
-  const one = createHost({ desktopSession: `${firstOrigin}/session`, liveProviderSync: true })
+  const one = createHost({ desktopSession: `${firstOrigin}/session` })
   const stopOne = await make(firstOrigin, firstKey, false).setup(one.ctx)
   await settle()
   assert.equal(one.providers().get(PROVIDER_ID)?.info.settings?.apiKey, firstKey)
@@ -898,7 +880,7 @@ test("desktop warm offline cache rebinds public catalogs to a new engine port/ke
   assert.ok(portable.includes("ow_local_catalog"))
   for (const forbidden of [GATEWAY_KEY, SESSION_TOKEN, firstKey, firstOrigin, "inventory-capability"]) assert.ok(!portable.includes(forbidden), forbidden)
   await stopOne?.()
-  const two = createHost({ desktopSession: `${nextOrigin}/session`, liveProviderSync: true })
+  const two = createHost({ desktopSession: `${nextOrigin}/session` })
   for (const [key, value] of one.storage) two.storage.set(key, value)
   const stopTwo = await make(nextOrigin, nextKey, true).setup(two.ctx)
   await settle()
@@ -933,7 +915,7 @@ for (const desktop of [false, true]) {
   test(`${desktop ? "desktop" : "standalone"} whole-inventory 403 withdraws providers and cached credentials`, async () => {
     const den = liveDen()
     const endpoint = "http://127.0.0.1:1234/session"
-    const host = createHost(desktop ? { desktopSession: endpoint, liveProviderSync: true } : { apiBaseUrl: API })
+    const host = createHost(desktop ? { desktopSession: endpoint } : { apiBaseUrl: API })
     host.credentials.set("cred_1", signedIn())
     let denied = false
     const fetcher: Fetch = async (url, init) => {
@@ -963,7 +945,7 @@ for (const desktop of [false, true]) {
   test(`${desktop ? "desktop" : "standalone"} stream ${status} organization denial fences late inventory, clears Locations, and recovers same-session regrant`, async () => {
     const den = liveDen()
     const endpoint = "http://127.0.0.1:1234/session"
-    const hosts = Array.from({ length: 2 }, () => createHost(desktop ? { desktopSession: endpoint, liveProviderSync: true } : { apiBaseUrl: API }))
+    const hosts = Array.from({ length: 2 }, () => createHost(desktop ? { desktopSession: endpoint } : { apiBaseUrl: API }))
     for (const host of hosts) host.credentials.set("cred_1", signedIn())
     let denied = false
     let block = false
@@ -1008,39 +990,3 @@ for (const desktop of [false, true]) {
   })
   }
 }
-
-test("standalone membership regrant after a rollout kill restores authorized legacy polling", async () => {
-  const den = liveDen()
-  const host = createHost({ apiBaseUrl: API })
-  host.credentials.set("cred_1", signedIn())
-  let denied = false
-  const fetcher: Fetch = async (url, init) => {
-    if (denied && (url.endsWith("/v1/org") || url.endsWith("/inventory/events"))) return Response.json({ error: "organization_not_found" }, { status: 403 })
-    return den.fetch(url, init)
-  }
-  const cleanup = await createPlugin({ fetch: fetcher }).setup(host.ctx)
-  try {
-    await settle()
-    assert.equal(host.providers().size, 1)
-    denied = true
-    den.streams.at(-1)?.close()
-    for (let i = 0; i < 150 && host.providers().size; i++) await delay(10)
-    assert.equal(host.providers().size, 0)
-    den.enabled = false
-    denied = false
-    host.emitCredentialEvent()
-    for (let i = 0; i < 350 && !host.providers().size; i++) await delay(10)
-    assert.equal(host.providers().size, 1, "an authenticated org response can restore legacy mode after regrant and kill")
-    const cached = host.storage.get("inventory")
-    assert.ok(cached && typeof cached === "object" && !Array.isArray(cached))
-    assert.equal(cached.liveProviderSync, false)
-    assert.equal(den.streams.length, 1, "legacy restoration does not reactivate the killed stream")
-  } finally { await cleanup?.() }
-})
-
-test("desktop rollout off does not register providers, MCP, integration or make requests", async () => {
-  const host = createHost({ desktopSession: "http://127.0.0.1:1234/session", liveProviderSync: false })
-  await createPlugin({ fetch: async () => assert.fail("rollout off must not fetch") }).setup(host.ctx)
-  assert.equal(host.methods.length, 0)
-  assert.equal(host.providers().size, 0)
-})

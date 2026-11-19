@@ -17,7 +17,7 @@ function fixture(): Den {
 }
 
 interface Call { path: string; method: string; body: unknown; seat: string; org: string | null }
-function mockDen(options: { elevatedSeat?: string; overrideBudget?: boolean; leakedKey?: boolean; errorBody?: boolean; extraMember?: boolean } = {}) {
+function mockDen(options: { elevatedSeat?: string; overrideBudget?: boolean; leakedKey?: boolean; errorBody?: boolean; extraMember?: boolean; allowanceMicroUsd?: number; upstreamModelId?: string } = {}) {
   const calls: Call[] = [];
   const fetchMock: typeof fetch = async (input, init) => {
     assert.equal(typeof input, "string", "Den uses its supplied API URL, not another service");
@@ -39,15 +39,15 @@ function mockDen(options: { elevatedSeat?: string; overrideBudget?: boolean; lea
     if (url.pathname.endsWith("/assignments")) return json({ id: "policy_workshop" });
     if (url.pathname === "/v1/gateway/usage-limits/me") return json({
       memberId: `member_${seat}`, organizationId: "org_workshop", state: "within_limit", providers: [],
-      buckets: [{ id: `bucket_${seat}`, policyId: "policy_workshop", timeframe: "week", baseAllowanceMicroUsd: 5_000_000,
-        allowanceMicroUsd: options.overrideBudget ? 10_000_000 : 5_000_000, extensionMicroUsd: 0, hardLimit: true, allowRequestReset: false }],
+      buckets: [{ id: `bucket_${seat}`, policyId: "policy_workshop", timeframe: "week", baseAllowanceMicroUsd: options.allowanceMicroUsd ?? 5_000_000,
+        allowanceMicroUsd: options.overrideBudget ? 10_000_000 : options.allowanceMicroUsd ?? 5_000_000, extensionMicroUsd: 0, hardLimit: true, allowRequestReset: false }],
     });
     if (url.pathname === "/v1/inference-providers" && method === "POST") {
       if (options.errorBody) return json({ error: "invalid_key", message: upstreamKey }, 400);
       return json({ inferenceProvider: { id: "provider_workshop" } }, 201);
     }
     const provider = { id: "provider_workshop", source: "openwork_gateway", credentialStatus: "ready",
-      models: [{ id: "gwm_workshop", name: "Sol 6.1", upstreamModelId: WORKSHOP_MODEL }],
+      models: [{ id: "gwm_workshop", name: "Sol 6.1", upstreamModelId: options.upstreamModelId ?? WORKSHOP_MODEL }],
       apiKey: options.leakedKey ? upstreamKey : `private-gateway-key-${seat}` };
     if (url.pathname === "/v1/inference-providers" && method === "GET") return json({ inferenceProviders: [provider] });
     if (url.pathname.endsWith("/connect")) return json({ inferenceProvider: provider });
@@ -148,4 +148,19 @@ test("unapproved attendee count, allowance, or a missing real Gateway fails with
   await assert.rejects(configureWorkshop(den, { upstreamKey, allowanceUsd: 5 }), /exactly 20/);
   delete den.gateway;
   await assert.rejects(configureWorkshop(den, { upstreamKey, allowanceUsd: 5 }), /real co-located Gateway/);
+});
+
+test("a workshop can run on Claude with an explicitly approved larger allowance, and never above the hard ceiling", async (t) => {
+  const { calls, fetchMock } = mockDen({ allowanceMicroUsd: 60_000_000, upstreamModelId: "claude-opus-5-5" });
+  t.mock.method(globalThis, "fetch", fetchMock);
+  // A larger allowance needs its own explicit ceiling; the default stays the approved $5.
+  await assert.rejects(configureWorkshop(fixture(), { upstreamKey, provider: "anthropic", allowanceUsd: 60 }), /at most \$5/);
+  await assert.rejects(configureWorkshop(fixture(), { upstreamKey, provider: "anthropic", allowanceUsd: 150, maxAllowanceUsd: 500 }), /at most \$100/);
+  const result = await configureWorkshop(fixture(), { upstreamKey, provider: "anthropic", allowanceUsd: 60, maxAllowanceUsd: 60 });
+  assert.equal(result.upstreamModelId, "claude-opus-5-5");
+  assert.deepEqual(calls.find((call) => call.path === "/v1/inference-providers" && call.method === "POST")?.body, {
+    name: "Workshop Claude Opus 5.5", providerId: "anthropic", modelIds: ["claude-opus-5-5"],
+    credential: { kind: "api_key", secret: upstreamKey }, settings: { upstreamBaseUrl: "https://api.anthropic.com/v1" },
+    memberIds: Array.from({ length: 20 }, (_, i) => `member_seat-${i}`),
+  });
 });

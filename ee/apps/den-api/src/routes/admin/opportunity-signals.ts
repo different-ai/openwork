@@ -13,6 +13,8 @@ export const PERSONAL_EMAIL_DOMAINS = [
   "mail.com", "email.com", "gmx.com", "gmx.net", "gmx.de", "web.de", "yandex.com", "yandex.ru", "ya.ru",
   "mail.ru", "inbox.ru", "bk.ru", "list.ru", "qq.com", "foxmail.com", "163.com", "126.com",
   "naver.com", "daum.net", "hanmail.net", "zoho.com", "rediffmail.com", "yopmail.com", "mailinator.com",
+  // Forwarding aliases: an address here says nothing about an employer.
+  "mozmail.com", "duck.com", "privaterelay.appleid.com", "simplelogin.com", "passmail.net",
 ]
 
 /** The verified, non-personal email domain of an account, or null. */

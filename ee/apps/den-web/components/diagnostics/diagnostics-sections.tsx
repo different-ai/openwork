@@ -1,7 +1,6 @@
 "use client";
 
-import { Globe, Laptop, Lock, Plug, Waypoints } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Laptop, Lock, Plug, Waypoints } from "lucide-react";
 import type {
   ConnectorCheck,
   ConnectorsDiagnostics,
@@ -35,7 +34,6 @@ import {
   DESKTOP_REASON_NEXT_STEPS,
   DESKTOP_STEP_LABELS,
   INSTALLATION_COPY,
-  NETWORK_COPY,
   PROVIDER_ACTIONS,
   PROVIDER_COPY,
   PROVIDER_NEXT_STEPS,
@@ -372,35 +370,6 @@ export function InstallationSection({ report, now }: SectionProps) {
       ) : (
         <DiagnosticsLockedRow name={INSTALLATION_COPY.lockedName} sub={INSTALLATION_COPY.lockedSub} />
       )}
-    </DiagnosticsSection>
-  );
-}
-
-// ── Advanced › Network check ───────────────────────────────────────────────
-
-function NetworkRow({ canRun, renderNetworkCheck }: { canRun: boolean; renderNetworkCheck: (canRun: boolean) => ReactNode }) {
-  // The check loads its own configuration, so it mounts only once the row is opened.
-  const [opened, setOpened] = useState(false);
-  return (
-    <DiagnosticsRow
-      id={diagnosticsRowId("network", "egress")}
-      testId="diagnostics-network-check"
-      lead={<Icon icon={Globe} />}
-      name={NETWORK_COPY.name}
-      sub={NETWORK_COPY.sub}
-      onToggle={(open) => { if (open) setOpened(true); }}
-    >
-      {opened ? renderNetworkCheck(canRun) : null}
-    </DiagnosticsRow>
-  );
-}
-
-export function NetworkSection({ report, renderNetworkCheck }: { report: OrgDiagnostics; renderNetworkCheck: (canRun: boolean) => ReactNode }) {
-  const network = report.network;
-  if (network.access === "locked") return <LockedSection id="diagnostics-network" title={SECTION_TITLES.network} permission={network.permission} />;
-  return (
-    <DiagnosticsSection id="diagnostics-network" title={SECTION_TITLES.network} testId="diagnostics-network">
-      <NetworkRow canRun={network.canRun} renderNetworkCheck={renderNetworkCheck} />
     </DiagnosticsSection>
   );
 }

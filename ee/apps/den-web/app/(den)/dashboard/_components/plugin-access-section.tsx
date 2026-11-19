@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Globe, Plus, Users } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Popover } from "@base-ui/react/popover";
+import { Check, Globe, LockKeyhole, Plus, Users } from "lucide-react";
 
 import { getOrgAccessFlags, permissionLockReason } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
@@ -16,11 +17,15 @@ import {
   useRevokePluginAccess,
 } from "./plugin-access-data";
 import { OrgMemberIdentity } from "./org-member-identity";
+import { useLibrary } from "./library-data";
 import { SectionTitle } from "./item-header";
+import { DenSwitch } from "../../_components/ui/switch";
+import { AccessRow, IconTile, RemoveButton, accessAddButtonClassName } from "./access-rows";
 
 type PluginAccessSectionProps = {
   pluginId: string;
   pluginCreatedByOrgMembershipId: string | null;
+  canManage?: boolean;
   grants: PluginAccessGrant[];
   isLoading: boolean;
   error: unknown;
@@ -65,9 +70,7 @@ function AccessRolePill({ role }: { role: PluginAccessRole }) {
 function TeamIdentity({ name, memberCount }: { name: string; memberCount: number }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-gray-100 text-gray-500">
-        <Users className="h-4 w-4" aria-hidden />
-      </div>
+      <IconTile icon={Users} />
       <div className="min-w-0">
         <p className="truncate text-[13px] font-medium text-gray-900">{name}</p>
         <p className="truncate text-[12px] text-gray-400">
@@ -94,21 +97,6 @@ function AccessAddPicker({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [role, setRole] = useState<"viewer" | "editor">("viewer");
   const [submitting, setSubmitting] = useState(false);
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handlePointerDown(event: MouseEvent) {
-      if (ref.current && !event.composedPath().includes(ref.current)) {
-        setOpen(false);
-        setQuery("");
-        setSelectedId(null);
-        setRole("viewer");
-      }
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [open]);
 
   const filteredCandidates = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -124,7 +112,7 @@ function AccessAddPicker({
   }
 
   async function handleGrant() {
-    if (!selectedId) return;
+    if (disabled || submitting || !selectedId || !candidates.some((candidate) => candidate.id === selectedId)) return;
     setSubmitting(true);
     try {
       await onGrant(selectedId, role);
@@ -139,42 +127,29 @@ function AccessAddPicker({
   const label = kind === "person" ? "person" : "team";
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        disabled={disabled || candidates.length === 0}
-        onClick={() => {
-          if (open) {
-            resetAndClose();
-          } else {
-            setOpen(true);
-          }
-        }}
-        className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-3 py-1.5 text-[11.5px] text-gray-500 transition hover:border-gray-500 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+    <Popover.Root open={open} onOpenChange={(next) => next ? setOpen(true) : resetAndClose()}>
+      <Popover.Trigger
+        disabled={disabled || submitting || candidates.length === 0}
+        className={accessAddButtonClassName}
+        data-testid={`plugin-access-add-${kind}`}
       >
-        <Plus className="h-3 w-3" aria-hidden />
+        <Plus className="h-3.5 w-3.5" aria-hidden />
         Add {label}
-      </button>
-
-      {open ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 px-4 py-6 md:absolute md:inset-auto md:left-0 md:top-[calc(100%+6px)] md:z-20 md:block md:bg-transparent md:p-0"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) resetAndClose();
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Add ${label} access`}
-            className="w-full max-w-[340px] rounded-2xl border border-gray-200 bg-white md:w-[340px]"
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="start" sideOffset={8} className="z-50">
+          <Popover.Popup
+            className="w-[340px] max-w-[var(--available-width)] max-h-[var(--available-height)] overflow-y-auto rounded-2xl border border-gray-200 bg-white"
           >
+            <Popover.Title className="sr-only">Add {label} access</Popover.Title>
             <div className="border-b border-gray-100 p-3">
               <DenInput
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={`Search ${kind === "person" ? "people" : "teams"}...`}
+                aria-label={`Search ${kind === "person" ? "people" : "teams"}`}
+                disabled={disabled || submitting}
                 autoFocus
               />
             </div>
@@ -188,6 +163,8 @@ function AccessAddPicker({
                     <button
                       key={candidate.id}
                       type="button"
+                      disabled={disabled || submitting}
+                      aria-pressed={selected}
                       onClick={() => setSelectedId(candidate.id)}
                       className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${selected ? "bg-gray-50" : "hover:bg-gray-50/70"}`}
                     >
@@ -205,7 +182,7 @@ function AccessAddPicker({
                   value={role}
                   onChange={(event) => setRole(event.target.value === "editor" ? "editor" : "viewer")}
                   className="min-w-0 flex-1"
-                  disabled={submitting}
+                  disabled={disabled || submitting}
                 >
                   <option value="viewer">Can view (use in chat)</option>
                   <option value="editor">Can edit</option>
@@ -213,7 +190,7 @@ function AccessAddPicker({
                 <DenButton
                   size="sm"
                   loading={submitting}
-                  disabled={!selectedId}
+                  disabled={disabled || !selectedId}
                   onClick={() => void handleGrant()}
                 >
                   Grant
@@ -225,21 +202,23 @@ function AccessAddPicker({
                 </p>
               ) : null}
             </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
 export function PluginAccessSection({
   pluginId,
   pluginCreatedByOrgMembershipId,
+  canManage: canManageOverride,
   grants,
   isLoading,
   error,
 }: PluginAccessSectionProps) {
   const { orgContext } = useOrgDashboard();
+  const library = useLibrary();
   const grantMutation = useGrantPluginAccess();
   const revokeMutation = useRevokePluginAccess();
   const access = getOrgAccessFlags(
@@ -247,6 +226,13 @@ export function PluginAccessSection({
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.currentMember.permissions,
   );
+  const libraryItem = library.data?.find((item) => item.type === "plugin" && item.id === pluginId);
+  // Workflows also embed this editor: their own edit role does not authorize
+  // changing the parent plugin's audience.
+  const canManage = canManageOverride ?? ((pluginCreatedByOrgMembershipId !== null
+    && pluginCreatedByOrgMembershipId === orgContext?.currentMember.id)
+    || (libraryItem?.type === "plugin" && libraryItem.role === "manager")
+    || access.canManageAllShared);
   const members = orgContext?.members ?? [];
   const teams = orgContext?.teams ?? [];
   const membersById = new Map(members.map((member) => [member.id, member]));
@@ -258,6 +244,7 @@ export function PluginAccessSection({
     (grant) => grant.orgMembershipId !== pluginCreatedByOrgMembershipId,
   );
   const busy = grantMutation.isPending || revokeMutation.isPending;
+  const disabled = busy || !canManage || isLoading || Boolean(error);
   // Turning org-wide sharing on needs `sharing.share_org_wide`; turning it off does not.
   const orgWideLocked = !orgWideGrant && !access.canShareWithEveryone;
 
@@ -277,6 +264,7 @@ export function PluginAccessSection({
     }));
 
   async function handleToggleOrgWide() {
+    if (disabled || orgWideLocked) return;
     try {
       if (orgWideGrant) {
         await revokeMutation.mutateAsync({ pluginId, grantId: orgWideGrant.id });
@@ -289,6 +277,9 @@ export function PluginAccessSection({
   }
 
   async function handleRevoke(grantId: string) {
+    if (disabled) return;
+    const grant = grants.find((entry) => entry.id === grantId);
+    if (!grant || (grant.orgMembershipId !== null && grant.orgMembershipId === pluginCreatedByOrgMembershipId)) return;
     try {
       await revokeMutation.mutateAsync({ pluginId, grantId });
     } catch {
@@ -297,6 +288,7 @@ export function PluginAccessSection({
   }
 
   function grantPerson(memberId: string, role: "viewer" | "editor") {
+    if (disabled) return Promise.reject(new Error("Only a plugin manager can change access."));
     return grantMutation.mutateAsync({
       pluginId,
       body: { orgMembershipId: memberId, role },
@@ -304,6 +296,7 @@ export function PluginAccessSection({
   }
 
   function grantTeam(teamId: string, role: "viewer" | "editor") {
+    if (disabled) return Promise.reject(new Error("Only a plugin manager can change access."));
     return grantMutation.mutateAsync({
       pluginId,
       body: { teamId, role },
@@ -315,6 +308,12 @@ export function PluginAccessSection({
   return (
     <section>
       <div className="mb-3"><SectionTitle title="Who can use it" /></div>
+      {!canManage ? (
+        <p className="mb-3 flex items-center gap-2 text-[13px] text-[var(--dls-text-secondary)]" data-testid="plugin-access-read-only">
+          <LockKeyhole className="size-4 shrink-0" aria-hidden />
+          Read only. Only a plugin manager or someone with Manage all shared items can change access.
+        </p>
+      ) : null}
 
       {error ? (
         <DenNotice
@@ -322,40 +321,27 @@ export function PluginAccessSection({
           message={error instanceof Error ? error.message : "Failed to load plugin access."}
         />
       ) : (
-        <div className="rounded-2xl border border-gray-100 bg-white">
+        <div className="border-y border-[var(--den-list-line)]">
           {isLoading ? (
-            <p className="px-6 py-4 text-[13px] text-gray-400">Loading access…</p>
+            <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Loading access…</p>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => void handleToggleOrgWide()}
-                disabled={busy || orgWideLocked}
-                className="flex w-full items-center gap-4 rounded-t-2xl px-6 py-4 text-left transition hover:bg-gray-50/60 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] ${orgWideGrant ? "bg-emerald-50 text-emerald-600" : "bg-gray-100 text-gray-500"}`}>
-                  <Globe className="h-4 w-4" aria-hidden />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[14px] font-semibold tracking-[-0.01em] text-gray-900">
-                    Everyone in the organization
-                  </p>
-                  <p className="mt-0.5 text-[12.5px] leading-[1.55] text-gray-500">
-                    {orgWideGrant
-                      ? "All organization members can use this plugin in chat."
-                      : orgWideLocked
-                        ? permissionLockReason("sharing.share_org_wide")
-                        : "Only people and teams you add below can use this plugin in chat."}
-                  </p>
-                </div>
-                <div
-                  role="switch"
-                  aria-checked={Boolean(orgWideGrant)}
-                  className={`relative inline-flex h-6 w-[42px] shrink-0 items-center rounded-full transition-colors ${orgWideGrant ? "bg-[#0f172a]" : "bg-gray-200"}`}
-                >
-                  <span className={`inline-block h-5 w-5 rounded-full bg-white transition-transform ${orgWideGrant ? "translate-x-[18px]" : "translate-x-0.5"}`} />
-                </div>
-              </button>
+              <AccessRow
+                lead={<IconTile icon={Globe} />}
+                title="Everyone in the organization"
+                description={orgWideGrant
+                  ? "On. Everyone in the organization can use it."
+                  : orgWideLocked
+                    ? permissionLockReason("sharing.share_org_wide")
+                    : "Off. Only the people and teams below can use it."}
+                trailing={<DenSwitch
+                  checked={Boolean(orgWideGrant)}
+                  disabled={disabled || orgWideLocked}
+                  onChange={() => void handleToggleOrgWide()}
+                  aria-label="Everyone in the organization"
+                  testId="plugin-access-everyone"
+                />}
+              />
 
               <div className="divide-y divide-gray-100 border-t border-gray-100">
                 {memberGrants.map((grant) => {
@@ -365,37 +351,27 @@ export function PluginAccessSection({
                     ? "you"
                     : membersById.get(grant.createdByOrgMembershipId)?.user.name ?? "an organization member";
                   return (
-                    <div key={grant.id} className="flex flex-col gap-3 px-4 py-4 md:flex-row md:flex-wrap md:items-center md:px-6 md:py-3.5">
-                      <div className="flex w-full min-w-0 items-start gap-3 md:w-auto md:min-w-[220px] md:flex-1 md:items-center">
-                        <div className="min-w-0 flex-1">
-                          {member ? (
-                            <OrgMemberIdentity member={member} />
+                    <AccessRow
+                      key={grant.id}
+                      title={member ? <OrgMemberIdentity member={member} /> : "Removed member"}
+                      description={creatorGrant ? undefined : `Shared by ${sharedBy} · ${formatAccessDate(grant.createdAt)}`}
+                      trailing={(
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                          <AccessRolePill role={grant.role} />
+                          {creatorGrant ? (
+                            <span className="text-[13px] text-[var(--dls-text-secondary)]">Creator</span>
                           ) : (
-                            <p className="text-[13px] font-medium text-gray-500">Removed member</p>
+                            <RemoveButton
+                              label={`Revoke access for ${member?.user.name || member?.user.email || "removed member"}`}
+                              actionLabel="Revoke"
+                              disabled={disabled}
+                              onClick={() => void handleRevoke(grant.id)}
+                            />
                           )}
                         </div>
-                        <AccessRolePill role={grant.role} />
-                      </div>
-                      {creatorGrant ? (
-                        <span className="text-[13px] text-[var(--dls-text-secondary)]">Creator</span>
-                      ) : (
-                        <>
-                          <p className="text-[11.5px] text-gray-400">
-                            shared by {sharedBy} · {formatAccessDate(grant.createdAt)}
-                          </p>
-                          <div className="flex w-full justify-end md:w-auto">
-                            <DenButton
-                              size="sm"
-                              variant="destructive"
-                              disabled={busy}
-                              onClick={() => void handleRevoke(grant.id)}
-                            >
-                              Revoke
-                            </DenButton>
-                          </div>
-                        </>
                       )}
-                    </div>
+                      testId="plugin-access-person"
+                    />
                   );
                 })}
 
@@ -405,36 +381,28 @@ export function PluginAccessSection({
                     ? "you"
                     : membersById.get(grant.createdByOrgMembershipId)?.user.name ?? "an organization member";
                   return (
-                    <div key={grant.id} className="flex flex-col gap-3 px-4 py-4 md:flex-row md:flex-wrap md:items-center md:px-6 md:py-3.5">
-                      <div className="flex w-full min-w-0 items-start gap-3 md:w-auto md:min-w-[220px] md:flex-1 md:items-center">
-                        <div className="min-w-0 flex-1">
-                          {team ? (
-                            <TeamIdentity name={team.name} memberCount={team.memberIds.length} />
-                          ) : (
-                            <p className="text-[13px] font-medium text-gray-500">Removed team</p>
-                          )}
+                    <AccessRow
+                      key={grant.id}
+                      title={team ? <TeamIdentity name={team.name} memberCount={team.memberIds.length} /> : "Removed team"}
+                      description={`Shared by ${sharedBy} · ${formatAccessDate(grant.createdAt)}`}
+                      trailing={(
+                        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                          <AccessRolePill role={grant.role} />
+                          <RemoveButton
+                            label={`Revoke access for ${team?.name || "removed team"}`}
+                            actionLabel="Revoke"
+                            disabled={disabled}
+                            onClick={() => void handleRevoke(grant.id)}
+                          />
                         </div>
-                        <AccessRolePill role={grant.role} />
-                      </div>
-                      <p className="text-[11.5px] text-gray-400">
-                        shared by {sharedBy} · {formatAccessDate(grant.createdAt)}
-                      </p>
-                      <div className="flex w-full justify-end md:w-auto">
-                        <DenButton
-                          size="sm"
-                          variant="destructive"
-                          disabled={busy}
-                          onClick={() => void handleRevoke(grant.id)}
-                        >
-                          Revoke
-                        </DenButton>
-                      </div>
-                    </div>
+                      )}
+                      testId="plugin-access-team"
+                    />
                   );
                 })}
 
                 {!hasGrantsBeyondCreator ? (
-                  <div className="px-6 py-3.5">
+                  <div className="py-3">
                     <div className="rounded-xl border border-dashed border-gray-200 px-5 py-5 text-center">
                       <p className="text-[13px] font-medium text-gray-900">Only you can use this plugin</p>
                       <p className="mt-1 text-[12px] text-gray-500">
@@ -444,17 +412,17 @@ export function PluginAccessSection({
                   </div>
                 ) : null}
 
-                <div className="flex flex-wrap items-center gap-2 px-6 py-3.5">
+                <div className="flex flex-wrap items-center gap-2 py-3">
                   <AccessAddPicker
                     kind="person"
                     candidates={memberCandidates}
-                    disabled={busy}
+                    disabled={disabled}
                     onGrant={grantPerson}
                   />
                   <AccessAddPicker
                     kind="team"
                     candidates={teamCandidates}
-                    disabled={busy}
+                    disabled={disabled}
                     onGrant={grantTeam}
                   />
                 </div>

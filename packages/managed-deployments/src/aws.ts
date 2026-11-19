@@ -2,7 +2,7 @@ import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
 // Self-reference, not "./schema.js": den-api loads this package's TypeScript
 // source at runtime, where only package exports resolve to the .ts files.
-import { awsRegionSchema, type AwsTarget } from "@openwork/managed-deployments/schema"
+import { assistantsEnabled, awsRegionSchema, gatewayAssistants, type AwsSignIn, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
  * AWS adapter: bootstrap (CloudFormation), naming shared with the Terraform
@@ -22,6 +22,22 @@ export function healthRoleName(deploymentId: string) {
 }
 export function consoleUrl(deploymentId: string, region: string) {
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks?filteringText=${stackName(deploymentId)}`
+}
+
+export function cloudShellUrl(region: string) {
+  return `https://${region}.console.aws.amazon.com/cloudshell/home?region=${region}`
+}
+
+/**
+ * Opens an AWS console page through the organization's access portal: the
+ * portal signs the person in to this account with the saved role, or asks them
+ * to choose one, then goes to the page. Without a saved sign-in the console
+ * page is returned as it is.
+ */
+export function throughAccessPortal(destination: string, accountId: string, signIn: AwsSignIn | null) {
+  if (!signIn) return destination
+  const params = new URLSearchParams({ account_id: accountId, ...(signIn.roleName ? { role_name: signIn.roleName } : {}), destination })
+  return `${signIn.portalUrl}/#/console?${params}`
 }
 
 // ---- Identity proof: a signed, unsent STS GetCallerIdentity request ----
@@ -94,6 +110,22 @@ export type AwsLaunch = {
   runId: string
   challenge: string
   target: AwsTarget
+  /** Explicitly configured runs also send false/empty values to disable an installed runner. */
+  includeAssistantParameters?: boolean
+  /** Omit on untouched historical records whose installer template predates runtime profiles. */
+  includeRuntimeProfileParameter?: boolean
+  /**
+   * Default true. False only for a configuration change of a record stored without
+   * `network`: it was created before network choice existed, when the installer
+   * template had no network parameters. Every template that has them defaults to
+   * the dedicated network such a record uses, so omitting them changes nothing.
+   */
+  includeNetworkParameters?: boolean
+  /**
+   * The command first asks OpenWork whether this run is still the approval to apply,
+   * and stops before `update-stack` when it is not. Configuration changes only.
+   */
+  approvalCheck?: boolean
   domainName: string
   ownerEmail: string
   size: string
@@ -109,12 +141,29 @@ function networkParameters(network: AwsTarget["network"]) {
 }
 
 function launchParameters(input: AwsLaunch) {
+  const gateway = input.target.runtimeProfile === "gateway"
+  const assistants = gateway ? gatewayAssistants(input.target.assistants) : input.target.assistants
   return {
     DeploymentId: input.deploymentId, RunId: input.runId, Challenge: input.challenge,
     ExpectedAccountId: input.target.accountId, ControlPlaneOrigin: input.release.apiOrigin,
     BundleUrl: input.release.bundleUrl, BundleSha256: input.release.bundleSha256, OpenWorkVersion: input.release.version,
     DomainName: input.domainName, Route53ZoneId: input.target.route53ZoneId, OwnerEmail: input.ownerEmail, Size: input.size,
-    ...networkParameters(input.target.network),
+    ...((input.includeNetworkParameters ?? true) ? networkParameters(input.target.network) : {}),
+    ...((input.includeRuntimeProfileParameter ?? gateway) ? { ManagedRuntimeProfile: input.target.runtimeProfile } : {}),
+    ...((gateway || (input.includeAssistantParameters ?? assistantsEnabled(assistants))) ? {
+      HeadlessRunnerEnabled: String(assistants.headlessRunnerEnabled),
+      WorkbotEnabled: String(assistants.workbotEnabled),
+      SlackAssistantEnabled: String(assistants.slackAssistantEnabled),
+      HeadlessModelProtocol: assistants.modelProtocol ?? "anthropic",
+      HeadlessModelBaseUrl: assistants.modelBaseUrl ?? "",
+      HeadlessModel: assistants.model ?? "",
+      HeadlessModelSecretArn: assistants.modelSecretArn ?? "",
+      HeadlessComputerProvider: assistants.computerProvider,
+      HeadlessComputerSecretArn: assistants.computerProvider === "off" ? "" : assistants.computerSecretArn ?? "",
+      HeadlessComputerSnapshot: assistants.computerProvider === "daytona" ? assistants.computerSnapshot ?? "" : "",
+      DaytonaApiUrl: assistants.daytonaApiUrl ?? "https://app.daytona.io/api",
+      DaytonaTarget: assistants.daytonaTarget ?? "us",
+    } : {}),
   }
 }
 
@@ -130,16 +179,31 @@ function quoteShell(value: string) {
   return `'${value.replaceAll("'", `'\\''`)}'`
 }
 
+/** Where the approval command confirms a configuration change before it updates the stack. */
+export function approvalCheckUrl(apiOrigin: string, deploymentId: string, runId: string) {
+  return `${apiOrigin.replace(/\/+$/, "")}/v1/managed-deployments/${deploymentId}/runs/${runId}/approval-check`
+}
+
 /**
- * Updates the existing installer stack with a new run (retry or approved
- * version update). Refuses to run against any other AWS account.
+ * Updates the existing installer stack with a new run (retry, approved version
+ * update or configuration change). Refuses to run against any other AWS account.
+ * With `approvalCheck`, any answer but OpenWork's own 200 ends the command
+ * before `update-stack`. The stack update is always the last step, and its
+ * `--parameters` value is the literal JSON.
  */
 export function updateStackCommand(input: AwsLaunch) {
   const parameters = Object.entries(launchParameters(input)).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue }))
   const check = `[ "$(aws sts get-caller-identity --query Account --output text)" = ${quoteShell(input.target.accountId)} ] || { echo "Switch to AWS account ${input.target.accountId}." >&2; exit 1; }`
+  // Only OpenWork's own 200 lets the command continue: a refusal, a redirect, a timeout, a proxy's
+  // answer or a missing curl all leave the status something else, and curl follows no redirect.
+  const confirm = [
+    `_openwork_approval_status=$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' --request POST --header 'content-type: application/json'`,
+    "--data", quoteShell(JSON.stringify({ challenge: input.challenge })), `${quoteShell(approvalCheckUrl(input.release.apiOrigin, input.deploymentId, input.runId))}) && [ "$_openwork_approval_status" = 200 ]`,
+  ].join(" ")
+  const refused = `{ echo "OpenWork did not confirm this approval, so this command changed nothing. Open the deployment in OpenWork and copy its current command." >&2; false; }`
   const update = [
     "aws cloudformation update-stack", "--region", quoteShell(input.target.region), "--stack-name", quoteShell(stackName(input.deploymentId)),
     "--template-url", quoteShell(input.release.templateUrl), "--capabilities CAPABILITY_NAMED_IAM", "--parameters", quoteShell(JSON.stringify(parameters)),
   ].join(" ")
-  return `${check} && ${update}`
+  return input.approvalCheck ? `${check} && { ${confirm} || ${refused}; } && ${update}` : `${check} && ${update}`
 }

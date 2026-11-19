@@ -2,32 +2,103 @@
 
 import { Button } from "@base-ui/react/button";
 import { Select } from "@base-ui/react/select";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { BookmarkCheck, ChevronDown, MessageSquareText, MousePointerClick, Pause, Play, Presentation, RotateCw, X } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { z } from "zod";
-import { browserInputLabel, browserSkillInputs, browserSkillRunPrompt, compileBrowserDemonstration, demonstrationStepLabel, demonstrationReplySchema, type BrowserDemonstration, type BrowserTeachingContext, type DemonstrationCommand, type DemonstrationStep } from "@openwork/types/browser-demonstration";
+import { browserInputLabel, browserSkillInputs, browserSkillRunPrompt, compileBrowserDemonstration, demonstrationStepGroups, demonstrationStepLabel, demonstrationReplySchema, type BrowserDemonstration, type BrowserTeachingContext, type DemonstrationCommand, type DemonstrationStep } from "@openwork/types/browser-demonstration";
 import { skillCreatedPayloadSchema, type SkillCreatedPayload } from "@openwork/types/skill-created-app";
 import { errorMessage, workbotHost, useRetainedSurface } from "./host";
 
 const button = "inline-flex h-8 items-center justify-center rounded-lg px-3 text-[13px] font-medium text-[var(--wb-text)] hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:shadow-[var(--wb-focus)]";
+const primary = "inline-flex h-8 items-center justify-center rounded-lg bg-[var(--wb-ink)] px-3 text-[13px] font-medium text-[var(--wb-on-ink)] hover:opacity-90 disabled:opacity-50 focus-visible:shadow-[var(--wb-focus)]";
+const iconButton = "relative grid size-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] disabled:opacity-50 aria-pressed:bg-[var(--wb-chip)] aria-pressed:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 const input = "w-full rounded-lg border border-[var(--wb-hairline)] bg-[var(--wb-surface)] px-3 py-2 text-[13px] text-[var(--wb-text)] focus-visible:shadow-[var(--wb-focus)]";
+const footer = "flex shrink-0 items-center gap-1 border-t border-[var(--wb-hairline)] px-3 py-2.5";
+const stepRow = `${button} h-auto min-h-7 w-full justify-start gap-2 py-1 text-left font-normal`;
+const stepNumber = "min-w-5 shrink-0 text-right tabular-nums text-[var(--wb-muted)]";
+const heading = "text-[12px] font-medium text-[var(--wb-muted)]";
 const saveSchema = z.object({ saved: skillCreatedPayloadSchema, markdown: z.string() });
 const identifier = (label: string) => label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 
-/** The same production panel is used beside the live browser and in its UI journey. */
-export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspended = false }: { suspended?: boolean; onTakeControl(): void; onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void> }) {
+/**
+ * Where the teaching window floats over the Browser view: top right, under the toolbar's Teach control, and short enough
+ * to stay clear of the workspace chat docked bottom right.
+ */
+export const TEACHING_WINDOW_PLACEMENT = "absolute right-3 top-3 z-10 flex max-h-[min(28rem,max(15rem,calc(100%-13rem)))] w-[min(22rem,calc(100%-24px))] flex-col";
+
+const STAGES = ["Choose tab", "Show", "Review", "Saved"] as const;
+const GUIDE = [
+  { icon: MousePointerClick, title: "Teach by showing", body: "Do a browser task once while Workbot watches. Each click, entry and page you open becomes a step it can repeat for you." },
+  { icon: MessageSquareText, title: "Explain as you go", body: "Tell Workbot in chat why a step matters or what changes each time. Select information marks what it should bring back." },
+  { icon: BookmarkCheck, title: "Save a private skill", body: "Review the steps, name the skill and save it for yourself. Values you enter and page addresses aren't saved; each run asks for them." },
+] as const;
+const GUIDE_KEY = "workbot.teachingGuide";
+
+function guideDismissed() {
+  try {
+    return window.localStorage.getItem(GUIDE_KEY) === "hidden";
+  } catch {
+    return false;
+  }
+}
+
+function dismissGuide() {
+  try {
+    window.localStorage.setItem(GUIDE_KEY, "hidden");
+  } catch {
+    // Storage off: the guide shows again after a reload, which is harmless.
+  }
+}
+
+/** The Browser view's tab strip, when the page stream draws one: its tabs in their places, and the one on screen. */
+export type TeachingLiveTabs = { frontId: string; tabs: Array<{ id: string; label: string }> };
+
+/**
+ * The Browser view's quiet toolbar control for teaching: a whiteboard that opens the teaching window, with a dot while
+ * a demonstration records.
+ */
+export function TeachButton({ open, recording, suspended = false, onClick }: { open: boolean; recording: boolean; suspended?: boolean; onClick(): void }) {
+  const label = suspended ? "Resume the computer to teach Workbot" : recording ? "Teach Workbot, recording" : "Teach Workbot";
+  return <Button className={iconButton} aria-label="Teach Workbot" title={label} aria-pressed={open} disabled={suspended && !open} onClick={onClick}>
+    <Presentation size={16} strokeWidth={1.5} aria-hidden />
+    {recording ? <span aria-hidden className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-[var(--wb-danger)] ring-2 ring-[var(--wb-bg)]" /> : null}
+  </Button>;
+}
+
+/**
+ * The teaching window, floating over the browser so the page keeps its space. The same production window is used beside
+ * the live browser and in its UI journey; it stays mounted while closed, so a demonstration and its review fields
+ * survive closing it or switching views. With `liveTabs`, tabs are named and ordered as in the tab strip, teaching
+ * starts on the tab on screen unless another is chosen, and `onShowTab` brings the taught tab back to the front.
+ * Before anything is taught it opens on a short guide until the person hides it; Show later hides it until Workbot is
+ * opened again, Don't show again remembers that in this browser. One action repeated in a row reads as one line that
+ * opens to its steps. A saved skill leads with trying it; Edit skill goes back to review and saves its next version.
+ * `onResume` wakes a paused browser, which teaching, saving and running all need.
+ */
+export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingChange, onRun, suspended = false, onResume, liveTabs, onShowTab }: { open: boolean; onOpenChange(open: boolean): void; suspended?: boolean; onResume?(): void; onTakeControl(): void; onTeachingChange?(context: BrowserTeachingContext | undefined): void; onRun?(text: string): void | Promise<void>; liveTabs?: TeachingLiveTabs; onShowTab?(id: string): void }) {
   const host = workbotHost();
   const [demo, setDemo] = useState<BrowserDemonstration | null>(null);
-  const [tabs, setTabs] = useState<Array<{ id: string; origin: string }>>([]);
-  const [tab, setTab] = useState("");
+  const [listed, setTabs] = useState<Array<{ id: string; origin: string }>>([]);
+  // Empty: the tab on screen, or the browser's most recent one.
+  const [chosen, setTab] = useState("");
   const [tabPickerOpen, setTabPickerOpen] = useState(false);
   const tabSurface = useRetainedSurface(tabPickerOpen && !suspended && host.browserDemonstrations === true);
-  const [opened, setOpened] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [guideHidden, setGuideHidden] = useState(guideDismissed);
+  const [guideCard, setGuideCard] = useState(0);
+  const bodyId = useId();
+  const runFormId = useId();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
   const [saved, setSaved] = useState<SkillCreatedPayload | null>(null);
+  const [savedMarkdown, setSavedMarkdown] = useState("");
+  // Editing a skill after it was saved: back in review, and the next save is that skill's next version.
+  const [revising, setRevising] = useState(false);
+  const [ran, setRan] = useState(false);
+  const [openGroups, setOpenGroups] = useState<ReadonlySet<number>>(new Set());
   const [runValues, setRunValues] = useState<Record<string, string>>({});
   const [stepId, setStepId] = useState<number | null>(null);
   const [explanation, setExplanation] = useState("");
@@ -36,17 +107,32 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
   const mounted = useRef(true);
   const inFlight = useRef(false);
   const changes = useRef(0);
+  const body = useRef<HTMLDivElement>(null);
+  const openChange = useRef(onOpenChange);
+  openChange.current = onOpenChange;
   const selected = demo?.steps.find(step => step.id === stepId);
   const focused = selected ?? demo?.steps.at(-1);
-  const focusedLabel = focused ? demonstrationStepLabel(focused) : "Task instructions";
+  const groups = demo ? demonstrationStepGroups(demo.steps) : [];
+  const labelOf = (step: DemonstrationStep) => groups.find(group => group.steps.includes(step))?.label ?? demonstrationStepLabel(step);
+  const focusedLabel = focused ? labelOf(focused) : "Task instructions";
+  const done = saved !== null && !revising;
+  // The browser lists tabs most recently used first; the strip keeps them where they opened.
+  const strip = new Map(liveTabs?.tabs.map((item, index) => [item.id, { label: item.label, place: index }]));
+  const tabs = liveTabs ? [...listed].sort((a, b) => (strip.get(a.id)?.place ?? Infinity) - (strip.get(b.id)?.place ?? Infinity)) : listed;
+  const tabLabel = (item: { id: string; origin: string }, index: number) => {
+    const shown = strip.get(item.id)?.label ?? `${item.origin === "null" ? "Blank page" : item.origin} · Tab ${index + 1}`;
+    return item.id === liveTabs?.frontId ? `${shown} (on screen)` : shown;
+  };
+  const tab = chosen || (liveTabs && listed.some(item => item.id === liveTabs.frontId) ? liveTabs.frontId : listed[0]?.id ?? "");
+  const taughtTab = demo && demo.phase !== "draft" && liveTabs ? liveTabs.tabs.find(item => item.id === demo.tabId) : undefined;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; onTeachingChange?.(undefined); }; }, [onTeachingChange]);
   useEffect(() => {
-    onTeachingChange?.(demo && !saved && host.browserDemonstrations ? { id: demo.id, phase: demo.phase, ...(selected ? { stepId: selected.id } : {}), label: selected ? `Step ${selected.id}: ${focusedLabel}` : `Latest step: ${focusedLabel}` } : undefined);
-  }, [demo?.id, demo?.phase, selected?.id, focusedLabel, saved, host.browserDemonstrations, onTeachingChange]);
+    onTeachingChange?.(demo && !done && host.browserDemonstrations ? { id: demo.id, phase: demo.phase, ...(selected ? { stepId: selected.id } : {}), label: selected ? `Step ${selected.id}: ${focusedLabel}` : `Latest step: ${focusedLabel}` } : undefined);
+  }, [demo?.id, demo?.phase, selected?.id, focusedLabel, done, host.browserDemonstrations, onTeachingChange]);
   const accept = useCallback((payload: unknown) => {
     const reply = demonstrationReplySchema.parse(payload);
     setDemo(reply.demonstration);
-    if (reply.tabs) { setTabs(reply.tabs); setTab(current => reply.tabs?.some(tab => tab.id === current) ? current : reply.tabs?.[0]?.id ?? ""); }
+    if (reply.tabs) { setTabs(reply.tabs); setTab(current => reply.tabs?.some(tab => tab.id === current) ? current : ""); }
     return reply;
   }, []);
   useEffect(() => {
@@ -56,7 +142,8 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
     void host.requestJson("/v1/workbot/teaching", { method: "POST", body: JSON.stringify({ action: "read" }), signal: controller.signal }, 30_000).then(({ response, payload }) => {
       if (!mounted.current || controller.signal.aborted || revision !== changes.current || !response.ok) return;
       const reply = accept(payload);
-      if (reply.demonstration) setOpened(true);
+      // A demonstration already under way opens its window again.
+      if (reply.demonstration) openChange.current(true);
     }).catch(() => { /* Opening an older desktop keeps the explicit Teach control available. */ });
     return () => controller.abort();
   }, [host, accept, suspended]);
@@ -74,13 +161,20 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
       if (!mounted.current) return;
       const reply = accept(payload);
       if (body.action === "start" || body.action === "resume") onTakeControl();
-      if (body.action === "discard") { setSaved(null); setStepId(null); setName(""); setPurpose(""); setRunValues({}); }
+      if (body.action === "discard") { setSaved(null); setSavedMarkdown(""); setRevising(false); setRan(false); setOpenGroups(new Set()); setStepId(null); setName(""); setPurpose(""); setRunValues({}); }
       return reply;
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Teaching is unavailable."); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
+  const enabled = host.browserDemonstrations === true && !host.documentAuthorization && !suspended;
+  // Opening the window shows it whole; with nothing being taught, it lists the tabs to choose from.
   useEffect(() => {
-    if ((!opened && !demo) || !host.browserDemonstrations || host.documentAuthorization || suspended) return;
+    if (!open) return;
+    setCollapsed(false);
+    if (!demo && enabled) void command({ action: "tabs" });
+  }, [open]);
+  useEffect(() => {
+    if ((!open && !demo) || !host.browserDemonstrations || host.documentAuthorization || suspended) return;
     let disposed = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -97,21 +191,40 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
     };
     timer = setTimeout(() => void poll(), 3000);
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [opened, host, accept, demo?.id, suspended]);
+  }, [open, host, accept, demo?.id, suspended]);
+  // While recording, keep the newest step in view as it arrives.
+  useEffect(() => {
+    const container = body.current, row = container?.querySelector<HTMLElement>("[data-latest-step]");
+    if (!container || !row || demo?.phase !== "recording" || stepId !== null) return;
+    const bottom = row.offsetTop + row.offsetHeight - container.clientHeight + 12;
+    if (container.scrollTop < bottom) container.scrollTop = bottom;
+  }, [demo?.steps.length, demo?.phase, stepId, collapsed]);
+  // Finishing moves on to naming the skill, which sits below the steps in a short window.
+  const nameInput = useRef<HTMLInputElement>(null);
+  const lastPhase = useRef(demo?.phase);
+  useEffect(() => {
+    const finished = demo?.phase === "draft" && (lastPhase.current === "recording" || lastPhase.current === "paused");
+    lastPhase.current = demo?.phase;
+    if (finished && !collapsed) { nameInput.current?.scrollIntoView({ block: "nearest" }); nameInput.current?.focus({ preventScroll: true }); }
+  }, [demo?.phase, collapsed]);
   const save = async () => {
     if (!demo || inFlight.current) return;
     inFlight.current = true; changes.current++; setBusy(true); setError(null);
     try {
-      const { response, payload } = await host.requestJson("/v1/workbot/teaching", { method: "POST", body: JSON.stringify({ action: "save", demonstrationId: demo.id, name, purpose }) }, 60_000);
+      const { response, payload } = await host.requestJson("/v1/workbot/teaching", { method: "POST", body: JSON.stringify({ action: "save", demonstrationId: demo.id, name, purpose, ...(saved ? { skillId: saved.skillId } : {}) }) }, 60_000);
       if (!response.ok) throw new Error(errorMessage(payload, "Couldn't confirm the save. Check your skill library before trying again."));
-      if (mounted.current) setSaved(saveSchema.parse(payload).saved);
+      if (!mounted.current) return;
+      const reply = saveSchema.parse(payload);
+      setSaved(reply.saved); setSavedMarkdown(reply.markdown); setRevising(false); setRan(false); setStepId(null);
+      // The saved view starts at trying the skill, not where the review was scrolled to.
+      if (body.current) body.current.scrollTop = 0;
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Couldn't confirm the save."); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
   const run = async () => {
     if (!demo || !saved || !onRun || inFlight.current) return;
     inFlight.current = true; setBusy(true); setError(null);
-    try { await onRun(browserSkillRunPrompt(saved.name, demo, runValues)); }
+    try { await onRun(browserSkillRunPrompt(saved.name, demo, runValues)); if (mounted.current) setRan(true); }
     catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Couldn't start the run. Your inputs are still here."); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
@@ -120,69 +233,145 @@ export function WorkbotTeaching({ onTakeControl, onTeachingChange, onRun, suspen
     try { preview = compileBrowserDemonstration(demo, name, purpose); }
     catch (error) { previewError = error instanceof Error ? error.message : "Review the recorded steps before saving."; }
   }
-  const enabled = host.browserDemonstrations === true && !host.documentAuthorization && !suspended;
   const conflict = selected && (selected.revision ?? 0) !== editingRevision;
   const variableName = identifier(variable);
   const needsVariable = selected?.parameter || selected?.field;
-  return <section aria-label="Teach Workbot" className="flex min-h-0 w-full flex-col border-b border-[var(--wb-hairline)] bg-[var(--wb-bg)] text-[var(--wb-text)]" data-testid="workbot-teaching">
-    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-      <Button className={button} disabled={!enabled || busy} onClick={() => { setOpened(current => !current); if (!opened) void command({ action: "tabs" }); }} aria-expanded={opened}>{suspended ? "Teaching paused · Resume the computer" : "Teach Workbot"}</Button>
-      {(opened || demo) && <span role="status" className="text-[12px] text-[var(--wb-muted)]">{saved ? "Saved · No run verified" : demo ? `${demo.phase === "recording" ? "Recording" : demo.phase === "paused" ? "Paused" : "Reviewing"} · ${demo.steps.length} steps` : "No demonstration"}</span>}
+  const status = suspended ? "Computer paused" : done ? "Saved" : demo ? ({ recording: "Recording", paused: "Paused", draft: "Reviewing" } as const)[demo.phase] : null;
+  const guiding = !demo && !guideHidden;
+  const stage = done ? 3 : !demo ? 0 : demo.phase === "draft" ? 2 : 1;
+  const card = GUIDE[guideCard] ?? GUIDE[0];
+  const CardIcon = card.icon;
+  const closeGuide = (forever: boolean) => { if (forever) dismissGuide(); setGuideHidden(true); setGuideCard(0); };
+  const inputs = demo && done ? browserSkillInputs(demo) : [];
+  const row = (step: DemonstrationStep, label: string) => {
+    const text = <span className="min-w-0 flex-1"><span className="line-clamp-2 break-words">{label}</span>{step.explanation ? <span className="block truncate text-[12px] text-[var(--wb-muted)]">{step.explanation.split("\n").at(-1)}</span> : null}</span>;
+    // A saved skill's steps are for reading; Edit skill makes them selectable again.
+    return done ? <div className="flex min-h-7 items-start gap-2 px-3 py-1 text-[13px]" title={label}><span className={stepNumber}>{step.id}.</span>{text}</div>
+      : <Button className={`${stepRow} ${stepId === step.id ? "bg-[var(--wb-chip)]" : ""}`} aria-pressed={stepId === step.id} title={label} onClick={() => chooseStep(step)}><span className={stepNumber}>{step.id}.</span>{text}</Button>;
+  };
+  const steps = !demo ? null : demo.steps.length ? <ol className="flex flex-col" aria-label="Demonstrated steps">{groups.map((group, index) => {
+    const first = group.steps[0], last = group.steps.at(-1);
+    if (!first || !last) return null;
+    const latest = index === groups.length - 1 ? { "data-latest-step": "" } : {};
+    if (group.steps.length === 1) return <li key={first.id} {...latest}>{row(first, group.label)}</li>;
+    const expanded = openGroups.has(first.id);
+    const note = [...group.steps].reverse().find(step => step.explanation)?.explanation.split("\n").at(-1);
+    return <li key={first.id} {...latest}>
+      <Button className={stepRow} aria-expanded={expanded} title={group.label} onClick={() => setOpenGroups(current => { const next = new Set(current); if (!next.delete(first.id)) next.add(first.id); return next; })}>
+        <span className={stepNumber}>{first.id}–{last.id}.</span>
+        <span className="min-w-0 flex-1"><span className="line-clamp-2 break-words">{group.label}</span>{!expanded && note ? <span className="block truncate text-[12px] text-[var(--wb-muted)]">{note}</span> : null}</span>
+        <span className="shrink-0 rounded-full bg-[var(--wb-chip)] px-1.5 py-0.5 text-[11px] tabular-nums text-[var(--wb-muted)]">{group.steps.length} times</span>
+        <ChevronDown size={14} strokeWidth={1.5} aria-hidden className={`shrink-0 text-[var(--wb-muted)] transition-transform duration-150 ease-out motion-reduce:transition-none ${expanded ? "" : "-rotate-90"}`} />
+      </Button>
+      {expanded && <ol className="ml-4 flex flex-col border-l border-[var(--wb-hairline)] pl-1" aria-label={`${group.label}, each time`}>{group.steps.map(step => <li key={step.id}>{row(step, group.label)}</li>)}</ol>}
+    </li>;
+  })}</ol> : <p className="text-[13px] text-[var(--wb-muted)]">No steps yet. What you do on the page appears here.</p>;
+  if (!open) return null;
+  return <section aria-label="Teach Workbot" data-testid="workbot-teaching" className="workbot-fade-in flex max-h-full w-[min(22rem,100%)] flex-col overflow-hidden rounded-xl bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)]">
+    <div className="flex h-11 shrink-0 items-center gap-2 pl-3 pr-1.5">
+      <Presentation size={16} strokeWidth={1.5} aria-hidden className="shrink-0 text-[var(--wb-muted)]" />
+      <h2 className="min-w-0 truncate text-[13px] font-semibold">Teach Workbot</h2>
+      <span role="status" className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-[12px] text-[var(--wb-muted)]">
+        {demo?.phase === "recording" && !done && !suspended ? <span aria-hidden className="size-1.5 rounded-full bg-[var(--wb-danger)]" /> : null}{status}
+      </span>
+      <Button className={iconButton} aria-label={collapsed ? "Expand teaching" : "Collapse teaching"} title={collapsed ? "Expand" : "Collapse"} aria-expanded={!collapsed} aria-controls={bodyId} onClick={() => setCollapsed(current => !current)}>
+        <ChevronDown size={16} strokeWidth={1.5} aria-hidden className={`transition-transform duration-150 ease-out motion-reduce:transition-none ${collapsed ? "-rotate-90" : ""}`} />
+      </Button>
+      <Button className={iconButton} aria-label="Hide teaching" title={demo && demo.phase !== "draft" ? "Hide (teaching continues)" : "Hide"} onClick={() => onOpenChange(false)}><X size={16} strokeWidth={1.5} aria-hidden /></Button>
     </div>
-    {opened && <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto px-4 pb-4">
+    {collapsed && demo && !done ? <p className="truncate px-3 pb-3 text-[12px] text-[var(--wb-muted)]">{selected ? `Step ${selected.id}` : "Latest step"}: {focusedLabel}</p> : null}
+    {!collapsed && !guiding && <ol aria-label="Teaching progress" className="grid shrink-0 grid-cols-4 gap-1.5 px-3 pb-2.5">
+      {STAGES.map((label, index) => <li key={label} aria-current={index === stage ? "step" : undefined} className={`flex min-w-0 flex-col gap-1 text-[11px] ${index === stage ? "font-medium text-[var(--wb-text)]" : index < stage ? "text-[var(--wb-muted)]" : "text-[var(--wb-faint)]"}`}>
+        <span aria-hidden className={`h-[3px] rounded-full transition-colors duration-200 motion-reduce:transition-none ${index <= stage ? "bg-[var(--wb-ink)]" : "bg-[var(--wb-chip)]"}`} />
+        <span className="truncate">{label}</span>
+      </li>)}
+    </ol>}
+    {/* Keep the ARIA target mounted while collapsed, but unmount its contents as before. */}
+    <div id={bodyId} ref={body} hidden={collapsed} className={collapsed ? "hidden" : "relative flex min-h-0 flex-col gap-2.5 overflow-y-auto border-t border-[var(--wb-hairline)] p-3"}>
+      {!collapsed && <>
       {error && <p role="alert" className="text-[13px]">{error}</p>}
       {syncError && <p role="status" className="text-[13px]">{syncError}</p>}
-      {demo?.notice && <p role="status" className="text-[13px]">{demo.notice}</p>}
-      {!demo ? <>
-        <div className="text-[13px]">
-          <span>Browser tab</span>
-          <Select.Root items={tabs.map((item, index) => ({ value: item.id, label: `${item.origin === "null" ? "Blank page" : item.origin} · Tab ${index + 1}` }))} value={tab || null} onValueChange={value => setTab(value ?? "")} disabled={busy || !enabled} open={tabSurface.open} onOpenChange={value => { if (!tabSurface.blocked) setTabPickerOpen(value); }}>
-            <Select.Trigger aria-label="Tab to teach" className={`${input} text-left`}><Select.Value placeholder="Choose a browser tab" /></Select.Trigger>
+      {demo?.notice && !done && <p role="status" className="text-[13px]">{demo.notice}</p>}
+      {suspended && !guiding && <p role="status" className="flex flex-wrap items-center gap-2 text-[13px]">The browser is paused. Resume it to {done ? "run this skill" : demo ? "keep going" : "teach Workbot"}.{onResume && <Button className={`${button} bg-[var(--wb-chip)]`} onClick={onResume}>Resume browser</Button>}</p>}
+      {taughtTab && taughtTab.id !== liveTabs?.frontId && <p role="status" className="flex flex-wrap items-center gap-2 text-[13px]">Only “{taughtTab.label}” is recorded, not the tab on screen.{onShowTab && <Button className={button} onClick={() => onShowTab(taughtTab.id)}>Show taught tab</Button>}</p>}
+      {guiding ? <div role="group" aria-label="How teaching works" className="flex flex-col gap-3 py-1">
+        <div key={guideCard} className="workbot-fade-in flex flex-col gap-2" aria-live="polite">
+          <span aria-hidden className="grid size-10 place-items-center rounded-xl bg-[var(--wb-chip)] text-[var(--wb-text)]"><CardIcon size={18} strokeWidth={1.5} /></span>
+          <p className="pt-1 text-[11px] font-medium text-[var(--wb-muted)]">{guideCard + 1} of {GUIDE.length}</p>
+          <h3 className="text-[15px] font-semibold leading-5">{card.title}</h3>
+          <p className="text-[13px] leading-5 text-[var(--wb-muted)]">{card.body}</p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {GUIDE.map((item, index) => <button key={item.title} type="button" aria-label={`Show “${item.title}”`} aria-current={index === guideCard ? "step" : undefined} onClick={() => setGuideCard(index)} className={`h-1.5 rounded-full transition-[width,background-color] duration-200 motion-reduce:transition-none focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] ${index === guideCard ? "w-4 bg-[var(--wb-ink)]" : "w-1.5 bg-[var(--wb-disabled)] hover:bg-[var(--wb-muted)]"}`} />)}
+        </div>
+      </div> : !demo ? <>
+        <div className="flex flex-col gap-1.5 text-[13px]">
+          <span className="font-medium">Browser tab</span>
+          <Select.Root items={tabs.map((item, index) => ({ value: item.id, label: tabLabel(item, index) }))} value={tab || null} onValueChange={value => setTab(value ?? "")} disabled={busy || !enabled} open={tabSurface.open} onOpenChange={value => { if (!tabSurface.blocked) setTabPickerOpen(value); }}>
+            <Select.Trigger aria-label="Tab to teach" className={`${input} truncate text-left`}><Select.Value placeholder="Choose a browser tab" /></Select.Trigger>
             <Select.Portal {...tabSurface.portal}>
               <Select.Positioner sideOffset={4} collisionPadding={8} alignItemWithTrigger={false} className="z-50">
                 <Select.Popup className="workbot w-[var(--anchor-width)] max-w-[var(--available-width)] rounded-lg bg-[var(--wb-surface)] p-1 text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)]">
-                  <Select.List className="max-h-[var(--available-height)] overflow-y-auto">{tabs.map((item, index) => <Select.Item key={item.id} value={item.id} className={`${button} w-full justify-start data-[highlighted]:bg-[var(--wb-chip)]`}><Select.ItemText>{item.origin === "null" ? "Blank page" : item.origin} · Tab {index + 1}</Select.ItemText></Select.Item>)}</Select.List>
+                  <Select.List className="max-h-[var(--available-height)] overflow-y-auto">{tabs.map((item, index) => <Select.Item key={item.id} value={item.id} className={`${button} w-full justify-start data-[highlighted]:bg-[var(--wb-chip)]`}><Select.ItemText className="truncate">{tabLabel(item, index)}</Select.ItemText></Select.Item>)}</Select.List>
                 </Select.Popup>
               </Select.Positioner>
             </Select.Portal>
           </Select.Root>
         </div>
-        <div className="flex gap-2"><Button className={`${button} bg-[var(--wb-chip)]`} disabled={!enabled || busy || !tab} onClick={() => void command({ action: "start", tabId: tab })}>Start teaching</Button><Button className={button} disabled={!enabled || busy} onClick={() => void command({ action: "tabs" })}>Refresh tabs</Button></div>
-        <details className="text-[12px] text-[var(--wb-muted)]"><summary className="cursor-pointer">What is saved</summary><p className="pt-2">Steps and your explanations become a private skill after you review it. Entered values and navigation addresses are omitted. You provide a public starting page when running it.</p></details>
+        <p className="text-[12px] text-[var(--wb-muted)]">Do the task on this tab and Workbot records each step. <Button className="underline underline-offset-2 hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" onClick={() => { setGuideCard(0); setGuideHidden(false); }}>How teaching works</Button></p>
       </> : <>
-        {demo.phase !== "draft" && <div className="flex flex-wrap gap-1">
-          <Button className={button} disabled={!enabled || busy} onClick={() => void command({ action: demo.phase === "recording" ? "pause" : "resume" })}>{demo.phase === "recording" ? "Pause recording" : "Resume recording"}</Button>
-          <Button className={button} disabled={!enabled || busy || demo.phase !== "recording"} onClick={() => void command({ action: "pick" })}>Select information</Button>
-          <Button className={button} disabled={!enabled || busy || !demo.steps.length} onClick={() => void command({ action: "finish" })}>Finish teaching</Button>
+        {done && saved && <>
+          <p role="status" className="text-[13px]">{ran ? `Sent to chat. Workbot is running “${saved.name}” there.` : saved.mode === "updated" ? `Saved your changes to “${saved.name}”. Try it again to check it works.` : `Saved “${saved.name}” to your private skills. Try it once to check it works.`}</p>
+          {preview && preview !== savedMarkdown && <p role="status" className="text-[13px]">Your latest edits aren't in the saved skill yet. Choose Edit skill, then Save changes.</p>}
+          <form id={runFormId} className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void run(); }}>
+            <h3 className={heading}>Try it</h3>
+            <p className="text-[12px] text-[var(--wb-muted)]">{inputs.length ? "Fill in what this run needs. Workbot asks in chat for anything you leave empty." : "This skill needs nothing filled in."}</p>
+            {inputs.map(item => <label key={item.name} className="flex flex-col gap-1.5 text-[13px]">{item.label}<input className={input} type={item.kind === "url" ? "url" : "text"} value={Object.hasOwn(runValues, item.name) ? runValues[item.name] ?? "" : ""} maxLength={2000} disabled={busy} onChange={event => setRunValues(current => ({ ...current, [item.name]: event.target.value }))} placeholder={item.kind === "url" ? "https://…" : "Optional"} /></label>)}
+          </form>
+          <details><summary className={`cursor-pointer ${heading}`}>Recorded steps ({demo.steps.length})</summary><div className="mt-1">{steps}</div></details>
+        </>}
+        {!done && <div className="flex flex-col gap-1">
+          <h3 className={heading}>Recorded steps ({demo.steps.length})</h3>
+          {steps}
         </div>}
-        {!saved && <div className="flex items-center justify-between gap-2 text-[13px]"><span>{selected ? `Explaining step ${selected.id}` : "Explaining the latest step"}: {focusedLabel}</span>{selected && <Button className={button} onClick={() => setStepId(null)}>Use latest step</Button>}</div>}
-        <details key={demo.phase === "draft" ? "review" : "record"} open={demo.phase === "draft"}>
-          <summary className="cursor-pointer text-[13px]">Recorded steps ({demo.steps.length})</summary>
-          <ol className="mt-2 space-y-1" aria-label="Demonstrated steps">{demo.steps.map(step => <li key={step.id}><Button className={`${button} h-auto min-h-8 w-full justify-start text-left ${stepId === step.id ? "bg-[var(--wb-chip)]" : ""}`} aria-pressed={stepId === step.id} onClick={() => chooseStep(step)}>{step.id}. {demonstrationStepLabel(step)}</Button></li>)}</ol>
-        </details>
-        {selected && !saved && <div className="flex flex-col gap-2">
+        {!done && <div className="flex items-center justify-between gap-2 text-[13px]"><span className="min-w-0">{selected ? `Explaining step ${selected.id}` : "Explaining the latest step"}: {focusedLabel}</span>{selected && <Button className={`${button} shrink-0`} onClick={() => setStepId(null)}>Use latest step</Button>}</div>}
+        {selected && !done && <div className="flex flex-col gap-2">
           {conflict && <p role="status" className="text-[13px]">This step has newer chat notes. <Button className={button} onClick={() => chooseStep(selected)}>Use current explanation</Button></p>}
-          <label className="text-[13px]">Explain step {selected.id}<textarea className={input} value={explanation} maxLength={2000} onChange={event => setExplanation(event.target.value)} /></label>
-          {needsVariable && <label className="text-[13px]">{selected.parameter ? "Input name" : "Output field"}<input className={input} value={variable} maxLength={64} onChange={event => setVariable(event.target.value)} /></label>}
-          <Button className={button} disabled={!enabled || busy || conflict || Boolean(needsVariable && !/^[a-z][a-z0-9_]{0,63}$/.test(variableName))} onClick={() => { void command({ action: "edit", stepId: selected.id, explanation, expectedRevision: editingRevision, ...(selected.parameter ? { parameter: variableName } : selected.field ? { field: variableName } : {}) }).then(reply => { const current = reply?.demonstration?.steps.find(step => step.id === selected.id); if (current) chooseStep(current); }); }}>Save step</Button>
+          <label className="flex flex-col gap-1.5 text-[13px]">Explain step {selected.id}<textarea className={input} rows={2} value={explanation} maxLength={2000} onChange={event => setExplanation(event.target.value)} /></label>
+          {needsVariable && <label className="flex flex-col gap-1.5 text-[13px]">{selected.parameter ? "Input name" : "Output field"}<input className={input} value={variable} maxLength={64} onChange={event => setVariable(event.target.value)} /></label>}
+          <Button className={`${button} self-start bg-[var(--wb-chip)]`} disabled={!enabled || busy || conflict || Boolean(needsVariable && !/^[a-z][a-z0-9_]{0,63}$/.test(variableName))} onClick={() => { void command({ action: "edit", stepId: selected.id, explanation, expectedRevision: editingRevision, ...(selected.parameter ? { parameter: variableName } : selected.field ? { field: variableName } : {}) }).then(reply => { const current = reply?.demonstration?.steps.find(step => step.id === selected.id); if (current) chooseStep(current); }); }}>Save step</Button>
         </div>}
-        {demo.phase === "draft" && !saved && <>
-          <label className="text-[13px]">Skill name<input className={input} value={name} maxLength={100} onChange={event => setName(event.target.value)} /></label>
-          <label className="text-[13px]">When to use this skill<textarea className={input} value={purpose} maxLength={1000} onChange={event => setPurpose(event.target.value)} /></label>
+        {demo.phase === "draft" && !done && <>
+          <label className="flex flex-col gap-1.5 text-[13px]">Skill name<input ref={nameInput} className={`${input} disabled:text-[var(--wb-muted)]`} value={name} maxLength={100} disabled={revising} onChange={event => setName(event.target.value)} />{revising && <span className="text-[12px] text-[var(--wb-muted)]">A saved skill keeps its name.</span>}</label>
+          <label className="flex flex-col gap-1.5 text-[13px]">When to use this skill<textarea className={input} rows={2} value={purpose} maxLength={1000} onChange={event => setPurpose(event.target.value)} /></label>
           {previewError && <p role="alert" className="text-[13px]">{previewError}</p>}
           {preview && <details><summary className="cursor-pointer text-[13px]">Skill instructions</summary><pre className="mt-2 whitespace-pre-wrap break-words text-[12px]">{preview}</pre></details>}
-          <Button className={`${button} bg-[var(--wb-chip)]`} disabled={!enabled || busy || !preview} onClick={() => void save()}>Save private skill</Button>
         </>}
-        {saved && <>
-          <p role="status" className="text-[13px]">Saved “{saved.name}” to your private skills.</p>
-          {saved.libraryUrl && /^https?:\/\//.test(saved.libraryUrl) && <a className="text-[13px] underline" href={saved.libraryUrl} target="_blank" rel="noopener noreferrer">Open saved skill</a>}
-          <form className="flex flex-col gap-2" onSubmit={event => { event.preventDefault(); void run(); }}>
-            {browserSkillInputs(demo).map(item => <label key={item.name} className="text-[13px]">{item.label}<input className={input} type={item.kind === "url" ? "url" : "text"} value={Object.hasOwn(runValues, item.name) ? runValues[item.name] ?? "" : ""} maxLength={2000} disabled={busy} onChange={event => setRunValues(current => ({ ...current, [item.name]: event.target.value }))} placeholder={item.kind === "url" ? "https://…" : "Ask me in chat"} /></label>)}
-            <Button type="submit" className={`${button} bg-[var(--wb-chip)]`} disabled={!enabled || !onRun || busy}>Run skill</Button>
-          </form>
-        </>}
-        <Button className={button} disabled={!enabled || busy} onClick={() => void command({ action: "discard" })}>{saved ? "Teach another task" : "Discard demonstration"}</Button>
+        {done ? <div className="flex flex-wrap items-center gap-1">
+          <Button className={`${button} bg-[var(--wb-chip)]`} disabled={!enabled || busy} onClick={() => setRevising(true)}>Edit skill</Button>
+          {saved?.libraryUrl && /^https?:\/\//.test(saved.libraryUrl) && <a className={button} href={saved.libraryUrl} target="_blank" rel="noopener noreferrer">Open in library</a>}
+          <Button className={`${button} text-[var(--wb-muted)]`} disabled={!enabled || busy} onClick={() => void command({ action: "discard" })}>Teach another task</Button>
+        </div> : !revising ? <Button className={`${button} self-start text-[var(--wb-muted)]`} disabled={!enabled || busy} onClick={() => void command({ action: "discard" })}>Discard demonstration</Button> : null}
       </>}
-    </div>}
+      </>}
+    </div>
+    {/* The step's main action stays in reach however long the review grows. */}
+    {!collapsed && (guiding ? <div className={footer}>
+      <Button className={`${button} px-2 text-[var(--wb-muted)]`} onClick={() => closeGuide(true)}>Don't show again</Button>
+      {guideCard < GUIDE.length - 1 && <Button className={`${button} ml-auto`} onClick={() => closeGuide(false)}>Show later</Button>}
+      <Button className={`${primary} ${guideCard < GUIDE.length - 1 ? "" : "ml-auto"}`} onClick={() => guideCard < GUIDE.length - 1 ? setGuideCard(guideCard + 1) : closeGuide(false)}>{guideCard < GUIDE.length - 1 ? "Next" : "Got it"}</Button>
+    </div> : !demo ? <div className={footer}>
+      <Button className={`${primary} flex-1`} disabled={!enabled || busy || !tab} onClick={() => void command({ action: "start", tabId: tab })}>Start teaching</Button>
+      <Button className={iconButton} aria-label="Refresh tabs" title="Refresh tabs" disabled={!enabled || busy} onClick={() => void command({ action: "tabs" })}><RotateCw size={16} strokeWidth={1.5} aria-hidden /></Button>
+    </div> : demo.phase !== "draft" ? <div className={footer}>
+      <Button className={iconButton} aria-label={demo.phase === "recording" ? "Pause recording" : "Resume recording"} title={demo.phase === "recording" ? "Pause recording" : "Resume recording"} disabled={!enabled || busy} onClick={() => void command({ action: demo.phase === "recording" ? "pause" : "resume" })}>{demo.phase === "recording" ? <Pause size={16} strokeWidth={1.5} aria-hidden /> : <Play size={16} strokeWidth={1.5} aria-hidden />}</Button>
+      <Button className={button} disabled={!enabled || busy || demo.phase !== "recording"} onClick={() => void command({ action: "pick" })}>Select information</Button>
+      <Button className={`${primary} ml-auto`} disabled={!enabled || busy || !demo.steps.length} onClick={() => void command({ action: "finish" })}>Finish teaching</Button>
+    </div> : !done ? <div className={footer}>
+      {revising && <Button className={button} disabled={busy} onClick={() => { setRevising(false); setStepId(null); }}>Back</Button>}
+      <Button className={`${primary} flex-1`} disabled={!enabled || busy || !preview || (revising && preview === savedMarkdown)} onClick={() => void save()}>{revising ? "Save changes" : "Save private skill"}</Button>
+    </div> : <div className={footer}>
+      <Button type="submit" form={runFormId} className={`${primary} flex-1`} disabled={!enabled || !onRun || busy}>{ran ? "Run again" : "Run skill"}</Button>
+    </div>)}
   </section>;
 }

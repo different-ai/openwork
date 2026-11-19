@@ -103,7 +103,7 @@ test("native: a stalled local session check does not withdraw providers or fail 
   try {
     engine = await createManagedOpencodeV2Server({ bin: binary, rootDir: join(root, "engine"),
       env: { HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "true" },
-      providerSession: { url: `${hopOrigin}/session`, token: bridge.token, enabled: () => true } });
+      providerSession: { url: `${hopOrigin}/session`, token: bridge.token } });
     const running = engine;
     const hasModel = async () => JSON.stringify((await running.fetchJson("/api/model", { directory })).json).includes(`"id":"${MODEL}"`);
     await until(hasModel, Boolean, "signed-in desktop publishes the gateway model");

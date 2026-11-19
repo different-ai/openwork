@@ -1,8 +1,8 @@
 # Workbot: My agent in the Library
 
-Feature `workbotAgentLibrary` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
-It needs `workbotProactive` ("Your agent", see [its doc](../workbot-proactive/README.md)) and Workbot on the
-deployment. The rollout is per member, like every feature: turn it on for one organization or one member in `/admin`.
+Included in `workbotProactive` (cloud and self-hosted, off by default). Author: `benjaminshafii`.
+It needs Workbot on the deployment. [Your agent](../workbot-proactive/README.md), its member view and the admin health
+view share one rollout: turn it on for one organization or one member in `/admin`. There is no separate Library gate.
 
 Members can see what their agent did and why it stayed quiet, and tell it what they care about in their own words.
 Chat (Workbot in Slack or on the web) is the main way to change it; the Library page shows the same agent with an
@@ -12,12 +12,18 @@ Undo next to every change. Nothing new runs: the existing wake writes the record
 
 ![Library › My agent after a change made in chat](./my-agent.png)
 
+With `workbotAgentBrief` on, My bot shows **Your brief** (the member's own lines in one text, with where each change
+came from and Undo, and the organization's brief behind a disclosure) in place of "What it tells you about" and "In
+your words", the next checks with the reason the agent gave for an extra one ("Next check 1:45 PM: before your 2 PM
+with Northwind"), how often it checks (never more often than the admin's), and quiet hours. See
+[Your agent's brief and check rhythm](../workbot-agent-brief/README.md).
+
 ## What a member gets
 
 | Where | What |
 | --- | --- |
 | Den › My Library | A pinned **My agent** row above the filters: "Last check at 11:20 AM. Stayed quiet.", "1 of 3 today", the on/off switch and a chevron. Locked with the reason when the admin turned agents off. |
-| Library › My agent | The last check and why (the focal line), the next check, "1 of 3 sent today"; today's checks with a Sent / Quiet / Waited / Failed pill and **Open in Slack**, "Earlier this week" collapsed; **What it tells you about** (switches with "Saved from chat at … Undo", locked when the admin turned one off); **In your words** (Always tell me about, Never tell me about, When, How); **Uses** (a switch per source, with its last read, a Connect action, the admin's lock and the member's instruction; see [Your agent](../workbot-proactive/README.md#member-controls)); **Limits** (their hours inside the admin's, an only-urgent window, the daily limit locked: "Set by your admin in Manage › Workbot"). |
+| Library › My agent | The last check and why (the focal line), the next check, "1 of 3 sent today"; today's checks with a Sent / Quiet / Waited / Failed pill and **Open in Slack**, "Earlier this week" collapsed; **What it tells you about** (switches with "Saved from chat at … Undo", locked when the admin turned one off); **In your words** (Always tell me about, Never tell me about, When, How); **Uses** (a switch per source, with its last read, a Connect action, the admin's lock and the member's instruction; see [Your agent](../workbot-proactive/README.md#member-controls)); **Limits** (their hours inside the admin's, an only-urgent window, the daily limit locked: "Set by your admin."). |
 | Chat | "between 12 and 2 only urgent stuff, stop telling me about calendar changes" → Workbot calls `putMeAgent` once and replies with `saved.reply`: exactly what was saved, `Reply "undo" to revert.` and the link. Text only, no Slack buttons. "Why so quiet?" is answered from `lastCheck` / `getMeAgentChecks`. |
 
 ## How it works
@@ -67,20 +73,22 @@ scheduled check (never inside a snooze or outside their hours). A check is
 `GET /v1/me/agent/checks?days=7` (`getMeAgentChecks`, at most 14 days) lists checks newest first.
 
 `PUT /v1/me/agent` (`putMeAgent`) also takes `preferences`, `hours`, `dailyCap`, `quietWindow` (each `null` to go back
-to the admin's) and `undo`, and answers with the agent plus `saved: {changes, reply, link}`. With the feature off
-these fields answer 404 `feature_disabled` and everything else works as before.
+to the admin's) and `undo`, and answers with the agent plus `saved: {changes, reply, link}`. With `workbotProactive` off, all agent endpoints answer 404 `feature_disabled`, including the basic controls.
+Response fields remain optional in shared schemas so current clients can still read responses from older servers;
+the current server always includes the member view and save receipt when the parent is on.
 
 ## Turning it off
 
-The kill switch hides the row and page, refuses the new fields and stops writing records. The wake goes back to the
-organization's hours and limit and drops the member's words from the prompt. Stored words, limits, the change log and
-records stay and come back when it is turned on again; records age out after 14 days.
+The `workbotProactive` kill switch hides the member page and admin health view, refuses all agent endpoints and
+stops agent wakes, including writing new member check records. It does not fall back to an agent that ignores the
+member's words or narrowed limits. Stored words, limits, the change log and records stay and come back when it is
+turned on again; records age out after 14 days.
 
 ## Try it
 
 ```sh
 pnpm dev:den:mysql && pnpm dev:workbot
-# /admin › Features › Workbot: Your agent and Workbot: My agent in the Library › on for your organization
+# /admin › Features › Workbot: Your agent › on for your organization
 # Den › Manage › Workbot › Members' agents › on; then My Library
 ```
 
@@ -88,4 +96,4 @@ pnpm dev:den:mysql && pnpm dev:workbot
 `pnpm --filter @openwork-ee/den-api test` (records for each outcome, narrowing, undo, the guidance sentence),
 `pnpm --filter @openwork-ee/den-api test:api` with `workbot-agent-library.api.test.ts` (chat and page in sync through
 Connect, server-side limits, records and isolation), the Den web render tests in `my-agent.test.tsx`, and
-`evals/proofs/workbot-agent-library.proof.test.ts` (the Library row and page, before and after).
+`evals/proofs/workbot-agent-library.proof.test.ts` (the parent rollout off/on, member page, and chat/page sync).

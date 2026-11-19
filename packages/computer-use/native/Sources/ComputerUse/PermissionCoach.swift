@@ -46,19 +46,13 @@ private enum CoachMessage: Decodable, Sendable {
 }
 
 @MainActor
-private final class PermissionCoachPanel: NSPanel {
+final class PermissionCoachPanel: NSPanel {
     var onClose: (() -> Void)?
-    override var canBecomeKey: Bool { true }
+    // A nonactivating panel can still steal keyboard focus without changing
+    // the frontmost app. Keep typing with System Settings and its password prompt.
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
-    override func cancelOperation(_ sender: Any?) { onClose?() }
     override func performClose(_ sender: Any?) { onClose?() }
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == 53 { onClose?() }
-        else if event.keyCode == 48 {
-            if event.modifierFlags.contains(.shift) { selectPreviousKeyView(nil) }
-            else { selectNextKeyView(nil) }
-        } else { super.keyDown(with: event) }
-    }
 }
 
 /// The OpenWork popover look: the app's light and dark tokens
@@ -107,14 +101,14 @@ private final class PermissionCoachSurface: NSView {
 }
 
 @MainActor
-private final class PermissionCoachButton: NSButton {
+final class PermissionCoachButton: NSButton {
     /// primary: the filled main action; quiet: text actions; close: the round dismiss control.
     enum Role { case primary, quiet, close }
     var role = Role.quiet { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
 
-    override var needsPanelToBecomeKey: Bool { true }
-    override var acceptsFirstResponder: Bool { isEnabled }
+    override var needsPanelToBecomeKey: Bool { false }
+    override var acceptsFirstResponder: Bool { false }
     override var intrinsicContentSize: NSSize {
         switch role {
         case .primary: return NSSize(width: NSView.noIntrinsicMetric, height: 36)
@@ -200,15 +194,14 @@ private final class PermissionCoachDocument: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// The System Settings row to switch on, drawn the way the list shows it:
-/// the app's icon and name, with its switch on.
+/// Identify the System Settings entry by its icon and name. The person
+/// switches on the real entry in System Settings, not a control in this guide.
 @MainActor
 private final class PermissionCoachTarget: NSView {
     static let height: CGFloat = 56
     private let glow = NSView()
     private let icon = NSImageView()
     private let name = NSTextField(labelWithString: "")
-    private let switchSize = NSSize(width: 32, height: 19)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -234,7 +227,7 @@ private final class PermissionCoachTarget: NSView {
             icon.widthAnchor.constraint(equalToConstant: 32), icon.heightAnchor.constraint(equalToConstant: 32),
             name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
             name.centerYAnchor.constraint(equalTo: centerYAnchor),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -(switchSize.width + 26))
+            name.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12)
         ])
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
@@ -266,20 +259,6 @@ private final class PermissionCoachTarget: NSView {
         let card = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), xRadius: 12, yRadius: 12)
         CoachStyle.accentTint.setFill(); card.fill()
         CoachStyle.accent.setStroke(); card.lineWidth = 1.5; card.stroke()
-        // The switch uses the Mac's own accent, as System Settings does.
-        let track = NSRect(x: bounds.maxX - 14 - switchSize.width, y: (bounds.height - switchSize.height) / 2,
-                           width: switchSize.width, height: switchSize.height)
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
-        let knob = NSRect(x: track.maxX - track.height + 2, y: track.minY + 2, width: track.height - 4, height: track.height - 4)
-        NSGraphicsContext.saveGraphicsState()
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
-        shadow.shadowBlurRadius = 1.5
-        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
-        shadow.set()
-        NSColor.white.setFill(); NSBezierPath(ovalIn: knob).fill()
-        NSGraphicsContext.restoreGraphicsState()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -396,7 +375,6 @@ final class PermissionCoach: NSObject, NSApplicationDelegate {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.onClose = { [weak self] in self?.dismiss() }
-        panel.autorecalculatesKeyViewLoop = true
         self.panel = panel
 
         let surface = PermissionCoachSurface()
@@ -416,7 +394,6 @@ final class PermissionCoach: NSObject, NSApplicationDelegate {
             .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
         close.imagePosition = .imageOnly
         close.isBordered = false
-        close.keyEquivalent = "\u{1b}"
         close.setAccessibilityLabel("Close permission guide")
         close.toolTip = "Close permission guide"
         let header = NSStackView(views: [mark, brand, NSView(), close])
@@ -504,7 +481,6 @@ final class PermissionCoach: NSObject, NSApplicationDelegate {
         for view in fullWidth { view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
         self.stack = stack
         scrollView = scroll
-        panel.initialFirstResponder = primary
     }
 
     private func render() {
@@ -555,7 +531,6 @@ final class PermissionCoach: NSObject, NSApplicationDelegate {
         helpLabel.stringValue = help
         helpLabel.isHidden = !helpExpanded
         positionPanel()
-        panel.recalculateKeyViewLoop()
         // The shadow follows the drawn corners; recompute it after a resize.
         panel.displayIfNeeded()
         panel.invalidateShadow()

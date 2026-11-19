@@ -6,6 +6,7 @@ import { parseMessageRow, sqlRow, toTurn, TURN_COLUMNS, type ConversationRows, t
 import { ACTIVE, messageSchema, type Message } from "../types.js"
 import { bodyPrefix, LargeBodies, type LargeBodyRef, type PreparedMessage } from "./large-bodies.js"
 import { insertManifest, manifestOf, removeManifest, replaceManifest, SegmentReader, type ManifestEntry } from "./manifest.js"
+import type { SqlDriver } from "../sql.js"
 import { readMeta, writeMeta } from "./migrations.js"
 import { encodeSegment, SEGMENT_FORMAT, SEGMENT_VERSION, SegmentError, segmentKey, segmentPrefix, sha256Hex, type SegmentData, type SegmentHeader } from "./segments.js"
 
@@ -40,14 +41,30 @@ const TERMINAL = new Set(["completed", "failed", "aborted"])
 const SEAL_DEBOUNCE_MS = 2_000
 /** Sessions whose hot bytes are counted per sealer run (databases from before they were kept). */
 const COUNT_PER_RUN = 5
-const ORPHAN_SCAN_MS = 24 * 3_600_000
 const ORPHAN_MIN_AGE_MS = 24 * 3_600_000
+/** How often, at most, a store notes that it is still storing objects (STORED_AT). */
+const STORED_NOTE_EVERY_MS = 3_600_000
+/** A check deletes objects older than a day, and stores are noted at most hourly: a store noted at T is old enough for a check from T plus this. */
+const ORPHAN_COVER_MS = ORPHAN_MIN_AGE_MS + STORED_NOTE_EVERY_MS
 const NEAR_LIMIT_SHARE = 0.9
 const NEAR_LIMIT_REPORT_MS = 3_600_000
 /** Durable Object SQL binds at most 100 parameters per statement. */
 const ID_CHUNK = 90
 const ORPHANS_AT = "segment_orphans_at"
 const ORPHANS_COUNT = "segment_orphans_count"
+/**
+ * When this store began storing segments or large outputs since its last orphan check ("0": it has not), and when it
+ * last noted storing one. Together they say when a check is due and whether another must follow it.
+ */
+const STORED_SINCE = "segment_stored_since"
+const STORED_AT = "segment_stored_at"
+/** A number kept in meta, or null when it was never written. */
+function metaNumber(db: SqlDriver, key: string): number | null {
+  const value = readMeta(db, key)
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
 /** 1B's retry shape: immediately three times, then 30 s, 2 min, then hourly. */
 export function sealRetryDelayMs(attempt: number) {
@@ -102,7 +119,11 @@ export class SessionStorage {
   private sealMore = false
   private sealRetryAt: number | null = null
   private uncounted: boolean | null = null
-  private orphansDueAt: number | null = null
+  /** When the next orphan check is due; null: none is; undefined: not worked out yet. */
+  private orphansDueAt: number | null | undefined = undefined
+  /** STORED_SINCE and STORED_AT as last read or written; undefined: not read yet. */
+  private storedSince: number | null | undefined = undefined
+  private storedAt: number | null | undefined = undefined
   private deletionsDueAt: number | null | undefined = undefined
   private nearLimitReportedAt = 0
 
@@ -114,10 +135,16 @@ export class SessionStorage {
     now: () => number = Date.now,
   ) {
     this.now = now
-    this.bodies = new LargeBodies(store, blobs, this.sealing ? settings.largeBodyBytes : null, (error) => {
-      console.error("[headless-runner] large body upload failed; kept in the row", { error: error instanceof Error ? error.message : "unknown" })
-      void errors?.report({ code: "large_body_upload_failed", level: "warning", error })
-    })
+    this.bodies = new LargeBodies(
+      store,
+      blobs,
+      this.sealing ? settings.largeBodyBytes : null,
+      (error) => {
+        console.error("[headless-runner] large body upload failed; kept in the row", { error: error instanceof Error ? error.message : "unknown" })
+        void errors?.report({ code: "large_body_upload_failed", level: "warning", error })
+      },
+      () => this.noteStored(),
+    )
     this.segments = new SegmentReader(blobs)
     // One look after the process (or cell) starts, then after turns end.
     this.sealDueAt = this.sealing ? now() : null
@@ -481,6 +508,7 @@ export class SessionStorage {
     const bytes = await encodeSegment(data)
     const sha256 = sha256Hex(bytes)
     const storageKey = segmentKey(sessionId, n, rev)
+    this.noteStored()
     await blobs.put(storageKey, bytes, "application/gzip")
     // Read back and verify before anything refers to it.
     const back = await blobs.get(storageKey)
@@ -815,18 +843,63 @@ export class SessionStorage {
   private orphansNextAt(): number | null {
     if (!this.blobs) return null
     if (this.deletionsDueAt === undefined) this.deletionsDueAt = numberRow.parse(this.store.db.prepare("SELECT MIN(due_at) AS n FROM storage_deletions").get()).n
-    if (this.sealing && this.orphansDueAt === null) this.orphansDueAt = (Number(readMeta(this.store.db, ORPHANS_AT) ?? "0") || 0) + ORPHAN_SCAN_MS
-    const due = [this.deletionsDueAt, this.sealing ? this.orphansDueAt : null].filter((at): at is number => at !== null)
+    if (this.sealing && this.orphansDueAt === undefined) this.orphansDueAt = this.orphanCheckDueAt()
+    const due = [this.deletionsDueAt, this.sealing ? this.orphansDueAt : null].filter((at): at is number => typeof at === "number")
     return due.length ? Math.min(...due) : null
   }
 
-  /** Retries queued deletions; once a day (with sealing on) deletes this cell's unreferenced segments and bodies. */
+  /**
+   * When this store's objects are next checked for orphans (with sealing on): a day after it began storing since its
+   * last check, and not at all while it has stored nothing since. A check every day would wake every conversation's
+   * cell once a day for ever to list bucket prefixes that almost never hold anything, and a woken cell stays in
+   * memory a while.
+   */
+  private orphanCheckDueAt(): number | null {
+    const db = this.store.db
+    const since = this.readStored().since
+    if (since === null) {
+      // From before stores were noted: one more check if it ever checked or holds objects, and that check notes it.
+      const checkedAt = metaNumber(db, ORPHANS_AT) ?? 0
+      const has = (table: "segments" | "large_bodies") => db.prepare(`SELECT 1 AS n FROM ${table} LIMIT 1`).get() !== undefined
+      return checkedAt > 0 || has("segments") || has("large_bodies") ? checkedAt + ORPHAN_MIN_AGE_MS : null
+    }
+    return since > 0 ? since + ORPHAN_COVER_MS : null
+  }
+
+  private readStored() {
+    if (this.storedSince === undefined) this.storedSince = metaNumber(this.store.db, STORED_SINCE)
+    if (this.storedAt === undefined) this.storedAt = metaNumber(this.store.db, STORED_AT)
+    return { since: this.storedSince, at: this.storedAt }
+  }
+
+  /**
+   * Called before a segment or a large output is uploaded, so the note exists before the object can: only a store
+   * that stored something since its last orphan check gets another one. One write when storing begins, then at most
+   * one an hour while it goes on.
+   */
+  private noteStored() {
+    if (!this.sealing) return
+    const db = this.store.db
+    const now = this.now()
+    const stored = this.readStored()
+    if (stored.since === null || stored.since <= 0) {
+      writeMeta(db, STORED_SINCE, String(now))
+      this.storedSince = now
+      this.orphansDueAt = undefined
+    }
+    if (stored.at === null || now - stored.at >= STORED_NOTE_EVERY_MS) {
+      writeMeta(db, STORED_AT, String(now))
+      this.storedAt = now
+    }
+  }
+
+  /** Retries queued deletions; deletes this store's unreferenced segments and bodies when a check is due. */
   private async orphansRun() {
     // A pass that fails before it ends tries again later, never in a tight loop.
     const now = this.now()
     if (this.deletionsDueAt !== null && this.deletionsDueAt !== undefined && this.deletionsDueAt <= now) this.deletionsDueAt = now + 60_000
     await this.processDeletions()
-    if (this.sealing && this.orphansDueAt !== null && this.orphansDueAt <= now) {
+    if (this.sealing && typeof this.orphansDueAt === "number" && this.orphansDueAt <= now) {
       this.orphansDueAt = now + 3_600_000
       await this.scanOrphans()
     }
@@ -861,7 +934,13 @@ export class SessionStorage {
     }
     writeMeta(db, ORPHANS_AT, String(now))
     writeMeta(db, ORPHANS_COUNT, String(orphans))
-    this.orphansDueAt = now + ORPHAN_SCAN_MS
+    // Objects stored too recently for this check (it only deletes those over a day old) get one more, timed from the
+    // last store noted; otherwise only a new store asks for the next one.
+    const storedAt = this.readStored().at
+    const since = storedAt !== null && storedAt + ORPHAN_COVER_MS > now ? storedAt : 0
+    writeMeta(db, STORED_SINCE, String(since))
+    this.storedSince = since
+    this.orphansDueAt = undefined
     if (orphans) console.log(`[headless-runner] orphan objects deleted ${JSON.stringify({ orphans })}`)
     return orphans
   }

@@ -1,4 +1,4 @@
-import { AlertTriangle, Circle, CornerDownLeft, GitBranch, Play, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowUp, Circle, CornerDownLeft, GitBranch, Play, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { BrandLogo } from "./lp-brand-logos";
@@ -320,69 +320,8 @@ export function RoadmapDashboardPreview() {
 }
 
 /* ------------------------------------------------------------------ */
-/* New apps (not available yet)                                        */
+/* Across apps                                                         */
 /* ------------------------------------------------------------------ */
-
-export function RoadmapStreamlinedChatPreview() {
-  return (
-    <div className="flex h-full w-full overflow-hidden rounded-2xl bg-[#FCFDFE] shadow-[0_0_0_1px_#EDF1F6]">
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-11 items-center gap-3 border-b border-[#EDF1F6] bg-white px-3.5">
-          <span className="flex h-[22px] w-[22px] items-center justify-center rounded-md bg-[var(--lp-ink)] text-[11px] font-semibold text-white">S</span>
-          <span className="text-[13px] font-semibold text-[#07192C]">Scout</span>
-          <span className="rounded-md bg-[#F1F5F9] px-2 py-1 text-[11.5px] font-medium text-[#07192C]">Home</span>
-          <span className="text-[11.5px] text-[#637291]">Apps</span>
-          <span className="text-[11.5px] text-[#637291]">Calendar</span>
-        </div>
-        <div className="flex flex-1 flex-col justify-end gap-1.5 px-4 pb-3.5 pt-5">
-          <span className="mb-3 flex flex-col items-center gap-1">
-            <span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[var(--lp-ink)] text-[15px] font-semibold text-white">S</span>
-            <span className="text-[12.5px] font-semibold text-[#07192C]">Scout</span>
-            <span className="text-[10.5px] text-[#637291]">Set up by Ben for the Launch team</span>
-          </span>
-          <span className="max-w-[300px] self-start rounded-2xl bg-[#EEF1F5] px-3 py-2 text-[12.5px] leading-[18px] text-[#07192C]">
-            Morning Maya. Your apps are connected, so I already had a look.
-          </span>
-          <span className="max-w-[300px] self-start rounded-2xl bg-[#EEF1F5] px-3 py-2 text-[12.5px] leading-[18px] text-[#07192C]">
-            Two things need you before 3 PM. Want me to start the pricing copy for Priya?
-          </span>
-          <span className="mb-1.5 flex items-center gap-1.5 text-[11px] text-[#637291]">
-            <GoogleMark className="h-3 w-3" />
-            <SlackMark className="h-3 w-3" />
-            Looked at Gmail, Slack and Calendar
-          </span>
-          <span className="self-end rounded-2xl bg-[var(--lp-ink)] px-3 py-2 text-[12.5px] text-white">yes please, keep it short</span>
-          <span className="mt-3 flex h-[38px] items-center rounded-full bg-white pl-3.5 text-xs text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE]">
-            Message Scout
-          </span>
-        </div>
-      </div>
-      <div className="hidden w-[210px] shrink-0 flex-col gap-2 border-l border-[#EDF1F6] bg-[#F8FAFC] p-3 sm:flex">
-        <span className="px-0.5 text-[10.5px] font-medium text-[#637291]">Launch team views</span>
-        <div className="flex flex-col gap-1 rounded-[10px] bg-white p-2.5 shadow-[0_0_0_1px_#EDF1F6]">
-          <span className="flex justify-between text-[11.5px]"><span className="font-semibold text-[#07192C]">Waiting on you</span><span className="text-[10.5px] text-[#9AA5BA]">2 today</span></span>
-          {[["P", "Pricing copy", "3:00"], ["D", "Hero copy OK", "Today"], ["A", "Press kit notes", "Yest."]].map(([initial, task, when]) => (
-            <span key={task} className="flex h-6 items-center gap-2 text-[11.5px]">
-              <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#EEF1F5] text-[9px] font-semibold text-[#30405F]">{initial}</span>
-              <span className="flex-1 text-[#07192C]">{task}</span>
-              <span className="text-[11px] text-[#07192C]">{when}</span>
-            </span>
-          ))}
-        </div>
-        <div className="flex flex-col gap-1 rounded-[10px] bg-white p-2.5 shadow-[0_0_0_1px_#EDF1F6]">
-          <span className="flex justify-between text-[11.5px]"><span className="font-semibold text-[#07192C]">Today</span><span className="text-[10.5px] text-[#9AA5BA]">Mon, Sep 28</span></span>
-          {[["10:00", "Standup"], ["1:00", "Design review"], ["3:00", "Update"]].map(([time, event]) => (
-            <span key={time} className="flex h-[22px] items-center gap-2 text-[11.5px]">
-              <span className="w-[34px] text-[11px] text-[#9AA5BA]">{time}</span>
-              <span className="h-4 w-0.5 rounded bg-[#D8E0EC]" />
-              <span className="text-[#07192C]">{event}</span>
-            </span>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const AT_RISK = [
   { account: "Northwind", why: "Renewal Oct 12", meeting: "No meeting" },
@@ -415,10 +354,10 @@ export function RoadmapSlackPreview() {
               <span className="flex flex-1 flex-col gap-1.5 px-3 py-2.5 text-xs">
                 <b className="text-[12.5px]">At-risk accounts, week of Sep 28</b>
                 {AT_RISK.map((row) => (
-                  <span key={row.account} className="flex">
-                    <span className="w-[88px] font-semibold">{row.account}</span>
-                    <span className="flex-1 text-[#4B5563]">{row.why}</span>
-                    <span className={row.meeting === "No meeting" ? "text-[#B45309]" : "text-[#4B5563]"}>{row.meeting}</span>
+                  <span key={row.account} className="flex gap-2">
+                    <span className="w-[68px] shrink-0 font-semibold sm:w-[80px]">{row.account}</span>
+                    <span className="min-w-0 flex-1 text-[#4B5563]">{row.why}</span>
+                    <span className={`shrink-0 whitespace-nowrap ${row.meeting === "No meeting" ? "text-[#B45309]" : "text-[#4B5563]"}`}>{row.meeting}</span>
                   </span>
                 ))}
               </span>
@@ -475,6 +414,114 @@ export function RoadmapPhonePreview() {
         </div>
         <div className="mx-3.5 mb-5 mt-3 flex h-10 items-center rounded-full bg-white pl-4 text-xs text-[#9CA3AF] shadow-[0_0_0_1px_#E3E7EE]">Ask OpenWork</div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Workbot                                                             */
+/* ------------------------------------------------------------------ */
+
+const WORKBOT_CHATS = ["Northwind renewal", "Monday pipeline review", "Launch checklist", "Expense report for October"];
+
+function WorkbotAvatar({ size }: { size: number }) {
+  return (
+    <span className="flex shrink-0 items-center justify-center rounded-full bg-white shadow-[0_0_0_1px_#E3E7EE]" style={{ width: size, height: size }}>
+      <OpenWorkMark className="h-[58%] w-[58%] object-contain" />
+    </span>
+  );
+}
+
+/* What Workbot is doing in its browser: a small page and one button to open it. */
+function WorkbotBrowserCard({ compact }: { compact?: boolean }) {
+  return (
+    <span className={`flex max-w-full items-center self-start rounded-xl bg-white p-2 pr-3 shadow-[0_0_0_1px_#E3E7EE] ${compact ? "gap-2" : "gap-3 pl-3 sm:pl-2"}`}>
+      <span className={`shrink-0 flex-col overflow-hidden rounded-md bg-[#F4F6F9] shadow-[0_0_0_1px_#E3E7EE] ${compact ? "flex h-11 w-16" : "hidden h-14 w-[88px] sm:flex"}`} aria-hidden="true">
+        <span className="flex h-2.5 items-center gap-[3px] bg-[#E7EBF1] px-1.5">
+          <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
+          <span className="h-1 w-1 rounded-full bg-[#B6C0CF]" />
+          <span className="ml-1 h-1 flex-1 rounded-full bg-white" />
+        </span>
+        <span className="flex flex-1 flex-col gap-1 p-1.5">
+          <span className="h-1 w-2/3 rounded-full bg-[#C9D2DF]" />
+          <span className="h-1 w-full rounded-full bg-[#DDE3EC]" />
+          <span className="h-1 w-5/6 rounded-full bg-[#DDE3EC]" />
+          <span className="mt-auto h-1.5 w-1/3 rounded-full bg-[#2563EB]" />
+        </span>
+      </span>
+      <span className="flex min-w-0 flex-col">
+        <span className={`whitespace-nowrap font-medium text-[#07192C] ${compact ? "text-[11px]" : "text-[12.5px]"}`}>Used browser</span>
+        <span className={`truncate text-[#637291] ${compact ? "text-[10px]" : "text-[11.5px]"}`}>{compact ? "northwind.com" : "northwind.com/billing"}</span>
+      </span>
+      {compact ? null : (
+        <span className="ml-3 shrink-0 rounded-full px-2.5 py-1 text-[11.5px] font-medium text-[#07192C] shadow-[inset_0_0_0_1px_#D3DAE4]">Open browser</span>
+      )}
+    </span>
+  );
+}
+
+/** Workbot in a desktop browser: the chat, with what it read and the browser it used. */
+export function RoadmapWorkbotPreview() {
+  return (
+    <div className="flex w-full" aria-label="Workbot preview with sample data">
+      <div className="flex min-w-0 flex-1">
+        <div className="hidden w-[196px] shrink-0 flex-col gap-0.5 border-r border-[#EDF1F6] bg-[#F8FAFC] p-3 md:flex">
+          <span className="mb-3 flex items-center gap-2 px-1.5">
+            <WorkbotAvatar size={22} />
+            <span className="text-[13px] font-semibold text-[#07192C]">Workbot</span>
+          </span>
+          {["Chats", "Documents", "Calendar"].map((page) => (
+            <span
+              key={page}
+              className={`flex h-8 items-center rounded-lg px-2 text-[12.5px] ${page === "Chats" ? "bg-white font-medium text-[#07192C] shadow-[0_0_0_1px_#E3E7EE]" : "text-[#4B5A75]"}`}
+            >
+              {page}
+            </span>
+          ))}
+          <span className="mt-4 px-2 text-[11px] text-[#8A96AC]">Today</span>
+          {WORKBOT_CHATS.map((chat, index) => (
+            <span key={chat} className={`flex h-7 items-center truncate rounded-md px-2 text-[12px] ${index === 0 ? "bg-[#EEF1F5] text-[#07192C]" : "text-[#4B5A75]"}`}>
+              {chat}
+            </span>
+          ))}
+        </div>
+
+        <div className="flex min-w-0 flex-1 flex-col bg-white">
+          <div className="flex h-12 items-center justify-center border-b border-[#EDF1F6]">
+            <span className="flex items-center gap-2 rounded-full bg-[#F4F6F9] py-1 pl-1 pr-3">
+              <WorkbotAvatar size={22} />
+              <span className="text-[12.5px] font-semibold text-[#07192C]">Workbot</span>
+              <span className="flex items-center gap-1.5 text-[11.5px] text-[#637291]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#10B981] motion-safe:animate-pulse" aria-hidden="true" />
+                Drafting the reply
+              </span>
+            </span>
+          </div>
+          <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col gap-3 px-5 py-6">
+            <span className="max-w-[85%] self-end rounded-2xl bg-[#EEF1F5] px-3.5 py-2 text-[13px] leading-5 text-[#07192C]">
+              Where are we on the Northwind renewal? Check their billing portal too.
+            </span>
+            <WorkbotBrowserCard />
+            <span className="text-[13px] leading-[21px] text-[#07192C]">
+              Northwind agreed to the 2026 terms on Tuesday, and their portal shows the invoice as unpaid. Dana is waiting on a signed order form from us. I drafted the reply with the form attached. Want to read it before it goes to your drafts?
+            </span>
+            <span className="flex items-center gap-2.5 self-start rounded-xl bg-white py-2 pl-2.5 pr-4 shadow-[0_0_0_1px_#E3E7EE]">
+              <span className="flex h-8 w-7 items-center justify-center rounded-[5px] bg-[#E8EFFD] text-[9px] font-bold text-[#1D4ED8]">DOC</span>
+              <span className="flex flex-col">
+                <span className="text-[12.5px] font-medium text-[#07192C]">Northwind order form.docx</span>
+                <span className="text-[11.5px] text-[#637291]">Made by Workbot, just now</span>
+              </span>
+            </span>
+            <span className="mt-auto flex h-11 items-center justify-between rounded-full bg-white pl-4 pr-1.5 text-[13px] text-[#9AA5BA] shadow-[0_0_0_1px_#E3E7EE,0_2px_6px_rgba(1,22,39,0.04)]">
+              Message Workbot
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--lp-ink)] text-white">
+                <ArrowUp size={15} strokeWidth={2.4} aria-hidden="true" />
+              </span>
+            </span>
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }

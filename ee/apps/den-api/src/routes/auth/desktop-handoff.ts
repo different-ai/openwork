@@ -14,7 +14,8 @@ import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { ensurePersonalOrganizationForUser, resolveUserOrganizations, setSessionActiveOrganization } from "../../orgs.js"
 import { findMemberOrganizationsApprovingWebOrigin, isWebOriginApprovedForOrganization } from "../../organization-web-origins.js"
-import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
+import { findSsoAccessBlock, ssoRequiredErrorBody } from "../../organization-sso-access.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
@@ -475,6 +476,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         200: jsonResponse("Desktop handoff grant created successfully.", desktopHandoffGrantResponseSchema),
         400: jsonResponse("The handoff request body or Cloud web return URL was invalid.", createGrantBadRequestSchema),
         401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
+        403: jsonResponse("The organization requires SSO and this session did not sign in through it.", ssoRequiredSchema),
       },
     }),
     userSessionRoute(),
@@ -503,6 +505,13 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
       approvedReturnUrl = approval.returnUrl
       if (approval.organizationId && approval.organizationId !== session.activeOrganizationId) activateOrganizationId = approval.organizationId
+    }
+
+    // never hand a session to the desktop inside an
+    // organization that requires SSO unless the session signed in through it.
+    const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: activateOrganizationId ?? session.activeOrganizationId })
+    if (ssoBlock) {
+      return c.json(ssoRequiredErrorBody(ssoBlock), 403)
     }
 
     // Audit: the grant hands over this session in its organization. With a
@@ -571,7 +580,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
 
       const input = c.req.valid("json")
-      const [grant] = await db
+      // primary: polled right after the grant is created and consumed; a lagging "unknown" reads as invalid.
+      const [grant] = await db.$primary
         .select({ consumedAt: DesktopHandoffGrantTable.consumed_at, expiresAt: DesktopHandoffGrantTable.expires_at })
         .from(DesktopHandoffGrantTable)
         .where(eq(DesktopHandoffGrantTable.id, input.grant))
@@ -707,6 +717,8 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         resolved = await resolveUserOrganizations({
           userId,
           activeOrganizationId: organizationId,
+          // primary: the organization was just created.
+          reader: db.$primary,
         })
       }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null

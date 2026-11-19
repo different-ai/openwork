@@ -1,5 +1,5 @@
 import "./load-env.js";
-import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
+import { readReplicaCredentialsFromEnv, type DenDbMode, type PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
 import { parseFeatureEnvironment } from "@openwork/features";
@@ -14,6 +14,8 @@ const EnvSchema = z
     DATABASE_HOST: z.string().min(1).optional(),
     DATABASE_USERNAME: z.string().min(1).optional(),
     DATABASE_PASSWORD: z.string().optional(),
+    DATABASE_READ_USERNAME: z.string().optional(),
+    DATABASE_READ_PASSWORD: z.string().optional(),
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
@@ -171,6 +173,8 @@ export const env = {
   dbMode: (parsed.DB_MODE ??
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
+  // Optional read-replica credentials; reads stay on the primary without both.
+  readReplica: readReplicaCredentialsFromEnv(parsed),
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
   proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
   openRouterUpstreamUrl,

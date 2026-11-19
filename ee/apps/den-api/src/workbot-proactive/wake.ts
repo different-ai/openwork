@@ -28,7 +28,7 @@ import { appLogger } from "../observability/logger.js"
 import type { MemberCalendarRead } from "../routes/org/google-workspace.js"
 import { describeAgentCheck, type AgentCheckRecord } from "./checks.js"
 import type { DeliveryResult } from "./deliver.js"
-import { activeResponsibilities, enabledOf, memberAgentOn, mutedOf, proactivePolicy } from "./policy.js"
+import { activeResponsibilities, enabledOf, memberAgentOn, mutedOf } from "./policy.js"
 import { memberLimits, memberPolicy, parseStoredPreferences } from "./preferences.js"
 import {
   blockedConnections,
@@ -37,10 +37,10 @@ import {
   readAllowlist,
   readableConnections,
   resolveMemberSources,
-  withConnectionState,
   type MemberConnection,
   type ResolvedSource,
 } from "./sources.js"
+import { checkSources, noticeStoppedSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService } from "./wake-shared.js"
 import type { AgentCheckCount, AgentInstanceRow, AgentSettle, DeliveryOutcome } from "./repository.js"
 import type { AgentTemplateVersion } from "./template.js"
 import type { AgentTurnResult } from "./turn.js"
@@ -60,6 +60,11 @@ export type AgentWakeDeps = {
   allowed: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
   settings: (organizationId: DenTypeId<"organization">) => Promise<WorkbotProactiveSettings>
   template: (organizationId: DenTypeId<"organization">) => Promise<AgentTemplateVersion>
+  /**
+   * The member's teams' own policy and template (`workbotTeamSettings`), or null to follow the organization's
+   * (`settings` and `template`, read as before). Without it every member follows the organization's.
+   */
+  teamPolicy?: (member: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<{ settings: WorkbotProactiveSettings; template: AgentTemplateVersion } | null>
   user: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<DenTypeId<"user"> | null>
   /** One read-only calendar GET as the member, through exactly this Google Workspace connection. */
   calendar: (input: { organizationId: DenTypeId<"organization">; orgMembershipId: DenTypeId<"member">; connectionId: string; timeMin: string; timeMax: string }) => Promise<MemberCalendarRead>
@@ -68,12 +73,22 @@ export type AgentWakeDeps = {
   turn: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentTurnResult>
   /** The member's usable connections and whether their account on each is ready. */
   connections: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }) => Promise<MemberConnection[]>
+  /**
+   * How many members connected their own account on each connection, by id: picks a core source's automatic default.
+   * Without it (or when it can't be read) the default is the first allowed connection.
+   */
+  connectedMembers?: (organizationId: DenTypeId<"organization">) => Promise<ReadonlyMap<string, number>>
   /** Where the member connects or reconnects a connection. */
   connectLink: (connectionId: string) => string
+  /**
+   * `workbotAgentStoppedSources` for this member: where they choose what their agent reads, or null while the feature
+   * is off for them. Asked only when a source their agent read lately is no longer on.
+   */
+  stoppedSources?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<{ link: string } | null>
   sessionId: (organizationId: string, memberId: string) => string
   messageId: (memberId: string, wakeAt: number) => string
   told: (memberId: DenTypeId<"member">, items: readonly AgentItem[]) => Promise<Set<string>>
-  reserve: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; item: AgentItem; outcome?: DeliveryOutcome }) => Promise<string | null>
+  reserve: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; item: AgentItem; outcome?: DeliveryOutcome; kind?: string }) => Promise<string | null>
   finish: (id: string, outcome: DeliveryOutcome) => Promise<void>
   sentSince: (memberId: DenTypeId<"member">, since: Date) => Promise<number>
   holdsLease: (row: AgentInstanceRow) => Promise<boolean>
@@ -83,8 +98,6 @@ export type AgentWakeDeps = {
   deliver: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; text: string }) => Promise<DeliveryResult>
   /** Adds a completed pass to the organization's daily counters (the admin's health view). */
   recordChecks: (input: { organizationId: DenTypeId<"organization">; day: string; counts: readonly AgentCheckCount[] }) => Promise<void>
-  /** My agent (`workbotAgentLibrary`) is on for this member: their words, narrower limits and check records. */
-  library: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
   /** Keeps one check for the member to read ("Last check at 11:20 AM. Stayed quiet."). */
   recordCheck: (record: AgentCheckRecord) => Promise<void>
 }
@@ -110,22 +123,21 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
     return { status: "skipped", reason }
   }
 
-  const settings = await deps.settings(organizationId)
+  // The member's policy: their team's own when it has one, else the organization's. Off in theirs is off for them.
+  const own = deps.teamPolicy ? await deps.teamPolicy({ organizationId, memberId }) : null
+  const settings = own?.settings ?? await deps.settings(organizationId)
   if (!settings.enabled) return skip("off", now + HOUR_MS)
   const userId = await deps.user(organizationId, memberId)
   if (!userId || !(await deps.allowed(organizationId, userId))) return skip("not_allowed", now + HOUR_MS)
   if (!memberAgentOn(row, settings)) return skip("opted_out", now + 6 * HOUR_MS)
 
-  // My agent: the member's narrower limits, their own words, and a record of each check they can read. Off, the
-  // agent runs exactly as before on the organization's policy.
-  const library = await deps.library(organizationId, userId).catch(() => false)
-  const limits = memberLimits(settings, library ? row.overrides : null)
-  const policy = library ? memberPolicy(limits) : proactivePolicy(settings)
+  // Every agent honors the member's narrower limits and words, and records its checks.
+  const limits = memberLimits(settings, row.overrides)
+  const policy = memberPolicy(limits)
   const state = parseAgentState(row.state)
   // Skips repeat until their cause is fixed; keyed by the pass they hold up, they stay one record.
   const slot = String(state.nextPassAt ?? "first")
   const record = async (input: { reason: AgentCheckReason; key: string; kind?: AgentCheckKind; responsibilities?: readonly AgentResponsibility[]; sources?: readonly AgentMemberCheckSource[]; message?: AgentMemberCheckMessage | null }) => {
-    if (!library) return
     const described = describeAgentCheck({ reason: input.reason, responsibilities: input.responsibilities, sources: input.sources, limits })
     await deps.recordCheck({
       organizationId,
@@ -165,7 +177,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
     await record({ reason: blocked, key: `${blocked}:${slot}` })
     return skip(blocked, now + HOUR_MS)
   }
-  const template = await deps.template(organizationId)
+  const template = own?.template ?? await deps.template(organizationId)
   const responsibilities = activeResponsibilities(template, row)
   if (!responsibilities.length) {
     await record({ reason: "nothing_to_check", key: `nothing_to_check:${slot}` })
@@ -176,23 +188,20 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   // the member turned it off). It also tells us their time zone. A failed read only stops the event source here; the
   // member's sources below decide what the agent reads and what they are told to fix.
   const stored = parseStoredPreferences(row.preferences)
-  const choices = library ? stored.sources : {}
-  // The member's sources first: the calendar is read through the connections its source uses (the admin's picks),
-  // never a default another of the member's accounts could stand in for.
-  const listed = await deps.connections({ organizationId, memberId }).catch(() => null)
-  let sources = resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices, lastLook: state.lastLook })
-  let read: MemberCalendarRead | null = null
-  const calendarSource = sources.find((source) => source.id === "calendar")
-  const calendarConnections = calendarSource ? readableConnections(calendarSource).filter((connection) => connection.native === "google-workspace") : []
-  for (const connection of calendarConnections) {
-    read = await deps.calendar({ organizationId, orgMembershipId: memberId, connectionId: connection.id, timeMin: iso(now - 15 * 60_000), timeMax: iso(now + AGENT_TIMING.horizonMs + 2 * HOUR_MS) })
-    if (read.kind === "ok") break
-    appLogger.info("workbot_agent_google_unavailable", { member_id: memberId, reason: read.kind })
-    // Google refused just now, whatever the stored state says: this connection only. A lost sign-in holds up all it
-    // serves; a missing calendar permission only the calendar.
-    if (read.kind === "needs_connection") sources = withConnectionState(sources, connection.id, "reconnect")
-    if (read.kind === "missing_scope") sources = withConnectionState(sources, connection.id, "reconnect", ["calendar"])
-  }
+  const choices = stored.sources
+  // The member's sources first: the calendar is read through the one connection its source reads for them (their
+  // pick among the admin's allowed ones, else the default), never another of their accounts.
+  const [listed, connectedMembers] = await Promise.all([
+    deps.connections({ organizationId, memberId }).catch(() => null),
+    deps.connectedMembers ? deps.connectedMembers(organizationId).catch(() => undefined) : Promise.resolve(undefined),
+  ])
+  const looked = await readMemberCalendar({
+    sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices, lastLook: state.lastLook, connectedMembers }),
+    read: (connectionId) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId, timeMin: iso(now - 15 * 60_000), timeMax: iso(now + AGENT_TIMING.horizonMs + 2 * HOUR_MS) }),
+    memberId,
+  })
+  const sources = looked.sources
+  const read: MemberCalendarRead | null = looked.read
   const projected = read?.kind === "ok" ? projectGoogleCalendarEvents(read.json) : null
   const timeZone = isValidTimeZone(projected?.timeZone) ? projected.timeZone : storedZone ?? "UTC"
   const calendarResponsibilities = responsibilities.includes("meeting_prep") || responsibilities.includes("calendar_changes")
@@ -235,30 +244,12 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
   const readable = sources.filter((source) => readableConnections(source).length > 0)
 
   // A source that is on but can't be read: one message with the action that fixes it, once until it works again.
-  const unreadable = blockedConnections(sources)
-  const notices: Record<string, number> = {}
-  for (const entry of unreadable) {
-    const told = state.notices[entry.connection.id]
-    if (told !== undefined) {
-      notices[entry.connection.id] = told
-      continue
-    }
-    const action = `${entry.connection.state === "reconnect" ? "Reconnect" : "Connect"} ${entry.connection.native ? connectionName(entry.connection) : entry.connection.name}`
-    const what = joinNames(entry.sources.map((source) => source.name))
-    const text = readable.length
-      ? `Quick check: I can't read your ${what}, so I've paused checking ${entry.sources.length > 1 ? "them" : "it"} and kept reading the rest. <${deps.connectLink(entry.connection.id)}|${action}>`
-      : `Quick check: I can't read your ${what}, so I've paused your checks until it's fixed. <${deps.connectLink(entry.connection.id)}|${action}>`
-    const sent = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId))
-      ? await deps.deliver({ organizationId, userId, text })
-      : { ok: false as const, code: "lease_or_feature_lost" }
-    if (sent.ok) notices[entry.connection.id] = now
-    await record({
-      reason: "source_disconnected",
-      key: `source_disconnected:${entry.connection.id}:${slot}`,
-      kind,
-      sources: entry.sources.map((source) => ({ id: source.id, name: source.name, connectionId: entry.connection.id })),
-      message: sent.ok ? sent.message ?? null : null,
-    })
+  const notices = {
+    ...await noticeUnreadableSources({
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record,
+    }),
+    // A source it read lately that is no longer on: said once too, instead of only dropping out of the check.
+    ...await noticeStoppedSources({ row, organizationId, userId, sources, choices, othersReadable: readable.length > 0, told: state.notices, now, slot, kind, deps, record }),
   }
   if (!readable.length) {
     // Nothing to read: no turn. Look again later; the member's fix (or turning a source on) makes it due sooner.
@@ -280,7 +271,8 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
         id: source.id,
         name: source.name,
         via: source.kind === "other" ? [] : readableConnections(source).map((connection) => connection.name),
-        instruction: library ? source.instruction : "",
+        ...sourcePromptService(source),
+        instruction: source.instruction,
         lastReadAt: source.lastReadAt,
       })),
       unavailable: sources
@@ -290,7 +282,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
       instructions: template.instructions,
       now,
       timeZone,
-      wishes: library ? { preferences: stored.words, quietWindow: limits.quietWindow } : null,
+      wishes: { preferences: stored.words, quietWindow: limits.quietWindow },
     }),
     messageId: deps.messageId(memberId, row.nextWakeAt.getTime()),
     scopes: agentReadScopes(allowlist),
@@ -329,7 +321,7 @@ export async function wakeAgent(row: AgentInstanceRow, deps: AgentWakeDeps): Pro
       at: deps.now(),
       timeZone,
       snoozedUntil: row.snoozedUntil?.getTime() ?? null,
-      quietWindow: library ? limits.quietWindow : null,
+      quietWindow: limits.quietWindow,
       urgent: result.urgent === true,
     })
     outcome = { reason: "already_told" }
@@ -385,32 +377,9 @@ function presetsOf(items: readonly AgentItem[]): AgentResponsibility[] {
   return [...new Set(items.flatMap((item) => (item.preset ? [item.preset] : [])))]
 }
 
-/** The sources a message's items came from, named as the member knows them ("Slack", "Gmail"). */
-function checkSources(items: readonly AgentItem[], sources: readonly ResolvedSource[]): AgentMemberCheckSource[] {
-  return items.flatMap((item) => {
-    const source = sources.find((entry) => entry.id === item.source)
-    if (!source) return []
-    const connection = readableConnections(source)[0] ?? null
-    return [{ id: source.id, name: source.kind === "other" ? source.name : connection?.name ?? source.name, connectionId: connection?.id ?? null }]
-  })
-}
-
 /** Calendar events only wake the agent when it may read the calendar. */
 function calendarRead(reasons: readonly AgentWakeReason[], readable: readonly ResolvedSource[]): AgentWakeReason[] {
   const calendar = readable.some((source) => source.id === "calendar")
   return reasons.filter((reason) => reason.kind !== "calendar" || calendar)
 }
 
-/** "Gmail and Google Calendar". */
-function joinNames(names: readonly string[]) {
-  const unique = [...new Set(names)]
-  if (unique.length <= 1) return unique[0] ?? "source"
-  return `${unique.slice(0, -1).join(", ")} and ${unique.at(-1)}`
-}
-
-/** A Den provider's connection as the member knows it in the Library ("Google Workspace"). */
-function connectionName(connection: MemberConnection) {
-  if (connection.native === "google-workspace") return "Google Workspace"
-  if (connection.native === "microsoft-365") return "Microsoft 365"
-  return connection.name
-}

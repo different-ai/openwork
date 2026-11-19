@@ -11,6 +11,11 @@ type Kept = { at: string; result: CallToolResult };
 // An open's loads that succeeded, for a card that mounts again. Memory only.
 const kept = new Map<string, Kept>();
 
+/** Drops every kept load, for when this person may no longer see them. */
+export function forgetMcpAppOpenLoads(): void {
+  kept.clear();
+}
+
 function keep(key: string, result: CallToolResult) {
   kept.delete(key);
   kept.set(key, { at: new Date().toISOString(), result });

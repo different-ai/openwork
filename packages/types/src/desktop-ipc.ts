@@ -304,7 +304,10 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  /** Caller-owned opt-in for aborting a finite request beyond the default GET/PATCH methods. */
+  cancellable?: boolean;
   transferId?: string;
+  redirect?: "error";
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -327,7 +330,7 @@ export type DesktopFetchResult = {
  * resolves elsewhere is shown in its folder instead of being handed to an application.
  */
 export type DesktopWorkspaceFileOpenResult =
-  | { ok: true; action: "opened" | "revealed" }
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
   | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
@@ -355,8 +358,8 @@ export type ComputerPermission = "accessibility" | "screenRecording";
 /** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
 export type ComputerRequest = {
   id: string;
-  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive. */
-  reason: "setup" | "script" | "files";
+  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval; files: files an app or page is about to receive; credential: the browser is about to type a password or code on a site. */
+  reason: "setup" | "script" | "files" | "credential";
   /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
   computer: string;
   placement: "local" | "remote";
@@ -364,10 +367,15 @@ export type ComputerRequest = {
   detail?: string;
   appId?: string;
   purpose?: string;
+  /** False when organization policy requires approval of each individual script or browser upload. */
+  standing?: boolean;
   /** The exact script that runs if the person approves it. */
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
   /** The files handed over if the person approves: names or full paths, and the app or site receiving them. */
-  files?: { app: string; names: string[] };
+  /** `save`: the one name is where the app will save a file, not a file handed to it. */
+  files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
+  /** Where the agent would type a password or one-time code: an exact site (origin) in the built-in browser, or a native app by name and id. */
+  credential?: { site?: string; app?: string; appId?: string };
 };
 
 /** One chat's computer use state, as the broker reports it. */
@@ -400,8 +408,60 @@ export type ComputerSnapshot = {
   timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
 };
 
+/** One of a chat's subagents on its computer, for the chat's crew view (`parallelComputerUse`). */
+export type ComputerCrewMember = {
+  sessionId: string;
+  /** Its cursor's name and color. */
+  name: string;
+  color: string;
+  app: string | null;
+  state: "working" | "waiting" | "paused" | "done";
+  /** Its latest step's intent, as its cursor shows it. */
+  intent: string | null;
+  /** Its app's newest frame while the crew view watches. */
+  frame?: { mimeType: "image/png"; data: string; width: number; height: number };
+};
+
 /** Settings: the computer every chat uses and whether it is set up. */
 export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
+
+/**
+ * The computers this desktop offers and how they are doing, for the organization's
+ * devices list (`remoteDevices`). Names and readiness only.
+ */
+export type ComputerDevicesSnapshot = {
+  /** Computer use is on, as the broker knows it. Off, nothing is probed. */
+  enabled: boolean;
+  /** Remote computers are verified on, so configured VMs are listed. */
+  remoteEnabled: boolean;
+  /** The computer every chat uses. */
+  selectedId: string | null;
+  /** This computer's macOS permissions, when its helper reports them. */
+  permissions: { accessibility: boolean; screenRecording: boolean } | null;
+  computers: Array<{
+    id: string;
+    label: string;
+    placement: "local" | "remote";
+    /** Null: not probed. Only this computer and the one chats use are. */
+    readiness: "ready" | "setup-required" | "unsupported" | "unavailable" | null;
+    /** What it still needs, in one sentence; null when ready or not probed. */
+    detail: string | null;
+    /** For a configured VM: who runs it and the provider's id for it. */
+    provider: "freestyle" | "daytona" | null;
+    externalId: string | null;
+  }>;
+};
+
+/** How this desktop names itself to the organization's devices list. */
+export type DesktopDeviceIdentity = {
+  /** The id this install's runner is registered with; null until the runner is configured. */
+  installId: string | null;
+  label: string;
+  platform: string;
+  appVersion: string;
+  osVersion: string | null;
+  arch: string | null;
+};
 
 /** The live watch view: recent redacted frames and dispatched input, never actionable. */
 export type ComputerPresentation = {
@@ -479,8 +539,15 @@ export type DesktopCommandMap = {
 
   // Computer use (macOS): chat ownership, the watch view and permission setup
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  /** The chat's subagents on its computer; `thumbnails` streams each app's newest frame. */
+  computerCrew: { args: [sessionId: string, thumbnails: boolean]; result: ComputerCrewMember[] };
   computerStatus: { args: []; result: ComputerStatus };
+  /** What this desktop reports to the organization's devices list. Read-only. */
+  computerDevices: { args: []; result: ComputerDevicesSnapshot };
+  desktopDeviceIdentity: { args: []; result: DesktopDeviceIdentity };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
+  /** This chat is on screen in a visible OpenWork window: its computer work follows along in view. */
+  computerFollow: { args: [sessionId: string, watching: boolean]; result: void };
   computerInteract: {
     args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
     result: void;
@@ -489,9 +556,20 @@ export type DesktopCommandMap = {
   computerDismissSetup: { args: [setupId?: string]; result: void };
   computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
-  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always"; id?: string }]; result: ComputerSnapshot };
-  computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
+  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string }]; result: ComputerSnapshot };
+  computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
+  /** Files in the chat's output folder, newest first, with their size and last change (ms). */
+  computerChatFiles: { args: [input: { sessionId: string }]; result: { files: Array<{ path: string; bytes: number; modifiedAt: number }> } };
+  /** An image saved in the chat's output folder, to show inline in a reply; null for anything else. */
+  computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
+  computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
+  computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  /** Whether the agent's cursor, frame and pill on this Mac show up in screen recordings. */
+  computerRecordableOverlay: { args: []; result: boolean };
+  /** Shows them in screen recordings from the next app the agent starts using, until OpenWork quits. */
+  computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };
+  /** Compatibility-only no-op for older renderers; returns true. */
   computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
@@ -581,8 +659,9 @@ export type DesktopCommandMap = {
   // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
+  __resolveChatFilePath: { args: [target: string]; result: string | null };
   __openPath: { args: [target: string]; result: unknown };
-  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };

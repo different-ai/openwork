@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { usePanelTabStore } from "../session/panel/panel-tab-store";
 import { useUiStateStore } from "@/react-app/shell/ui-state-store";
 import { appCreationRuns, appRead } from "./app-creation-progress";
+import { BuiltAppCatalogSync } from "./built-app-catalog-sync";
 import {
   builtAppSummary,
   isAppBuilderPart,
@@ -161,5 +162,8 @@ export function BuiltAppPreviewSync({
       }
     }
   }, [messages, mcpAppOrigin, readOnly, sessionId, active]);
-  return <LatestBuiltAppPartsContext.Provider value={latestParts}>{children}</LatestBuiltAppPartsContext.Provider>;
+  return <LatestBuiltAppPartsContext.Provider value={latestParts}>
+    <BuiltAppCatalogSync messages={messages} />
+    {children}
+  </LatestBuiltAppPartsContext.Provider>;
 }

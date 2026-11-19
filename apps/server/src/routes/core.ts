@@ -12,8 +12,12 @@ import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } fr
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
+import { readDiskSpace } from "../disk-space.js";
+import { runtimeStorageDir } from "../runtime-db.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
+import { takeApprovedDriveUpload } from "../extensions/approved-drive-upload.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
+import { takeFileSendApproved } from "../file-send-approval.js";
 import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
@@ -258,6 +262,12 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
+  // Free space on the disk that holds this server's saved data, so the app
+  // can warn before writes start failing.
+  addRoute(routes, "GET", "/disk-space", "client", async () => {
+    return jsonResponse(await readDiskSpace(runtimeStorageDir(config)));
+  });
+
   addRoute(routes, "GET", "/runtime/versions", "client", async () => {
     const snapshot = await fetchRuntimeControl("/runtime/versions");
     return jsonResponse(snapshot);
@@ -362,12 +372,15 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call extension actions");
     }
+    const approvedDriveFile = takeApprovedDriveUpload(ctx.request);
+    if (approvedDriveFile) ensureWritable(config);
     const body = await readJsonBody(ctx.request);
-    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), ctx.request.signal));
+    return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), ctx.request.signal, approvedDriveFile));
   });
 
   // Drive writes additionally require the in-process Desktop confirmation in
-  // callDriveFileAction. Neither an engine credential nor a request flag grants approval.
+  // callDriveFileAction, unless this host's shared file-send approval already
+  // approved the save in the chat. Neither an engine credential nor a request flag grants approval.
   addRoute(routes, "POST", "/experimental/drive-files/call", "client", async (ctx) => {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call Drive file actions");
@@ -377,7 +390,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     const args = isRecord(body.args) ? body.args : {};
     const context = isRecord(body.context) ? body.context : {};
     if (action === "drive_push_file" || action === "drive_pull_file") ensureWritable(config);
-    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal });
+    const approvedInChat = takeFileSendApproved(ctx.request) && action === "drive_push_file";
+    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal, ...(approvedInChat ? { approvedInChat } : {}) });
     if (!result) throw new ApiError(404, "extension_action_not_found", "Drive file action not found");
     return jsonResponse(result);
   });

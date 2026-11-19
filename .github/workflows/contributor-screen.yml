@@ -1,0 +1,78 @@
+name: Contributor screen
+
+# Screens a fork PR's changes without ever running them: free deterministic
+# checks, no model and no secrets (hidden characters, dependencies, database
+# changes, binaries, encoded code, text aimed at an AI reviewer).
+#
+# Called from contributor-pr.yml (pull_request_target), so this file and its
+# scripts always come from dev. The PR is fetched as git objects only; nothing
+# from it is installed, built, sourced or executed by this job.
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        type: number
+        required: true
+      head_sha:
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    env:
+      GIT_LFS_SKIP_SMUDGE: "1"
+      PR_NUMBER: ${{ inputs.pr_number }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+    steps:
+      - name: Set paths
+        run: echo "SCAN_PATH=$RUNNER_TEMP/scan.json" >> "$GITHUB_ENV"
+
+      - name: Checkout trusted scripts from dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: trusted
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+
+      # Objects only. The head must still be the commit this run was asked to
+      # screen; a newer push gets its own run.
+      - name: Fetch the PR as data
+        id: fetch
+        working-directory: trusted
+        run: |
+          git fetch --no-tags --filter=blob:none origin "+refs/pull/${PR_NUMBER}/head:refs/contributor/head" "+refs/heads/dev:refs/contributor/dev"
+          fetched="$(git rev-parse refs/contributor/head)"
+          if [ "$fetched" != "$HEAD_SHA" ]; then
+            echo "::notice::PR head moved to $fetched; the run for that push screens it."
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "merge_base=$(git merge-base refs/contributor/dev "$HEAD_SHA")" >> "$GITHUB_OUTPUT"
+          echo "stale=false" >> "$GITHUB_OUTPUT"
+
+      - name: Scan for hidden characters, dependencies, database changes and obfuscation
+        if: steps.fetch.outputs.stale == 'false'
+        env:
+          PR_GIT_DIR: ${{ github.workspace }}/trusted/.git
+          MERGE_BASE: ${{ steps.fetch.outputs.merge_base }}
+        run: node trusted/.github/scripts/contributor-screen.mjs scan
+
+      - name: Report the screen
+        if: steps.fetch.outputs.stale == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node trusted/.github/scripts/contributor-screen.mjs report

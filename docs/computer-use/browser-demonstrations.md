@@ -5,16 +5,29 @@ steps in chat, and save the result as a private Cloud skill. This builds on the
 shared desktop and input controls; it uses the ordinary skill library and
 `create_skill` / `get_skill` tools.
 
-Enable `browserDemonstrations`, `computerUse`, and `remoteComputers` for the
-organization in `/admin`. The teaching rollout is off by default on cloud and
-self-hosted installations. The conversation needs a desktop snapshot built with
-the current guest bridge. An old snapshot reports that teaching is unavailable;
-it is never replaced automatically.
+Enable `browserDemonstrations`, `browserUse`, and `remoteComputers` for the
+organization in `/admin`; `computerUse` is not needed. The teaching rollout is
+off by default on cloud and self-hosted installations. The conversation needs a
+desktop built with the current guest bridge. An older one reports that teaching
+is unavailable until it moves to a current build (see
+[Prepare the headless runner](workbot.md#prepare-the-headless-runner)).
 
 ## Teach, review, and run
 
-1. Open Computer → Browser → Teach Workbot. Choose the browser tab, then
-   Start teaching. The person owns browser input while teaching.
+Asking Workbot in the main chat to be taught a browser task ("let me show you
+how I do this") opens Browser with the teaching window ready. Workbot requests
+it with `open_teaching` (message turns only, never tasks or reports); the
+person still chooses the tab and presses Start teaching, so nothing is recorded
+before they do. The page follows the request once, for a message sent from that
+page. A Teach Workbot action under the reply opens the window again.
+
+1. Open Browser and choose the whiteboard, Teach Workbot, in its toolbar. The
+   teaching window floats over the page, which keeps its size; collapse it to
+   its latest step or hide it, and teaching continues (the whiteboard shows a
+   dot while recording). Choose the browser tab, then Start teaching.
+   With the browser live view, the tab on screen is chosen unless you pick
+   another, and tabs are named as in the tab strip. The taught tab comes to the
+   front. The person owns browser input while teaching.
 2. Navigate, enter search inputs, and use the page normally. Explain intentions
    in the conversation before or after an action. Workbot receives recent
    semantic steps with the explanation, using read-only turn credentials. The
@@ -22,8 +35,10 @@ it is never replaced automatically.
    review, and which step the explanation applies to.
 3. Choose Select information, then click a field in the browser. That click
    selects an extraction target instead of activating the page control.
-4. Open Recorded steps and select an earlier action to explain or correct it
-   in chat. Use latest step returns chat to the current action. Input and output
+4. Select an earlier action under Recorded steps to explain or correct it
+   in chat. The same action repeated in a row on one control is one line with
+   a count; open it to select one of its steps. Use latest step returns chat to
+   the current action. Input and output
    names accept ordinary words such as “Person name.” Each recorded field edit
    starts as a parameter; the entered value is omitted. Pause recording for
    activity that should not enter the skill; explanations still work while paused.
@@ -31,11 +46,18 @@ it is never replaced automatically.
    instructions. Draft-review chat stays read-only and can add final corrections.
    Missing extraction explanations appear beside Save. Save private skill creates
    an ordinary private Cloud skill.
-6. Fill in Starting page and the named inputs, then choose Run skill, or ask for
-   the saved skill in chat. Workbot reads the saved instructions, asks for missing
-   inputs, and operates through its existing browser tools. The chat shows the
-   ordinary run request, not its internal input envelope. “No run verified” means
-   saving alone does not establish a successful autonomous rerun.
+6. The saved view opens on Try it. Fill in Starting page and the named inputs,
+   then choose Run skill, or ask for the saved skill in chat. A field typed
+   several times in a row asks once, and Workbot asks in chat for anything left
+   empty. Workbot reads the saved instructions and operates through its existing
+   browser tools. The chat shows the ordinary run request, not its internal
+   input envelope. Saving alone does not establish a successful autonomous
+   rerun, which is why the window asks for one try.
+7. Edit skill returns to review. Change step explanations, input names or the
+   purpose; Save changes publishes the skill's next version under the same name.
+
+A paused browser cannot teach, save or run. The window says so and offers
+Resume browser.
 
 The draft includes input placeholders, the taught controls and extraction
 fields, teacher explanations, verification requirements, and interruption rules.
@@ -53,8 +75,13 @@ rather than reopening the starting page after each action.
 ## Recording boundaries
 
 Recording is limited to the chosen tab's top document and trusted user events.
-It does not record other tabs, raw keystroke streams, screenshots, entered field
-values, passwords, payment fields, or session credentials. Extraction captures
+Typing in one field is one step, including when the page redraws that field
+while you type.
+With the browser live view, switching to another tab says that only the taught
+tab is recorded, with Show taught tab to return to it. Closing the taught tab
+pauses recording. It does not record other tabs, raw keystroke streams,
+screenshots, entered field values, passwords, payment fields, or session
+credentials. Extraction captures
 an accessible field label or table heading rather than its example value.
 An unlabeled selection keeps only its structural descriptor and asks for an
 explanation; plain page-text clicks are not recorded as controls.

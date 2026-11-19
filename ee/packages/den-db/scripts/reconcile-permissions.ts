@@ -1,6 +1,6 @@
 /**
- * Adds rows for new catalog permissions to every organization's Member and
- * Admin permission sets. Run after migrations; see permission-reconciliation.ts.
+ * Adds rows for new catalog permissions to every organization's Member, Admin and
+ * Super admin permission sets. Run after migrations; see permission-reconciliation.ts.
  *
  * Usage:
  *   DATABASE_URL=mysql://root:password@127.0.0.1:3306/openwork_den \

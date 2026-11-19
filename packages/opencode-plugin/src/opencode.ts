@@ -261,8 +261,19 @@ export interface NativeModelDomain {
   default(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data?: ModelInfo }>
 }
 
+/** packages/schema permission Request in 2.0.26: action and resources, with optional metadata. */
+export interface NativePermissionRequest {
+  readonly id: string
+  readonly sessionID: string
+  readonly action?: string
+  readonly resources?: readonly string[]
+  readonly metadata?: Readonly<Record<string, unknown>>
+}
+
 export interface NativePermissionDomain {
-  list(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly { readonly id: string; readonly sessionID: string }[]>
+  list(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly NativePermissionRequest[]>
+  /** session.permission.reply; the runner sends only "once" or "reject", never "always". */
+  reply?(input: { sessionID: string; requestID: string; decision: "once" | "reject" }, options?: NativeRequestOptions): Promise<void>
 }
 
 // ---- Plugin ----

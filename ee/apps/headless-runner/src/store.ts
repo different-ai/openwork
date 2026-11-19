@@ -8,6 +8,7 @@ import {
   enqueueIndexUpdate,
   INDEX_SIZE_STEP_BYTES,
   indexSnapshotAll,
+  indexSnapshotAt,
   nextIndexUpdateAt,
   pendingIndexUpdates,
   setIndexCapability,
@@ -56,7 +57,9 @@ const sessionOptions = z.object({
   reactions: z.boolean().optional(),
   tasks: z.boolean().optional(),
   documentNavigation: z.boolean().optional(),
+  teachingNavigation: z.boolean().optional(),
   sandboxGateway: z.boolean().optional(),
+  browserRecovery: z.boolean().optional(),
   timeZone: z.string().optional(),
   autoTitle: z.boolean().optional(),
   memoryOf: z.string().optional(),
@@ -109,8 +112,11 @@ export type Session = {
   tasks: boolean
   /** Whether the host opens a document beside this chat when the person explicitly asks (the `open_document` tool). */
   documentNavigation: boolean
+  /** Whether the host opens its teaching window when the person asks to teach a browser task (the `open_teaching` tool). */
+  teachingNavigation: boolean
   /** Whether this conversation's computer runs through the runner's sandbox gateway (SANDBOX_GATEWAY) instead of its own provider. */
   sandboxGateway: boolean
+  browserRecovery: boolean
   /**
    * Who the conversation belongs to, in the caller's own terms (for example one person in one organization), and
    * the caller's id for it. A caller with several conversations per person lists them by owner (GET /v1/sessions).
@@ -140,7 +146,9 @@ export type SessionInput = {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  teachingNavigation?: boolean
   sandboxGateway?: boolean
+  browserRecovery?: boolean
   owner?: string
   ref?: string
   timeZone?: string
@@ -159,7 +167,9 @@ function optionsOf(input: {
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
+  teachingNavigation?: boolean
   sandboxGateway?: boolean
+  browserRecovery?: boolean
   timeZone?: string | null
   autoTitle?: boolean
   memoryOf?: string | null
@@ -174,7 +184,9 @@ function optionsOf(input: {
     ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
     ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
     ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+    ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
     ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
+    ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
     ...(input.timeZone ? { timeZone: input.timeZone } : {}),
     ...(input.autoTitle !== undefined ? { autoTitle: input.autoTitle } : {}),
     ...(input.memoryOf ? { memoryOf: input.memoryOf } : {}),
@@ -197,7 +209,9 @@ function serializeOptions(options: SessionOptions) {
     ...(options.reactions ? { reactions: true } : {}),
     ...(options.tasks ? { tasks: true } : {}),
     ...(options.documentNavigation ? { documentNavigation: true } : {}),
+    ...(options.teachingNavigation ? { teachingNavigation: true } : {}),
     ...(options.sandboxGateway ? { sandboxGateway: true } : {}),
+    ...(options.browserRecovery ? { browserRecovery: true } : {}),
     ...(options.timeZone ? { timeZone: options.timeZone } : {}),
     ...(options.autoTitle ? { autoTitle: true } : {}),
     // Owner-scoped memory replaces another conversation's: never both.
@@ -581,7 +595,9 @@ export class Store {
       reactions: options.reactions ?? false,
       tasks: options.tasks ?? false,
       documentNavigation: options.documentNavigation ?? false,
+      teachingNavigation: options.teachingNavigation ?? false,
       sandboxGateway: options.sandboxGateway ?? false,
+      browserRecovery: options.browserRecovery ?? false,
       owner: value.owner ?? null,
       ref: value.ref ?? null,
       timeZone: options.timeZone ?? null,
@@ -1130,6 +1146,17 @@ export class Store {
       })
   }
 
+  /** Every step-mode turn's next step and when it is due, earliest first. */
+  scheduledSteps(): Array<{ sessionId: string; messageId: string; dueAt: number }> {
+    return this.db
+      .prepare("SELECT session_id, message_id, due_at FROM step_schedule ORDER BY due_at, rowid")
+      .all()
+      .flatMap((row) => {
+        const value = z.object({ session_id: z.string(), message_id: z.string(), due_at: z.number() }).safeParse(row)
+        return value.success ? [{ sessionId: value.data.session_id, messageId: value.data.message_id, dueAt: value.data.due_at }] : []
+      })
+  }
+
   /** When the earliest next step is due, or null without step-mode turns. */
   nextStepAt(): number | null {
     const row = this.db.prepare("SELECT MIN(due_at) AS n FROM step_schedule").get()
@@ -1445,6 +1472,10 @@ export class Store {
 
   indexSnapshotAll(now: number): void {
     this.transaction(() => indexSnapshotAll(this.db, now))
+  }
+
+  indexSnapshotAt(): number | null {
+    return indexSnapshotAt(this.db)
   }
 
   /** Queues a fresh index snapshot of one session (same transaction as the caller's change). */

@@ -11,14 +11,15 @@ export type BillingPlanTier = (typeof BILLING_PLAN_TIERS)[number];
 export const BILLING_PLAN_SOURCES = ["default", "stripe", "manual", "grandfathered"] as const;
 export type BillingPlanSource = (typeof BILLING_PLAN_SOURCES)[number];
 
-/** Plans a billing admin can buy by card. */
-export const PLAN_CHECKOUT_TIERS = ["team", "enterprise"] as const;
+/**
+ * Plans a billing admin can buy by card. Enterprise is never bought by card:
+ * a platform admin sets it in /admin › Billing and OpenWork invoices it.
+ */
+export const PLAN_CHECKOUT_TIERS = ["team"] as const;
 export type PlanCheckoutTier = (typeof PLAN_CHECKOUT_TIERS)[number];
 
 /** Team: $10 for every person once the workspace passes its free people. */
 export const TEAM_PLAN_UNIT_AMOUNT = 1000;
-/** Planned Enterprise price; deployments can change it with DEN_ENTERPRISE_UNIT_AMOUNT. */
-export const DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT = 2000;
 export const PLAN_CURRENCY = "usd";
 export const PLAN_INTERVAL = "month";
 /** Most people one plan checkout may add on top of the people already counted. */
@@ -32,7 +33,7 @@ export function planTierRank(tier: BillingPlanTier): number {
 }
 
 export function isPlanCheckoutTier(value: unknown): value is PlanCheckoutTier {
-  return value === "team" || value === "enterprise";
+  return value === "team";
 }
 
 function wholeCount(value: number, max = Number.MAX_SAFE_INTEGER): number {
@@ -49,12 +50,9 @@ export function quotePlan(input: {
   plan: PlanCheckoutTier;
   people: number;
   addPeople?: number;
-  enterpriseUnitAmount?: number;
 }): PlanQuote {
   const people = Math.max(1, wholeCount(input.people) + wholeCount(input.addPeople ?? 0, PLAN_MAX_ADD_PEOPLE));
-  const unitAmount = input.plan === "enterprise"
-    ? wholeCount(input.enterpriseUnitAmount ?? DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT) || DEFAULT_ENTERPRISE_PLAN_UNIT_AMOUNT
-    : TEAM_PLAN_UNIT_AMOUNT;
+  const unitAmount = TEAM_PLAN_UNIT_AMOUNT;
   return { people, unitAmount, monthlyTotal: people * unitAmount };
 }
 
@@ -109,7 +107,7 @@ export function withReturnParams(path: `/dashboard/${string}`, params: Record<st
 
 // ─── Billing that is not configured ──────────────────────────────────────────
 
-export const BILLING_NOT_CONFIGURED_PRODUCTS = ["seat", "inference", "web", "team", "enterprise", "portal", "checkout"] as const;
+export const BILLING_NOT_CONFIGURED_PRODUCTS = ["seat", "inference", "web", "team", "portal", "checkout"] as const;
 export type BillingNotConfiguredProduct = (typeof BILLING_NOT_CONFIGURED_PRODUCTS)[number];
 
 const BILLING_NOT_CONFIGURED_MESSAGES: Record<BillingNotConfiguredProduct, string> = {
@@ -117,7 +115,6 @@ const BILLING_NOT_CONFIGURED_MESSAGES: Record<BillingNotConfiguredProduct, strin
   seat: "Paid seats aren't sold on this deployment.",
   web: "OpenWork Web isn't sold on this deployment.",
   team: "The Team plan isn't sold on this deployment.",
-  enterprise: "Enterprise isn't sold by card on this deployment.",
   portal: "Billing isn't set up on this deployment.",
   checkout: "Billing isn't set up on this deployment.",
 };
@@ -146,13 +143,13 @@ export type PlanCheckoutRequest = z.infer<typeof planCheckoutRequestSchema>;
 
 export const checkoutStartResponseSchema = z.object({
   url: z.string(),
-  /** The plan changed without a new payment page (for example Team to Enterprise); `url` is the return page. */
+  /** The plan changed without a new payment page; `url` is the return page. */
   completed: z.boolean().optional(),
 });
 export type CheckoutStartResponse = z.infer<typeof checkoutStartResponseSchema>;
 
-/** Who pays for the organization's plan: nobody (Free or set by a platform admin), or a Stripe subscription. */
-export const PLAN_PAID_BY = ["none", "stripe_team", "stripe_enterprise"] as const;
+/** Who pays for the organization's plan: nobody (Free, or set by a platform admin and invoiced), or a Team subscription in Stripe. */
+export const PLAN_PAID_BY = ["none", "stripe_team"] as const;
 export type PlanPaidBy = (typeof PLAN_PAID_BY)[number];
 
 /** A calendar date, `YYYY-MM-DD`, such as the optional end of a plan a platform admin set. */
@@ -194,7 +191,7 @@ export const billingPlanSummarySchema = z.object({
 export type BillingPlanSummary = z.infer<typeof billingPlanSummarySchema>;
 
 const planOfferSchema = z.object({
-  /** On for this organization and sold on this deployment. */
+  /** Sold on this deployment (Stripe and the price are set up). */
   available: z.boolean(),
   unitAmount: z.number().int(),
   currency: z.string(),
@@ -202,7 +199,6 @@ const planOfferSchema = z.object({
 });
 export const billingPlansSchema = z.object({
   team: planOfferSchema,
-  enterprise: planOfferSchema,
 });
 export type BillingPlans = z.infer<typeof billingPlansSchema>;
 export type BillingPlanOffer = z.infer<typeof planOfferSchema>;
@@ -218,7 +214,7 @@ export const seatPlanQuoteSchema = z.object({
   monthlyTotal: z.number().int(),
   currency: z.string(),
   interval: z.string(),
-  /** Team checkout is on for this organization and sold on this deployment. */
+  /** Team checkout is sold on this deployment. */
   available: z.boolean(),
 });
 export type SeatPlanQuote = z.infer<typeof seatPlanQuoteSchema>;

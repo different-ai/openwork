@@ -8,7 +8,7 @@
     "name": "OpenWork",
     "email": "support@openworklabs.com"
   },
-  "main": "electron/main.mjs",
+  "main": "electron/entry.mjs",
   "type": "module",
   "scripts": {
     "dev": "node ./scripts/electron-dev.mjs",
@@ -20,10 +20,12 @@
     "package:electron:cloud": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.cloud.yml",
     "package:electron:enterprise": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.enterprise.yml",
     "package:electron:dir": "pnpm run build:electron && pnpm exec electron-builder --config electron-builder.yml --dir",
-    "electron": "pnpm run rebuild:electron-native && pnpm exec electron ./electron/main.mjs",
+    "electron": "pnpm run rebuild:electron-native && pnpm exec electron ./electron/entry.mjs",
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --filter @openwork/computer-use build && pnpm --filter @openwork/remote-sessions build && pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
-    "test:session-runner": "node --test ./test/session-runner.test.mjs",
+    "test:session-runner": "node --test ./test/remote-session-transcript.test.mjs",
+    "test:native-navigation": "node --test ./test/browser-navigation-native.test.mjs",
+    "test:login-entry": "node --test ./test/login-entry.test.mjs",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
   "dependencies": {
@@ -48,7 +50,7 @@
     "electron-updater": "^6.3.9",
     "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
-    "minimatch": "^10.2.5",
+    "minimatch": "^11.0.1",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",
     "undici": "6.29.1",
     "yaml": "^2.9.0",
@@ -59,7 +61,7 @@
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
     "electron": "^43.8.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.18.0"
   },
   "packageManager": "pnpm@10.27.0"
 }

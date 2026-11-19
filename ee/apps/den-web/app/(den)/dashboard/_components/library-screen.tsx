@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { KeyRound, Plus } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
@@ -14,12 +14,15 @@ import {
   getLibraryNewPluginRoute,
   getLibraryPluginRoute,
   getLibraryPluginShareRoute,
+  getLibraryLlmProviderRoute,
+  getLibraryRoute,
   getYourConnectionsRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
 import { ItemPage } from "./item-header";
-import { ConnectorLogo } from "./item-logo";
+import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { RowTile } from "../_features/computers/computer-rows";
 import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
@@ -34,6 +37,8 @@ import {
   parseLibraryFilter,
   parseNeedsSignIn,
   receivedStatus,
+  workflowFailureSummary,
+  workflowLastRunFailed,
 } from "./library-view";
 import { LibraryCompactRow, LibraryCompactSection, LibraryCompactSkeleton, LibraryCompactSurface, LibraryKindIcon } from "./library-compact";
 import { useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -43,9 +48,14 @@ import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
 import { LibraryModelRow } from "./library-models-ui";
 import { MemberApiKeyDialog } from "./member-api-key-dialog";
+import { MemberGatewayApiKeysSection } from "./member-gateway-api-keys-section";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
+import { useOrgLlmProviders } from "./llm-provider-data";
+import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from "../_features/feature-intros";
+import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
+import { libraryIntroFacts } from "./library-intro-facts";
 
 /** Show the name filter once a Library holds more than this many items. */
 const FILTER_AFTER = 10;
@@ -54,6 +64,21 @@ function itemHref(orgSlug: string | null, item: LibraryItem): string {
   if (item.type === "connection") return getLibraryConnectorRoute(orgSlug, item.id);
   if (item.type === "plugin") return getLibraryPluginRoute(orgSlug, item.id);
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
+}
+
+/**
+ * A saved workflow whose last run failed says so in its description slot: one
+ * red word and the reason, never a tinted panel (DESIGN V2, T2).
+ */
+function WorkflowFailedDescription({ reason }: { reason: string | null }) {
+  const summary = workflowFailureSummary(reason);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" data-workflow-last-run="failed">
+      <span className="size-1.5 shrink-0 rounded-full bg-red-500" aria-hidden="true" />
+      <span className="shrink-0 font-medium text-red-600">Last run failed</span>
+      <span className="min-w-0 truncate" title={summary}>{summary}</span>
+    </span>
+  );
 }
 
 function LibraryItemRow({ item, mine, signIn }: {
@@ -97,6 +122,7 @@ function LibraryItemRow({ item, mine, signIn }: {
       label={`More for ${item.name}`}
       entries={[
         { label: "Open", onSelect: () => router.push(href) },
+        ...(item.type === "workflow" ? [{ label: "See runs", onSelect: () => router.push(`${href}?tab=runs`) }] : []),
         ...(mine && item.type === "connection" ? [{ label: "Share", onSelect: () => router.push(getLibraryConnectorShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type === "plugin" ? [{ label: "Share", onSelect: () => router.push(getLibraryPluginShareRoute(orgSlug, item.id)) }] : []),
         ...(mine && item.type !== "workflow" ? [removeEntry(item.name, remove)] : []),
@@ -110,14 +136,33 @@ function LibraryItemRow({ item, mine, signIn }: {
       kind={item.type}
       testName={item.name}
       logo={item.type === "connection"
-        ? <ConnectorLogo name={item.name} url={item.url} size="xs" />
-        : <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : libraryFilterOf(item) === "skills" ? "skill" : "plugin"} />}
+        ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
+        : item.type === "workflow" || libraryFilterOf(item) === "skills"
+          ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
+          // A plugin wears the same tile as on Manage › Plugins and on its own page.
+          : <PluginLogo name={item.name} />}
       name={item.name}
-      description={item.description ? libraryItemDescription(item) : undefined}
+      description={workflowLastRunFailed(item)
+        ? <WorkflowFailedDescription reason={item.failureReason} />
+        : item.description ? libraryItemDescription(item) : undefined}
       source={mine ? "You" : receivedStatus(item.edges)}
       action={needsSignIn ? action : ready || item.type === "plugin" ? action : <span className="text-[12px] text-[var(--dls-text-secondary)]">{status}</span>}
       revealAction={!needsSignIn && (ready || item.type === "plugin")}
     />
+  );
+}
+
+/** No saved workflows yet: say where they come from, in the person's words. */
+function WorkflowsEmpty() {
+  return (
+    <ItemPanel>
+      <div className="flex flex-col items-center gap-2 px-5 py-8 text-center" data-testid="library-workflows-empty">
+        <h2 className="text-sm font-medium text-[var(--dls-text-primary)]">No saved workflows yet</h2>
+        <p className="max-w-sm text-[13px] text-[var(--dls-text-secondary)]">
+          Ask OpenWork to do something in chat, like a morning brief from your email and calendar. When it works, say “save this” and it shows up here.
+        </p>
+      </div>
+    </ItemPanel>
   );
 }
 
@@ -158,7 +203,14 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
+  const introsEnabled = useFeatureIntroRuntime().enabled;
+  const introUnseen = useFeatureIntroUnseen();
+  // With feature intros on, the viewer's own keys load on every tab: they count toward "anything in my Library".
+  const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
+  const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
+  const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
   const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
+  const personalRows = personalProviders.filter(provider => !onlyNeedsSignIn && provider.name.toLowerCase().includes(query.trim().toLowerCase()));
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -194,9 +246,15 @@ function LibraryContent() {
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
   const hasModels = (models.data ?? []).length > 0;
-  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
+  // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
+  const personalPending = introsEnabled && !personal.loaded && !personal.error;
+  const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
+  // Feature intros: null while anything is loading or failed, so the page shows as before.
+  const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
+    ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
+    : null;
   // A short Library is read at a glance; the filter earns its place once the list runs long.
-  const showFilter = items.length + (models.data ?? []).length > FILTER_AFTER || query !== "";
+  const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
   // What waits on you first, then one section per kind.
   const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
@@ -205,7 +263,7 @@ function LibraryContent() {
     { key: "connectors", title: "Connectors", match: (item) => libraryFilterOf(item) === "connectors" },
     { key: "skills", title: "Skills", match: (item) => libraryFilterOf(item) === "skills" },
     { key: "plugins", title: "Plugins", match: (item) => libraryFilterOf(item) === "plugins" },
-    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === null },
+    { key: "workflows", title: "Workflows", match: (item) => libraryFilterOf(item) === "workflows" },
   ];
   const sections = [
     { key: "attention", title: "Needs your sign-in", items: visible.filter(needsViewerSignIn), models: modelRows.filter((provider) => provider.state === "needs_signin") },
@@ -213,63 +271,84 @@ function LibraryContent() {
     { key: "models", title: "Models", items: [] as LibraryItem[], models: modelRows.filter((provider) => provider.state !== "needs_signin") },
   ].filter((section) => section.items.length + section.models.length > 0);
 
-  return (
+  const listBody = (
+    <>
+      {library.isLoading || (personalPending && items.length === 0 && !hasModels) ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+
+      {filter === "models" && personalRows.length > 0 ? (
+        <LibraryCompactSurface>
+          <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
+            {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
+              logo={<RowTile icon={KeyRound} />} name={provider.name} source="You" />)}
+          </LibraryCompactSection>
+        </LibraryCompactSurface>
+      ) : null}
+
+      {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
+        {sections.map((section) => (
+          <LibraryCompactSection key={section.key} title={section.title} count={section.items.length + section.models.length} tone={section.key === "attention" ? "attention" : "default"} testId={`library-section-${section.key}`}>
+            {section.items.map((item) => (
+              <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={mineKeys.has(`${item.type}:${item.id}`)} signIn={signIn} />
+            ))}
+            {section.models.map((provider) => (
+              <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
+            ))}
+          </LibraryCompactSection>
+        ))}
+      </LibraryCompactSurface> : null}
+
+      {filter === "models" && models.error ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
+          {models.error instanceof Error ? models.error.message : "Your models did not load."}
+        </p>
+      ) : null}
+
+      {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
+          Your organization hasn't given you any models yet.
+        </p>
+      ) : null}
+
+      {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
+
+      {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
+      ) : null}
+    </>
+  );
+
+  const page = (
     <ItemPage testId="library-screen" wide>
       <DenPageHeader
         title="My Library"
         size="compact"
-        action={!empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
+        action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
       {library.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {library.error instanceof Error ? library.error.message : "Your Library did not load."}
         </p>
       ) : null}
 
-      {empty ? <LibraryEmpty onAdd={openAdd} /> : null}
-
-      {!empty && !library.error ? (
+      {empty && filter !== "models" ? <LibraryEmpty onAdd={openAdd} /> : null}
+      {filter === "models" && personal.error ? <p role="alert" className="text-sm text-red-600">{personal.error}</p> : null}
+      {(!empty || filter === "models") && !library.error ? (
         <>
           <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
-            <UnderlineTabs tabs={LIBRARY_FILTERS} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
+            <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
             {showFilter ? (
-              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0">
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
                 <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
               </div>
             ) : null}
           </div>
 
-          {library.isLoading ? <LibraryCompactSurface><LibraryCompactSkeleton label="Loading your Library" /></LibraryCompactSurface> : null}
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
-          {sections.length > 0 ? <LibraryCompactSurface testId="library-compact-sections">
-            {sections.map((section) => (
-              <LibraryCompactSection key={section.key} title={section.title} count={section.items.length + section.models.length} tone={section.key === "attention" ? "attention" : "default"} testId={`library-section-${section.key}`}>
-                {section.items.map((item) => (
-                  <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={mineKeys.has(`${item.type}:${item.id}`)} signIn={signIn} />
-                ))}
-                {section.models.map((provider) => (
-                  <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
-                ))}
-              </LibraryCompactSection>
-            ))}
-          </LibraryCompactSurface> : null}
-
-          {filter === "models" && models.error ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
-              {models.error instanceof Error ? models.error.message : "Your models did not load."}
-            </p>
-          ) : null}
-
-          {filter === "models" && !models.isLoading && !models.error && !hasModels ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
-              Your organization hasn't given you any models yet.
-            </p>
-          ) : null}
-
-          {!library.isLoading && !models.isLoading && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
-            <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
-          ) : null}
+          {filter === "all" || filter === "workflows"
+            ? listBody
+            : <FeatureIntroGate introKey={LIBRARY_TAB_INTROS[filter]} facts={introFacts}>{listBody}</FeatureIntroGate>}
         </>
       ) : null}
 
@@ -277,4 +356,8 @@ function LibraryContent() {
       <MemberApiKeyDialog target={signIn.apiKeyTarget} onClose={signIn.closeApiKey} />
     </ItemPage>
   );
+
+  // With feature intros on, the Library intro replaces the page while the viewer has nothing at all, and each
+  // tab with nothing of its kind shows its box (DESIGN.md I1, I2); with the flag off the page renders as before.
+  return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

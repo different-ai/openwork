@@ -1,5 +1,5 @@
 /**
- * How a feature from ./registry.ts resolves. One function for
+ * How a feature from ./flags resolves. One function for
  * every feature and every place it is checked (den-api, Den web, the desktop):
  *
  *   1. not part of this deployment      → off    ("unavailable")
@@ -37,12 +37,13 @@ export const RETIRED_FEATURE_KEYS = [
   "implicitCloudSkills", "platformAuditReads",
   // Folded into another feature (2026-10): analyticsIntegrated → libraryUsage; the rest → workbot.
   "analyticsIntegrated", "workbotCalendar", "workbotSideChats", "workbotDefaultModel",
-  // Generally available (2026-10, second pass). calendarPolish is always on
-  // wherever Workbot or the desktop Calendar is.
+  // Generally available (2026-10, second pass). calendarPolish is always on in Workbot.
   "denFlatPageHeaders", "dashboardActivity", "libraryIntegrated", "libraryUsage", "modelsAnalytics",
   "headlessAutomations", "calendarPolish",
   // Removed (2026-10): organization Dashboards and copy-only Workbot sharing
   "orgManagedDashboards", "workbotSharing",
+  // Removed (2026-10): desktop Calendar; Workbot Calendar and meeting triggers remain separate.
+  "automationCalendar",
   // Generally available (2026-10, third pass): always on, on cloud and self-hosted.
   "agentPermissions", "appBuildProgress", "backgroundShellTasks", "desktopPolicyScreenRemoval",
   "gatewayProviderUsageLimits", "googleDocumentTools", "inviteLinkVerifiesEmail", "lastTurnModelFooter",
@@ -77,6 +78,68 @@ export const RETIRED_FEATURE_KEYS = [
   // Removed (2026-10): an organization's plan and seats are set in one place in /admin (Billing);
   // Stripe-billed Enterprise is a plain /admin control and organization grants are gone.
   "enterprisePlan", "organizationGrants",
+  // Billing without flags (2026-10): Team checkout is always sold where Stripe seat billing is set up,
+  // and Enterprise is only set in /admin (no card purchase, no Stripe Enterprise subscriptions).
+  "teamPlan", "selfServeEnterprise",
+  // Generally available (2026-10): completed rollouts. Sandbox organizations remain cloud-only.
+  "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode", "libraryConnectorNavigation", "mcpAppLibraries",
+  "gatewayProviderTest", "mermaidZoom", "sandboxOrgs", "slackSendAsBot", "liveProviderSync",
+  "browserFloatingView", "remoteSessionSubagents", "remoteSessionThreadView", "remoteSessionAnswers",
+  "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
+  "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
+  "guidedSlackSetup", "libraryConnectorOrgSetup",
+  // Generally available (2026-10): included models and permission-aware recovery; entitlement still applies.
+  "workbotIncludedModels", "workbotUsageRecovery",
+  // Generally available (2026-10): live reply model, composer Agents list, text-first activity, list-first Artifacts.
+  "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
+  // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
+  // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
+  "automationIntervalSchedules", "automationCalendarTriggers",
+  // Folded (2026-10): Your agent includes health and Library; browser use includes
+  // its live view; computer use includes background interaction on supported Macs.
+  "workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground",
+  // Generally available (2026-10): remembered sign-in and helper-style tasks on other computers.
+  "lastUsedSignIn", "remoteSessionHelperView",
+  // Removed, not graduated (2026-10): early restart and its download-progress window.
+  "desktopUpdateDownloadWindow",
+  // Generally available (2026-11): Den feature intros, Auth & Security (with session settings and the
+  // SSO requirement on the SSO page), several SSO connections, config import and export, and AI Gateway
+  // member API keys, custom OpenAI-compatible providers and Smart Model Router (which was cloud only).
+  // Always on, on cloud and self-hosted.
+  "featureIntros", "authSecuritySettings", "sessionSecuritySettings", "ssoSettingsOnSsoPage",
+  "multipleSsoConnections", "configBlobs", "gatewayMemberApiKeys", "gatewayCustomProviders",
+  "autoRouter",
+  // Generally available (2026-11): TrueFoundry in AI Gateway, always on, on cloud and self-hosted.
+  "truefoundryGateway",
+  // Generally available (2026-11): completed default-on rollouts. Their gates are gone.
+  // Browser recovery and sample Microsoft 365 remain cloud-only, without rollout switches.
+  "googleCalendarRecurrence", "googleDrivePdfText", "plainFreeModel",
+  "settledSessions", "appToolRepair", "publicApps",
+  "appSites", "composerBackgroundTasks", "agentQuestions",
+  "steadyLiveTurn", "ssoPerOrganization", "superAdminPermissionSet",
+  "desktopPersonalConnectors", "workbotDriveFiles", "workbotAccountMenu",
+  "workbotBrowserChat", "workbotInstantOpen", "workbotBrowserRecovery",
+  "workbotQuickReply", "workbotWorkingStatus", "workbotCenteredProfile",
+  "workbotBrowserPreview", "workbotProfileSheet", "workbotRemoteTasks",
+  "workbotProfileNav", "workbotQuietCalendar", "workbotSlackAnswerReply",
+  "browserUploadPermissions", "agentHarnessPermissions", "computerUse",
+  "computerSessionHistory", "parallelComputerUse", "browserUse",
+  "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode",
+  "outlookAttachments",
+  // Generally available (2026-11): deployment-wide rollouts graduate even when the
+  // old registry default lagged behind. Actual settings, entitlements and consent remain enforced.
+  "claudeAgentProvider", "webPerMember", "localModelsPolicy",
+  "shareDeviceProvider", "singleOpenWorkModelsRow", "passwordSignInGoogle",
+  "signInEmailSync", "ssoOidcSetupCheck", "denPageConsistency",
+  "nativeDictation", "workbotScrollToBottom", "workbotApps",
+  "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
+  "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
+  // Removed (2026-11): team settings use the existing top tabs.
+  "teamSettingsSidebar",
+  // Generally available (2026-11): Workbot settings tabs; sample Slack stays cloud-sandbox-only.
+  "workbotSettingsTabs", "sandboxSlack",
+  // Generally available (2026-11): choosing a new sandbox's models; stays cloud-sandbox-only.
+  "sandboxModelChoice",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

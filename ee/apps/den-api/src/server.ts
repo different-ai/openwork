@@ -1,3 +1,5 @@
+import { startNativeEventWorker } from "./native-mcp-events/worker.js"
+import { startMcpEventWorker } from "./mcp-events/worker.js"
 import { Server } from "node:http"
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import { DEN_SHUTDOWN_DRAIN_MS, installGracefulShutdown, trackEventStreams } from "./graceful-shutdown.js"
@@ -22,9 +24,14 @@ import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
 import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
 import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
+import { startComputerFleetSampler } from "./computer-fleet/service.js"
+import { startRunnerFleetSampler } from "./runner-fleet/service.js"
+import { startConfigBlobWorker } from "./config-blobs/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
+const stopMcpEventWorker = startMcpEventWorker()
+const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
@@ -36,6 +43,9 @@ const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
 const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
+const stopRunnerFleetSampler = startRunnerFleetSampler()
+const stopComputerFleetSampler = startComputerFleetSampler()
+const stopConfigBlobWorker = startConfigBlobWorker()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
@@ -63,11 +73,16 @@ async function stopBackgroundLoops() {
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
+    stopMcpEventWorker(),
+    stopNativeEventWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
     stopMcpRegistrationProbeLoop(),
     stopAdminMetricsRefreshLoop(),
+    stopRunnerFleetSampler(),
+    stopComputerFleetSampler(),
+    stopConfigBlobWorker(),
     automationScheduler.stop(),
   ])
 

@@ -7,8 +7,9 @@
  * invitations that have not expired. Removed members, expired invitations and
  * the setup agent never count. See countBillingUsersForOrganizations().
  *
- * Team seats, OpenWork Models and OpenWork Web all bill that same number of
- * users. The Free plan allows up to its free seats (5, or more if a platform
+ * Team seats and OpenWork Models bill that same number of users. OpenWork Web
+ * bills only the users an admin gave Web (MemberTable.openworkWeb, on by
+ * default), so an organization pays for Web only where it is used. The Free plan allows up to its free seats (5, or more if a platform
  * admin raised it); past that, the organization must upgrade to the Team plan,
  * which bills every user. An organization may upgrade at any size.
  */
@@ -16,6 +17,7 @@
 export const FREE_ORG_SEAT_COUNT = 5
 
 /** What the OpenWork Web quantity counts, reported to clients with the billing summary. */
+/** Kept as is with webPerMember: still members and pending invitations, only those with Web. */
 export const OPENWORK_WEB_QUANTITY_DEFINITION = "members_and_pending_invitations" as const
 
 export type OrganizationBillingQuantities = {
@@ -35,7 +37,7 @@ export type OrganizationBillingQuantities = {
     quantity: number
   }
   web: {
-    /** Quantity on the Stripe OpenWork Web subscription. */
+    /** Users with OpenWork Web: the quantity on the Stripe OpenWork Web subscription. */
     quantity: number
   }
 }
@@ -54,10 +56,13 @@ export function additionalFreeSeatCountFromMetadata(metadata: Record<string, unk
 
 export function calculateOrganizationBillingQuantities(input: {
   users: number
+  /** Users with OpenWork Web; every user when omitted. Never more than users. */
+  webUsers?: number
   metadata?: Record<string, unknown> | null
   additionalFreeSeats?: number
 }): OrganizationBillingQuantities {
   const users = normalizeUserCount(input.users)
+  const webUsers = input.webUsers === undefined ? users : Math.min(users, normalizeUserCount(input.webUsers))
   const additionalFree = input.additionalFreeSeats === undefined
     ? additionalFreeSeatCountFromMetadata(input.metadata)
     : normalizeAdditionalFreeSeats(input.additionalFreeSeats)
@@ -77,7 +82,7 @@ export function calculateOrganizationBillingQuantities(input: {
       quantity: Math.max(1, users),
     },
     web: {
-      quantity: users,
+      quantity: webUsers,
     },
   }
 }
@@ -90,53 +95,3 @@ export function canAddUserWithoutSeatSubscription(seats: { total: number; free: 
   return seats.total < seats.free
 }
 
-type PlanTier = "free" | "team" | "enterprise"
-type PlanSource = "default" | "stripe" | "manual" | "grandfathered"
-
-/**
- * Quantity on a Stripe Enterprise subscription: every user, but never fewer
- * than the committed minimum in the contract, and at least 1 (Stripe needs a
- * positive quantity on a per-user price).
- */
-export function enterpriseSubscriptionQuantity(input: { users: number; minimumUsers: number }) {
-  return Math.max(1, normalizeUserCount(input.users), normalizeUserCount(input.minimumUsers))
-}
-
-/** Committed minimum users from an Enterprise subscription's `minimum_users` Stripe metadata; 0 when absent or invalid. */
-export function minimumUsersFromStripeMetadata(metadata: Record<string, string> | null | undefined) {
-  const raw = metadata?.minimum_users?.trim() ?? ""
-  if (!/^\d+$/.test(raw)) return 0
-  return normalizeUserCount(Number(raw))
-}
-
-/**
- * The plan an organization should have after one of its paid plan
- * subscriptions changes, or null to leave it alone.
- *
- * - An Enterprise subscription makes it Enterprise; it outranks Team.
- * - A Team plan (seat) subscription makes it Team, at any size.
- * - When neither is paid for, a plan Stripe set returns to Free.
- *
- * Plans a platform admin set (manual) and grandfathered plans are never
- * changed by Stripe, nor is an Enterprise plan that Stripe did not set.
- */
-export function planAfterSubscriptionChange(
-  current: { tier: PlanTier; source: PlanSource },
-  subscribed: { team: boolean; enterprise: boolean },
-): { tier: PlanTier; source: PlanSource } | null {
-  if (current.source === "manual" || current.source === "grandfathered") {
-    return null
-  }
-  if (current.tier === "enterprise" && current.source !== "stripe") {
-    return null
-  }
-  const next: { tier: PlanTier; source: PlanSource } | null = subscribed.enterprise
-    ? { tier: "enterprise", source: "stripe" }
-    : subscribed.team
-      ? { tier: "team", source: "stripe" }
-      : current.source === "stripe"
-        ? { tier: "free", source: "default" }
-        : null
-  if (!next) return null
-  return next.tier === current.tier && next.source === current.source ? null : next
-}

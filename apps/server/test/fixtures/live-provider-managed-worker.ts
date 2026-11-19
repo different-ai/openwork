@@ -30,8 +30,6 @@ let quotaMode = false;
 let connectReads = 0;
 const inferenceRequests: { providerID: string; path: string }[] = [];
 let unrelatedDenRequests = 0;
-let flag: boolean | "unavailable" = false;
-let flagReads = 0;
 const streams = new Set<ServerResponse>();
 const den = createServer((req, res) => {
   const protocol = nativeProtocols.find(item => req.url?.startsWith(`/api/v1/providers/${item.providerID}/`));
@@ -101,11 +99,7 @@ function freshEngine() {
   return createEngineV2Preview({
     config, deferStart: true,
     providerSession: () => ({ baseUrl: denURL, token: "native-managed-session", orgId: "org_native_managed" }),
-    resolveLiveProviderSync: async () => {
-      flagReads++;
-      if (flag === "unavailable") throw new Error("synthetic fresh rollout lookup unavailable");
-      return flag;
-    },
+
   });
 }
 async function models(at = directory) {
@@ -144,20 +138,10 @@ try {
   await writeFile(join(root, "engine-v2-preview.json"), JSON.stringify({ enabled: true, chatRouting: true }));
   await runtimeSnapshot("Legacy first");
   await start();
-  await until(models, rows => rows.some(model => model.id === "gwm_legacy") && rows.some(model => model.id === "legacy_model"), "OFF legacy mirror");
-  assert.equal(engine?.status().liveProviderSync, false);
-  assert.equal(inventoryReads, 0, "OFF must not fetch Gateway inventory through the plugin");
-  assert.equal(streams.size, 0);
-  assert.ok(!(await generatedConfig()).includes('"liveProviderSync":true'));
-  console.log("Passed managed 12: OFF boots actual legacy native catalog, with no live inventory writer");
-
-  flag = true;
-  await engine?.setLiveProviderSync(true);
-  await engine?.refreshProviders();
-  await until(models, rows => rows.some(model => model.name === "Live initial") && !rows.some(model => model.id === "gwm_legacy"), "OFF to ON replaces legacy Gateway");
+  await until(models, rows => rows.some(model => model.name === "Live initial") && !rows.some(model => model.id === "gwm_legacy"), "managed Gateway is live on startup");
   assert.equal(engine?.status().liveProviderSync, true);
   assert.ok(!engine?.status().mirroredProviderIds.includes(gatewayID));
-  assert.ok(engine?.status().mirroredProviderIds.includes(legacyID));
+  await until(async () => engine?.status().mirroredProviderIds ?? [], ids => ids.includes(legacyID), "local-provider mirror settles independently of the live Gateway catalog");
   const beforeConfig = await generatedConfig();
   const parsed: unknown = JSON.parse(beforeConfig);
   assert.ok(record(parsed) && record(parsed.providers));
@@ -170,7 +154,7 @@ try {
   await until(models, rows => rows.some(model => model.name === name), "actual bundled plugin inventory update");
   assert.equal(await generatedConfig(), beforeConfig, "inventory never rewrites the managed native config");
   assert.deepEqual(await readGlobalRuntimeOpencodeConfig(config), beforeRuntime, "plugin does not invoke the old materializer");
-  console.log("Passed managed 12: OFF to ON transfers sole Gateway ownership; local mirror survives; inventory leaves both configs untouched");
+  console.log("Passed managed 12: GA startup assigns sole Gateway ownership; local mirror survives; inventory leaves both configs untouched");
 
   const connection = engine?.connection();
   assert.ok(connection);
@@ -306,38 +290,20 @@ try {
   assert.equal(quotaRequests, 1, "verified live Gateway quota must not be retried by the native engine");
   console.log("Passed managed quota: actual provider.get settings resolve live Gateway base and native 429 terminates after one request");
 
-  flag = false;
-  await engine?.setLiveProviderSync(false);
-  assert.equal(engine?.status().liveProviderSync, true, "runtime kill is frozen until the child restarts");
   await stop();
   await start();
-  await until(models, rows => rows.some(model => model.id === "gwm_legacy") && !rows.some(model => model.id === "gwm_live"), "ON to OFF restart removes plugin providers");
-  assert.equal(engine?.status().liveProviderSync, false);
-  await until(async () => streams.size, size => size === 0, "old plugin subscription closed");
-  const readsAfterOff = inventoryReads;
-  await runtimeSnapshot("Legacy after restart");
-  await engine?.refreshProviders();
-  await until(models, rows => rows.some(model => model.name === "Legacy after restart"), "legacy still owns catalog after kill");
-  await delay(1100);
-  assert.equal(inventoryReads, readsAfterOff, "OFF engine has no leftover live Gateway reader");
-  assert.ok(!(await generatedConfig()).includes('"liveProviderSync":true'));
-  console.log("Passed managed 12: ON to OFF restart restores legacy writer, removes live models/subscription, and stays legacy on updates");
+  await until(models, rows => rows.some(model => model.id === "gwm_live") && !rows.some(model => model.id === "gwm_legacy"), "restart retains live Gateway ownership");
+  assert.equal(engine?.status().liveProviderSync, true);
+  console.log("Passed managed restart: every managed child starts with live Gateway ownership without a Den rollout lookup");
 
-  await stop();
-  flag = "unavailable";
-  await start();
-  await until(models, rows => rows.some(model => model.id === "gwm_legacy") && !rows.some(model => model.id === "gwm_live"), "fresh rollout unavailable uses legacy");
-  assert.equal(engine?.status().liveProviderSync, false, "fresh Den flag lookup fails closed, despite prior live cache");
-  assert.equal(inventoryReads, readsAfterOff);
-  assert.ok(flagReads >= 3, "rollout is freshly resolved for every child start");
-  console.log("Passed managed 14B: fresh managed boot with Den rollout unavailable does NOT enable cached live rollout");
-
-  // This checks server ownership/routing only. It deliberately does not claim a V1 binary run.
-  await engine?.setChatRouting(false);
-  assert.equal(engine?.status().liveProviderSync, false);
-  assert.equal(engine?.status().chatRouting, false);
+  // In-place v2 adoption is one-way: native v1 tables are no longer a live
+  // projection. Retain both the Gateway owner and the materialized config.
+  assert.ok(engine);
+  await assert.rejects(engine.setChatRouting(false), { code: "engine_v1_history_adopted" });
+  assert.equal(engine.status().liveProviderSync, true);
+  assert.equal(engine.status().chatRouting, true);
   assert.ok((await readGlobalRuntimeOpencodeConfig(config)).provider?.[gatewayID]);
-  console.log("Passed managed 12 V1 routing regression: choosing V1 retains legacy materialized config (not a V1 engine execution)");
+  console.log("Passed managed 12 V1 routing regression: adopted shared history keeps v2 ownership and legacy materialized config");
 } finally {
   await stop();
   for (const stream of streams) stream.end();

@@ -19,7 +19,7 @@ import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from "../src/image.js"
 
 const apiKey = process.env.FREESTYLE_API_KEY
 if (!apiKey) {
-  console.error("Set FREESTYLE_API_KEY (see the get-env-var skill: dev, /openwork-ops).")
+  console.error("Set FREESTYLE_API_KEY (Infisical: dev, /openwork-ops).")
   process.exit(1)
 }
 const root = new URL("../", import.meta.url)

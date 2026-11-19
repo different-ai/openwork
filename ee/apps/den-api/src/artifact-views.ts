@@ -108,8 +108,8 @@ async function accessibleView(input: {
   return row
 }
 
-async function revisionRows(artifactViewId: ArtifactViewId, activeRevisionId: ArtifactViewRevisionId | null = null): Promise<RevisionMetadata[]> {
-  const revisions = await db.select(revisionMetadata).from(ArtifactViewRevisionTable).where(eq(
+async function revisionRows(artifactViewId: ArtifactViewId, activeRevisionId: ArtifactViewRevisionId | null = null, database: typeof db.$primary = db): Promise<RevisionMetadata[]> {
+  const revisions = await database.select(revisionMetadata).from(ArtifactViewRevisionTable).where(eq(
     ArtifactViewRevisionTable.artifact_view_id,
     artifactViewId,
   )).orderBy(desc(ArtifactViewRevisionTable.created_at), desc(ArtifactViewRevisionTable.id))
@@ -117,7 +117,7 @@ async function revisionRows(artifactViewId: ArtifactViewId, activeRevisionId: Ar
   // Published clients select the active revision from this array. A rollback
   // must remain renderable even when its revision is outside the history page.
   if (activeRevisionId && !revisions.some((revision) => revision.id === activeRevisionId)) {
-    const [active] = await db.select(revisionMetadata).from(ArtifactViewRevisionTable).where(and(
+    const [active] = await database.select(revisionMetadata).from(ArtifactViewRevisionTable).where(and(
       eq(ArtifactViewRevisionTable.artifact_view_id, artifactViewId),
       eq(ArtifactViewRevisionTable.id, activeRevisionId),
     )).limit(1)
@@ -341,10 +341,11 @@ export async function saveArtifactViewRevision(input: {
     })
   })
 
-  const rows = await db.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.id, artifactViewId)).limit(1)
+  // primary: reads back the view and revision saved above.
+  const rows = await db.$primary.select().from(ArtifactViewTable).where(eq(ArtifactViewTable.id, artifactViewId)).limit(1)
   const view = rows[0]
   if (!view) throw new Error("artifact_view_not_found")
-  return serializeView(view, await revisionRows(view.id, view.active_revision_id))
+  return serializeView(view, await revisionRows(view.id, view.active_revision_id, db.$primary))
 }
 
 export async function activateArtifactViewRevision(input: {

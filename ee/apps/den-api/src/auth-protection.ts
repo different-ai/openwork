@@ -138,7 +138,8 @@ export async function readEmailSignInAttempt(request: Request): Promise<LoginAtt
 }
 
 async function readLoginFailureState(email: string): Promise<LoginFailureState | null> {
-  const [row] = await db
+  // primary: failure counts from rapid repeated attempts must not be missed.
+  const [row] = await db.$primary
     .select({
       count: RateLimitTable.count,
       lastRequest: RateLimitTable.lastRequest,
@@ -166,7 +167,7 @@ export async function getEmailPasswordLockoutResponse(attempt: LoginAttempt, now
 
 export async function recordEmailSignInFailure(attempt: LoginAttempt, now = Date.now()) {
   const key = lockoutKey(attempt.email)
-  const [row] = await db
+  const [row] = await db.$primary
     .select({
       id: RateLimitTable.id,
       count: RateLimitTable.count,

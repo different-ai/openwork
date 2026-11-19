@@ -58,6 +58,47 @@ export function useAutomationListQuery(context: AutomationsDenContext) {
   })
 }
 
+export function useAutomationSharingEnabled(context: AutomationsDenContext) {
+  const features = useQuery({
+    queryKey: ["den", "org-features", context.organizationId],
+    queryFn: () => context.client!.getOrgFeatures(context.organizationId!),
+    enabled: context.ready,
+    staleTime: 30_000,
+    retry: false,
+    refetchInterval: AUTOMATIONS_SLOW_POLL_MS,
+    refetchIntervalInBackground: true,
+  })
+  return context.ready && features.data?.automationSharing === true
+}
+
+export function useSharedAutomationsQuery(context: AutomationsDenContext, enabled: boolean) {
+  const auth = useDenAuth()
+  return useQuery({
+    queryKey: [...context.queryRoot, "shared", auth.verifiedIdentity?.principalId],
+    queryFn: () => context.client!.listSharedAutomations(context.organizationId!),
+    enabled: context.ready && enabled,
+    refetchInterval: AUTOMATIONS_SLOW_POLL_MS,
+  })
+}
+
+export function useAutomationSharingQuery(context: AutomationsDenContext, automationId: string, enabled: boolean) {
+  const auth = useDenAuth()
+  return useQuery({
+    queryKey: [...context.queryRoot, "sharing", automationId, auth.verifiedIdentity?.principalId],
+    queryFn: () => context.client!.getAutomationSharing(context.organizationId!, automationId),
+    enabled: context.ready && enabled,
+  })
+}
+
+export function useAutomationSharingContextQuery(context: AutomationsDenContext, enabled: boolean) {
+  const auth = useDenAuth()
+  return useQuery({
+    queryKey: [...context.queryRoot, "sharing-context", auth.verifiedIdentity?.principalId],
+    queryFn: () => context.client!.getAutomationSharingContext(context.organizationId!),
+    enabled: context.ready && enabled && auth.verifiedIdentity?.organizationId === context.organizationId,
+  })
+}
+
 export function useAutomationDetailQuery(context: AutomationsDenContext, automationId: string | null) {
   return useQuery({
     queryKey: [...context.queryRoot, "detail", automationId],

@@ -1,3 +1,4 @@
+import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir, platform } from "node:os";
@@ -55,9 +56,8 @@ export async function uiBridgeRequest(
   const bridge = await discoverUiBridge();
   if (!bridge) return { ok: false, code: "browser_unavailable", dispatched: false, error: "The built-in browser is unavailable. Open the desktop app on the same machine as this task's server." };
   try {
-    const response = await fetch(`${bridge.baseUrl}${path}`, {
+    const request = {
       method: options.method || "GET",
-      redirect: "error",
       signal: options.timeoutMs === null && options.signal ? options.signal
         : options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS)]) : AbortSignal.timeout(options.timeoutMs ?? BRIDGE_TIMEOUT_MS),
       headers: {
@@ -65,7 +65,10 @@ export async function uiBridgeRequest(
         ...(options.body ? { "Content-Type": "application/json" } : {}),
       },
       ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-    });
+    };
+    const response = options.timeoutMs === null && options.signal
+      ? await approvalLoopbackFetch(`${bridge.baseUrl}${path}`, request)
+      : await fetch(`${bridge.baseUrl}${path}`, { ...request, redirect: "error" });
     const text = await response.text();
     try { return JSON.parse(text); } catch { return { ok: false, code: "browser_disconnected", mayHaveChangedState: true, retrySafe: false, error: "The browser returned no readable receipt. Inspect the page before retrying an action." }; }
   } catch {

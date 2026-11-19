@@ -47,16 +47,12 @@ _This notice should stay as the first item in this file._
    instructions to an AI reviewer. A comment on the pull request lists what
    it found. Nothing else runs yet.
 2. **Maintainer review and `/test`.** A maintainer reviews your changes and
-   comments `/test`. That marks the commit they reviewed and starts an AI
-   screen for hidden behavior and supply-chain risk.
-3. **Tests and security review.** If the AI screen is clear (or the
-   maintainer comments `/test` again after reading its findings), the
-   repository approves the waiting test runs for that exact commit. Fork
-   tests have no secrets. Warden reads the diff in a sandbox with no secrets;
-   a separate, restricted proxy uses a spend-limited model key. Before
-   approving the PR, a maintainer checks the screen and Warden results on
-   the current head and the required `openwork-tests-required` CI check.
-   Screen/Warden results are advisory, not a separate required merge status.
+   comments `/test`. That marks the commit they reviewed.
+3. **Tests.** The repository approves the waiting test runs for that exact
+   commit. Fork tests have no secrets. Before approving the PR, a maintainer
+   checks the screen results on the current head and the required
+   `openwork-tests-required` CI check. Screen results are advisory, not a
+   separate required merge status.
    If you push again, screening runs again and a maintainer reviews the new
    commits before `/test`. Prefer `/test <full-head-sha>` to name the commit
    you actually reviewed (explicit SHAs must be all 40 characters); a plain
@@ -80,7 +76,7 @@ file lists at that limit.
 For repository administrators: [fork gate deployment and ruleset migration](./docs/fork-contributor-ci.md).
 
 Changes to CI or agent configuration (`.github/`, `.opencode/`,
-`opencode.json`, `warden.toml`, `.warden/`, agent skills) can't be tested
+`opencode.json`, agent skills) can't be tested
 from a fork. A maintainer moves those commits to a branch in this
 repository, keeping you as the author.
 

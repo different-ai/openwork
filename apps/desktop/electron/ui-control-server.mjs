@@ -5,7 +5,7 @@
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { rm, writeFile } from "node:fs/promises";
+import { open, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export function createUiControlServer({
@@ -13,13 +13,10 @@ export function createUiControlServer({
   appName,
   appIdentifier,
   getWindow,
-  listWebMcpTools,
-  executeWebMcpTool,
   browserTask = undefined,
   computerTask = undefined,
   computerProgram = undefined,
   computerScript = undefined,
-  computerEnabled = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -171,10 +168,6 @@ export function createUiControlServer({
           sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
           return;
         }
-        if (request.method === "GET" && url.pathname === "/computer/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true });
-          return;
-        }
         if (request.method === "POST" && url.pathname === "/computer/program") {
           if (typeof computerProgram !== "function") { sendJsonResponse(response, 503, { ok: false, code: "computer_unavailable" }); return; }
           const controller = new AbortController();
@@ -196,35 +189,9 @@ export function createUiControlServer({
           sendJsonResponse(response, 200, await computerTask(await readJsonRequestBody(request), { signal: controller.signal }));
           return;
         }
-        if (request.method === "POST" && url.pathname === "/webmcp/tools") {
-          if (typeof listWebMcpTools !== "function") {
-            sendJsonResponse(response, 503, { ok: false, error: "The built-in browser is not ready." });
-            return;
-          }
-          const controller = new AbortController();
-          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
-          sendJsonResponse(response, 200, await listWebMcpTools(await readJsonRequestBody(request), { signal: controller.signal }));
-          return;
-        }
-        if (request.method === "POST" && url.pathname === "/webmcp/execute") {
-          if (typeof executeWebMcpTool !== "function") {
-            sendJsonResponse(response, 503, { ok: false, error: "The built-in browser is not ready." });
-            return;
-          }
-          const controller = new AbortController();
-          response.once("close", () => {
-            if (!response.writableEnded) controller.abort();
-          });
-          sendJsonResponse(
-            response,
-            200,
-            await executeWebMcpTool(await readJsonRequestBody(request), { signal: controller.signal }),
-          );
-          return;
-        }
         sendJsonResponse(response, 404, { ok: false, error: "Not found" });
       } catch (error) {
-        if (/^\/(?:browser|webmcp)(?:\/|$)/.test(request.url ?? "")) console.error("[ui-control] request failed");
+        if (/^\/browser(?:\/|$)/.test(request.url ?? "")) console.error("[ui-control] request failed");
         else console.error("[ui-control] request failed", error);
         sendJsonResponse(response, 500, { ok: false, error: "OpenWork UI control request failed." });
       }
@@ -237,11 +204,20 @@ export function createUiControlServer({
     const port = typeof address === "object" && address ? address.port : null;
     if (!port) throw new Error("Could not start OpenWork UI control bridge.");
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
-    await writeFile(
-      uiControlDiscoveryPath,
-      `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
-      "utf8",
-    );
+    const discovery = `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`;
+    if (process.platform === "win32") {
+      await writeFile(uiControlDiscoveryPath, discovery, "utf8");
+    } else {
+      const file = await open(uiControlDiscoveryPath, "w", 0o600);
+      try {
+        // open's mode applies only to new files. Tighten an existing discovery
+        // file before writing the new bearer, not after exposing it briefly.
+        await file.chmod(0o600);
+        await file.writeFile(discovery, "utf8");
+      } finally {
+        await file.close();
+      }
+    }
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).
     process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
   }

@@ -64,7 +64,6 @@ import {
   SettingsPanelToolbarStatus,
 } from "./panel";
 import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
-import { useDesktopFeature } from "../../session/status/use-desktop-feature";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
   switch (tab) {
@@ -99,6 +98,7 @@ export function getSettingsTabIcon(tab: SettingsTab) {
     case "shortcuts":
       return Keyboard;
     case "computer":
+    case "devices":
       return Monitor;
     case "updates":
       return RefreshCcw;
@@ -147,6 +147,8 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return "Keyboard shortcuts";
     case "computer":
       return "Computer use";
+    case "devices":
+      return "Devices";
     case "updates":
       return t("settings.tab_updates");
     case "recovery":
@@ -196,6 +198,8 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return "Keys that switch to the models you use most";
     case "computer":
       return "Let the agent use apps on this computer";
+    case "devices":
+      return "Your desktops and cloud computers";
     case "updates":
       return t("settings.tab_description_updates");
     case "recovery":
@@ -216,10 +220,11 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 export function getGlobalSettingsTabs(
   developerMode: boolean,
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
-  options: { computerUse?: boolean } = {},
+  options: { desktop?: boolean } = {},
 ): SettingsTab[] {
-  const tabs: SettingsTab[] = ["ai", "ollama", "appearance", "shortcuts", "environment"];
-  if (options.computerUse) tabs.push("computer");
+  // Ollama opens from a button on AI Providers, not from the sidebar.
+  const tabs: SettingsTab[] = ["ai", "appearance", "shortcuts", "environment"];
+  if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
   if (developerMode) tabs.push("debug");
   return tabs;
@@ -235,6 +240,8 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
 }
 
 export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
+  // The Ollama page is reached from AI Providers, which stays highlighted there.
+  if (activeTab === "ollama") return tab === "ai";
   return activeTab === tab;
 }
 
@@ -276,15 +283,13 @@ export type SettingsNavGroups = {
 export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
-  // Computer use runs in the desktop app; the web app has no local computer.
-  const computerUse = useDesktopFeature("computerUse") && isElectronRuntime();
   const allowed = (tabs: SettingsTab[]) =>
     tabs.filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));
   return {
     hub: allowed(["general"]),
     workspace: allowed(getWorkspaceSettingsTabs()),
-    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { computerUse })),
-    cloud: allowed(CLOUD_SETTINGS_TABS),
+    global: allowed(getGlobalSettingsTabs(developerMode, platform.capabilities, { desktop: isElectronRuntime() })),
+    cloud: allowed([...CLOUD_SETTINGS_TABS, "devices"]),
   };
 }
 
@@ -434,7 +439,7 @@ export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "acti
   return (
     <SettingsPanelHeading>
       <SettingsPanelTitle>{getSettingsTabLabel(activeTab)}</SettingsPanelTitle>
-      <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription>
+      {activeTab !== "devices" ? <SettingsPanelDescription>{getSettingsTabDescription(activeTab)}</SettingsPanelDescription> : null}
     </SettingsPanelHeading>
   );
 }

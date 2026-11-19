@@ -101,7 +101,7 @@ export function AdminOpportunitiesPage() {
   ];
   return <section data-testid="admin-opportunities" className="min-w-0 text-[var(--dls-text-primary)]">
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--dls-border)] py-5">
-      <h1 className="text-lg font-semibold">Adoption opportunities</h1>
+      <h1 className="text-lg font-semibold">All active teams</h1>
       <DenButton size="sm" variant="secondary" disabled={refreshing} onClick={() => setAttempt(value => value + 1)}>Refresh</DenButton>
     </header>
     <AdminOpportunityNav active="adoption" />
@@ -127,7 +127,7 @@ export function AdminOpportunitiesPage() {
         <li>Activity is recorded app telemetry for this organization during the selected window. Missing telemetry, including opt-outs, does not establish inactivity; sign-in alone is not counted.</li>
         <li>Company-email signals use verified addresses outside known personal email providers. A domain does not establish employment; organizations are never combined by domain.</li>
         <li>Cloud setup counts active, non-deleted skills and MCP entries. Configuration does not prove recent use or a working connection.</li>
-        <li>Plan is the stored plan tier. Paying means a current active subscription; trials are not paying. Contacted means a platform admin recorded outreach, a reply or a meeting in This week.</li>
+        <li>Plan is the stored plan tier. Paying means a current active subscription; trials are not paying. Contacted means a platform admin recorded outreach, a reply or a meeting on the Outreach tab.</li>
       </ul>
     </details>
     {data ? <p className="mt-2 text-xs text-[var(--dls-text-secondary)]">Snapshot {new Date(data.generatedAt).toLocaleString()}</p> : null}

@@ -408,9 +408,19 @@ GRANT ALL PRIVILEGES ON openwork_den.* TO 'openwork_den'@'$COHOST_IP';
 FLUSH PRIVILEGES;
 SQL
 else
+  # MySQL 8 snapshots create root@localhost with auth_socket, which ignores a
+  # password; name a password plugin so Den can connect over TCP. MariaDB keeps
+  # the plain form.
+  if "${MYSQL_ROOT_CMD[@]}" -N -e "SELECT VERSION()" 2>/dev/null | grep -qi mariadb; then
+    root_password_sql="ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';"
+  else
+    root_password_sql="ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY 'password';"
+  fi
+  "${MYSQL_ROOT_CMD[@]}" -e "$root_password_sql"
+  # Socket authentication no longer applies once root has a password.
+  MYSQL_ROOT_CMD=(mysql -uroot -ppassword)
   "${MYSQL_ROOT_CMD[@]}" <<'SQL'
 CREATE DATABASE IF NOT EXISTS openwork_den;
-ALTER USER 'root'@'localhost' IDENTIFIED BY 'password';
 CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'password';
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION;
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
@@ -431,6 +441,17 @@ if [ ! -d node_modules ] || [ ! -f "$baseline" ] || [ "$(cat "$baseline")" != "$
   printf "%s" "$current" > "$baseline"
 else
   echo "==> Skipping pnpm install (node_modules present and lockfile unchanged)."
+fi
+
+# Next's own type declarations import "react" through pnpm's hidden hoist. A
+# full install over the snapshot's filtered one can hoist the landing site's
+# @types/react 18 there, and Den Web's type check then fails on ReactNode.
+hoisted_react_types=node_modules/.pnpm/node_modules/@types/react
+den_web_react_types="$(readlink -f ee/apps/den-web/node_modules/@types/react 2>/dev/null || true)"
+if [ -n "$den_web_react_types" ] && [ -L "$hoisted_react_types" ] \
+  && [ "$(readlink -f "$hoisted_react_types")" != "$den_web_react_types" ]; then
+  echo "==> Pointing hoisted @types/react at Den Web's version..."
+  ln -sfn "$den_web_react_types" "$hoisted_react_types"
 fi
 
 # Content keys for the sandbox-invariant builds baked into the snapshot.
@@ -487,7 +508,7 @@ nohup env \
   DEN_PASSWORD_BREACH_SCREENING_ENABLED="$DEN_PASSWORD_BREACH_SCREENING_ENABLED" \
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED="$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
-  NODE_OPTIONS="--conditions=development" \
+  NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development" \
   pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
@@ -510,7 +531,7 @@ if [ "$GATEWAY_ENABLED" = "true" ]; then
     NODE_ENV=test \
     SENTRY_DSN= \
     SENTRY_LOG_LEVEL=off \
-    NODE_OPTIONS="--conditions=development" \
+    NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development" \
     pnpm --filter @openwork-ee/gateway exec tsx src/server.ts > /tmp/gateway.log 2>&1 &
   wait_for_http "http://127.0.0.1:$GATEWAY_PORT/ready" "AI Gateway" 180
 fi

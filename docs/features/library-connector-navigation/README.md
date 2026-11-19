@@ -1,9 +1,12 @@
 # Library connector navigation and skill previews
 
-- Feature: `libraryConnectorNavigation`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+- Retired rollout key: `libraryConnectorNavigation`
 - Deployments: Cloud and self-hosted
 - Author: `benjaminshafii`
-- Default: off
+- Status: generally available (no flag)
 
 ## What changes
 
@@ -20,15 +23,13 @@ uses the existing caller-scoped disconnect, separate from **Sign everyone out**.
 Once signed out, the page no longer lists the tools the person could use before;
 it says they show up after signing in.
 
-Skills expand inline in plugin pages and My Library. My Library shows the skill
-count (**2 skills**) when the summary knows it. A plugin that is a single skill
-opens straight to **Steps**, without listing itself again. Steps longer than
-eight lines open with **Show all steps**. Library previews load the existing
-authorized plugin query only when expanded; skill source is shown as text.
+The My Library list stays compact: no inline skill previews, nested skill lists,
+or disclosure controls beneath a row. Open a plugin or skill to read its detail
+page. Skill instructions expand inline on that detail page, and instructions
+longer than eight lines offer **Show all steps**. Content uses the existing
+authorized plugin query; skill source is shown as text.
 
 ## Try it
-
-Enable `libraryConnectorNavigation` for a test organization in `/admin`.
 
 As an admin: open an assigned connector in Manage, choose **Open in My
 Library**, then **Manage** from its menu to go back. Sign in to a per-person
@@ -38,15 +39,16 @@ An unassigned connector offers no Library link.
 As a member: open a connector you added in My Library. Share and Remove are
 there; **Manage** is not.
 
-In My Library, expand a plugin's skill count, then a skill. Expand a one-skill
-plugin's **Steps** and use **Show all steps**. Check keyboard disclosure,
-narrow windows, and a failed preview with **Try again**.
+In My Library, verify that plugin and skill rows have no inline previews. Open a
+row, then expand a skill's instructions on its detail page and use **Show all
+steps** for a long body. Check keyboard disclosure, narrow windows, and detail
+loading failures and recovery.
 
-## Turning it off
+## Availability
 
-Disabling the feature restores the previous navigation and static skill rows.
-No grants, published versions, connector setup, or signed-in accounts change.
-Existing member connector pages and personal sign-out remain available.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## Evidence
 
@@ -58,8 +60,8 @@ Published skill steps expanded in the Library plugin detail:
 
 ![Expanded skill steps in a Library plugin](plugin-skill-steps.png)
 
-My Library: a one-skill plugin opens to its steps with **Show all steps**, and a
-plugin shows its skill count:
+Historical list-style skill disclosures, no longer part of the compact Library
+list (open the detail page instead):
 
 ![One-skill steps and a skill count in My Library](library-skills.png)
 

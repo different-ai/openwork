@@ -18,7 +18,7 @@ const versionIds = Object.fromEntries(names.map((name, index) => [name, `pinned+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 const fakeAws = `#!${process.execPath}
-const { appendFileSync, readFileSync, writeFileSync } = require("node:fs");
+const { appendFileSync, readFileSync, writeFileSync, existsSync } = require("node:fs");
 const { join } = require("node:path");
 const root = process.env.TEST_ROOT;
 const config = JSON.parse(readFileSync(join(root, "config.json"), "utf8"));
@@ -32,10 +32,15 @@ else {
   if (args[args.indexOf("--bucket") + 1] !== config.bucket) throw new Error("Wrong bucket");
   if (config.wrongOwner) { console.error("403 expected bucket owner mismatch"); process.exit(1); }
   if (action === "s3api get-bucket-versioning") out({ Status: config.versioning });
+  else if (action === "s3api list-object-versions") {
+    if (config.listError) { console.error("Permission denied"); process.exit(1); }
+    if (args[args.indexOf("--prefix") + 1] !== "releases/aws/" + config.version + "/") throw new Error("Wrong prefix");
+    out(config.inventory ?? { Versions: Object.keys(config.versionIds).filter((name) => existsSync(join(root, "uploaded-" + name))).map((name) => ({ Key: "releases/aws/" + config.version + "/" + name, VersionId: config.versionIds[name] })) });
+  }
   else if (action === "s3api put-object") {
     const name = args[args.indexOf("--key") + 1].split("/").at(-1);
     if (args[args.indexOf("--if-none-match") + 1] !== "*") throw new Error("Missing overwrite guard");
-    if (config.existing === name) { console.error("412 precondition failed"); process.exit(1); }
+    if (config.concurrentObject === name || existsSync(join(root, "uploaded-" + name))) { console.error("412 precondition failed"); process.exit(1); }
     writeFileSync(join(root, "uploaded-" + name), readFileSync(args[args.indexOf("--body") + 1]));
     out({ VersionId: config.badVersionId ?? config.versionIds[name] });
   } else throw new Error("Unexpected command: " + JSON.stringify(args));
@@ -114,7 +119,7 @@ test("AWS publisher verifies all unauthenticated pinned bytes and expected bucke
   assert.equal(f.requests().length, 3);
   const commands = f.commands();
   const storageCommands = commands.filter((args) => args[0] === "s3api");
-  assert.equal(storageCommands.length, 4);
+  assert.equal(storageCommands.length, 5);
   for (const args of storageCommands) assert.equal(args[args.indexOf("--expected-bucket-owner") + 1], accountId);
   const writes = storageCommands.filter((args) => args[1] === "put-object");
   assert.equal(writes.length, 3);
@@ -123,7 +128,7 @@ test("AWS publisher verifies all unauthenticated pinned bytes and expected bucke
     assert.equal(args[args.indexOf("--if-none-match") + 1], "*");
     assert.equal(args[args.indexOf("--server-side-encryption") + 1], "AES256");
   }
-  assert.ok(commands.every((args) => ["get-caller-identity", "get-bucket-versioning", "put-object"].includes(args[1])));
+  assert.ok(commands.every((args) => ["get-caller-identity", "get-bucket-versioning", "list-object-versions", "put-object"].includes(args[1])));
 });
 
 for (const [label, overrides, pattern] of [
@@ -146,12 +151,55 @@ test("AWS publisher refuses a wrong provider manifest before uploading", (t) => 
   refused(f, /Invalid release manifest/);
 });
 
-test("AWS overwrite guard refuses existing objects", (t) => {
-  const f = fixture(t, { existing: "bundle.tar.gz" });
+test("AWS overwrite guard refuses concurrent objects after preflight", (t) => {
+  const f = fixture(t, { concurrentObject: "bundle.tar.gz" });
   refused(f, /412 precondition failed/, { beforeUpload: false });
   assert.equal(f.requests().length, 0);
   assert.equal(f.commands().filter((args) => args[1] === "put-object").length, 1);
 });
+
+test("AWS reuses matching immutable public objects after partial and complete publication", (t) => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, "uploaded-bundle.tar.gz"), readFileSync(join(f.root, "bundle.tar.gz")));
+  const first = f.run();
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(f.commands().filter((args) => args[1] === "put-object").length, 2);
+  const second = f.run();
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual(JSON.parse(second.stdout), JSON.parse(first.stdout));
+  assert.equal(f.commands().filter((args) => args[1] === "put-object").length, 2);
+});
+
+test("AWS reuses the actual verified noncurrent version ID", (t) => {
+  const reused = "historical+version/42=";
+  const f = fixture(t, {
+    versionIds: { ...versionIds, "cloudformation.json": reused },
+    inventory: { Versions: [{ Key: `releases/aws/${version}/cloudformation.json`, VersionId: reused, IsLatest: false }] },
+  });
+  writeFileSync(join(f.root, "uploaded-cloudformation.json"), readFileSync(join(f.root, "cloudformation.json")));
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).DEN_MANAGED_DEPLOYMENT_AWS_TEMPLATE_URL,
+    `https://${bucket}.s3.${region}.amazonaws.com/releases/aws/${version}/cloudformation.json?versionId=${encodeURIComponent(reused)}`);
+  assert.equal(f.commands().filter((args) => args[1] === "put-object").length, 2);
+});
+
+for (const name of names) {
+  test(`AWS preflights conflicting existing ${name} before any writes`, (t) => {
+    const f = fixture(t);
+    writeFileSync(join(f.root, "uploaded-" + name), "conflicting immutable bytes");
+    refused(f, /differs from the reviewed local artifact/, { beforeUpload: false });
+    assert.equal(f.commands().filter((args) => args[1] === "put-object").length, 0);
+  });
+}
+
+for (const [label, overrides, pattern] of [
+  ["list failure", { listError: true }, /Permission denied/],
+  ["malformed inventory", { inventory: { Versions: {} } }, /Invalid release object inventory/],
+  ["delete markers", { inventory: { DeleteMarkers: [{ Key: "deleted" }] } }, /delete markers/],
+]) {
+  test(`AWS refuses ${label} before any writes`, (t) => refused(fixture(t, overrides), pattern));
+}
 
 for (const badVersionId of ["", "null", 42]) {
   test(`AWS publisher refuses nonimmutable version ID ${JSON.stringify(badVersionId)}`, (t) => {

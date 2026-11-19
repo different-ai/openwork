@@ -5,12 +5,19 @@
  * is formatted in UTC, the calendar it is stored in.
  */
 
-import type { BillingPlanSummary } from "@openwork/types/den/billing-plans";
+import type { BillingPlanSummary, BillingPlanTier } from "@openwork/types/den/billing-plans";
+import type { DenOrgSummary } from "./den-org";
 
-export type PlanTierName = "free" | "team" | "enterprise";
+export type PlanTierName = BillingPlanTier;
 
 export function planName(tier: PlanTierName): string {
   return tier === "enterprise" ? "Enterprise" : tier === "team" ? "Team" : "Free";
+}
+
+/** Workspace identity comes from Den, not the signed-in person's role. */
+export function organizationPlanLabel(organization: Pick<DenOrgSummary, "planTier" | "isSandbox">): string | null {
+  if (organization.isSandbox) return "Sandbox";
+  return organization.planTier ? `${planName(organization.planTier)} plan` : null;
 }
 
 function parseCalendarDate(value: string): Date | null {

@@ -18,6 +18,7 @@ import {
 } from "@/react-app/domains/cloud/openwork-models-promo";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { SignInHandoffNotice } from "@/react-app/domains/cloud/sign-in-handoff-notice";
+import { RemoteAccessAsk } from "@/react-app/domains/devices/remote-access-ask";
 import { useCloudSignIn } from "@/react-app/domains/cloud/sign-in-return";
 import { persistableComposerDraftText, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store";
 import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
@@ -214,6 +215,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       </div>
 
       <div ref={composerDockRef} onFocusCapture={() => setComposing(true)} data-empty-composer-dock className="max-lg:sticky max-lg:bottom-0 max-lg:order-last max-lg:mt-auto max-lg:shrink-0 max-lg:bg-dls-surface">
+      <RemoteAccessAsk />
       <SignInHandoffNotice workspaceId={props.composer?.workspaceId} sessionId={null} hasDraft={Boolean(persistableComposerDraftText(prompt).trim())} />
       <NewTaskComposer
         draft={prompt}

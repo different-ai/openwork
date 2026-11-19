@@ -1,3 +1,4 @@
+import { registerAdminManagedReleaseRoutes } from "./managed-releases.js"
 import { registerAdminMcpRegistrationRoutes } from "./mcp-registration.js"
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -15,6 +16,8 @@ import {
   HeadlessResumeGrantTable,
   HeadlessResumeRevocationTable,
   ExternalIdentityTable,
+  SessionSsoAuthenticationTable,
+  SessionSsoProofTable,
   InvitationTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUsageBucketTable,
@@ -52,6 +55,8 @@ import { registerAdminDashboardRoute } from "./dashboard.js"
 import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
+import { registerAdminComputerFleetRoutes } from "./computer-fleet.js"
+import { registerAdminRunnerFleetRoutes } from "./runner-fleet.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -98,10 +103,11 @@ import { auditChangeCapture, logAuditOutcomeLost } from "../../audit/request-cap
 import { platformAdminChangeCapture } from "../../audit/service-capture.js"
 import { hasOpenWorkWebComplimentaryAccess, setOpenWorkWebComplimentaryAccess } from "../../openwork-web-access.js"
 import { readAdminOpenWorkWebAccess } from "./openwork-web-access-state.js"
-import { createEnterpriseSubscription, EnterpriseBillingError, getEnterpriseBillingAdminState, isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncOrganizationBillingQuantities, updateEnterpriseMinimumUsers } from "../../stripe-billing.js"
+import { isOngoingOpenWorkWebSubscriptionStatus, organizationHasOngoingOpenWorkWebSubscription, refreshOrgSubscriptionFromStripe, syncOrganizationBillingQuantities } from "../../stripe-billing.js"
 import { FREE_ORG_SEAT_COUNT } from "../../billing-quantities.js"
 import { getBillingQuantitiesForOrganizations, getOrganizationBillingQuantities } from "../../billing-users.js"
 import { unlessResumeTableMissing } from "../../headless-runner/resume-grant-revocation.js"
+import { removeMemberWorkbotComputersInBackground } from "../../workbot/member-computers.js"
 import { buildAdminPageInfo, normalizeAdminPageRequest, sanitizeAdminSearchForLike, type AdminPageRequest } from "./scale-performance.js"
 
 type UserId = typeof AuthUserTable.$inferSelect.id
@@ -143,45 +149,6 @@ const adminOrganizationPageQuerySchema = adminPageQuerySchema.extend({
 const updateOrganizationFreeSeatsSchema = z.object({
   totalFreeSeats: z.number().int().min(DEFAULT_ORGANIZATION_FREE_SEAT_COUNT).max(100000),
 })
-
-const createEnterpriseSubscriptionSchema = z.object({
-  priceId: z.string().trim().regex(/^price_[A-Za-z0-9]+$/, "Use a Stripe price id (price_...)."),
-  minimumUsers: z.number().int().min(0).max(100000),
-  billingEmail: z.string().trim().email(),
-  daysUntilDue: z.number().int().min(1).max(90).default(30),
-})
-
-const updateEnterpriseMinimumUsersSchema = z.object({
-  minimumUsers: z.number().int().min(0).max(100000),
-})
-
-const enterpriseBillingStateSchema = z.object({
-  configured: z.boolean(),
-  users: z.number().int(),
-  minimumUsers: z.number().int(),
-  billableUsers: z.number().int(),
-  subscription: z.object({}).passthrough().nullable(),
-}).meta({ ref: "AdminEnterpriseBillingState" })
-
-const enterpriseBillingErrorSchema = z.object({
-  error: z.string(),
-  message: z.string(),
-})
-
-function enterpriseBillingErrorStatus(error: EnterpriseBillingError) {
-  switch (error.code) {
-    case "organization_not_found":
-    case "enterprise_subscription_missing":
-      return 404 as const
-    case "enterprise_subscription_exists":
-      return 409 as const
-    case "enterprise_price_invalid":
-      return 400 as const
-    case "stripe_not_configured":
-    case "enterprise_product_not_configured":
-      return 503 as const
-  }
-}
 
 const updateOrganizationOpenWorkWebAccessSchema = z.object({
   enabled: z.boolean(),
@@ -1434,6 +1401,7 @@ const adminRouteErrors = {
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerAdminManagedReleaseRoutes(app)
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)
@@ -1445,6 +1413,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
+  registerAdminRunnerFleetRoutes(app)
+  registerAdminComputerFleetRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)
   app.post(
     "/v1/admin/admins",
@@ -1806,6 +1776,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
+        await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.userId, userId))
+        await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.userId, userId))
         await tx.delete(ScimSyncEventTable).where(eq(ScimSyncEventTable.userId, userId))
         if (membershipRows.length > 0) {
           await tx.delete(ConnectedAccountTable).where(inArray(
@@ -1848,6 +1820,9 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       await Promise.all(organizationIds.map((organizationId) => cache.org.deleteMembers(organizationId)))
       for (const organizationId of organizationIds) {
         await syncOrganizationBillingQuantities({ organizationId })
+      }
+      for (const membership of activeMembershipRows) {
+        removeMemberWorkbotComputersInBackground({ organizationId: membership.organizationId, memberId: membership.id })
       }
 
       return c.json({ ok: true, user: { id: targetUser.id, email: targetUser.email } })
@@ -1951,108 +1926,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           billableSeatCount: seatCounts.chargeable,
         },
       })
-    },
-  )
-
-  app.get(
-    "/v1/admin/organizations/:organizationId/enterprise-subscription",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Get an organization's Enterprise plan billing",
-      description: "Returns the organization's Stripe Enterprise subscription, committed minimum users and the users Stripe bills.",
-      responses: {
-        200: jsonResponse("Enterprise billing returned.", z.object({ enterprise: enterpriseBillingStateSchema })),
-        400: jsonResponse("The organization id was invalid.", adminRequestErrorSchema),
-        ...adminRouteErrors,
-      },
-    }),
-    adminRoute(),
-    async (c) => {
-      const organizationId = c.req.param("organizationId")
-      if (!isOrganizationId(organizationId)) {
-        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
-      }
-      return c.json({ enterprise: await getEnterpriseBillingAdminState(organizationId) })
-    },
-  )
-
-  app.post(
-    "/v1/admin/organizations/:organizationId/enterprise-subscription",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Start an organization's Enterprise plan",
-      description: "Creates a Stripe Enterprise subscription on a custom per-user price of the Enterprise product, billed by invoice, never below the committed minimum users. Cancels a Team plan subscription with a prorated credit. Body: { priceId, minimumUsers, billingEmail, daysUntilDue? }.",
-      responses: {
-        200: jsonResponse("The Enterprise subscription was created.", z.object({ ok: z.literal(true), enterprise: enterpriseBillingStateSchema })),
-        400: jsonResponse("The request body, organization id or price was invalid.", z.union([adminRequestErrorSchema, enterpriseBillingErrorSchema])),
-        ...adminRouteErrors,
-        404: jsonResponse("The organization does not exist.", z.union([notFoundSchema, enterpriseBillingErrorSchema])),
-        409: jsonResponse("The organization already has an Enterprise subscription.", enterpriseBillingErrorSchema),
-        503: jsonResponse("Stripe Enterprise billing is not configured on this deployment.", enterpriseBillingErrorSchema),
-      },
-    }),
-    adminRoute(),
-    async (c) => {
-      const body = createEnterpriseSubscriptionSchema.safeParse(await c.req.json().catch(() => null))
-      if (!body.success) {
-        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid Enterprise subscription request." }, 400)
-      }
-      const organizationId = c.req.param("organizationId")
-      if (!isOrganizationId(organizationId)) {
-        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
-      }
-      try {
-        await createEnterpriseSubscription({
-          organizationId,
-          priceId: body.data.priceId,
-          minimumUsers: body.data.minimumUsers,
-          billingEmail: body.data.billingEmail,
-          daysUntilDue: body.data.daysUntilDue,
-          requestedByUserId: c.get("user").id,
-        })
-      } catch (error) {
-        if (error instanceof EnterpriseBillingError) {
-          return c.json({ error: error.code, message: error.message }, enterpriseBillingErrorStatus(error))
-        }
-        throw error
-      }
-      return c.json({ ok: true, enterprise: await getEnterpriseBillingAdminState(organizationId) })
-    },
-  )
-
-  app.patch(
-    "/v1/admin/organizations/:organizationId/enterprise-subscription",
-    describeRoute({
-      tags: ["Admin"],
-      summary: "Change an organization's Enterprise minimum users",
-      description: "Updates the committed minimum users on the organization's Enterprise subscription and resynchronizes its Stripe quantity. Body: { minimumUsers }.",
-      responses: {
-        200: jsonResponse("The minimum users were updated.", z.object({ ok: z.literal(true), enterprise: enterpriseBillingStateSchema })),
-        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
-        ...adminRouteErrors,
-        404: jsonResponse("The organization has no ongoing Enterprise subscription.", enterpriseBillingErrorSchema),
-        503: jsonResponse("Stripe Enterprise billing is not configured on this deployment.", enterpriseBillingErrorSchema),
-      },
-    }),
-    adminRoute(),
-    async (c) => {
-      const body = updateEnterpriseMinimumUsersSchema.safeParse(await c.req.json().catch(() => null))
-      if (!body.success) {
-        return c.json({ error: "invalid_request", message: body.error.issues[0]?.message ?? "Invalid Enterprise minimum users request." }, 400)
-      }
-      const organizationId = c.req.param("organizationId")
-      if (!isOrganizationId(organizationId)) {
-        return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
-      }
-      try {
-        await updateEnterpriseMinimumUsers({ organizationId, minimumUsers: body.data.minimumUsers })
-      } catch (error) {
-        if (error instanceof EnterpriseBillingError) {
-          return c.json({ error: error.code, message: error.message }, enterpriseBillingErrorStatus(error))
-        }
-        throw error
-      }
-      return c.json({ ok: true, enterprise: await getEnterpriseBillingAdminState(organizationId) })
     },
   )
 

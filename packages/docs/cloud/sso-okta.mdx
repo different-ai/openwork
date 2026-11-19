@@ -26,7 +26,7 @@ access available as a recovery path during setup.
 
 <Note>
 For a Helm deployment with separate web and API hosts, use the URLs OpenWork
-shows in **Settings → SSO**. Do not replace their host with the separate API
+shows in **Settings → Auth & Security → Single sign-on (SSO)** (older versions: **Settings → SSO**). Do not replace their host with the separate API
 origin. SAML uses the deployment's configured auth origin, which is normally
 the public web origin when `/api/auth` is proxied through the web host.
 </Note>
@@ -95,7 +95,7 @@ In the Okta application's **Sign On** tab, select
 - **X.509 Certificate**, including the `BEGIN CERTIFICATE` and
   `END CERTIFICATE` lines
 
-In OpenWork, open **Settings → SSO**, select **SAML**, and enter:
+In OpenWork, open **Settings → Auth & Security → Single sign-on (SSO)**, select **SAML**, and enter:
 
 | OpenWork field | Okta value |
 | --- | --- |
@@ -150,7 +150,7 @@ Do not assign broad groups until the test user can complete the full flow.
 
 After the Okta assignment and domain verification are complete:
 
-1. In OpenWork **Settings → SSO**, select **Enable Config** or **Enable SSO**.
+1. In OpenWork **Settings → Auth & Security → Single sign-on (SSO)**, select **Enable Config** or **Enable SSO**.
 2. In the **Test SSO before enabling it** dialog, select **SSO Login**.
 3. Complete Okta authentication in the separate window.
 4. Return to OpenWork and confirm **Authentication test successful**.

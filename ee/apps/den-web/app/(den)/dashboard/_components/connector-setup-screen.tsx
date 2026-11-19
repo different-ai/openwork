@@ -8,7 +8,6 @@ import {
   getLibraryAddConnectorRoute,
   getLibraryConnectorShareRoute,
   getLibraryRoute,
-  orgFeatureEnabled,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { shortDescription } from "./connector-picker";
@@ -22,10 +21,7 @@ import { SetupChecks } from "./setup-checks";
 export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean; failed: boolean } {
   const searchParams = useSearchParams();
   const presets = useMcpConnectionPresets();
-  const { orgContext } = useOrgDashboard();
-  // With guided Slack setup, a preset's own minimum wins until the admin chooses more, and the
-  // optional list feeds that choice; off, setup requests what the server advertises, as before.
-  const presetScopesWin = orgFeatureEnabled(orgContext, "guidedSlackSetup");
+  // A preset's own minimum wins until the admin chooses more; its optional list feeds that choice.
   const customUrl = searchParams.get("url");
   const customName = searchParams.get("name");
   return useMemo(() => {
@@ -46,7 +42,7 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
           authType: preset.authType,
           requiresOAuthClient: preset.requiresOAuthClient,
           defaultOAuthClientId: preset.defaultOAuthClientId,
-          ...(presetScopesWin ? { defaultOAuthScopes: preset.defaultOAuthScopes, optionalOAuthScopes: preset.optionalOAuthScopes } : {}),
+          defaultOAuthScopes: preset.defaultOAuthScopes, optionalOAuthScopes: preset.optionalOAuthScopes,
           oauthCallbackUrl: preset.oauthCallbackUrl,
         },
       },
@@ -54,7 +50,7 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
       missing: false,
       failed: false,
     };
-  }, [catalogId, customName, customUrl, presetScopesWin, presets.data, presets.error, presets.isLoading]);
+  }, [catalogId, customName, customUrl, presets.data, presets.error, presets.isLoading]);
 }
 
 /** A4 and A5: the checks fill in, the member signs in, and the connector is theirs. */

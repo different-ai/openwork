@@ -89,6 +89,9 @@ import {
   workspaceBrandingFingerprint,
 } from "./workspace-branding-restart";
 
+import { useOnboardingStep } from "../../shell/use-onboarding-step";
+import { captureOnboardingEvent, updateAnalytics } from "../../../app/lib/analytics";
+
 const RELOAD_AFTER_ONBOARDING_KEY = "openwork.reloadAfterOrgOnboarding";
 const APPLIED_BRANDING_FINGERPRINT_KEY = "openwork.den.appliedBrandingFingerprint";
 const BRANDING_RESTART_RESUME_KEY = "openwork.den.brandingRestartResume";
@@ -120,40 +123,55 @@ async function stageOnboardingUpdate(
   const updater = onboardingUpdaterBridge();
   if (!updater?.getChannel || !updater.check || !updater.download) return false;
 
-  const channelState = await updater.getChannel();
-  if (
-    channelState.channel === "alpha" &&
-    !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
-  ) {
-    await updater.setChannel?.("stable");
-    return false;
-  }
-  let targetVersion: string | undefined;
-  if (channelState.channel === "stable") {
-    const selection = await resolveFreshStableDesktopUpdate({
-      currentVersion: channelState.currentVersion,
-      refreshDesktopConfig: async () => desktopConfig,
-    });
-    if (selection?.kind !== "update") return false;
-    targetVersion = selection.targetVersion;
-  }
+  let action: "check" | "download" = "check";
+  let currentVersion: string | null = null;
+  try {
+    const channelState = await updater.getChannel();
+    currentVersion = channelState.currentVersion;
+    if (
+      channelState.channel === "alpha" &&
+      !isAlphaChannelAllowedByDesktopConfig(desktopConfig)
+    ) {
+      await updater.setChannel?.("stable");
+      return false;
+    }
+    let targetVersion: string | undefined;
+    if (channelState.channel === "stable") {
+      const selection = await resolveFreshStableDesktopUpdate({
+        currentVersion: channelState.currentVersion,
+        refreshDesktopConfig: async () => desktopConfig,
+      });
+      if (selection?.kind !== "update") return false;
+      targetVersion = selection.targetVersion;
+    }
 
-  const update = await updater.check(channelState.channel, targetVersion);
-  if (!update.available || update.reason) return false;
-  if (
-    channelState.channel === "alpha" &&
-    update.latestVersion &&
-    !(await isAlphaUpdateAllowed(
-      update.latestVersion,
-      desktopConfig,
-      channelState.currentVersion,
-    ))
-  ) {
-    return false;
-  }
+    const update = await updater.check(channelState.channel, targetVersion);
+    if (update.reason) {
+      if (update.reason !== "unavailable") updateAnalytics.failed(currentVersion, "check");
+      return false;
+    }
+    if (!update.available) return false;
+    if (
+      channelState.channel === "alpha" &&
+      update.latestVersion &&
+      !(await isAlphaUpdateAllowed(
+        update.latestVersion,
+        desktopConfig,
+        channelState.currentVersion,
+      ))
+    ) {
+      return false;
+    }
 
-  const download = await updater.download();
-  return download.ok;
+    updateAnalytics.offered(currentVersion, update.latestVersion ?? undefined);
+    action = "download";
+    const download = await updater.download();
+    if (!download.ok) updateAnalytics.failed(currentVersion, "download");
+    return download.ok;
+  } catch (error) {
+    updateAnalytics.failed(currentVersion, action);
+    throw error;
+  }
 }
 
 function subscribeToDenSettings(onStoreChange: () => void) {
@@ -473,11 +491,15 @@ export function OrgOnboardingPage() {
     void selectDenActiveOrganization(autoSelectOrg, settings)
       .then(() => {
         if (cancelled) return;
+        captureOnboardingEvent("onboarding_organization_selected", { choice: "automatic" });
         setAutoContinueResources(true);
         setHasSelectedOrganization(true);
       })
       .catch(() => {
-        if (!cancelled) setAutoSelectFailedOrgId(autoSelectOrg.id);
+        if (!cancelled) {
+          captureOnboardingEvent("onboarding_organization_failed", { reason: "selection_failed" });
+          setAutoSelectFailedOrgId(autoSelectOrg.id);
+        }
       })
       .finally(() => {
         if (autoSelectingOrgIdRef.current === autoSelectOrg.id) {
@@ -646,7 +668,10 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
     }),
   });
 
+  const resourcesRef = useOnboardingStep("resources", Boolean(authToken && orgId && !loading && !error && !autoContinue));
+
   const finishOnboarding = useCallback((optionsArg?: { requestReload?: boolean }) => {
+    captureOnboardingEvent("onboarding_resources_completed", { choice: autoContinue ? "automatic" : "manual", model_selected: Boolean(selectedDefault) });
     // If user picked a default model, write it
     if (selectedDefault) {
       writeStoredDefaultModel({
@@ -670,7 +695,7 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
     // Stores and caches across the app still hold the previous organization's
     // providers, skills and connections. Start over at the route above.
     if (previousOrgId && previousOrgId !== orgId) window.location.reload();
-  }, [gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
+  }, [autoContinue, gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
 
   const handleContinue = useCallback(async (optionsArg?: { requestReload?: boolean }) => {
     if (!window.__OPENWORK_ELECTRON__?.shell?.relaunch) {
@@ -738,8 +763,17 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
     window.localStorage.setItem(APPLIED_BRANDING_FINGERPRINT_KEY, brandingRestart.fingerprint);
     window.localStorage.setItem(BRANDING_RESTART_RESUME_KEY, orgId);
     if (brandingRestart.updateReady) {
-      const result = await onboardingUpdaterBridge()?.installAndRestart?.();
-      if (result?.ok) return;
+      updateAnalytics.installing();
+      try {
+        const result = await onboardingUpdaterBridge()?.installAndRestart?.();
+        if (result?.ok) return;
+        updateAnalytics.cancelInstall();
+        updateAnalytics.failed(null, "install");
+      } catch (error) {
+        updateAnalytics.cancelInstall();
+        updateAnalytics.failed(null, "install");
+        throw error;
+      }
     }
     await relaunchDesktopApp();
   }, [brandingRestart, orgId]);
@@ -850,7 +884,7 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
   }
 
   return (
-    <Page>
+    <Page ref={resourcesRef}>
       <PageBackground />
       <PageTitlebarRegion />
 
@@ -1196,15 +1230,20 @@ function OrganizationSelectionPage({
   onContinue,
   onCancel,
 }: OrganizationSelectionPageProps) {
+  const organizationRef = useOnboardingStep("organization");
   const { settings } = useDenClient();
   const [selected, setSelected] = useState(defaultOrganization);
   const { error, isPending, mutate } = useMutation({
     mutationFn: (nextOrg: DenOrgSummary) => selectDenActiveOrganization(nextOrg, settings),
-    onSuccess: () => onContinue(),
+    onSuccess: () => {
+      captureOnboardingEvent("onboarding_organization_selected", { choice: "manual" });
+      onContinue();
+    },
+    onError: () => captureOnboardingEvent("onboarding_organization_failed", { reason: "selection_failed" }),
   });
 
   return (
-    <Page>
+    <Page ref={organizationRef}>
       <PageBackground />
       <PageTitlebarRegion />
       <PageContainer>

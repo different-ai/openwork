@@ -8,7 +8,7 @@ overrides:
   fast-uri@>=3.0.0 <3.1.9: 3.1.9
   postcss-selector-parser@<7.1.6: 7.1.6
   source-map-js@>=1.0.0 <1.2.2: 1.2.2
-  vite@>=6.0.0 <6.4.4: 6.4.4
+  vite@>=6.0.0 <6.4.5: 6.4.5
   zod@<4.6.6: 4.6.7
 
 importers:
@@ -68,11 +68,11 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
       vite:
-        specifier: ^6.4.4
-        version: 6.4.4(@types/node@26.1.2)(terser@5.51.2)
+        specifier: ^6.4.5
+        version: 6.4.5(@types/node@26.1.2)(terser@5.51.2)
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))
+        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))
       xml-crypto:
         specifier: 6.1.2
         version: 6.1.2
@@ -114,7 +114,7 @@ importers:
         version: 4.0.520(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))
+        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))
     devDependencies:
       '@types/react':
         specifier: ^19.1.13
@@ -251,7 +251,7 @@ importers:
         version: 3.23.2(@types/node@26.1.2)
       vitest:
         specifier: ^4.1.12
-        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))
+        version: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))
 
   packages/timeline: {}
 
@@ -1050,7 +1050,7 @@ packages:
     resolution: {integrity: sha512-fKShNpKZzupWZuY0z7egydvL0sqW4INEZBEExMBMAa6izlENEVHwoXgdaTCaBZ5fwlr4xf2o1wXC83n9RpO+NA==}
     peerDependencies:
       msw: ^2.4.9
-      vite: 6.4.4
+      vite: 6.4.5
     peerDependenciesMeta:
       msw:
         optional: true
@@ -1875,8 +1875,8 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
-  vite@6.4.4:
-    resolution: {integrity: sha512-xGjU/SyjeNyb0E4KxXBvYz/1C+3JXuujvf2hXNOtnlcE+58o5ajd9N2/n2VhkiJvpCP2qQasnUpx5PXNeI+p1Q==}
+  vite@6.4.5:
+    resolution: {integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
@@ -1931,7 +1931,7 @@ packages:
       '@vitest/ui': 4.1.12
       happy-dom: '*'
       jsdom: '*'
-      vite: 6.4.4
+      vite: 6.4.5
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -2663,7 +2663,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))
+      vitest: 4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))
 
   '@vitest/expect@4.1.12':
     dependencies:
@@ -2674,13 +2674,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.12(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))':
+  '@vitest/mocker@4.1.12(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))':
     dependencies:
       '@vitest/spy': 4.1.12
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.4(@types/node@26.1.2)(terser@5.51.2)
+      vite: 6.4.5(@types/node@26.1.2)(terser@5.51.2)
 
   '@vitest/pretty-format@4.1.12':
     dependencies:
@@ -3477,7 +3477,7 @@ snapshots:
 
   util-deprecate@1.0.2: {}
 
-  vite@6.4.4(@types/node@26.1.2)(terser@5.51.2):
+  vite@6.4.5(@types/node@26.1.2)(terser@5.51.2):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.5)
@@ -3490,10 +3490,10 @@ snapshots:
       fsevents: 2.3.3
       terser: 5.51.2
 
-  vitest@4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2)):
+  vitest@4.1.12(@types/node@26.1.2)(@vitest/coverage-v8@4.1.12)(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2)):
     dependencies:
       '@vitest/expect': 4.1.12
-      '@vitest/mocker': 4.1.12(vite@6.4.4(@types/node@26.1.2)(terser@5.51.2))
+      '@vitest/mocker': 4.1.12(vite@6.4.5(@types/node@26.1.2)(terser@5.51.2))
       '@vitest/pretty-format': 4.1.12
       '@vitest/runner': 4.1.12
       '@vitest/snapshot': 4.1.12
@@ -3510,7 +3510,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 6.4.4(@types/node@26.1.2)(terser@5.51.2)
+      vite: 6.4.5(@types/node@26.1.2)(terser@5.51.2)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.1.2

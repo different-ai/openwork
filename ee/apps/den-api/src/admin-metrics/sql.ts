@@ -23,7 +23,9 @@ export function normalizeRows(result: unknown): Row[] {
   return []
 }
 
-export const dbRows: Rows = async (query) => normalizeRows(await db.execute(query))
+// `db.execute` always runs on the primary. The refresh only aggregates, so it can
+// lag slightly; without replica credentials the replica is the primary.
+export const dbRows: Rows = async (query) => normalizeRows(await (db.$replicas[0] ?? db).execute(query))
 
 // The refresh job runs in the background, so it may take longer than a request,
 // but the database still stops any statement that runs away.

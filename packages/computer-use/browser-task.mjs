@@ -1,6 +1,7 @@
 // The browser host owns task identity, observations and dispatch.
 // No model-specific API, arbitrary script execution, cookies or raw CDP surface.
 import { createHash, randomUUID } from "node:crypto";
+import { deferBrowserStop } from "./browser-navigation.mjs";
 
 const WORLD = 1001;
 const TRUST = "untrusted-site-content";
@@ -19,6 +20,9 @@ export function browserTaskUrl(value) {
 }
 function safeUrl(value) {
   try { const url = new URL(value); return `${url.origin}${url.pathname}`; } catch { return ""; }
+}
+function originOf(value) {
+  try { return new URL(value).origin; } catch { return null; }
 }
 
 // After click, key or scroll: wait for navigation, network idle and a DOM that
@@ -43,7 +47,7 @@ const EDIT_COMMANDS = { a: "selectAll", z: "undo", "shift+z": "redo" };
 const ACTION_TYPES = ["click", "fill", "select", "set_checked", "key", "scroll", "reveal", "attach"];
 /** As many files as the approval card lists; the broker refuses more. */
 const MAX_FILES = 20;
-const PREPARE_CODES = ["stale_observation", "stale_element", "sign_in_required", "unverifiable_focus", "element_disabled", "element_outside_viewport",
+const PREPARE_CODES = ["stale_observation", "stale_element", "use_attach", "unverifiable_focus", "element_disabled", "element_outside_viewport",
   "element_obscured", "not_editable", "not_selectable", "option_unavailable", "not_checkable", "outside_viewport"];
 
 /** @param {{ key?: unknown, modifiers?: unknown }} action */
@@ -99,8 +103,12 @@ function observePage(id, options = {}) {
   // only whether a field is filled, unless the agent entered that exact value itself. In-page
   // staleness and verification checks read the real value (reveal).
   const entered = globalThis.__openworkAgentEntered ??= new WeakMap();
-  const isSensitive = element => element.matches('input[type="password"]') ||
-    (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).some(token => token === "one-time-code" || token.startsWith("cc-"));
+  const autocomplete = element => (element.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/);
+  const isPayment = element => autocomplete(element).some(token => token.startsWith("cc-"));
+  const isCredential = element => element.matches('input[type="password"]')
+    || autocomplete(element).some(token => ["current-password", "new-password", "one-time-code"].includes(token));
+  // Passwords, one-time codes and card fields are never read back, even after the agent fills them.
+  const isSensitive = element => isCredential(element) || isPayment(element);
   const isTextValue = element => element instanceof HTMLTextAreaElement ||
     element instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "hidden", "file", "range", "color"].includes(element.type) ||
     element.isContentEditable || ["textbox", "combobox"].includes(element.getAttribute("role"));
@@ -172,8 +180,8 @@ function observePage(id, options = {}) {
       readOnly: element.readOnly === true || element.getAttribute("aria-readonly") === "true",
     };
     if (input) state.type = element.type;
-    if (!sensitive && field) {
-      if (reveal || (!select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
+    if (field) {
+      if (reveal || (!sensitive && !select && entered.get(element) === value)) { state.value = value.slice(0, 8000); state.valueTruncated = value.length > 8000; }
       else { state.filled = value.length > 0; state.valueWithheld = true; }
     }
     if (input && ["checkbox", "radio"].includes(element.type)) state.checked = element.indeterminate ? "mixed" : element.checked;
@@ -275,6 +283,7 @@ function observePage(id, options = {}) {
   registry.describe = describe;
   registry.optionRef = optionRef;
   registry.identify = identify;
+  registry.isCredential = isCredential;
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -292,15 +301,17 @@ function observePage(id, options = {}) {
     registry.last = { mode, items: current };
   }
   const focused = registry.byElement.get(document.activeElement);
-  const signIn = [...candidates].some((element) => {
-    if (!(element instanceof HTMLElement) || !isSensitive(element)) return false;
-    const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0;
-  });
-  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPasswordField: signIn };
+  // A card field shows its digits in an image. Page script can copy a typed or autofilled
+  // password or code into visible text, then clear, hide or remove the field: no image while
+  // the document has such a field anywhere, or after the agent filled one in it.
+  const onScreen = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; };
+  const payment = [...candidates].some((element) => element instanceof HTMLElement && isPayment(element) && onScreen(element));
+  const credential = globalThis.__openworkCredentialEntered === true
+    || [...candidates].some((element) => element instanceof HTMLElement && isCredential(element));
+  const page = { viewport: { width: innerWidth, height: innerHeight }, scroll: { x: scrollX, y: scrollY }, hasPaymentField: payment, hasCredentialField: credential };
   if (!interactive) {
     return { truncated, scrollRegions, title: text(document.title, 300), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}), elements,
       ...page, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
-      webmcp: "modelContext" in document ? "available" : "check_site_tools",
       limitations: ["DOM references cover the top document and open controls; use a fresh image for frames or canvas."] };
   }
   const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
@@ -309,7 +320,7 @@ function observePage(id, options = {}) {
     .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
   return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
     ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
-    ...page, ...("modelContext" in document ? { webmcp: "available" } : {}) };
+    ...page };
 }
 // Records when the document last changed structure. Text-only changes (live
 // counters, clocks) are ignored; elements appearing, disappearing, showing,
@@ -323,8 +334,26 @@ function readSettle(arm) {
     }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "disabled", "aria-busy", "aria-hidden", "open"] });
   }
   if (arm) state.at = performance.now();
-  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]') };
+  return { quietMs: performance.now() - state.at, readyState: document.readyState, busy: !!document.querySelector('[aria-busy="true"]'), textChars: (document.body?.innerText || "").trim().length };
 }
+// What stands between the agent and the page's content: a cookie or consent wall, or a human-verification check.
+// Only kinds and a character count leave the page, never its text.
+function readBlockers() {
+  const shown = (element) => { const rect = element.getBoundingClientRect(); return rect.width > 40 && rect.height > 20 && getComputedStyle(element).visibility !== "hidden"; };
+  const any = (selectors) => selectors.some((selector) => [...document.querySelectorAll(selector)].some(shown));
+  const consent = /^consent\./.test(location.hostname) || any(["#onetrust-banner-sdk", "#onetrust-consent-sdk", "#CybotCookiebotDialog", "#didomi-host",
+    ".fc-consent-root", "[id^='sp_message_container']", "#qc-cmp2-container", "#truste-consent-track", "#usercentrics-root", "#cmpbox",
+    "form[action*='consent.']", "ytd-consent-bump-v2-lightbox", "[aria-modal='true'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='cookie' i]", "[role='dialog'][aria-label*='consent' i]"]);
+  const challenge = /^(just a moment|attention required|are you a robot|prove your humanity|verify you are human|security check|access denied)/i.test(document.title.trim())
+    || any(["iframe[src*='challenges.cloudflare.com']", "iframe[src*='recaptcha']", "iframe[src*='hcaptcha.com']", "#challenge-form", "#px-captcha", "#captcha-container"]);
+  return { blocker: challenge ? "bot_check" : consent ? "consent" : null, textChars: (document.body?.innerText || "").trim().length };
+}
+const BLOCKER_NEXT = {
+  consent: "A cookie or consent dialog covers this page. Observe it (mode interactive) and choose the option the person would want, the most private one such as Reject all unless they said otherwise, then continue.",
+  bot_check: "The site is showing a human-verification check the agent must not solve. Tell the person and let them complete it in the browser view, then observe again.",
+};
+// Failures that are the page being busy, not something for a person to fix: the tab stays usable.
+const TRANSIENT_CODES = new Set(["page_changed", "busy", "navigation_timeout"]);
 function prepareAction(id, action) {
   const registry = globalThis.__openworkBrowserRefs;
   const observation = registry?.observations.get(id);
@@ -337,12 +366,11 @@ function prepareAction(id, action) {
   const control = element ? registry.describe(element) : null;
   // The control must still be what the model saw: same kind and name.
   if (element && registry.identities.get(element) !== registry.identify(element, control)) throw new Error("stale_element");
-  if (element?.matches('input[type="password"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
   if (control?.disabled) throw new Error("element_disabled");
   if (action.type === "key") {
     if (element && document.activeElement !== element) element.focus();
     if (element && document.activeElement !== element) throw new Error("unverifiable_focus");
-    if (document.activeElement?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (document.activeElement?.matches('input[type="file"]')) throw new Error("use_attach");
     // Only a directly focused, observed control can receive keys. Frames and
     // generic containers can conceal a different focused descendant.
     if (!document.activeElement?.matches('input,textarea,select,button,a,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"]')
@@ -370,7 +398,7 @@ function prepareAction(id, action) {
   }
   if (action.type === "reveal" && !element) throw new Error("stale_element");
   if (action.type === "fill") {
-    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "date", "time", "datetime-local", "month", "week"].includes(element.type));
+    const editable = element instanceof HTMLTextAreaElement || element?.isContentEditable || (element instanceof HTMLInputElement && ["text", "search", "email", "url", "tel", "number", "password", "date", "time", "datetime-local", "month", "week"].includes(element.type));
     if (!editable || control.readOnly) throw new Error("not_editable");
   }
   if (action.type === "select") {
@@ -390,9 +418,19 @@ function prepareAction(id, action) {
   if ((action.type === "click" || action.type === "scroll") && (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight)) throw new Error("outside_viewport");
   if (!element && action.type === "click") {
     const hit = document.elementFromPoint(x, y);
-    if (hit?.matches('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]')) throw new Error("sign_in_required");
+    if (hit?.matches('input[type="file"]')) throw new Error("use_attach");
   }
   return { x, y, unchanged: action.type === "set_checked" && control.checked === action.checked };
+}
+/** Whether this step would click, fill or press a key in a password or one-time-code field. */
+function credentialTarget(id, action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.observations.get(id)) return false;
+  const point = action.type === "click" && Number.isFinite(action.x) && Number.isFinite(action.y);
+  const element = action.ref ? registry.byRef.get(action.ref)?.deref() : point ? document.elementFromPoint(action.x, action.y) : document.activeElement;
+  // Clicking a label, or anything inside one, focuses its field.
+  const control = element?.closest?.("label")?.control ?? element;
+  return control?.isConnected === true && registry.isCredential(control);
 }
 function applyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -400,6 +438,8 @@ function applyFormAction(action) {
   if (!element?.isConnected) throw new Error("stale_element");
   if (registry.identities.get(element) !== registry.identify(element, registry.describe(element))) throw new Error("stale_element");
   if (registry.snapshots.get(element) !== JSON.stringify(registry.describe(element, true))) throw new Error("stale_observation");
+  // Once a password or code was filled in this document, it takes no more images.
+  if (action.type === "fill" && registry.isCredential(element)) globalThis.__openworkCredentialEntered = true;
   // The agent may read back exactly what it entered.
   if (action.type === "fill" || action.type === "select") globalThis.__openworkAgentEntered?.set(element, action.type === "select"
     ? JSON.stringify([...element.options].filter(option => action.values.includes(registry.optionRefs.get(option)?.ref)).map(option => option.value))
@@ -528,16 +568,25 @@ function relevantPassages(text, question, maxChars) {
 /**
  * Clicks an upload control with the page's file chooser intercepted, then gives
  * the input that asked these files. The system file picker never opens.
- * @returns {Promise<"attached" | "no_file_chooser" | "single_file">}
+ * @returns {Promise<"attached" | "no_file_chooser" | "single_file" | "files_permission_changed">}
  */
-async function attachFiles(contents, point, files, signal, waitMs) {
+async function attachFiles(contents, point, files, signal, waitMs, beforeShare = null) {
   const cdp = contents.debugger;
   const attached = !cdp.isAttached();
   if (attached) cdp.attach("1.3");
   let listener = null;
+  let receivingFrame = null;
+  let receiverChanged = false;
   try {
     const opened = new Promise((resolve) => {
-      listener = (_event, method, params) => { if (method === "Page.fileChooserOpened") resolve(params); };
+      listener = (_event, method, params) => {
+        if (method === "Page.fileChooserOpened") { receivingFrame = params.frameId ?? null; resolve(params); }
+        // history.pushState/replaceState keeps the input's backend node alive.
+        // Reject even same-document changes while policy/files are checked.
+        if (receivingFrame && ((method === "Page.navigatedWithinDocument" && params.frameId === receivingFrame)
+          || (method === "Page.frameNavigated" && params.frame?.id === receivingFrame)
+          || (method === "Page.frameDetached" && params.frameId === receivingFrame))) receiverChanged = true;
+      };
       cdp.on("message", listener);
       setTimeout(() => resolve(null), waitMs).unref?.();
     });
@@ -550,6 +599,21 @@ async function attachFiles(contents, point, files, signal, waitMs) {
     signal.throwIfAborted();
     if (!chooser || !Number.isInteger(chooser.backendNodeId)) return "no_file_chooser";
     if (chooser.mode === "selectSingle" && files.length > 1) return "single_file";
+    // A chooser can belong to a cross-origin frame, or opening it can navigate.
+    // A managed/remembered grant is only for the exact top-level origin shown.
+    if (beforeShare) {
+      const tree = await cdp.sendCommand("Page.getFrameTree");
+      const findFrame = (node) => node?.frame?.id === chooser.frameId ? node.frame
+        : (node?.childFrames ?? []).map(findFrame).find(Boolean);
+      const frame = typeof chooser.frameId === "string" ? findFrame(tree?.frameTree) : null;
+      if (!frame || receiverChanged || !await beforeShare(frame.url) || receiverChanged) return "files_permission_changed";
+      // Re-read after asynchronous authorization, not just before it. The
+      // listener remains active through DOM.setFileInputFiles.
+      const finalTree = await cdp.sendCommand("Page.getFrameTree");
+      const finalFrame = findFrame(finalTree?.frameTree);
+      if (!finalFrame || receiverChanged || finalFrame.url !== frame.url) return "files_permission_changed";
+    }
+    signal.throwIfAborted();
     await cdp.sendCommand("DOM.setFileInputFiles", { files, backendNodeId: chooser.backendNodeId });
     return "attached";
   } finally {
@@ -564,7 +628,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
   // A page receives files only after the person approves exactly these, in the chat.
   checkFiles = /** @type {(paths: string[]) => Promise<void>} */ (async () => { throw new Error("files_unavailable"); }),
-  approveFiles = async (_sessionId, _request, _signal) => false, fileChooserMs = 5000 }) {
+  approveFiles = /** @type {(sessionId: string, request: { app: string, url: string, files: string[] }, signal: AbortSignal) => Promise<boolean | { allowed: boolean, code?: string, error?: string, revalidate?: (frameUrl?: string) => Promise<boolean> }>} */ (async (_sessionId, _request, _signal) => false),
+  // A password or code is typed only on a site (exact origin) the person confirmed. Without
+  // this, as on hosts that cannot ask, sign-in fields stay with the person.
+  approveCredential = /** @type {((sessionId: string, request: { site: string }, signal: AbortSignal) => Promise<boolean>) | undefined} */ (undefined),
+  fileChooserMs = 5000,
+  // After a takeover or cancellation stops the agent's navigation, page navigation stays guarded this long
+  // (and while any agent operation is still unwinding), so a late task redirect cannot land; then the tab is the person's.
+  navigationReleaseMs = 1000,
+  // With a budget, open and navigate wait up to this long for the page to load and stop changing, and an observation
+  // or extract that a still-loading page invalidated is retried once. 0 keeps the original behavior.
+  loadSettleMs = 0,
+  // Unexpected (uncoded) failures, for the host's own log: operation, code, whether input was sent, and the error.
+  onFailure = /** @type {(failure: { operation?: string, code: string, dispatched: boolean, detail: string }) => void} */ ((_failure) => {}) }) {
   const states = new Map();
   // request_id -> first receipt, per conversation: a retried act never replays input.
   const receipts = new Map();
@@ -596,8 +672,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (signal?.aborted) lifetime.abort(signal.reason);
     else signal?.addEventListener("abort", () => lifetime.abort(signal.reason), { once: true, signal: lifetime.signal });
     const controller = new AbortController();
-    const scope = { tab, sessionId, controller, lifetime, control, manual: false,
+    const scope = { tab, sessionId, controller, lifetime, control, manual: false, abortedAt: 0,
       signal: AbortSignal.any([lifetime.signal, controller.signal, control.controller.signal]) };
+    if (scope.signal.aborted) scope.abortedAt = Date.now();
+    else scope.signal.addEventListener("abort", () => { scope.abortedAt = Date.now(); }, { once: true });
     previous?.controller.abort();
     navigations.set(tab.tabId, scope);
     return scope;
@@ -620,12 +698,25 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     // Give it a synchronous final ownership/cancellation check.
     return () => checkNavigation(scope);
   }
+  /**
+   * Whether a stopped scope no longer guards its tab. A takeover or cancellation
+   * aborts the scope; once every agent operation in that conversation has
+   * unwound and the release delay has passed, nothing queued by the agent can
+   * still navigate, so links, sign-in forms and their redirects belong to the
+   * person. A new agent operation tracks a fresh scope and is guarded again.
+   */
+  function released(scope) {
+    if (!scope.abortedAt || Date.now() - scope.abortedAt < navigationReleaseMs) return false;
+    return !tabsFor(scope.sessionId).some((item) => states.get(item.tabId)?.controller);
+  }
   function navigationGuard(tabId) {
     const scope = navigations.get(tabId);
-    // Pausing alone must not turn a late task redirect into manual browsing.
-    // Only explicit app-toolbar navigation enables manual mode.
-    // Page input (including trusted events) can come from queued automation.
+    // Pausing alone must not turn a late task redirect into manual browsing:
+    // right after a takeover, page input can still come from queued automation.
+    // Explicit app-toolbar navigation enables manual mode at once; otherwise
+    // the tab is released to the person after the stopped task settles.
     if (!scope || (scope.manual && pausedSessions.has(scope.sessionId) && ownerOf(tabId) === scope.sessionId)) return null;
+    if (released(scope)) return null;
     return (url) => authorizeNavigation(scope, url);
   }
   function manualNavigation(tabId) {
@@ -672,7 +763,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     for (const item of tabsFor(owner)) {
       const navigation = navigations.get(item.tabId);
       if (navigation) { navigation.manual = false; navigation.lifetime.abort(); }
-      if (!item.view.webContents.isDestroyed()) item.view.webContents.stop();
+      const revision = item.webMcpRevision;
+      deferBrowserStop(item.view.webContents, () => pausedSessions.has(owner)
+        && getTab(item.tabId) === item && item.webMcpRevision === revision);
       const sibling = states.get(item.tabId); sibling?.controller?.abort(); forget(sibling); publish(item.tabId, "paused", reason);
     }
     const state = stateFor(tabId); forget(state);
@@ -715,7 +808,8 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
     let image, digest;
     if (includeImage) {
-      if (page.hasPasswordField) fail("sign_in_required", "This page contains protected sign-in or payment fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
+      if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
@@ -728,11 +822,14 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     if (state.latest && (state.latest.revision !== revision || state.latest.url !== url)) state.observations.clear();
     state.observations.set(id, record); state.latest = record;
     for (const old of state.observations.keys()) { if (state.observations.size <= 20) break; state.observations.delete(old); }
+    // This page script is isolated from the site's own tools, so the host's count says whether to look for them.
+    const siteTools = tab.webMcpToolCount > 0 ? { siteTools: tab.webMcpToolCount } : {};
     if (mode === "interactive") {
-      const { hasPasswordField, viewport: _viewport, scroll: _scroll, ...compact } = page;
-      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...(hasPasswordField ? { signIn: "take_over" } : {}), ...(image ? { image } : {}) };
+      const { hasPaymentField, hasCredentialField: _credential, viewport: _viewport, scroll: _scroll, ...compact } = page;
+      return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...compact, ...siteTools, ...(hasPaymentField ? { payment: "take_over" } : {}), ...(image ? { image } : {}) };
     }
-    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...page, ...(image ? { image } : {}) };
+    const { hasCredentialField: _credential, ...full } = page;
+    return { ok: true, tabId: tab.tabId, observationId: id, url: safeUrl(url), trust: TRUST, ...full, ...siteTools, ...(image ? { image } : {}) };
   }
   /** Bounded wait after input: navigation, in-flight requests and DOM structure. */
   async function settle(tab, observed, since, signal) {
@@ -752,29 +849,80 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       await delay(50);
     }
   }
-  async function extract(tab, args, signal) {
+  /**
+   * Bounded wait for a page that just loaded: its document readable and complete (or interactive and quiet), its
+   * structure unchanged for a moment, and no request it started in the last moment still running. Long polls and
+   * streams that started earlier don't hold it up. Reports what stands in the way of reading it, if anything.
+   */
+  async function settleLoad(tab, signal, budgetMs, recovery = false, requireText = false) {
+    const contents = tab.view.webContents;
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      signal.throwIfAborted();
+      if (contents.isDestroyed()) fail("tab_closed", "The browser tab closed while it loaded.");
+      const loading = typeof contents.isLoading === "function" && contents.isLoading();
+      // Between two documents the page may not answer; that is still loading.
+      const page = loading ? null : await Promise.race([isolated(contents, readSettle, false).catch(() => null), delay(1000).then(() => null)]);
+      const recent = inFlight(tab, Date.now() - 1500);
+      const ready = page && (!requireText || page.textChars > 0) && !page.busy && recent === 0 && (page.readyState === "complete" ? page.quietMs >= 400 : page.readyState === "interactive" && page.quietMs >= 1000);
+      if (ready || Date.now() >= deadline) {
+        const found = recovery ? await Promise.race([isolated(contents, readBlockers).catch(() => null), delay(1000).then(() => null)]) : null;
+        return { outcome: ready ? "settled" : "still_loading", ...(found?.blocker ? { blocker: found.blocker } : {}), textChars: found?.textChars ?? null };
+      }
+      await delay(100);
+    }
+  }
+  /** What a load receipt adds: whether the page settled and what to do about anything in the way. */
+  function loaded(page) {
+    const next = page.blocker ? BLOCKER_NEXT[page.blocker]
+      : page.outcome === "still_loading" ? "The page is still loading. Observe it; if it is not ready, observe again in a moment. Do not open it again."
+      : page.textChars === 0 ? "The page shows no text (it may draw into a canvas or frames). Observe with includeImage to see it." : "observe";
+    return { page: page.outcome, ...(page.blocker ? { blocker: page.blocker } : {}), next };
+  }
+  /** A read-only operation a still-loading page changed under: wait for it to settle, then read once more. */
+  async function readAgain(tab, signal, recovery, read) {
+    try { return await read(); }
+    catch (error) {
+      if (!recovery || !loadSettleMs || !(error instanceof BrowserTaskError) || error.code !== "page_changed") throw error;
+      await settleLoad(tab, signal, Math.min(loadSettleMs, 4000));
+      return read();
+    }
+  }
+  async function extract(tab, args, signal, recovery) {
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question || question.length > 1000) fail("invalid_question", "Ask one question of at most 1000 characters.");
     const maxChars = Number.isInteger(args.maxChars) ? Math.min(8000, Math.max(200, args.maxChars)) : 2000;
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
     // Withheld field values are redacted exactly as observations redact them.
-    const page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    let page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    // A page that has not drawn its text yet (an app still starting) gets one bounded wait before it is read again.
+    let found = null;
+    if (loadSettleMs && !page.text.trim()) {
+      found = await settleLoad(tab, signal, Math.min(loadSettleMs, 4000), recovery, true);
+      page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    }
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
     signal.throwIfAborted();
     const passages = relevantPassages(page.text, question, maxChars);
+    if (recovery && !passages.length && !found) found = await Promise.race([isolated(tab.view.webContents, readBlockers).catch(() => null), delay(1000).then(() => null)]);
+    if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
+    signal.throwIfAborted();
+    const next = found?.blocker ? BLOCKER_NEXT[found.blocker]
+      : !page.text.trim() ? "The page has no readable text yet. Observe with includeImage to see what it shows, or observe again in a moment if it is still loading."
+      : "No passage matched. Try other words, or browser_observe with includeText.";
     return { ok: true, tabId: tab.tabId, url: safeUrl(url), title: page.title, trust: TRUST, question, passages, pageChars: page.text.length,
-      ...(passages.length ? {} : { next: "No passage matched. Try other words, or browser_observe with includeText." }) };
+      ...(found?.blocker ? { blocker: found.blocker } : {}), ...(passages.length ? {} : { next }) };
   }
   /**
    * @typedef {{ type?: string, ref?: string, text?: string, checked?: boolean, values?: string[], key?: string, modifiers?: string[], x?: number, y?: number, deltaY?: number, files?: string[] }} BrowserAction
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
-   * @param {{ signal?: AbortSignal }} options
+   * @param {{ signal?: AbortSignal, recovery?: boolean }} options
    */
-  async function request({ sessionId, operation, args = {} } = {}, { signal } = {}) {
+  async function request({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}) {
     let tab, state, dispatched = false, abort, controller, openingController;
     /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
     let entry = null;
@@ -810,9 +958,15 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         requestSignal.throwIfAborted();
         checkControl(sessionId, control);
         if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
+        const opened = !tab;
         if (!tab) {
           tab = await Promise.race([
             openTab(url.href, sessionId, requestSignal, async (created) => {
+              // Keep the tab's identity even if loading fails: the agent can inspect it, not open another blindly.
+              tab = created;
+              state = stateFor(created.tabId);
+              state.controller = controller;
+              publish(created.tabId, "running", "open");
               const validate = await authorizeNavigation(trackNavigation(sessionId, created, requestSignal), url.href);
               validate();
               dispatched = true;
@@ -827,8 +981,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await Promise.race([authorizeNavigation(trackNavigation(sessionId, tab, requestSignal), url.href), canceled]);
           validate();
         }
+        const page = opened && loadSettleMs ? await Promise.race([settleLoad(tab, requestSignal, loadSettleMs, recovery), canceled]) : null;
         publish(tab.tabId, "idle");
-        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe" };
+        return { ok: true, provider: "builtin", tabId: tab.tabId, url: safeUrl(tab.view.webContents.getURL()), visible: isVisible(tab.tabId), next: "observe", ...(page ? loaded(page) : {}) };
       }
       tab = await Promise.race([resolve(sessionId, args.tabId, ["navigate", "pause", "handoff"].includes(operation)), canceled]);
       requestSignal.throwIfAborted();
@@ -851,7 +1006,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         await prepare(tab);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText });
+        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText }));
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
           forget(state);
@@ -865,13 +1020,18 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const validate = await authorizeNavigation(navigationScope, url.href);
           validate();
           forget(state); dispatched = true;
-          const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+          const stop = () => {
+            const revision = tab.webMcpRevision;
+            deferBrowserStop(tab.view.webContents, () => getTab(tab.tabId) === tab
+              && tab.webMcpRevision === revision && navigations.get(tab.tabId) === navigationScope);
+          };
           requestSignal.addEventListener("abort", stop, { once: true });
           try { await navigate(tab, url.href); requestSignal.throwIfAborted(); }
           finally { requestSignal.removeEventListener("abort", stop); }
-          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe" };
+          const page = loadSettleMs ? await settleLoad(tab, requestSignal, loadSettleMs, recovery) : null;
+          return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe", ...(page ? loaded(page) : {}) };
         }
-        if (operation === "extract") return extract(tab, args, requestSignal);
+        if (operation === "extract") return readAgain(tab, requestSignal, recovery, () => extract(tab, args, requestSignal, recovery));
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         // One action keeps the original receipt; actions (1-8) run in order
         // against one observation and return one receipt with the new state.
@@ -923,14 +1083,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const attaching = actions.filter((action) => action.type === "attach").flatMap((action) => action.files);
         // The person sees every file before any is sent, so a batch never carries more than the card lists.
         if (attaching.length > MAX_FILES) fail("invalid_action", `Attach at most ${MAX_FILES} files in one call. Nothing was dispatched.`);
+        let fileAuthorization = null;
         if (attaching.length) {
           let host = "this page";
           try { host = new URL(observed.url).host || host; } catch { /* Keep the generic name. */ }
           // Nothing about the files is read before the person answers, so a page cannot probe
           // paths; afterwards each must be exactly the regular file approved, not a link to another.
-          if (!await approveFiles(sessionId, { app: host, files: attaching }, requestSignal)) {
+          const approval = await approveFiles(sessionId, { app: host, url: observed.url, files: attaching }, requestSignal);
+          const decision = typeof approval === "object" && approval ? approval : null;
+          if (decision?.allowed === false && decision.code === "organization_policy_denied") fail(decision.code, decision.error);
+          if (approval !== true && !(decision?.allowed === true && typeof decision.revalidate === "function")) {
             fail("files_declined", "The person did not approve giving these files to the page. Nothing was dispatched.");
           }
+          fileAuthorization = decision;
           requestSignal.throwIfAborted();
           try { await checkFiles(attaching); }
           catch { fail("file_unavailable", "Attach readable regular files by their real absolute paths, not links. Nothing was dispatched."); }
@@ -953,8 +1118,29 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         const contents = tab.view.webContents;
         const steps = [];
         let failure = null, page = null, interrupted = null;
+        // A password or code goes only to the exact site the person confirmed, asked at the step
+        // that clicks, fills or presses a key in its field: focusing it can autofill a saved
+        // password, Enter can submit one, and a click earlier in a batch can focus the field.
+        let confirmedSite = null;
+        // Taking focus gives a page a moment to leave: nothing goes out unless it is still on that site.
+        const leftConfirmedSite = () => confirmedSite !== null && originOf(contents.getURL()) !== confirmedSite;
+        const LEFT_SITE = "The page left the site the person confirmed, so nothing was sent to it.";
         for (const [index, action] of actions.entries()) {
           checkNavigation(navigationScope);
+          if (!confirmedSite && observed.url === contents.getURL() && ["click", "fill", "key"].includes(action.type)
+            && await isolated(contents, credentialTarget, observed.id, action)) {
+            const site = new URL(observed.url).origin;
+            const refused = !approveCredential ? ["sign_in_required", "Take over and sign in directly in the browser, then resume."]
+              : !await approveCredential(sessionId, { site }, requestSignal) ? ["credential_declined", "The person did not confirm entering a password or code on this site."] : null;
+            requestSignal.throwIfAborted();
+            if (refused) {
+              if (!batch) fail(refused[0], refused[1]);
+              failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code: refused[0], error: refused[1] };
+              break;
+            }
+            confirmedSite = site;
+          }
+          // Runs after the person's answer too, so a redirect while they decide stops here.
           if (state.observations.get(observed.id) !== observed || observed.revision !== tab.webMcpRevision || observed.url !== contents.getURL()) {
             if (!steps.length) fail("stale_observation", "The page or observation changed while preparing the action. Observe again.");
             interrupted = "page_changed";
@@ -967,7 +1153,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             const code = PREPARE_CODES.find((item) => String(error?.message).includes(item));
             if (!code) throw error;
             const message = code === "unverifiable_focus" ? "Keyboard input requires a directly focused observed page control. Pass the control's ref or click it first."
-              : code === "sign_in_required" ? "Take over and sign in directly in the browser, then resume."
+              : code === "use_attach" ? "Upload controls take files through attach with the control's ref."
               : "The observed control is no longer ready. Observe again before choosing an action.";
             if (!batch) fail(code, message);
             failure = { index, type: action.type, ...(action.ref ? { ref: action.ref } : {}), code, error: message };
@@ -981,9 +1167,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           if (sent) observed.sent.add(sent);
           const since = Date.now();
           if (["click", "key", "scroll"].includes(action.type)) await isolated(contents, readSettle, true).catch(() => null);
+          if (action.type === "key" && leftConfirmedSite()) {
+            if (!steps.length) fail("page_changed", LEFT_SITE);
+            interrupted = "page_changed";
+            break;
+          }
           if (action.type === "fill" || action.type === "select") {
             const prepared = await isolated(contents, applyFormAction, action);
             if (action.type === "fill" && !prepared.inserted) {
+              if (leftConfirmedSite()) {
+                if (!steps.length) fail("page_changed", LEFT_SITE);
+                interrupted = "page_changed";
+                break;
+              }
               if (action.text) await contents.insertText(action.text);
               else {
                 await contents.sendInputEvent({ type: "keyDown", keyCode: "Backspace" });
@@ -994,9 +1190,17 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           }
           if (action.type === "attach") {
             const scale = inputScale(tab);
-            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs);
+            const outcome = await attachFiles(contents, { x: point.x * scale, y: point.y * scale }, action.files, requestSignal, fileChooserMs,
+              fileAuthorization ? async (frameUrl) => {
+                if (originOf(frameUrl) !== originOf(observed.url) || contents.getURL() !== observed.url || !await allowed(observed.url)) return false;
+                if (!await fileAuthorization.revalidate(frameUrl)) return false;
+                // Recheck actual paths immediately before CDP receives them.
+                await checkFiles(action.files);
+                return contents.getURL() === observed.url && originOf(frameUrl) === originOf(contents.getURL());
+              } : null);
             if (outcome !== "attached") {
-              const error = outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
+              const error = outcome === "files_permission_changed" ? "The website, receiving frame or file-sharing permission changed. No files were shared. Observe and review permission again."
+                : outcome === "single_file" ? "This control takes one file. Attach one." : "No file chooser opened. Use the page's upload button or file input ref.";
               if (!batch) fail(outcome, error);
               failure = { index, type: action.type, ref: action.ref, code: outcome, error };
               break;
@@ -1087,8 +1291,26 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       // Refs stay usable after a refused action; after input, the page may differ.
       if (state && state.controller === controller && (dispatched || !(error instanceof BrowserTaskError))) forget(state);
       if (entry && !dispatched && receipts.get(sessionId)?.get(entry.id) === entry) receipts.get(sessionId)?.delete(entry.id);
-      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) publish(tab.tabId, "needs_attention", error?.code || "Check browser");
-      return { ok: false, code: error instanceof BrowserTaskError ? error.code : "browser_operation_failed", error: error instanceof BrowserTaskError ? error.message : "Browser operation could not finish. Observe the page or take over to continue.", dispatched, mayHaveChangedState: dispatched, retrySafe: false, next: dispatched ? "observe_before_retry" : "review", trust: TRUST };
+      // A host's own coded failures (paused, egress_unavailable) keep their code and words; anything else is
+      // unexpected, so it is logged and the agent hears plainly whether anything reached the page and what to do.
+      const coded = error instanceof BrowserTaskError || (typeof error?.code === "string" && /^[a-z][a-z_]{2,40}$/.test(error.code) && typeof error.message === "string");
+      const timedOut = !coded && (error?.name === "TimeoutError" || error?.timedOut === true);
+      const code = coded ? error.code : timedOut ? "operation_timeout" : "browser_operation_failed";
+      const detail = !coded ? /disconnect|socket/i.test(error?.message ?? "") ? "connection_lost"
+        : /timed out|timeout/i.test(error?.message ?? "") ? "receipt_timeout"
+        : /ENOENT/.test(error?.code ?? "") ? "runtime_dependency_missing" : "unexpected_failure" : "";
+      if (!coded) { try { onFailure({ operation, code, dispatched, detail }); } catch { /* Logging never changes the receipt. */ } }
+      const message = coded ? error.message
+        : timedOut ? "The browser operation was not confirmed before the timeout. It may still be running."
+        : dispatched ? "The browser did not confirm this operation, and it may have changed the page."
+        : "The browser could not run this operation. Nothing reached the page.";
+      const next = dispatched ? "Observe the tab before doing anything else; never repeat input it may have received."
+        : code === "page_changed" ? "The page is still loading or redirecting. Observe again."
+        : coded ? "review" : "Retry this operation once. If it fails again, open the page in a new tab.";
+      if (tab && state?.status !== "paused" && (!state?.controller || state.controller === controller)) {
+        publish(tab.tabId, TRANSIENT_CODES.has(code) ? "idle" : "needs_attention", TRANSIENT_CODES.has(code) ? null : code);
+      }
+      return { ok: false, code, error: message, ...(tab ? { tabId: tab.tabId } : {}), ...(detail ? { detail } : {}), dispatched, mayHaveChangedState: dispatched, retrySafe: false, next, trust: TRUST };
     } finally {
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
       if (signal && abort) signal.removeEventListener("abort", abort);

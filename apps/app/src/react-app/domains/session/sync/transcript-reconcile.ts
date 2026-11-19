@@ -147,3 +147,42 @@ export function dedupeRenderedTurnErrors(messages: UIMessage[]): UIMessage[] {
   }
   return result.length === messages.length ? messages : result;
 }
+
+const recoveredReplies = new WeakMap<UIMessage, { continuation: UIMessage; joined: UIMessage[] }>();
+
+function joinContinuation(interrupted: UIMessage, continuation: UIMessage): UIMessage[] | null {
+  const cached = recoveredReplies.get(interrupted);
+  if (cached?.continuation === continuation) return cached.joined;
+  const tail = interrupted.parts.at(-1);
+  if (tail?.type !== "text") return null;
+  const headIndex = continuation.parts.findIndex((part) => part.type !== "step-start" && part.type !== "reasoning");
+  const head = continuation.parts[headIndex];
+  if (head?.type !== "text") return null;
+  const earlier = interrupted.parts.slice(0, -1);
+  const joined: UIMessage[] = [
+    ...(earlier.some((part) => part.type !== "step-start") ? [{ ...interrupted, parts: earlier }] : []),
+    { ...continuation, parts: continuation.parts.with(headIndex, { ...head, text: tail.text + head.text }) },
+  ];
+  recoveredReplies.set(interrupted, { continuation, joined });
+  return joined;
+}
+
+export function joinRecoveredReplies(messages: UIMessage[]): UIMessage[] {
+  const result: UIMessage[] = [];
+  let changed = false;
+  for (const message of messages) {
+    const error = result.at(-1);
+    const interrupted = result.at(-2);
+    const joined = error && interrupted?.role === "assistant" && message.role === "assistant"
+      && !isSyntheticMessageId(message.id) && error.id === `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${interrupted.id}`
+      ? joinContinuation(interrupted, message)
+      : null;
+    if (!joined) {
+      result.push(message);
+      continue;
+    }
+    changed = true;
+    result.splice(-2, 2, ...joined);
+  }
+  return changed ? result : messages;
+}

@@ -174,6 +174,7 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_BUMP: ${{ github.event.inputs.bump }}
           TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+          QUICK_CHECK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -210,6 +211,10 @@ jobs:
             fi
             git fetch origin dev
             SHA="$(git rev-parse origin/dev)"
+            # A release only ships a dev commit the quick check passed on. A
+            # tag pushed by hand (the audited expedited path) and a recovery
+            # rerun of an existing tag are not held here.
+            GH_TOKEN="${QUICK_CHECK_TOKEN}" node .github/scripts/require-quick-check.mjs --sha "$SHA" --wait-minutes 15
             # Create the tag ref via REST as the diff-warden app (a v* tag
             # ruleset bypass actor). Ruleset bypass attributes REST ref
             # creation to the app; a git-over-https push with the same
@@ -724,6 +729,7 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && inputs.benchmark_only != true && '1' || '0' }}
         run: pnpm --filter @openwork/desktop build:electron
 
       - name: Package Electron (macOS, signed + notarized)
@@ -1216,10 +1222,12 @@ jobs:
             node: "24.22.1"
     runs-on: ${{ matrix.os }}
     steps:
+      # Keep verification with this workflow revision, including recovery runs.
+      # The package under test is still built from the immutable release tag.
       - name: Checkout smoke script
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve-release.outputs.release_tag }}
+          ref: ${{ github.sha }}
           sparse-checkout: apps/server/scripts/npm-web-smoke.mjs
           sparse-checkout-cone-mode: false
       - name: Setup Node

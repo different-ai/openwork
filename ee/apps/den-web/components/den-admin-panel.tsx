@@ -165,7 +165,7 @@ type AdminOrganization = {
   /** Display-only end date of a plan a platform admin set, YYYY-MM-DD. */
   endsAt: string | null;
   ended: boolean;
-  paidBy: "none" | "stripe_team" | "stripe_enterprise";
+  paidBy: "none" | "stripe_team";
   features: AdminOrganizationFeatures | null;
   openworkWebAccess: AdminOpenWorkWebAccess;
 };
@@ -460,7 +460,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           userLimit: typeof value.userLimit === "number" ? value.userLimit : null,
           endsAt: toStringValue(value.endsAt),
           ended: value.ended === true,
-          paidBy: value.paidBy === "stripe_team" || value.paidBy === "stripe_enterprise" ? value.paidBy : "none",
+          paidBy: value.paidBy === "stripe_team" ? value.paidBy : "none",
           features: isRecord(value.featureStates) || isRecord(value.capabilities)
             ? parseAdminOrganizationFeatures(value.featureStates, value.capabilities)
             : null,

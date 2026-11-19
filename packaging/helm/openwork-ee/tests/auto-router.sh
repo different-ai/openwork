@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# AI Gateway Auto Model Routing: the gateway reads the TypeSafe (Jev) key from
+# AI Gateway Smart Model Router: the gateway reads the TypeSafe (Jev) key from
 # the chart Secret (or the operator's existing Secret), optionally.
 chart_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmp_dir="$(mktemp -d)"

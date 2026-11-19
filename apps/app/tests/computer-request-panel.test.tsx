@@ -56,3 +56,29 @@ test("a remote computer that needs setup also opens Settings, where the computer
   const settings = await openSetupFrom({ id: "req_2", reason: "setup", computer: "Test VM", placement: "remote", detail: "Test VM needs a desktop connection." })
   expect(settings?.dataset.path).toBe("/workspace/ws_1/settings/computer")
 })
+
+async function render(request: ComputerRequest) {
+  const container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root?.render(<MemoryRouter><ComputerRequestPanel sessionId="chat_1" request={request} /></MemoryRouter>))
+  return container
+}
+
+test("a save reads as where the app will save the file, not as a file handed to it", async () => {
+  const container = await render({ id: "req_3", reason: "files", computer: "This Mac", placement: "local", standing: false,
+    files: { app: "Preview", names: ["/Users/me/Desktop/report.pdf"], save: true } })
+  const heading = [...container.querySelectorAll<HTMLElement>("[title]")].find(item => item.title === "/Users/me/Desktop/report.pdf")
+  expect(heading?.textContent).toBe("Save report.pdf to Desktop from Preview?")
+  expect(container.querySelector('[data-testid="session-computer-files-allow"]')?.textContent).toBe("Save")
+  expect(container.querySelector('[data-testid="session-computer-files-dismiss"]')?.textContent).toBe("Don't save")
+  expect(container.querySelector('[data-testid="session-computer-files-always"]')).toBeNull()
+  expect(container.querySelector('[data-testid="session-computer-files"]')?.textContent).toBe("/Users/me/Desktop/report.pdf")
+})
+
+test("handing a file over still reads as giving it to the app", async () => {
+  const container = await render({ id: "req_4", reason: "files", computer: "This Mac", placement: "local",
+    files: { app: "Preview", names: ["/Users/me/Desktop/photo.png"] } })
+  expect(container.textContent).toContain("Give this file to Preview?")
+  expect(container.querySelector('[data-testid="session-computer-files-allow"]')?.textContent).toBe("Give file")
+})

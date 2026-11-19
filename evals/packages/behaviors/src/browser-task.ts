@@ -60,8 +60,9 @@ export interface BrowserState {
   visibleWindowCount: number;
   backgroundWindowCount: number;
   backgroundWindowVisible: boolean;
-  tabs: Array<{ id: string; label: string; ownerSessionId: string | null }>;
-  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
+  popOutAboveOthers: boolean;
+  tabs: Array<{ id: string; label: string; url: string; ownerSessionId: string | null }>;
+  nativeViews: Array<{ tabId: string; attached: boolean; aboveApp: boolean; poppedOut: boolean; focused: boolean; visible: boolean; bounds: { x: number; y: number; width: number; height: number } }>;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -123,16 +124,17 @@ export async function readBrowserState(app: Surface): Promise<BrowserState> {
     visibleWindowCount: value.visibleWindowCount,
     backgroundWindowCount: value.backgroundWindowCount,
     backgroundWindowVisible: value.backgroundWindowVisible,
+    popOutAboveOthers: value.popOutAboveOthers === true,
     tabs: value.tabs.map((tab: unknown) => {
       if (!record(tab)) throw new Error("Invalid browser tab.");
-      return { id: string(tab.id), label: string(tab.label), ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };
+      return { id: string(tab.id), label: string(tab.label), url: typeof tab.url === "string" ? tab.url : "", ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null };
     }),
     nativeViews: value.nativeViews.map((view: unknown) => {
-      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || typeof view.visible !== "boolean" || !record(view.bounds)
+      if (!record(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean" || typeof view.poppedOut !== "boolean" || typeof view.focused !== "boolean" || typeof view.visible !== "boolean" || !record(view.bounds)
         || typeof view.bounds.x !== "number" || typeof view.bounds.y !== "number" || typeof view.bounds.width !== "number" || typeof view.bounds.height !== "number") {
         throw new Error("Invalid native browser view.");
       }
-      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp, visible: view.visible,
+      return { tabId: string(view.tabId), attached: view.attached, aboveApp: view.aboveApp, poppedOut: view.poppedOut, focused: view.focused, visible: view.visible,
         bounds: { x: view.bounds.x, y: view.bounds.y, width: view.bounds.width, height: view.bounds.height } };
     }),
   };

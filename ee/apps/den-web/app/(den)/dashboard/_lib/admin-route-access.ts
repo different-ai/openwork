@@ -4,6 +4,8 @@ import {
   getAiGatewayRoute,
   getApiKeysRoute,
   getBillingRoute,
+  getConfigRoute,
+  getComputersRoute,
   getCustomLlmProvidersRoute,
   getAnalyticsRoute,
   getDeploymentsRoute,
@@ -41,13 +43,13 @@ const MEMBERS_AREA_KEYS: readonly PermissionKey[] = [
 
 /** Each Diagnostics section's permission; any one opens the page and the rest show locked. */
 const DIAGNOSTICS_KEYS: readonly PermissionKey[] = [
-  "desktop_policies.view", "gateway_providers.view", "llm_providers.view", "connections.view", "egress_diagnostics.view",
+  "desktop_policies.view", "gateway_providers.view", "llm_providers.view", "connections.view",
 ];
 
 /** Settings › Diagnostics opens with any section's permission. Installation operators are handled in canOpenAdminRoute. */
 export function canViewDiagnostics(access: DenOrgAccessFlags): boolean {
   return access.canViewDesktopPolicies || access.canViewGatewayProviders || access.canViewAllLlmProviders
-    || access.canViewAllConnections || access.canViewEgressDiagnostics;
+    || access.canViewAllConnections;
 }
 
 const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
@@ -60,6 +62,7 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
   { prefix: getApiKeysRoute(), allowed: (access) => access.canViewApiKeys, needs: ["api_keys.view"] },
   { prefix: getBillingRoute(), allowed: (access) => access.canViewBilling, needs: ["billing.view"] },
   { prefix: getCustomLlmProvidersRoute(), allowed: (access) => access.canViewAllLlmProviders, needs: ["llm_providers.view"] },
+  { prefix: getComputersRoute(), allowed: (access) => access.canViewComputers, needs: ["computers.view"] },
   { prefix: getDesktopPoliciesRoute(), allowed: (access) => access.canViewDesktopPolicies, needs: ["desktop_policies.view"] },
   { prefix: getWorkbotSettingsRoute(), allowed: (access) => access.canViewModelsSettings || access.canManageModelsSettings, needs: ["inference.view", "inference.manage"] },
   { prefix: getDeploymentsRoute(), allowed: (access) => access.canViewDeployments, needs: ["deployments.view"] },
@@ -92,6 +95,8 @@ const ADMIN_ROUTE_RULES: readonly AdminRouteRule[] = [
     needs: ["sharing.manage_all", "connectors.manage", "plugins.import"],
   },
   { prefix: getImportPluginRoute(), allowed: (access) => access.canImportPlugins, needs: ["plugins.import"] },
+  // Config import/export changes organization settings; each area is also checked by the API.
+  { prefix: getConfigRoute(), allowed: (access) => access.canManageSettings, needs: ["organization.update"] },
   { prefix: getToolTesterRoute(), allowed: (access) => access.canManageConnections, needs: ["connections.manage"] },
 ];
 

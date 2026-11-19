@@ -1,6 +1,28 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
+import { limitCodemodePatternTime } from "./codemode-pattern-limit.js"
+import { runStandardCodeMode } from "./codemode-run-standard.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
+
+// Den runs programs for every organization on one event loop.
+limitCodemodePatternTime()
+
+/**
+ * Which interpreter runs a script: OpenWork's original Code Mode, or the
+ * standard one, which runs ECMAScript (today `@opencode/codemode`).
+ */
+export type CodemodeRuntime = "openwork" | "standard"
+
+/**
+ * Saved code runs only on the interpreter it was written for: OpenWork's for
+ * `codemode-js`, the standard one for `ecmascript`. Never switch an existing
+ * Workflow to another interpreter silently.
+ */
+export function codemodeRuntimeFor(language: CodemodeLanguage): CodemodeRuntime {
+  if (language === "codemode-js") return "openwork"
+  return "standard"
+}
 
 type CodemodeRunCommon = {
   logs: string[]
@@ -38,6 +60,7 @@ export async function runCodemodeScript(input: {
   timeoutMs: number
   maxToolCalls?: number
   maxOutputBytes?: number
+  runtime?: CodemodeRuntime
 }): Promise<CodemodeRunResult> {
   const startedAt = Date.now()
   if (input.scriptInput !== undefined && !isJsonSafe(input.scriptInput)) {
@@ -50,17 +73,20 @@ export async function runCodemodeScript(input: {
     }
   }
   const bindings = input.scriptInput === undefined ? undefined : { input: input.scriptInput }
-  const result = await Effect.runPromise(CodeMode.execute({
-    code: input.code,
-    tools: input.tools,
-    ...(bindings ? { bindings } : {}),
-    readonlyBindings: input.readOnlyInput,
-    limits: {
-      timeoutMs: input.timeoutMs,
-      maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
-      maxOutputBytes: input.maxOutputBytes ?? 65_536,
-    },
-  }))
+  const limits = {
+    timeoutMs: input.timeoutMs,
+    maxToolCalls: input.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+    maxOutputBytes: input.maxOutputBytes ?? 65_536,
+  }
+  const result = input.runtime === "standard"
+    ? await runStandardCodeMode({ code: input.code, tools: input.tools, ...(bindings ? { bindings } : {}), limits })
+    : await Effect.runPromise(CodeMode.execute({
+        code: input.code,
+        tools: input.tools,
+        ...(bindings ? { bindings } : {}),
+        readonlyBindings: input.readOnlyInput,
+        limits,
+      }))
   const common = {
     logs: [...(result.logs ?? [])],
     toolCalls: result.toolCalls.map((call) => ({ name: call.name })),

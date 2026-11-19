@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { strictArgsSchema } from "./openwork-provider-adapters.js";
 
 // Sidebar groups live in the OpenWork server's workspace store, so the agent
 // changes them there directly. Nothing here needs the desktop window: the app
@@ -10,17 +11,17 @@ export const SESSION_GROUP_AFFORDANCE_IDS: readonly string[] = ["session.group.l
 const workspaceIdArg = z.string().trim().optional()
   .describe("Optional OpenWork workspace id/name. Defaults to the workspace of the session involved.");
 
-export const sessionGroupListArgsSchema = z.object({ workspaceId: workspaceIdArg });
-export const sessionGroupCreateArgsSchema = z.object({
+export const sessionGroupListArgsSchema = strictArgsSchema({ workspaceId: workspaceIdArg });
+export const sessionGroupCreateArgsSchema = strictArgsSchema({
   label: z.string().trim().min(1).max(120).describe("Group name shown in the sidebar, for example \"Done\" or \"In progress\"."),
   workspaceId: workspaceIdArg,
 });
-export const sessionGroupMoveArgsSchema = z.object({
+export const sessionGroupMoveArgsSchema = strictArgsSchema({
   sessionId: z.string().trim().min(1).describe("Session ID from session.search, session.read or session.group.list."),
   groupId: z.string().trim().nullable().optional().describe("Group id or exact label from session.group.list. Omit or null to ungroup."),
   workspaceId: workspaceIdArg,
 });
-export const sessionGroupRemoveArgsSchema = z.object({
+export const sessionGroupRemoveArgsSchema = strictArgsSchema({
   groupId: z.string().trim().min(1).describe("Group id or exact label to remove. Its sessions are kept."),
   destinationGroupId: z.string().trim().optional().describe("Optional group id or label that receives the removed group's sessions. Omit to leave them ungrouped."),
   confirmed: z.literal(true).describe("Must be true: the person asked for this group to be removed."),

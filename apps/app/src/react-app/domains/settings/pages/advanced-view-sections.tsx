@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
 import { Cpu, RefreshCcw, Server } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -8,8 +8,8 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import type { OpenworkServerClient, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus } from "@/app/lib/openwork-server";
-import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
+import type { OpenworkServerClient, OpenworkRuntimeConfigStatus } from "@/app/lib/openwork-server";
+import { sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
 import {
   DEFAULT_DEN_API_BASE_URL,
   DEFAULT_DEN_BASE_URL,
@@ -22,8 +22,8 @@ import {
   type DenEndpointSource,
 } from "@/app/lib/den-endpoint-sources";
 import { useOpencodeEngineControls } from "@/react-app/shell/opencode-engine-controls";
-import { showEngineMigrationProgress } from "@/react-app/shell/engine-migration";
-import { isDesktopRuntime } from "@/app/utils";
+import { desktopBridge } from "@/app/lib/desktop";
+import { isDesktopRuntime, isElectronRuntime, isMacPlatform } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
 import { usePlatform } from "../../../kernel/platform";
@@ -329,164 +329,6 @@ export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   );
 }
 
-function DiagnosticRow(props: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 rounded-lg border border-gray-6 bg-gray-2/50 p-2 sm:grid-cols-[12rem_minmax(0,1fr)]">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-8">{props.label}</div>
-      <div className="min-w-0 break-all font-mono text-[11px] text-gray-12">{props.value}</div>
-    </div>
-  );
-}
-
-function joinList(values: string[]): string {
-  return values.length ? values.join(", ") : "none";
-}
-
-function formatMaybe(value: string | number | boolean | null | undefined): string {
-  if (value === null || value === undefined || value === "") return "unknown";
-  return String(value);
-}
-
-function formatMetadataRecord(value: Record<string, string | number | boolean | null> | null | undefined): string {
-  if (!value || Object.keys(value).length === 0) return "none";
-  return Object.entries(value).map(([key, nested]) => `${key}=${formatMaybe(nested)}`).join(", ");
-}
-
-function formatSupportedFeatures(features: OpenworkCloudMcpHealth["compatibility"]["supportedFeatures"]): string {
-  return Object.entries(features).map(([key, enabled]) => `${key}:${enabled ? "yes" : "no"}`).join(", ");
-}
-
-function formatPluginHashes(hashes: OpenworkCloudMcpHealth["compatibility"]["pluginFileHashes"]): string {
-  if (hashes.length === 0) return "none";
-  return hashes.map((hash) => `${hash.name}=${hash.sha256 ? hash.sha256.slice(0, 12) : `unavailable${hash.error ? ` (${hash.error})` : ""}`}`).join(", ");
-}
-
-function formatMcpToolExposure(input: { checked: boolean; includesMcpTools: boolean | null; present: string[]; missing: string[]; limitation?: string }): string {
-  if (!input.checked) return "not checked";
-  const includes = input.includesMcpTools === null ? "unknown" : input.includesMcpTools ? "yes" : "no";
-  return `includes MCP tools: ${includes}; present ${joinList(input.present)}; missing ${joinList(input.missing)}${input.limitation ? `; limitation: ${input.limitation}` : ""}`;
-}
-
-interface AdvancedCloudMcpDiagnosticsSectionProps {
-  cloudMcpHealth: OpenworkCloudMcpHealth | null;
-  onRefresh: () => Promise<OpenworkCloudMcpHealth | null>;
-}
-
-export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagnosticsSectionProps) {
-  const [busy, setBusy] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
-  const safeHealth = sanitizeCloudMcpHealthDiagnostic(props.cloudMcpHealth);
-  const projection = props.cloudMcpHealth?.tools.providerProjection;
-  const compatibility = props.cloudMcpHealth?.compatibility;
-
-  const refresh = async () => {
-    setBusy(true);
-    setCopyStatus(null);
-    setRefreshError(null);
-    try {
-      await props.onRefresh();
-    } catch (error) {
-      setRefreshError(error instanceof Error ? error.message : "Could not refresh Cloud MCP diagnostics.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const copy = async () => {
-    const payload = JSON.stringify({ cloudMcpHealth: safeHealth }, null, 2);
-    await navigator.clipboard.writeText(payload);
-    setCopyStatus("Copied sanitized Cloud diagnostic.");
-  };
-
-  return (
-    <LayoutSection id="advanced-agent-access">
-      <LayoutSectionHeader>
-        <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
-        <LayoutSectionDescription>
-          Technical details for OpenWork Cloud MCP delivery. Tokens and Authorization headers are redacted before display or copy.
-        </LayoutSectionDescription>
-      </LayoutSectionHeader>
-
-      <LayoutSectionItem>
-        <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>OpenWork Cloud MCP health</LayoutSectionItemTitle>
-          <LayoutSectionItemDescription>
-            Use this when support needs exact runtime state. The main Connect card stays user-facing.
-          </LayoutSectionItemDescription>
-          <LayoutSectionItemHeaderActions>
-            <Button type="button" variant="outline" size="sm" onClick={() => void refresh()} disabled={busy}>
-              <RefreshCcw size={14} className={busy ? "animate-spin" : ""} />
-              Refresh
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => void copy()} disabled={!props.cloudMcpHealth}>
-              Copy sanitized diagnostic
-            </Button>
-          </LayoutSectionItemHeaderActions>
-        </LayoutSectionItemHeader>
-
-        {copyStatus ? <SettingsNotice>{copyStatus}</SettingsNotice> : null}
-        {refreshError ? <SettingsNotice tone="error">{refreshError}</SettingsNotice> : null}
-        {props.cloudMcpHealth ? (
-          <div className="space-y-2 rounded-xl border border-gray-6 bg-gray-1/60 p-3">
-            <div className="grid gap-2">
-              <DiagnosticRow label="Active workspace" value={`${props.cloudMcpHealth.workspace.id} (${props.cloudMcpHealth.workspace.directory ?? "no directory"})`} />
-              <DiagnosticRow label="Desired revision" value={props.cloudMcpHealth.desired.revision ?? "none"} />
-              <DiagnosticRow label="Applied revision" value={props.cloudMcpHealth.delivery.appliedRevision ?? "none"} />
-              <DiagnosticRow label="Delivery" value={`${props.cloudMcpHealth.delivery.state}${props.cloudMcpHealth.delivery.trigger ? ` / ${props.cloudMcpHealth.delivery.trigger}` : ""}`} />
-              <DiagnosticRow label="Engine status" value={props.cloudMcpHealth.engine.status} />
-              {props.cloudMcpHealth.engineInspection?.checked ? (
-                <DiagnosticRow
-                  label="Engine MCP servers"
-                  value={(props.cloudMcpHealth.engineInspection.servers ?? []).length
-                    ? (props.cloudMcpHealth.engineInspection.servers ?? []).map((server) => `${server.name} ${server.status}${server.error ? ` (${server.error})` : ""}`).join("; ")
-                    : "none tracked"}
-                />
-              ) : null}
-              <DiagnosticRow label="Provider/model" value={projection?.checked ? `${projection.provider ?? "unknown"}/${projection.model ?? "unknown"}; source ${projection.source ?? "unknown"}; tool calling ${formatMaybe(projection.toolCalling)}; present ${joinList(projection.present)}; missing ${joinList(projection.missing)}${projection.limitation ? `; limitation: ${projection.limitation}` : ""}` : "not checked"} />
-              <DiagnosticRow label="Cloud tools" value={`derived present ${joinList(props.cloudMcpHealth.tools.present)}; missing ${joinList(props.cloudMcpHealth.tools.missing)}`} />
-              <DiagnosticRow label="Direct tools/list" value={`checked ${props.cloudMcpHealth.tools.direct.checked ? "yes" : "no"}; present ${joinList(props.cloudMcpHealth.tools.direct.present)}; missing ${joinList(props.cloudMcpHealth.tools.direct.missing)}`} />
-              {props.cloudMcpHealth.tools.direct.trace ? (
-                <DiagnosticRow
-                  label="Direct probe"
-                  value={`${props.cloudMcpHealth.tools.direct.trace.endpoint ?? "unknown endpoint"} · ${props.cloudMcpHealth.tools.direct.trace.latencyMs} ms · ${props.cloudMcpHealth.tools.direct.trace.steps.map((step) => `${step.step} ${step.ok ? "ok" : "failed"}${step.httpStatus !== undefined ? ` (HTTP ${step.httpStatus})` : ""} ${Math.max(0, Math.round(step.latencyMs))}ms`).join(" → ") || "no steps"}`}
-                />
-              ) : null}
-              {props.cloudMcpHealth.firstFailure ? (
-                <DiagnosticRow
-                  label="First failure"
-                  value={`${props.cloudMcpHealth.firstFailure.code} (stage ${props.cloudMcpHealth.firstFailure.stage}; ${props.cloudMcpHealth.firstFailure.retryable ? "retryable" : "not retryable"}): ${props.cloudMcpHealth.firstFailure.message}`}
-                />
-              ) : null}
-              <DiagnosticRow label="Plugin canaries" value={`present ${joinList(props.cloudMcpHealth.pluginCanaries.present)}; missing ${joinList(props.cloudMcpHealth.pluginCanaries.missing)}`} />
-              <DiagnosticRow label="Safe capabilities" value={`schema v${props.cloudMcpHealth.schemaVersion}; connect catalog ${props.cloudMcpHealth.connectCatalogEnabled ? "enabled" : "disabled"}`} />
-              {compatibility ? (
-                <>
-                  <DiagnosticRow label="OpenWork versions" value={`server ${formatMaybe(compatibility.openwork.serverVersion)}; app ${formatMetadataRecord(compatibility.openwork.app)}`} />
-                  <DiagnosticRow label="OpenCode compatibility" value={`expected ${formatMaybe(compatibility.opencode.expectedVersion)}; actual ${formatMaybe(compatibility.opencode.actualVersion)}; probe ${compatibility.opencode.probe}`} />
-                  <DiagnosticRow label="Feature probes" value={formatSupportedFeatures(compatibility.supportedFeatures)} />
-                  <DiagnosticRow label="Experimental tool IDs" value={formatMcpToolExposure(compatibility.experimentalToolIds)} />
-                  <DiagnosticRow label="Experimental provider tools" value={formatMcpToolExposure(compatibility.experimentalProviderTools)} />
-                  <DiagnosticRow label="Plugin hashes" value={formatPluginHashes(compatibility.pluginFileHashes)} />
-                </>
-              ) : null}
-              <DiagnosticRow label="Live verification" value={props.cloudMcpHealth.checkedAt} />
-            </div>
-            <details className="rounded-lg bg-gray-3 p-2">
-              <summary className="cursor-pointer text-[11px] font-medium text-gray-11">Show sanitized health JSON</summary>
-              <pre className="mt-2 max-h-72 overflow-auto font-mono text-[11px] text-gray-11">
-                {JSON.stringify(safeHealth, null, 2)}
-              </pre>
-            </details>
-          </div>
-        ) : (
-          <SettingsNotice>No Cloud MCP health has been loaded for this workspace yet.</SettingsNotice>
-        )}
-      </LayoutSectionItem>
-    </LayoutSection>
-  );
-}
-
 interface AdvancedRuntimeConfigSourcesSectionProps {
   busy: boolean;
   canInspect: boolean;
@@ -739,7 +581,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
   const engine = useOpencodeEngineControls(props.client);
   if (!isDesktopRuntime()) return null;
   const runtimeError = engine.status?.enabled ? engine.status.lastError : undefined;
-  const engineNote = engine.blockedReason ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
+  const engineNote = engine.blockedReason ?? engine.v1Locked;
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader><LayoutSectionTitle>OpenCode engine</LayoutSectionTitle></LayoutSectionHeader>
@@ -749,7 +591,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
           <LayoutSectionItemHeaderActions>
             <ToggleGroup aria-label="Chat engine" value={[engine.selected]} variant="outline" disabled={engine.disabled}
               onValueChange={(value) => { if (value[0] === "v1" || value[0] === "v2") engine.select(value[0]); }}>
-              <ToggleGroupItem value="v1" data-engine="v1">OpenCode v1</ToggleGroupItem>
+              <ToggleGroupItem value="v1" data-engine="v1" disabled={Boolean(engine.v1Locked)}>OpenCode v1</ToggleGroupItem>
               <ToggleGroupItem value="v2" data-engine="v2">OpenCode v2 (preview)</ToggleGroupItem>
             </ToggleGroup>
           </LayoutSectionItemHeaderActions>
@@ -758,19 +600,7 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
         {engine.status?.enabled && !engine.status.running && !engine.status.lastError ? <p role="status" className="text-xs text-muted-foreground">OpenCode v2 is starting…</p> : null}
         {engine.error || runtimeError ? <p role="alert" className="text-xs text-destructive">{engine.error ?? runtimeError}</p> : null}
       </LayoutSectionItem>
-      <LayoutSectionItem>
-        <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>V1 chat history</LayoutSectionItemTitle>
-          <LayoutSectionItemHeaderActions>
-            {engine.migrating
-              ? <Button variant="outline" size="sm" onClick={showEngineMigrationProgress}>{t("engine_migration.show_progress")}</Button>
-              : <Button variant="outline" size="sm" disabled={engine.disabled || !engine.status?.migration} onClick={engine.openMigration}>Migrate chats to OpenCode v2</Button>}
-          </LayoutSectionItemHeaderActions>
-        </LayoutSectionItemHeader>
-        {engine.message ? <p role="status" className="text-xs text-muted-foreground">{engine.message}</p> : null}
-      </LayoutSectionItem>
       <details className="text-xs text-muted-foreground"><summary>Engine details</summary>
-        <p className="py-2">Each engine has its own chat history. Switching engines does not migrate chats.</p>
         {engine.status?.running ? <p>OpenCode {engine.status.version} · {engine.status.mirroredProviderIds.length} providers · {engine.status.catalogModelIds.length} models</p> : null}
       </details>
     </LayoutSection>
@@ -811,6 +641,8 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
       </LayoutSectionItem>
+
+      <ComputerUseRecordingItem />
 
       {isDesktopRuntime() && props.opencodeDevModeEnabled && props.developerMode ? (
         <LayoutSectionItem>
@@ -861,5 +693,52 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
         </LayoutSectionItem>
       ) : null}
     </LayoutSection>
+  );
+}
+
+/**
+ * Lets screen recordings show the agent's cursor, frame and pill on this Mac, for demos.
+ * Main keeps the choice until OpenWork quits; it applies to the next app the agent starts using.
+ */
+function ComputerUseRecordingItem() {
+  const shown = isElectronRuntime() && isMacPlatform();
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!shown) return;
+    let current = true;
+    desktopBridge.computerRecordableOverlay()
+      .then((value) => { if (current) setEnabled(value); })
+      .catch(() => { if (current) setEnabled(false); });
+    return () => { current = false; };
+  }, [shown]);
+
+  if (!shown) return null;
+  const change = (next: boolean) => {
+    setError("");
+    desktopBridge.computerSetRecordableOverlay(next)
+      .then(setEnabled)
+      .catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
+  return (
+    <LayoutSectionItem>
+      <LayoutSectionItemHeader>
+        <LayoutSectionItemTitle>Show computer use in screen recordings</LayoutSectionItemTitle>
+        <LayoutSectionItemDescription>
+          The agent's cursor, frame and controls appear in screen recordings and screen sharing, for demos. Starts with the next app the agent uses and turns off when OpenWork quits. The agent's own screenshots never include them.
+        </LayoutSectionItemDescription>
+        <LayoutSectionItemHeaderActions>
+          <Switch
+            aria-label="Show computer use in screen recordings"
+            data-testid="settings-computer-recordable-overlay"
+            checked={enabled === true}
+            disabled={enabled === null}
+            onCheckedChange={change}
+          />
+        </LayoutSectionItemHeaderActions>
+      </LayoutSectionItemHeader>
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+    </LayoutSectionItem>
   );
 }

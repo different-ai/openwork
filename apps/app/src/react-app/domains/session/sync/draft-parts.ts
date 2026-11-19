@@ -55,6 +55,31 @@ export async function draftToParts(
     return segments[segments.length - 1] ?? "file";
   };
 
+  /** Where the next visible text starts in the prompt the person sees. */
+  const visibleOffset = () => parts.reduce((total, part) => {
+    if (part.type === "text") return part.synthetic ? total : total + part.text.length;
+    if (part.type === "agent") return total + part.name.length + 1;
+    if (part.type === "file" && part.source?.type === "file") return total + part.source.text.value.length;
+    return total;
+  }, 0);
+
+  /**
+   * An `@file` mention: the file itself, plus OpenCode's standard file source
+   * naming the `@` text it came from. Engines that take one prompt string use
+   * the source to keep the mention (and its chip) instead of dropping it.
+   */
+  const fileMentionPart = (absolute: string, mentionPath: string): FilePartInput => {
+    const value = `@${mentionPath}`;
+    const start = visibleOffset();
+    return {
+      type: "file",
+      mime: "text/plain",
+      url: toFileUrl(absolute),
+      filename: filenameFromPath(mentionPath),
+      source: { type: "file", path: absolute, text: { value, start, end: start + value.length } },
+    };
+  };
+
   const attachmentFileById = new Map<string, FilePartInput>();
   if (draft.attachments.length > 0) {
     if (!endpoint) {
@@ -130,12 +155,7 @@ export async function draftToParts(
             parts.push({ type: "text", text: absolute });
             continue;
           }
-          parts.push({
-            type: "file",
-            mime: "text/plain",
-            url: toFileUrl(absolute),
-            filename: filenameFromPath(mentionPart.path),
-          });
+          parts.push(fileMentionPart(absolute, mentionPart.path));
           continue;
         }
       }
@@ -169,12 +189,7 @@ export async function draftToParts(
           parts.push({ type: "text", text: absolute });
           continue;
         }
-        parts.push({
-          type: "file",
-          mime: "text/plain",
-          url: toFileUrl(absolute),
-          filename: filenameFromPath(part.path),
-        });
+        parts.push(fileMentionPart(absolute, part.path));
       }
     }
   }
