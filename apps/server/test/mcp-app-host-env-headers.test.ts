@@ -19,3 +19,13 @@ test("expandEnvInHeaders expands all string headers", () => {
     { "x-api-key": "Bearer secret-from-env", "x-plain": "nope" },
   );
 });
+
+test("expandEnvTemplates never sends the server-only encryption key, under any spelling", () => {
+  const env = { OPENWORK_ENCRYPTION_KEY: "server-secret", openwork_encryption_key: "server-secret", MY_API_KEY: "ok" };
+  assert.equal(expandEnvTemplates("{env:OPENWORK_ENCRYPTION_KEY}", env), "");
+  assert.equal(expandEnvTemplates("{env:openwork_encryption_key}", env), "");
+  assert.deepEqual(
+    expandEnvInHeaders({ authorization: "Bearer {env:MY_API_KEY}", "x-key": "{env:OPENWORK_ENCRYPTION_KEY}" }, env),
+    { authorization: "Bearer ok", "x-key": "" },
+  );
+});

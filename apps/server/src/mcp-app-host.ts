@@ -34,6 +34,7 @@ import {
 import { diagnoseMcpToolDenies, listMcpFromRuntimeSnapshot } from "./mcp.js";
 import { readEffectiveRuntimeOpencodeConfig, readRuntimeMcpConfigRevisions } from "./runtime-opencode-config-store.js";
 import { localManagedMcpAppIdentity } from "./local-managed-mcp.js";
+import { isServerOnlyEnvironmentName } from "./provider-config-templates.js";
 import { externalFetch } from "./server-fetch.js";
 
 async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
@@ -256,7 +257,8 @@ function stringHeaders(value: unknown): Record<string, string> {
  * and https://opencode.ai/docs/config/
  */
 export function expandEnvTemplates(value: string, env: NodeJS.ProcessEnv = process.env): string {
-  return value.replace(/\{env:([^}]+)\}/g, (_, varName: string) => (env[varName] ?? "") || "");
+  // The engine never sees server-only secrets, so the host must not send them either.
+  return value.replace(/\{env:([^}]+)\}/g, (_, varName: string) => (isServerOnlyEnvironmentName(varName) ? "" : env[varName] ?? ""));
 }
 
 export function expandEnvInHeaders(
