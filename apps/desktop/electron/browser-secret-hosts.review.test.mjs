@@ -81,7 +81,7 @@ async function fixture() {
 if (process.versions.electron) {
   fixture().catch(() => { process.stdout.write('{"review":true,"fixtureFailed":true}\n'); electron.app.exit(1); });
 } else {
-  test("origin-shared worker targets never inherit the attaching tab's secret authority", async () => {
+  test("only the page's own session is intercepted: no frame or worker target is attached or answered", async () => {
     const { createSecretInterception } = await import("./browser-secret-interception.mjs");
     const calls = [];
     const cdp = Object.assign(new EventEmitter(), {
@@ -89,18 +89,24 @@ if (process.versions.electron) {
       async sendCommand(method, _params, sessionId) { calls.push({ method, sessionId }); return {}; },
     });
     const contents = Object.assign(new EventEmitter(), { debugger: cdp, isDestroyed: () => false, isCrashed: () => false });
-    const secrets = { live: () => false, onLiveChange: () => () => {}, interceptionLost() {} };
+    const secrets = { guarded: () => false, onGuardChange: () => () => {}, interceptionLost() {} };
     const host = createSecretInterception({ secrets });
     const tab = { tabId: "review-owner", view: { webContents: contents } };
+    const paused = (requestId) => ({ requestId, request: { url: "https://example.test/", method: "GET", headers: {} } });
     try {
       assert.equal(await host.arm(tab), true);
-      for (const type of ["service_worker", "shared_worker"]) {
-        cdp.emit("message", {}, "Target.attachedToTarget", { sessionId: type, targetInfo: { type }, waitingForDebugger: false });
+      // Someone else sharing the debugger may have such targets attached and paused.
+      for (const type of ["iframe", "service_worker", "shared_worker", "worker"]) {
+        cdp.emit("message", {}, "Target.attachedToTarget", { sessionId: type, targetInfo: { type }, waitingForDebugger: true });
+        cdp.emit("message", {}, "Fetch.requestPaused", paused(`in-${type}`), type);
       }
-      cdp.emit("message", {}, "Target.attachedToTarget", { sessionId: "owned-frame", targetInfo: { type: "iframe" }, waitingForDebugger: false });
-      await new Promise((resolve) => setImmediate(resolve));
-      assert.equal(calls.some(({ sessionId }) => sessionId === "service_worker" || sessionId === "shared_worker"), false);
-      assert.equal(calls.some(({ method, sessionId }) => method === "Fetch.enable" && sessionId === "owned-frame"), true);
+      cdp.emit("message", {}, "Fetch.requestPaused", paused("in-page"), "");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await host.release(tab);
+      assert.deepEqual(calls.filter(({ method }) => method.startsWith("Target.")), [], "no Target command is ever sent");
+      assert.deepEqual(calls.filter(({ sessionId }) => sessionId !== undefined), [], "no command is ever sent to a child session");
+      // One answer: the page's own request. Nothing paused in another session is decided here.
+      assert.deepEqual(calls.map(({ method }) => method), ["Fetch.enable", "Fetch.continueRequest", "Fetch.disable"]);
     } finally { await host.dispose(); }
   });
 

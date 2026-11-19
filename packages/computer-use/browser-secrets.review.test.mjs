@@ -131,6 +131,60 @@ test("a delayed redirect cannot carry a substituted body away after placeholder 
   assert.equal(result.method, "Fetch.failRequest", "expiry must not release protection of an in-flight rewritten request");
 });
 
+test("no amount of waiting releases a redirect of a rewritten request, named by the browser or not", async () => {
+  for (const named of [true, false]) {
+    const { secrets, placeholder, clock } = seeded(VALUE, { placeholderTtlMs: 100 });
+    const body = JSON.stringify({ password: placeholder });
+    const first = named
+      ? await decidePausedRequest(secrets, TAB, { requestId: "first", networkId: "chain", request: { url: `${SITE}/login`, method: "POST", headers: { "Content-Type": "application/json" }, hasPostData: true, postData: body } })
+      : { params: { postData: secrets.rewrite(json(placeholder)).body.toString("base64") } };
+    const rewritten = Buffer.from(first.params.postData, "base64").toString();
+    assert.ok(rewritten.includes(JSON.stringify(VALUE).slice(1, -1)));
+    // Far past the placeholder's life and past any timer a guard could have had.
+    for (const waited of [121_000, 600_000, 86_400_000]) {
+      clock.at += waited;
+      assert.equal(secrets.live(TAB), false);
+      assert.equal(secrets.guarded(TAB), true, "the host must keep seeing the tab's requests");
+      for (const redirect of [{ redirectedRequestId: "first" }, { networkId: "chain" }]) {
+        const result = await decidePausedRequest(secrets, TAB, { requestId: `late-${waited}`, ...(named ? redirect : {}), request: {
+          url: `${OTHER}/collect`, method: "POST", headers: { "Content-Type": "application/json" }, hasPostData: true, postData: rewritten } });
+        assert.equal(result.method, "Fetch.failRequest", "a server may answer with a redirect as late as it likes");
+      }
+    }
+  }
+});
+
+test("with requests named by the browser, a page's own cross-origin request is never judged by what it holds", async () => {
+  const { secrets, placeholder, value } = seeded();
+  const paused = (requestId, url, postData, extra = {}) => decidePausedRequest(secrets, TAB, { requestId, networkId: `net-${requestId}`, ...extra,
+    request: { url, method: "POST", headers: { "Content-Type": "application/json" }, hasPostData: true, postData } });
+  const first = await paused("first", `${SITE}/login`, JSON.stringify({ password: placeholder }));
+  const rewritten = Buffer.from(first.params.postData, "base64").toString();
+  // The exact rewritten body, a right guess and a wrong guess all get the same answer: the page learns nothing.
+  const answers = [];
+  for (const [index, guess] of [rewritten, JSON.stringify({ password: value }), value, JSON.stringify({ password: "fake-wrong-guess" })].entries()) answers.push((await paused(`probe-${index}`, `${OTHER}/probe`, guess)).method);
+  assert.deepEqual(new Set(answers), new Set(["Fetch.continueRequest"]));
+  assert.equal((await paused("hop", `${OTHER}/collect`, rewritten, { redirectedRequestId: "first" })).method, "Fetch.failRequest");
+});
+
+test("a rewritten body the browser sends again on reload is still followed to its redirect", async () => {
+  for (const lineage of ["redirectedRequestId", "networkId"]) {
+    const { secrets, secret, placeholder, clock } = seeded();
+    const paused = (requestId, url, postData, extra = {}) => decidePausedRequest(secrets, TAB, { requestId, networkId: `net-${requestId}`, ...extra,
+      request: { url, method: "POST", headers: { "Content-Type": "application/json" }, hasPostData: true, postData } });
+    const first = await paused("first", `${SITE}/login`, JSON.stringify({ password: placeholder }));
+    const rewritten = Buffer.from(first.params.postData, "base64").toString();
+    secrets.remove(SESSION, secret.secretRef);
+    clock.at += 86_400_000;
+    // The reload is a new request with new names that follows nothing; it holds the value and no placeholder.
+    assert.deepEqual(await paused("reload", `${SITE}/login`, rewritten), { method: "Fetch.continueRequest", params: { requestId: "reload" } });
+    const redirect = lineage === "networkId" ? { networkId: "net-reload" } : { networkId: undefined, redirectedRequestId: "reload" };
+    assert.equal((await paused("moved", `${OTHER}/collect`, rewritten, redirect)).method, "Fetch.failRequest", "the resent body must not follow a redirect elsewhere");
+    // A request the page makes to another origin is still its own, whatever it holds.
+    assert.equal((await paused("own", `${OTHER}/collect`, rewritten)).method, "Fetch.continueRequest");
+  }
+});
+
 test("reissuing the same field cannot forget the redirect protection of a previously substituted body", () => {
   const { secrets, placeholder, issue } = seeded();
   const first = secrets.rewrite(json(placeholder));

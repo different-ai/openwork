@@ -385,42 +385,54 @@ async function run() {
       expect(!interception.holds(tab) && !cdp.isAttached(), "release detaches the debugger this module attached");
       tab.window.destroy();
     } },
-    { name: "a cross-site frame's requests are judged like the page's", async run() {
-      // The debugger stays attached for someone else here, so only this module's own cleanup can free the frames.
+    { name: "a cross-site frame's requests keep the placeholder, whatever site they go to", async run() {
+      // Only the page's own session is intercepted. The debugger stays attached for someone else
+      // here, so this also shows no session is opened on, or left attached to, a frame.
       const hooks = createSecretInterception({ secrets, keepDebugger: () => true });
       const tab = await openTab(`${ALLOWED}/with-frame`);
       const contents = tab.view.webContents;
       await eventually(() => contents.mainFrame.framesInSubtree.some((frame) => frame.url.startsWith(ATTACKER)));
       expect(new Set(contents.mainFrame.framesInSubtree.map((frame) => frame.processId)).size === 2, "the frame runs in its own process");
       contents.debugger.attach("1.3");
+      let childSessions = 0, paused = 0;
+      contents.debugger.on("message", (_event, method, _params, sessionId) => {
+        if (method === "Target.attachedToTarget" || sessionId) childSessions++;
+        if (method === "Fetch.requestPaused") paused++;
+      });
       const placeholder = await typeSecret(tab, password, "frame", { hooks });
       /** Sends the field from the newest frame. @param {string} origin @param {string} pathname */
       const fromFrame = (origin, pathname) => page(tab, `send.frame(${JSON.stringify(origin + pathname)})`);
       expect(await fromFrame(ALLOWED, "/collect/from-frame") === 200, "the frame's request to the allowed site succeeds");
-      expect((await allowed.take("/collect/from-frame"))?.body.toString("utf8") === `password=${PASSWORD}`, "the frame's request to the allowed site carries the value");
+      expect((await allowed.take("/collect/from-frame"))?.body.toString("utf8") === `password=${placeholder}`, "the frame's request to the allowed site carries exactly the placeholder");
       await fromFrame(ATTACKER, "/collect/from-frame");
-      expect((await attacker.take("/collect/from-frame"))?.body.toString("utf8") === `password=${placeholder}`, "the frame's request to its own site carries only the placeholder");
-      // A frame added after arming is found too.
+      expect((await attacker.take("/collect/from-frame"))?.body.toString("utf8") === `password=${placeholder}`, "the frame's request to its own site carries exactly the placeholder");
+      // A frame added after arming is not intercepted either.
       await page(tab, `new Promise((resolve) => { const frame = document.createElement("iframe"); frame.onload = () => resolve(true); frame.src = ${JSON.stringify(`${ATTACKER}/frame`)}; document.body.append(frame); })`);
       await fromFrame(ALLOWED, "/collect/from-late-frame");
-      expect((await allowed.take("/collect/from-late-frame"))?.body.toString("utf8") === `password=${PASSWORD}`, "a later frame's request to the allowed site carries the value");
+      expect((await allowed.take("/collect/from-late-frame"))?.body.toString("utf8") === `password=${placeholder}`, "a later frame's request to the allowed site carries exactly the placeholder");
+      expect(childSessions === 0, "no frame was attached and nothing arrived from a frame's session");
+      expect(statusOf(tab.tabId, "frame")?.state !== "sent", "nothing a frame sent counts as the secret being sent");
+      // The page that holds those frames is still intercepted itself.
+      const before = paused;
+      expect(await page(tab, `send.json("/collect/page-with-frame")`) === 200 && paused > before, "the page's own request pauses");
+      const own = await allowed.take("/collect/page-with-frame");
+      expect(own && JSON.parse(own.body.toString("utf8")).password === PASSWORD, "the page's own request to the allowed site carries the value");
       await hooks.release(tab);
-      let paused = 0;
-      contents.debugger.on("message", (_event, method) => { if (method === "Fetch.requestPaused") paused++; });
+      paused = 0;
       expect(contents.debugger.isAttached(), "the debugger someone else attached is left attached");
       expect(await fromFrame(ATTACKER, "/collect/after-release") === 200 && await page(tab, `send.json("/collect/after-release")`) === 200 && paused === 0, "no request of the page or its frames pauses after release");
       expect((await attacker.take("/collect/after-release"))?.body.toString("utf8") === `password=${placeholder}`, "after release a frame's request is sent as written");
       await hooks.dispose();
       tab.window.destroy();
     } },
-    { name: "a service worker forwarding a request is intercepted too", async run() {
+    { name: "an origin-shared service worker forwards only the placeholder", async run() {
       const tab = await openTab(`${ALLOWED}/sw/page`);
       await page(tab, `navigator.serviceWorker.register("/sw/sw.js", { scope: "/sw/" }).then(() => navigator.serviceWorker.ready).then(() => navigator.serviceWorker.controller || new Promise((resolve) => navigator.serviceWorker.addEventListener("controllerchange", resolve))).then(() => true)`);
       const placeholder = await typeSecret(tab, password, "service-worker");
       expect(await page(tab, `send.json("/collect/through-service-worker")`) === 200, "the forwarded request succeeds");
       const request = await allowed.take("/collect/through-service-worker");
-      expect(request && JSON.parse(request.body.toString("utf8")).password === PASSWORD, "the forwarded request carries the value");
-      expect(!request?.body.includes(placeholder), "no placeholder reached the allowed site");
+      expect(request && JSON.parse(request.body.toString("utf8")).password === placeholder, "the origin-shared target does not inherit this tab's secret authority");
+      expect(!request?.body.includes(PASSWORD), "the origin-shared worker never sends the real value");
       await interception.release(tab);
       expect(await page(tab, `send.json("/collect/service-worker-after-release")`) === 200, "forwarded requests go on after release");
       await page(tab, `navigator.serviceWorker.getRegistration("/sw/").then((registration) => registration?.unregister())`);

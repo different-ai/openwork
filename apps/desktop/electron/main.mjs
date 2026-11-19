@@ -1293,7 +1293,7 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   readPolicy: async () => {
     const server = await runtimeManager.openworkServerInfo();
     if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
-    // Trusted local service verifies the current Den organization, member and rollout.
+    // loopback-fetch: the trusted local service verifies the current Den organization, member and rollout.
     const response = await fetch(`${server.baseUrl}/managed-policy/browser-upload-permissions`, {
       headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
     });
@@ -1313,9 +1313,8 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   },
 });
 
-// Secrets the person enters for the agent's built-in browser (`browserSecretHandles`). One store
-// for the app, in memory only: a value is never written to disk, a log or an error, and nothing
-// outside the store keeps a reference to one.
+// Secrets the person enters for the agent's built-in browser (`browserSecretHandles`). Enrollment
+// keeps values in this process, never in configuration, logs, tool arguments or child environments.
 const browserSecrets = createBrowserSecrets();
 // On only once the local server, which verifies the signed-in member's rollout with Den,
 // confirmed the feature. What the app window reports can turn it off, never on.
@@ -1324,7 +1323,7 @@ let browserSecretsReport = 0;
 async function setBrowserSecretsEnabled(requested) {
   const report = ++browserSecretsReport;
   if (!requested) {
-    // The feature turned off: every secret, placeholder and status is forgotten.
+    // Turning off revokes enrollment and substitution; late readback still passes through redaction.
     if (browserSecretsEnabled) browserSecrets.clear();
     browserSecretsEnabled = false;
     return false;

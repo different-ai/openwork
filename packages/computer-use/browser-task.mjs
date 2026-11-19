@@ -86,6 +86,9 @@ function observePage(id, options = {}) {
   const interactive = mode === "interactive";
   const limit = Number.isInteger(options.limit) && options.limit > 0 ? Math.min(options.limit, 500) : interactive ? 200 : 500;
   const includeText = options.includeText ?? !interactive;
+  // The host redacts every text, and only then cuts and trims it: this many characters more are read on each
+  // side, so a saved secret the page echoes is never cut in two. No secret enters the page for that, only this number.
+  const reach = Number.isInteger(options.reach) && options.reach > 0 ? options.reach : 0;
   const registry = globalThis.__openworkBrowserRefs ??= { byElement: new WeakMap(), byRef: new Map(), identities: new WeakMap(), next: 0,
     observations: new Map(), latest: null, last: null, describe: null, identify: null };
   const elements = [];
@@ -144,13 +147,18 @@ function observePage(id, options = {}) {
     // Labels, referenced nodes, body text and titles can all echo a field's
     // withheld content. Redact before truncation, throughout the observation.
     const safe = privatePattern ? (value || "").replace(privatePattern, "[withheld]") : value || "";
-    return safe.trim().slice(0, limit);
+    // Not trimmed here: a saved secret may begin or end with a space, and the host looks for it first.
+    const lead = safe.length - safe.trimStart().length;
+    return safe.slice(Math.max(0, lead - reach), lead + limit + reach);
   };
   // browser_extract reads page text, which includes editable content and can echo field values.
   if (mode === "extract") return { title: text(document.title, 300), text: text(document.body?.innerText, 500_000) };
   const describe = (element, reveal = false) => {
-    const referenced = (attribute) => (element.getAttribute(attribute) || "").split(/\s+/)
-      .map(id => document.getElementById(id)?.textContent || "").join(" ").trim();
+    // Not trimmed, like every text here: the host looks for a saved secret first. Blank counts as absent.
+    const referenced = (attribute) => {
+      const joined = (element.getAttribute(attribute) || "").split(/\s+/).map(id => document.getElementById(id)?.textContent || "").join(" ");
+      return joined.trim() ? joined : "";
+    };
     const labelText = (label) => {
       const copy = label.cloneNode(true);
       if (copy instanceof HTMLElement) for (const control of copy.querySelectorAll("input,textarea,select,button")) control.remove();
@@ -220,7 +228,7 @@ function observePage(id, options = {}) {
       ? [element.getAttribute("aria-label"), element.getAttribute("aria-labelledby")] : control.name]);
   const compact = (ref, control, visible) => {
     /** @type {Record<string, unknown>} */
-    const item = { ref, role: control.role, name: control.name.slice(0, 120) };
+    const item = { ref, role: control.role, name: control.name };
     if (control.type && !["text", "submit", "button"].includes(control.type)) item.type = control.type;
     if (control.value !== undefined && control.value !== "" && !control.options) item.value = control.value.length > 300 ? `${control.value.slice(0, 300)}…` : control.value;
     if (control.valueWithheld) { item.filled = control.filled === true; item.valueWithheld = true; }
@@ -237,7 +245,7 @@ function observePage(id, options = {}) {
       if (control.multiple) item.multiple = true;
       if (control.optionsTruncated || control.options.length > 50) item.optionsTruncated = true;
     }
-    if (control.description) item.description = control.description.slice(0, 200);
+    if (control.description) item.description = control.description;
     if (!visible) item.offscreen = true;
     return item;
   };
@@ -262,7 +270,7 @@ function observePage(id, options = {}) {
     const control = describe(element);
     if (query) {
       const match = (actual, expected) => !expected || (query.exact === false ? actual.toLowerCase().includes(expected.toLowerCase()) : actual.toLowerCase() === expected.toLowerCase());
-      if (!match(control.role, query.role) || !match(control.name, query.name) || !match(control.name, query.text)) continue;
+      if (!match(control.role, query.role) || !match(control.name.trim(), query.name) || !match(control.name.trim(), query.text)) continue;
     }
     let ref = registry.byElement.get(element);
     if (!ref) { ref = `e${++registry.next}`; registry.byElement.set(element, ref); }
@@ -290,6 +298,16 @@ function observePage(id, options = {}) {
   registry.identify = identify;
   registry.isCredential = isCredential;
   registry.secretField = secretField;
+  // The type of the field a saved secret is about to be typed into, only while that field has the keyboard and is
+  // still the control that was observed.
+  registry.secretTarget = element => {
+    if (!element?.isConnected || document.activeElement !== element) throw new Error("stale_element");
+    const control = describe(element);
+    if (registry.identities.get(element) !== identify(element, control)) throw new Error("stale_element");
+    const field = secretField(element);
+    if (!field || control.readOnly) throw new Error("not_editable");
+    return field;
+  };
   registry.observations.set(id, { createdAt: performance.now(), width: innerWidth, height: innerHeight, x: scrollX, y: scrollY });
   registry.latest = id;
   for (const old of registry.observations.keys()) { if (registry.observations.size <= 20) break; registry.observations.delete(old); }
@@ -323,7 +341,7 @@ function observePage(id, options = {}) {
   const shown = diff ? items.filter((item) => diff.added.includes(item.ref) || diff.changed.includes(item.ref)) : items;
   const status = [...document.querySelectorAll('[role="alert"],[role="status"],[aria-live]:not([aria-live="off"]),output')]
     .filter((element) => element instanceof HTMLElement && element.getClientRects().length > 0)
-    .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter(Boolean).slice(0, 5);
+    .map((element) => text(element instanceof HTMLElement ? element.innerText : "", 300)).filter((line) => line.trim()).slice(0, 5);
   return { mode, title: text(document.title, 300), elements: shown, ...(diff ? { diff } : {}), ...(focused ? { focused } : {}),
     ...(status.length ? { status } : {}), ...(truncated ? { truncated } : {}), ...(includeText ? { text: text(document.body?.innerText, 16000) } : {}),
     ...page };
@@ -490,10 +508,16 @@ function applyFormAction(action) {
   }
   if (field) {
     element.select();
-    if (document.activeElement !== element || !element.isConnected) throw new Error("stale_element");
-    return { inserted: false, field };
+    // Taking focus runs the page's own handlers: the field is named again as it is now.
+    return { inserted: false, field: registry.secretTarget(element) };
   }
   return { inserted: false };
+}
+/** The last look at a saved secret's field before it is typed into: see `secretTarget` in the observation. */
+function secretTarget(action) {
+  const registry = globalThis.__openworkBrowserRefs;
+  if (!registry?.secretTarget) throw new Error("stale_element");
+  return { field: registry.secretTarget(registry.byRef.get(action.ref)?.deref()) };
 }
 async function verifyFormAction(action) {
   const registry = globalThis.__openworkBrowserRefs;
@@ -653,6 +677,41 @@ async function attachFiles(contents, point, files, signal, waitMs, beforeShare =
   }
 }
 
+/** Redaction on a host without saved secrets: nothing to replace, texts are only cut. */
+const NO_SECRETS = { span: 0, redact: /** @template T @param {T} value */ (value) => value, redactText: /** @param {string} text @param {number} [limit] */ (text, limit) => limit === undefined ? text : text.slice(0, limit) };
+/** @typedef {typeof NO_SECRETS} Mask redaction for one operation: see `redactor` in browser-secrets.mjs */
+/**
+ * One text the page read, as the agent is given it: redacted whole, then cut to `limit` characters of what it
+ * says, then trimmed. The page reads past both ends for this and trims nothing, so no part of a secret is left at
+ * a cut or at a space the secret began or ended with.
+ * @param {Mask} mask @param {string} text @param {number} limit
+ */
+const cutText = (mask, text, limit) => mask.redactText(text, text.length - text.trimStart().length + limit).trim();
+/**
+ * One control as the agent is given it, each of its texts through `cutText`.
+ * @param {Mask} mask @param {Record<string, unknown>} control @param {number} name @param {number} description
+ */
+function cutControl(mask, control, name, description) {
+  const cut = (/** @type {unknown} */ value, /** @type {number} */ limit) => typeof value === "string" ? cutText(mask, value, limit) : value;
+  return { ...control, name: cut(control.name, name),
+    ...("invalid" in control ? { invalid: cut(control.invalid, 1000) || true } : {}),
+    ...("validationMessage" in control ? { validationMessage: cut(control.validationMessage, 1000) } : {}),
+    ...("description" in control ? { description: cut(control.description, description) } : {}),
+    ...(Array.isArray(control.options) ? { options: control.options.map((option) => ({ ...option, label: cut(option.label, 200) })) } : {}) };
+}
+/**
+ * What `observePage` read, as the agent is given it.
+ * @template {{ title: string, elements: Record<string, unknown>[], text?: string, status?: string[], scrollRegions?: [string, ...number[]][] }} T
+ * @param {Mask} mask @param {T} page @param {boolean} interactive
+ */
+function cutObservation(mask, page, interactive) {
+  return { ...page, title: cutText(mask, page.title, 300),
+    ...(typeof page.text === "string" ? { text: cutText(mask, page.text, 16000) } : {}),
+    ...(page.status ? { status: page.status.map((line) => cutText(mask, line, 300)) } : {}),
+    ...(page.scrollRegions ? { scrollRegions: page.scrollRegions.map(([label, ...size]) => [cutText(mask, label, 200), ...size]) } : {}),
+    elements: page.elements.map((control) => cutControl(mask, control, interactive ? 120 : 200, interactive ? 200 : 1000)) };
+}
+
 export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isVisible, openTab, navigate,
   allowed, enabled, changed, siteTools, runSiteTool, beforeInput = async (_tab) => {}, inFlight = (_tab, _since) => 0,
   prepare = async (_tab) => {}, inputScale = (_tab) => 1, capture = (_tab, _viewport) => null,
@@ -687,6 +746,11 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
   const pausedSessions = new Set();
   const opening = new Map();
   const navigations = new Map();
+  // Tabs a saved secret was typed into. The site may show it back on any later page of the tab, where no text
+  // redaction reaches the pixels: such a tab gives no more images until it closes.
+  const secretTabs = new Set();
+  // The pictures this host took itself. Only they are returned unredacted, known by identity and never by shape.
+  const captured = new WeakSet();
   function controlFor(sessionId) {
     if (!controls.has(sessionId)) controls.set(sessionId, { controller: new AbortController() });
     return controls.get(sessionId);
@@ -828,6 +892,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         pausedSessions.delete(owner);
       }
       navigations.get(tabId)?.lifetime.abort(); navigations.delete(tabId);
+      secretTabs.delete(tabId);
     }
     const state = states.get(tabId); if (!state) return;
     forget(state);
@@ -852,24 +917,26 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
     return { ...receipt, secrets: status, ...(undelivered ? { next: keepNext ? `${SECRET_NOT_SENT} ${receipt.next}` : SECRET_NOT_SENT } : {}) };
   }
   /**
-   * @param {{ mode?: string, limit?: number, includeText?: boolean, sessionId?: string }} [options]
+   * @param {{ mode?: string, limit?: number, includeText?: boolean, sessionId?: string }} [options] @param {Mask} [mask]
    */
-  async function observe(tab, includeImage, signal, query = null, options = {}) {
+  async function observe(tab, includeImage, signal, query = null, options = {}, mask = NO_SECRETS) {
     const state = stateFor(tab.tabId);
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
     const id = randomUUID();
     const mode = options.mode === "interactive" ? "interactive" : "full";
     const limit = Number.isInteger(options.limit) && options.limit >= 1 && options.limit <= 500 ? options.limit : undefined;
-    const page = await isolated(tab.view.webContents, observePage, id, { mode, query: query ?? null, ...(limit ? { limit } : {}),
-      ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}) });
+    const page = cutObservation(mask, await isolated(tab.view.webContents, observePage, id, { mode, query: query ?? null, ...(limit ? { limit } : {}),
+      ...(typeof options.includeText === "boolean" ? { includeText: options.includeText } : {}), reach: mask.span }), mode === "interactive");
     let image, digest;
     if (includeImage) {
       if (page.hasPaymentField) fail("payment_required", "This page shows payment card fields. Take over and complete them directly in the browser, then resume.");
       if (page.hasCredentialField) fail("credential_on_screen", "This page has a password or code field, or one was filled on it, so no image was taken. Work from its controls without an image.");
+      if (secretTabs.has(tab.tabId)) fail("credential_on_screen", "A saved secret was entered in this tab and the site may show it back, so no image was taken. Work from the page's controls without an image.");
       const png = await captureObservation(tab.view.webContents, page.viewport, (viewport) => capture(tab, viewport));
       digest = imageDigest(png);
       image = { mimeType: "image/png", data: png.toString("base64"), width: page.viewport.width, height: page.viewport.height };
+      captured.add(image);
     }
     const offered = typeof options.sessionId === "string" && await secretsOn();
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
@@ -952,19 +1019,25 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       return read();
     }
   }
-  async function extract(tab, args, signal, recovery) {
+  /** @param {Mask} mask */
+  async function extract(tab, args, signal, recovery, mask) {
     const question = typeof args.question === "string" ? args.question.trim() : "";
     if (!question || question.length > 1000) fail("invalid_question", "Ask one question of at most 1000 characters.");
     const maxChars = Number.isInteger(args.maxChars) ? Math.min(8000, Math.max(200, args.maxChars)) : 2000;
     const revision = tab.webMcpRevision;
     const url = tab.view.webContents.getURL();
-    // Withheld field values are redacted exactly as observations redact them.
-    let page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+    // Withheld field values are redacted exactly as observations redact them. Saved secrets go before anything is
+    // chosen, cut or counted: which lines match a question, or how long the page is, says nothing about one.
+    const read = async () => {
+      const raw = await isolated(tab.view.webContents, observePage, null, { mode: "extract", reach: mask.span });
+      return { title: cutText(mask, raw.title, 300), text: cutText(mask, raw.text, 500_000) };
+    };
+    let page = await read();
     // A page that has not drawn its text yet (an app still starting) gets one bounded wait before it is read again.
     let found = null;
     if (loadSettleMs && !page.text.trim()) {
       found = await settleLoad(tab, signal, Math.min(loadSettleMs, 4000), recovery, true);
-      page = await isolated(tab.view.webContents, observePage, null, { mode: "extract" });
+      page = await read();
     }
     if (!await allowed(url)) fail("website_blocked", "Your organization does not allow this website.");
     if (revision !== tab.webMcpRevision || url !== tab.view.webContents.getURL()) fail("page_changed", "The page changed while reading it. Try again.");
@@ -984,18 +1057,18 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
    * @param {{ sessionId?: string, operation?: string, args?: { tabId?: string, url?: string, provider?: string, includeImage?: boolean, mode?: string, limit?: number, includeText?: boolean,
    *   query?: {role?: string, name?: string, text?: string, exact?: boolean}, observationId?: string, toolId?: string, input?: unknown, question?: string, maxChars?: number,
    *   action?: BrowserAction, actions?: BrowserAction[], request_id?: string } }} request
-   * @param {{ signal?: AbortSignal, recovery?: boolean }} options
+   * @param {{ signal?: AbortSignal, recovery?: boolean }} options @param {Mask} mask
    */
-  async function perform({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}) {
+  async function perform({ sessionId, operation, args = {} } = {}, { signal, recovery = false } = {}, mask = NO_SECRETS) {
     let tab, state, dispatched = false, abort, controller, openingController;
     // A single action's receipt gains the tab's secret status on its way out; a replayed receipt is returned as stored.
     let single = false;
-    /** @type {{ id: string, input: string, receipt: Record<string, unknown> } | null} */
+    /** @type {{ id: string, input: string, running: boolean, receipt: Record<string, unknown> } | null} */
     let entry = null;
     try {
       if (typeof sessionId !== "string" || !sessionId.trim()) fail("missing_session", "Browser control requires a requesting conversation.");
       if (!enabled()) fail("browser_disabled", "Enable OpenWork Browser in Library, or ask your organization to allow browser control.");
-      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: item.view.webContents.getTitle().slice(0, 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
+      if (operation === "tabs") return { ok: true, provider: "builtin", externalBrowsers: "unsupported", tabs: tabsFor(sessionId).map((item) => ({ tabId: item.tabId, url: safeUrl(item.view.webContents.getURL()), title: cutText(mask, item.view.webContents.getTitle(), 300), visible: isVisible(item.tabId), status: stateFor(item.tabId).status, operation: stateFor(item.tabId).operation })) };
       if (pausedSessions.has(sessionId)) fail("paused", "The user has browser control until they resume it or send their next message. End your turn and wait.");
       const control = controlFor(sessionId);
       controller = new AbortController();
@@ -1072,7 +1145,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         await prepare(tab);
         requestSignal.throwIfAborted();
         publish(tab.tabId, "running", operation);
-        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText, sessionId }));
+        if (operation === "observe") return readAgain(tab, requestSignal, recovery, () => observe(tab, args.includeImage === true, requestSignal, args.query, { mode: args.mode, limit: args.limit, includeText: args.includeText, sessionId }, mask));
         if (operation === "site_tools") return siteTools({ tabId: tab.tabId, sessionId });
         if (operation === "site_tool") {
           forget(state);
@@ -1097,7 +1170,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const page = loadSettleMs ? await settleLoad(tab, requestSignal, loadSettleMs, recovery) : null;
           return { ok: true, tabId: tab.tabId, dispatched: true, outcome: "navigation_finished", url: safeUrl(tab.view.webContents.getURL()), next: "observe", ...(page ? loaded(page) : {}) };
         }
-        if (operation === "extract") return readAgain(tab, requestSignal, recovery, () => extract(tab, args, requestSignal, recovery));
+        if (operation === "extract") return readAgain(tab, requestSignal, recovery, () => extract(tab, args, requestSignal, recovery, mask));
         if (operation !== "act") fail("unknown_operation", "Use a supported browser operation.");
         // One action keeps the original receipt; actions (1-8) run in order
         // against one observation and return one receipt with the new state.
@@ -1109,13 +1182,19 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         if (args.request_id !== undefined) {
           if (typeof args.request_id !== "string" || !args.request_id || args.request_id.length > 256) fail("invalid_action", "request_id must be a short string.");
           const input = JSON.stringify([tab.tabId, args.observationId, actions]);
-          const previous = receipts.get(sessionId)?.get(args.request_id);
+          const stored = receipts.get(sessionId) ?? new Map();
+          const previous = stored.get(args.request_id);
           if (previous) {
             if (previous.input !== input) fail("request_conflict", "This request_id already belongs to different input. Nothing was dispatched.");
+            if (previous.running) fail("busy", "This request_id is still running. Wait for its result; nothing was dispatched again.");
             return previous.receipt;
           }
-          entry = { id: args.request_id, input, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
+          // Reserved before anything is awaited: the same id arriving meanwhile, in this tab or another, finds it.
+          entry = { id: args.request_id, input, running: true, receipt: { ok: false, code: "dispatch_uncertain", error: "This request was interrupted after it may have sent input. Observe before continuing; it is never replayed.",
             dispatched: true, mayHaveChangedState: true, retrySafe: false, next: "observe", request_id: args.request_id } };
+          receipts.set(sessionId, stored);
+          stored.set(entry.id, entry);
+          for (const [id, old] of stored) { if (stored.size <= 64) break; if (!old.running) stored.delete(id); }
         }
         single = !batch;
         const observed = state.observations.get(args.observationId);
@@ -1180,12 +1259,6 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           // keyboard and pointer events on the shared cloud desktop.
           await beforeInput(tab);
           requestSignal.throwIfAborted();
-        }
-        if (entry) {
-          const stored = receipts.get(sessionId) ?? new Map();
-          receipts.set(sessionId, stored);
-          stored.set(entry.id, entry);
-          for (const old of stored.keys()) { if (stored.size <= 64) break; stored.delete(old); }
         }
         const contents = tab.view.webContents;
         const steps = [];
@@ -1259,9 +1332,16 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           const stillArmed = await arm();
           if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
           if (!stillArmed) return refuse("secrets_unavailable");
+          // The page had every wait above to move the keyboard elsewhere or change the field. This is the last
+          // look: nothing is awaited between its answer and the typing.
+          const ready = await inPage(secretTarget, target);
+          if (!live() || originOf(contents.getURL()) !== site) return { changed: "page_changed", error: LEFT_SITE };
+          if (ready.code) return refuse(ready.code);
+          if (ready.field !== shown.field) return refuse("stale_element");
           let placeholder;
           try { ({ placeholder } = secrets.issue({ sessionId, secretRef: action.secretRef, tabId: tab.tabId, origin: site, ref: action.ref })); }
           catch (error) { return refuse(["unknown_secret", "secret_not_allowed_here"].includes(error?.code) ? error.code : "secrets_unavailable"); }
+          secretTabs.add(tab.tabId);
           await contents.insertText(placeholder);
           requestSignal.throwIfAborted();
           // The comparison happens in the page's isolated world; only its yes or no comes back.
@@ -1418,10 +1498,10 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
             if (!batch) {
               return { ok: result.verified, dispatched, mayHaveChangedState: dispatched, outcome: result.verified ? "verified" : "value_mismatch", retrySafe: false,
                 ...(result.verified ? {} : { code: "value_mismatch", error: "The control did not retain the requested value. Observe its current state before deciding how to continue." }),
-                tabId: tab.tabId, control: result.control, next: "observe" };
+                tabId: tab.tabId, control: cutControl(mask, result.control, 200, 1000), next: "observe" };
             }
             if (!result.verified) {
-              failure = { index, type: action.type, ref: action.ref, code: "value_mismatch", error: "The control did not retain the requested value.", control: result.control };
+              failure = { index, type: action.type, ref: action.ref, code: "value_mismatch", error: "The control did not retain the requested value.", control: cutControl(mask, result.control, 200, 1000) };
               break;
             }
             steps.push({ i: index, type: action.type, ref: action.ref, outcome: point.unchanged ? "unchanged" : "verified" });
@@ -1441,7 +1521,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
         let observation;
         try {
           // The receipt itself says what became of the secrets, once.
-          const { ok: _ok, tabId: _tabId, trust: _trust, secrets: _secrets, secretsNext: _secretsNext, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive", sessionId });
+          const { ok: _ok, tabId: _tabId, trust: _trust, secrets: _secrets, secretsNext: _secretsNext, ...post } = await observe(tab, false, requestSignal, null, { mode: "interactive", sessionId }, mask);
           observation = post;
         } catch (error) {
           if (requestSignal.aborted) throw error;
@@ -1456,7 +1536,7 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
           next: failure ? "Read observation, then fix or replan the failed step; completed steps are not repeated." : skipped ? "The page changed; plan the skipped steps from observation." : "Verify the result in observation; act on it directly." },
           Boolean(failure || skipped));
         // What is kept for a retry is already free of every secret and placeholder.
-        if (entry) entry.receipt = secrets ? secrets.redact(receipt) : receipt;
+        if (entry) entry.receipt = mask.redact(receipt);
         return receipt;
       };
       const result = await Promise.race([run(), canceled]);
@@ -1492,16 +1572,21 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, isV
       if (openingController && opening.get(sessionId) === openingController) opening.delete(sessionId);
       if (signal && abort) signal.removeEventListener("abort", abort);
       if (state && state.controller === controller) state.controller = null;
+      if (entry) entry.running = false;
     }
   }
   /**
    * The only way a result leaves this host. Page text, a site tool's answer or an error can echo a saved secret or
-   * the placeholder typed in its place: every result of every operation is redacted, whether or not the flag is on.
+   * the placeholder typed in its place: every result of every operation is redacted, whether or not the flag is on,
+   * by what was secret when the operation began as well as when it ends.
    * @param {Parameters<typeof perform>[0]} [input] @param {Parameters<typeof perform>[1]} [options]
    */
   async function request(input, options) {
-    const result = await perform(input, options);
-    return secrets ? secrets.redact(result) : result;
+    const mask = secrets ? secrets.redactor() : NO_SECRETS;
+    const result = await perform(input, options, mask);
+    if (!result || !captured.has(result.image)) return mask.redact(result);
+    const { image, ...rest } = result;
+    return { ...mask.redact(rest), image };
   }
   return { request, pause, resume, invalidate, stateFor, navigationGuard, inheritNavigation, manualNavigation };
 }

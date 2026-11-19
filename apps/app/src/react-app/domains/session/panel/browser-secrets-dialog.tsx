@@ -171,7 +171,7 @@ function BrowserSecretsBody({ sessionId, pageUrl, nameRef, secretField }: {
               : <FieldDescription id={`${id}-sites-note`}>It is only sent to these sites. One https:// address per line.</FieldDescription>}
           </Field>
           <SecretField id={`${id}-value`} testId="browser-secret-value" label={kindLabel} handleRef={secretField} disabled={busy}
-            description="Stays in memory on this computer until you remove it or quit OpenWork."
+            description="Temporary on this computer. Remove it to stop new fills; quit OpenWork to clear its memory."
             error={problem?.field === "value" ? problem.message : null}
             onValueChange={setHasValue} onSubmit={() => void save()} />
           {problem?.field === "save" ? <FieldError data-testid="browser-secret-save-error">{problem.message}</FieldError> : null}

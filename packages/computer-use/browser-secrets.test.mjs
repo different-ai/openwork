@@ -205,8 +205,8 @@ test("rule 3: a secret allowed for two origins is swapped for either and reporte
 test("rule 3: loopback http is swapped only under allowLoopbackHttp", () => {
   const local = "http://127.0.0.1:4010";
   const { secrets, placeholder } = seeded({ origins: [local], options: { allowLoopbackHttp: true } });
-  assert.equal(secrets.rewrite(jsonRequest({ password: placeholder }, { url: `${local}/login` })).body.toString(), JSON.stringify({ password: PLAIN }));
   assert.deepEqual(secrets.rewrite(jsonRequest({ password: placeholder }, { url: "http://127.0.0.1:4011/login" })), { action: "continue" });
+  assert.equal(secrets.rewrite(jsonRequest({ password: placeholder }, { url: `${local}/login` })).body.toString(), JSON.stringify({ password: PLAIN }));
 });
 
 test("rule 4: JSON bodies get the JSON-escaped value, in values and keys, at any depth", () => {
@@ -311,14 +311,37 @@ test("rule 4: multipart is refused when the placeholder is in a part's headers o
   assert.deepEqual(secrets.rewrite(request({ headers: { "Content-Type": "multipart/form-data" }, body: multipart(boundary, [{ headers: 'Content-Disposition: form-data; name="a"', body: placeholder }]) })), { action: "fail" });
 });
 
-test("rule 4: multipart is refused for a value with a line break or the boundary", () => {
-  const boundary = "----fakeBoundary1234567890";
-  for (const value of ["fake-line\r\nbreak", "fake-line\nbreak", "fake-carriage\rreturn", `fake-----fakeBoundary1234567890-value`]) {
-    const { secrets, placeholder } = seeded({ value });
-    const body = multipart(boundary, [{ headers: 'Content-Disposition: form-data; name="password"', body: placeholder }]);
-    assert.deepEqual(secrets.rewrite(request({ headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body })), { action: "fail" });
-    assert.deepEqual(state(secrets), ["not_sent:unsupported_encoding"]);
+test("rule 4: multipart is refused for a value with a line break or two leading dashes, whatever the boundary", () => {
+  for (const value of ["fake-line\r\nbreak", "fake-line\nbreak", "fake-carriage\rreturn", "--fake-leading-dashes"]) {
+    for (const boundary of ["----fakeBoundary1234567890", "fake-leading-dashes", "unrelated"]) {
+      const { secrets, placeholder } = seeded({ value });
+      const body = multipart(boundary, [{ headers: 'Content-Disposition: form-data; name="password"', body: placeholder }]);
+      assert.deepEqual(secrets.rewrite(request({ headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body })), { action: "fail" });
+      assert.deepEqual(state(secrets), ["not_sent:unsupported_encoding"]);
+    }
   }
+});
+
+test("rule 4: whether a multipart body is swapped never depends on the boundary and the value together", () => {
+  const sent = (value, boundary, content = (placeholder) => placeholder) => {
+    const { secrets, placeholder } = seeded({ value });
+    const parts = (text) => multipart(boundary, [{ headers: 'Content-Disposition: form-data; name="password"', body: content(text) }]);
+    const decision = secrets.rewrite(request({ headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body: parts(placeholder) }));
+    if (decision.body) assert.ok(decision.body.equals(parts(value)), "the part holds the value and the body keeps its parts");
+    return decision.action === "continue" && decision.body !== undefined;
+  };
+  // A boundary the page chose to be a piece of the value, its start or all of it, changes nothing.
+  for (const boundary of ["probe", "fake", "fake-boundary-probe", "-boundary-", "neverPresent"]) assert.equal(sent("fake-boundary-probe", boundary), true);
+  assert.equal(sent("fake-----fakeBoundary1234567890-value", "----fakeBoundary1234567890"), true);
+  // A page that writes the start of a delimiter in front of the placeholder is refused for that alone: the same
+  // answer whether the value would have completed the delimiter or not.
+  for (const before of ["\r\n-", "\r\n--", "\r\n--zz", "\r\n--zzfa"]) {
+    for (const value of ["fake-boundary-probe", "ke-would-complete", "-zzfake-would-complete", "zzfake-would-complete"]) {
+      assert.equal(sent(value, "zzfake", (text) => `line${before}${text}`), false);
+    }
+  }
+  // Anything else in front of the placeholder is the page's own text.
+  for (const before of ["", "\r\n", "\r\nx-", "--zz", "\r\n -"]) assert.equal(sent("fake-boundary-probe", "zzfake", (text) => `line${before}${text}`), true);
 });
 
 test("rule 4: text/plain that is JSON is rewritten as JSON, and as raw text otherwise", () => {
@@ -409,42 +432,106 @@ test("rules 5 and 6: header and body are swapped together, without a Content-Len
   assert.equal(bodyOnly.headers, undefined);
 });
 
-test("rule 7: each redirect hop is judged on its own address", () => {
+test("rule 7: each request the page makes is judged on its own address", () => {
   const { secrets, placeholder } = seeded();
   const body = Buffer.from(JSON.stringify({ password: placeholder }));
   const headers = { "Content-Type": "application/json" };
-  assert.equal(secrets.rewrite(request({ headers, body })).body.toString(), JSON.stringify({ password: PLAIN }));
-  assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/moved`, headers, body })), { action: "continue" });
-  assert.deepEqual(secrets.rewrite(request({ url: `${SITE}/moved?p=${placeholder}`, headers, body })), { action: "continue" });
-  assert.equal(secrets.rewrite(request({ url: `${SITE}/back`, headers, body })).body.toString(), JSON.stringify({ password: PLAIN }));
+  const named = (requestId, extra) => request({ headers, body, requestId, networkId: `net-${requestId}`, ...extra });
+  assert.equal(secrets.rewrite(named("r1")).body.toString(), JSON.stringify({ password: PLAIN }));
+  assert.deepEqual(secrets.rewrite(named("r2", { url: `${OTHER}/moved` })), { action: "continue" });
+  assert.deepEqual(secrets.rewrite(named("r3", { url: `${SITE}/moved?p=${placeholder}` })), { action: "continue" });
+  assert.equal(secrets.rewrite(named("r4", { url: `${SITE}/back` })).body.toString(), JSON.stringify({ password: PLAIN }));
   assert.deepEqual(secrets.status("s1", TAB).map(({ state, sentTo }) => [state, sentTo]), [["sent", [SITE]]]);
 });
 
-test("rule 7: a redirect that replays the rewritten body to an origin the secret is not allowed for is blocked", () => {
+test("rule 7: a redirect of a rewritten request to an origin the secret is not allowed for is blocked, by what it follows and never by what it holds", () => {
   const value = 'fake "quoted" & 100% a+b=c';
   for (const [contentType, text] of [["application/json", (secret) => JSON.stringify({ password: secret })], ["application/x-www-form-urlencoded", (secret) => `password=${secret}`], ["text/plain", (secret) => `password=${secret}`]]) {
-    const { secrets, placeholder } = seeded({ value, origins: [SITE, API] });
-    const headers = { "Content-Type": contentType, Origin: SITE };
-    // Before anything was sent, the same characters in a request elsewhere are the page's own business.
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/collect`, headers, body: Buffer.from(`note=${value}`) })), { action: "continue" });
-    const rewritten = secrets.rewrite(request({ headers, body: Buffer.from(text(placeholder)) })).body;
-    assert.ok(rewritten.includes(contentType === "text/plain" ? value : contentType === "application/json" ? JSON.stringify(value).slice(1, -1) : new URLSearchParams([["", value]]).toString().slice(1)));
-    // Chromium sends the rewritten body on to the redirect target.
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/collect`, headers, body: rewritten })), { action: "fail" });
-    assert.deepEqual(secrets.rewrite(request({ url: "http://app.example/login", headers, body: rewritten })), { action: "fail" });
-    assert.deepEqual(secrets.rewrite(request({ url: "wss://app.example/socket", method: "GET", headers: { "Sec-WebSocket-Protocol": value } })), { action: "fail" });
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/collect`, method: "GET", headers: { "X-Token": value } })), { action: "fail" });
-    assert.deepEqual(secrets.rewrite(request({ url: "not an address", headers, body: rewritten })), { action: "fail" });
-    // The same body may follow a redirect to another origin of that secret, and other requests go on.
-    assert.deepEqual(secrets.rewrite(request({ url: `${API}/session`, headers, body: rewritten })), { action: "continue" });
-    assert.deepEqual(secrets.rewrite(request({ url: `${SITE}/again`, headers, body: rewritten })), { action: "continue" });
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/collect`, headers, body: Buffer.from(JSON.stringify({ event: "submit" })) })), { action: "continue" });
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/pixel.gif`, method: "GET", headers: { Accept: "image/*" } })), { action: "continue" });
-    assert.deepEqual(state(secrets), ["sent"]);
-    // Once the placeholder has expired the host no longer intercepts the tab.
-    secrets.tabClosed(TAB);
-    assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/collect`, headers, body: rewritten })), { action: "continue" });
+    // Chromium names the hop it redirects (`redirectOf`) and keeps one network id for the chain: either is enough.
+    for (const lineage of ["redirectOf", "networkId", "both"]) {
+      const { secrets, placeholder, secret, clock } = seeded({ value, origins: [SITE, API] });
+      const headers = { "Content-Type": contentType, Origin: SITE };
+      const hop = (requestId, from, extra) => request({ headers, requestId, ...(from && lineage !== "networkId" ? { redirectOf: from } : {}), ...(lineage !== "redirectOf" ? { networkId: from ? "chain-1" : `chain-${requestId}` } : {}), ...extra });
+      const first = lineage === "redirectOf" ? hop("r1", null, { body: Buffer.from(text(placeholder)) }) : hop("r1", null, { networkId: "chain-1", body: Buffer.from(text(placeholder)) });
+      const rewritten = secrets.rewrite(first).body;
+      assert.ok(rewritten.includes(contentType === "text/plain" ? value : contentType === "application/json" ? JSON.stringify(value).slice(1, -1) : new URLSearchParams([["", value]]).toString().slice(1)));
+      // The redirect is stopped at an origin outside the allow-list, at http, at a WebSocket and at no address at all,
+      // with the body it carries, with none it shows, and however late it comes or whatever became of the secret.
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: `${OTHER}/collect`, body: rewritten })), { action: "fail" });
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: "http://app.example/login", body: rewritten })), { action: "fail" });
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: "not an address", body: rewritten })), { action: "fail" });
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: `${OTHER}/collect`, body: null, bodyComplete: false })), { action: "fail" });
+      clock.at += 86_400_000;
+      secrets.remove("s1", secret.secretRef);
+      assert.equal(secrets.live(TAB), false);
+      assert.equal(secrets.guarded(TAB), true);
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: `${OTHER}/collect`, body: rewritten })), { action: "fail" });
+      // A hop that left the body behind, as a 302 after a sign-in does, carries nothing and goes anywhere.
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: `${OTHER}/welcome`, method: "GET", headers: { Accept: "text/html" } })), { action: "continue" });
+      // It may go on to another origin of that secret, and is still followed from there.
+      assert.deepEqual(secrets.rewrite(hop("r3", "r1", { url: `${API}/session`, body: rewritten })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(hop("r4", "r3", { url: `${SITE}/again`, body: rewritten })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(hop("r5", "r4", { url: `${OTHER}/collect`, body: rewritten })), { action: "fail" });
+      // What the page sends itself is its own business, whatever it holds: a block would tell it that a guess was right.
+      const own = (extra) => request({ requestId: "p1", networkId: "chain-p1", url: `${OTHER}/collect`, ...extra });
+      assert.deepEqual(secrets.rewrite(own({ headers, body: rewritten })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(own({ headers: { "Content-Type": "text/plain" }, body: Buffer.from(value) })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(own({ method: "GET", headers: { "X-Token": value } })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(own({ url: "wss://app.example/socket", method: "GET", headers: { "Sec-WebSocket-Protocol": value } })), { action: "continue" });
+      assert.deepEqual(secrets.rewrite(own({ headers, body: null, bodyComplete: false })), { action: "continue" });
+      // A closed tab's requests are gone with it.
+      secrets.tabClosed(TAB);
+      assert.equal(secrets.guarded(TAB), false);
+      assert.deepEqual(secrets.rewrite(hop("r2", "r1", { url: `${OTHER}/collect`, body: rewritten })), { action: "continue" });
+    }
   }
+});
+
+test("rule 7: a header the store rewrote is followed like a body", () => {
+  const { secrets, placeholder } = seeded({ kind: "token" });
+  const rewritten = secrets.rewrite(request({ method: "GET", requestId: "r1", headers: { Authorization: `Bearer ${placeholder}`, Accept: "*/*" } })).headers;
+  assert.equal(rewritten.Authorization, `Bearer ${PLAIN}`);
+  assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/moved`, method: "GET", requestId: "r2", redirectOf: "r1", headers: rewritten })), { action: "fail" });
+  assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/moved`, method: "GET", requestId: "r2", redirectOf: "r1", headers: { Accept: "*/*" } })), { action: "fail" });
+  assert.deepEqual(secrets.rewrite(request({ url: `${SITE}/moved`, method: "GET", requestId: "r2", redirectOf: "r1", headers: rewritten })), { action: "continue" });
+  assert.deepEqual(secrets.rewrite(request({ url: `${OTHER}/moved`, method: "GET", requestId: "p1", headers: rewritten })), { action: "continue" });
+});
+
+test("rule 7: after a rewrite nobody named, no request that could be its redirect leaves for another origin until the tab closes", () => {
+  const body = (secret) => Buffer.from(JSON.stringify({ password: secret }));
+  const headers = { "Content-Type": "application/json" };
+  const elsewhere = (secrets, extra) => secrets.rewrite(request({ url: `${OTHER}/collect`, headers, ...extra })).action;
+  for (const end of ["expired", "reissued", "removed", "cleared", "document changed", "interception lost"]) {
+    const { secrets, secret, placeholder, clock } = seeded({ value: "fake-unnamed-value", options: { placeholderTtlMs: 1000 } });
+    const events = [];
+    secrets.onGuardChange((tabId, guarded) => events.push([tabId, guarded]));
+    // Before anything was sent, the page's requests are its own.
+    assert.equal(elsewhere(secrets, { body: body("fake-unnamed-value") }), "continue");
+    const rewritten = secrets.rewrite(request({ headers, body: body(placeholder) })).body;
+    if (end === "expired") clock.at += 1000;
+    if (end === "reissued") secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: TAB, origin: SITE, ref: "e1" });
+    if (end === "removed") secrets.remove("s1", secret.secretRef);
+    if (end === "cleared") secrets.clear();
+    if (end === "document changed") secrets.documentChanged(TAB);
+    if (end === "interception lost") secrets.interceptionLost(TAB);
+    clock.at += 86_400_000;
+    assert.equal(secrets.live(TAB), false, end);
+    assert.equal(secrets.guarded(TAB), true, end);
+    // The same answer for the rewritten body, a right guess, a wrong guess and a body that cannot be read.
+    for (const sent of [{ body: rewritten }, { body: body("fake-unnamed-value") }, { body: body("fake-wrong-guess") }, { body: null, bodyComplete: false }]) assert.equal(elsewhere(secrets, sent), "fail", end);
+    // A request without a body cannot be the redirect of a rewritten body, and the secret's own origins stay open.
+    assert.equal(elsewhere(secrets, { method: "GET", headers: { Accept: "image/*" } }), "continue", end);
+    assert.equal(secrets.rewrite(request({ url: `${SITE}/next`, headers, body: rewritten })).action, "continue", end);
+    secrets.tabClosed(TAB);
+    assert.equal(secrets.guarded(TAB), false, end);
+    assert.equal(elsewhere(secrets, { body: rewritten }), "continue", end);
+    assert.deepEqual(events.at(-1), [TAB, false], end);
+  }
+  // An unnamed rewrite of a header can be redirected without a body: then nothing leaves for another origin.
+  const { secrets, placeholder } = seeded({ kind: "token" });
+  secrets.rewrite(request({ method: "GET", headers: { Authorization: `Bearer ${placeholder}` } }));
+  assert.equal(elsewhere(secrets, { method: "GET", headers: { Accept: "image/*" } }), "fail");
+  assert.equal(secrets.rewrite(request({ url: `${SITE}/next`, method: "GET", headers: {} })).action, "continue");
 });
 
 test("rule 8: a failure inside the decision fails the request and nothing is thrown", () => {
@@ -566,16 +653,13 @@ test("noteAction on a tab without placeholders, or after they ended, does nothin
   assert.deepEqual(state(held.secrets), ["not_sent:expired"]);
 });
 
-test("status: a changed document lets requests in flight finish, then the placeholder expires", () => {
-  const { secrets, clock, placeholder } = seeded({ options: { lingerMs: 15_000, placeholderTtlMs: 300_000 } });
-  secrets.documentChanged(TAB);
+test("status: a changed document ends its placeholders at once", () => {
+  const { secrets, clock, placeholder } = seeded({ options: { placeholderTtlMs: 300_000 } });
   secrets.documentChanged("tab-unknown");
-  clock.at += 14_999;
   assert.equal(secrets.live(TAB), true);
   assert.deepEqual(state(secrets), ["pending"]);
-  // A second navigation does not extend the first one's grace period.
   secrets.documentChanged(TAB);
-  clock.at += 1;
+  secrets.documentChanged(TAB);
   assert.equal(secrets.live(TAB), false);
   assert.deepEqual(state(secrets), ["not_sent:expired"]);
   assert.deepEqual(secrets.rewrite(jsonRequest({ password: placeholder })), { action: "continue" });
@@ -585,13 +669,17 @@ test("status: a changed document lets requests in flight finish, then the placeh
   assert.deepEqual(secrets.status("s1", TAB), []);
 });
 
-test("status: a form post in flight when the document changes still gets the value and stays sent after expiry", () => {
+test("status: a form post is rewritten before its document is replaced, stays sent, and the next document cannot spend the placeholder", () => {
   const { secrets, clock, placeholder } = seeded();
+  const form = () => request({ resourceType: "Document", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: Buffer.from(`password=${placeholder}`) });
+  assert.equal(secrets.rewrite(form()).body.toString(), `password=${PLAIN}`);
   secrets.documentChanged(TAB);
-  clock.at += 5000;
-  assert.equal(secrets.rewrite(request({ resourceType: "Document", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: Buffer.from(`password=${placeholder}`) })).body.toString(), `password=${PLAIN}`);
-  clock.at += 20_000;
   assert.equal(secrets.live(TAB), false);
+  assert.deepEqual(state(secrets), ["sent"]);
+  // The document that follows was handed the placeholder, in its address or by the page before it.
+  assert.deepEqual(secrets.rewrite(form()), { action: "continue" });
+  assert.deepEqual(secrets.rewrite(jsonRequest({ password: placeholder })), { action: "continue" });
+  clock.at += 20_000;
   assert.deepEqual(state(secrets), ["sent"]);
 });
 
@@ -641,7 +729,8 @@ test("status: removing a secret, closing its tab or losing interception revokes 
   assert.deepEqual(all.secrets.status("s1", TAB), []);
   assert.deepEqual(all.secrets.list("s1"), []);
   assert.deepEqual(all.secrets.rewrite(jsonRequest({ password: all.placeholder })), { action: "continue" });
-  assert.equal(all.secrets.redactText(`x ${PLAIN} y`), `x ${PLAIN} y`);
+  // Ending a secret stops its use; what it was is still never read back.
+  for (const ended of [removed, session, all]) assert.equal(ended.secrets.redactText(`x ${PLAIN} y`), "x [secret] y");
 });
 
 test("a new placeholder for the same field retires the previous one", () => {
@@ -661,12 +750,12 @@ test("a new placeholder for the same field retires the previous one", () => {
   assert.equal(secrets.status("s1", TAB).length, 2);
 });
 
-test("a field of a new document does not retire the previous document's placeholder while it lingers", () => {
+test("a field of a new document gets its own placeholder; the previous document's is spent and still reported", () => {
   const { secrets, secret, placeholder } = seeded();
   secrets.documentChanged(TAB);
   const next = secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: TAB, origin: SITE, ref: "e1" }).placeholder;
-  assert.deepEqual(JSON.parse(secrets.rewrite(jsonRequest({ before: placeholder, after: next })).body.toString()), { before: PLAIN, after: PLAIN });
-  assert.equal(secrets.status("s1", TAB).length, 2);
+  assert.deepEqual(JSON.parse(secrets.rewrite(jsonRequest({ before: placeholder, after: next })).body.toString()), { before: placeholder, after: PLAIN });
+  assert.deepEqual(state(secrets), ["not_sent:expired", "sent"]);
 });
 
 test("live and onLiveChange follow the tab's placeholders", () => {
@@ -699,28 +788,27 @@ test("live and onLiveChange follow the tab's placeholders", () => {
 });
 
 test("a host that only listens hears about expiry without reading", async () => {
-  const secrets = createBrowserSecrets({ placeholderTtlMs: 300_000, lingerMs: 30 });
+  const secrets = createBrowserSecrets({ placeholderTtlMs: 30 });
   const secret = secrets.add({ sessionId: "s1", label: "Example", kind: "password", origins: [SITE], value: PLAIN });
   const ended = new Promise((resolve) => secrets.onLiveChange((tabId, live) => { if (!live) resolve(tabId); }));
   secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: TAB, origin: SITE, ref: "e1" });
-  secrets.documentChanged(TAB);
   const keepAlive = setTimeout(() => {}, 5000);
   assert.equal(await ended, TAB);
   clearTimeout(keepAlive);
   assert.deepEqual(state(secrets), ["not_sent:expired"]);
 });
 
-test("a store with live placeholders does not keep the process alive", () => {
+test("a store with live placeholders and a guarded request does not keep the process alive", () => {
   const module = fileURLToPath(new URL("./browser-secrets.mjs", import.meta.url));
   const script = `import { createBrowserSecrets } from ${JSON.stringify(module)};
     const secrets = createBrowserSecrets();
     const secret = secrets.add({ sessionId: "s1", label: "Example", kind: "password", origins: ["https://app.example"], value: "fake-Passw0rd-123" });
-    secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: "tab-1", origin: "https://app.example", ref: "e1" });
-    secrets.documentChanged("tab-1");
-    console.log(secrets.live("tab-1"));`;
+    const { placeholder } = secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: "tab-1", origin: "https://app.example", ref: "e1" });
+    const sent = secrets.rewrite({ tabId: "tab-1", url: "https://app.example/login", method: "POST", headers: { "Content-Type": "text/plain" }, body: Buffer.from(placeholder), bodyComplete: true, requestId: "r1" });
+    console.log(sent.body.length, secrets.live("tab-1"), secrets.guarded("tab-1"));`;
   const child = spawnSync(process.execPath, ["--input-type=module", "-e", script], { encoding: "utf8", timeout: 10_000 });
   assert.equal(child.status, 0, child.stderr);
-  assert.equal(child.stdout.trim(), "true");
+  assert.equal(child.stdout.trim(), "17 true true");
 });
 
 const encodings = (value) => ({
@@ -809,12 +897,12 @@ test("redact replaces placeholders, every one ever issued by the store, and only
   assert.equal(secrets.redactText(placeholder.slice(0, 31)), placeholder.slice(0, 31));
   secrets.remove("s1", secret.secretRef);
   clock.at += 3_600_000;
-  assert.equal(secrets.redactText(`${placeholder} ${PLAIN}`), `[secret placeholder] ${PLAIN}`);
+  assert.equal(secrets.redactText(`${placeholder} ${PLAIN}`), "[secret placeholder] [secret]");
   secrets.clear();
   assert.equal(secrets.redactText(second), "[secret placeholder]");
 });
 
-test("redact covers strings and keys at any depth, leaves its input alone and passes a PNG at image.data through", () => {
+test("redact covers strings and keys at any depth, leaves its input alone and passes nothing through for its shape", () => {
   const { secrets, placeholder } = seeded({ value: AWKWARD });
   secrets.add({ sessionId: "s2", label: "Other conversation", kind: "token", origins: [OTHER], value: PLAIN });
   const png = `iVBORw0KGgo${Buffer.from(`pixels ${PLAIN} pixels`).toString("base64")}`;
@@ -841,7 +929,7 @@ test("redact covers strings and keys at any depth, leaves its input alone and pa
     url: `${SITE}/login?next=[secret]`,
     elements: [{ ref: "e1", name: "Password [secret]", value: "[secret placeholder]", options: [['deep "[secret]"']] }, { text: "shared [secret]" }, { text: "shared [secret]" }],
     "key [secret]": { "[secret placeholder]": "[secret]" },
-    image: { mimeType: "image/png", data: png, width: 10, alt: "shot of [secret]" },
+    image: { mimeType: "image/png", data: secrets.redactText(png), width: 10, alt: "shot of [secret]" },
     attachment: { data: secrets.redactText(png) },
     other: { image: { data: "not a picture [secret]" } },
     ["__proto__"]: { polluted: "[secret]" },
@@ -851,6 +939,8 @@ test("redact covers strings and keys at any depth, leaves its input alone and pa
   assert.equal({}.polluted, undefined);
   assert.equal(output.when, input.when);
   assert.equal(output.bytes, input.bytes);
+  // What looks like a picture is text a page can write too: a site tool's answer shaped like one is redacted.
+  assert.ok(!output.image.data.includes(Buffer.from(PLAIN).toString("base64")) && output.image.data.includes("[secret]"));
   assert.notEqual(output.attachment.data, png);
   for (const leaf of [5, null, undefined, true, "short"]) assert.equal(secrets.redact(leaf), leaf);
   assert.deepEqual(secrets.redact([PLAIN, [AWKWARD]]), ["[secret]", ["[secret]"]]);
@@ -955,8 +1045,8 @@ test("decidePausedRequest never rejects", async () => {
   assert.deepEqual(await decidePausedRequest(secrets, TAB, { requestId: "r3", request: { url: 5 } }), blocked("r3"));
   assert.deepEqual(await decidePausedRequest(secrets, TAB, paused({ hasPostData: true }), { readBody: () => { throw new Error("sync"); } }), { method: "Fetch.continueRequest", params: { requestId: "interception-1" } });
   assert.deepEqual(await decidePausedRequest(undefined, TAB, paused({})), blocked("interception-1"));
-  assert.deepEqual(await decidePausedRequest({ live: () => { throw new Error("broken"); } }, TAB, paused({})), blocked("interception-1"));
-  assert.deepEqual(await decidePausedRequest({ live: () => true, rewrite: () => { throw new Error("broken"); } }, TAB, paused({})), blocked("interception-1"));
+  assert.deepEqual(await decidePausedRequest({ guarded: () => { throw new Error("broken"); } }, TAB, paused({})), blocked("interception-1"));
+  assert.deepEqual(await decidePausedRequest({ guarded: () => true, rewrite: () => { throw new Error("broken"); } }, TAB, paused({})), blocked("interception-1"));
 });
 
 test("no error, status or summary anywhere holds a value or a placeholder", () => {
@@ -974,4 +1064,117 @@ test("no error, status or summary anywhere holds a value or a placeholder", () =
   record(() => secrets.availableFor("s1", SITE));
   assert.equal(seen.length, 9);
   for (const text of seen) assert.ok(!text.includes(AWKWARD) && !text.includes(JSON.stringify(AWKWARD).slice(1, -1)) && !text.includes(placeholder));
+});
+
+test("redact: copies of secrets that overlap, of one secret or of two, leave nothing of either", () => {
+  const { secrets } = store();
+  const add = (value) => secrets.add({ sessionId: "s1", label: "Example", kind: "token", origins: [SITE], value });
+  add("fakefake"); add("summer-2024"); add("2024-winter");
+  assert.equal(secrets.redactText("fakefakefake"), "[secret]");
+  assert.equal(secrets.redactText("a fakefakefakefakefak b"), "a [secret]fak b");
+  assert.equal(secrets.redactText("x summer-2024-winter y"), "x [secret] y");
+  assert.equal(secrets.redactText(`${Buffer.from("fakefake").toString("hex")}66616b65`), "[secret]");
+  assert.equal(secrets.redactText("fakefake fakefake"), "[secret] [secret]");
+});
+
+test("redact: UTF-8 shown as Windows-1252 or Latin-1, as a page without a charset shows it", () => {
+  // "€" and "—" have bytes that the two encodings show differently; "é" and "✓" do not.
+  for (const value of ["fake-é-value", "fake €5 — ✓ value", "fake 😀 value"]) {
+    const { secrets } = store();
+    secrets.add({ sessionId: "s1", label: "Example", kind: "password", origins: [SITE], value });
+    const bytes = Buffer.from(value, "utf8");
+    const latin1 = bytes.toString("latin1");
+    const windows1252 = new TextDecoder("windows-1252").decode(bytes);
+    for (const shown of new Set([latin1, windows1252])) {
+      assert.equal(secrets.redactText(shown), "[secret]");
+      assert.equal(secrets.redactText(`Echo ${shown}.`), "Echo [secret].");
+    }
+  }
+});
+
+test("redact: hex and base64 broken into lines or groups", () => {
+  for (const value of [PLAIN, AWKWARD]) {
+    const { secrets } = store();
+    secrets.add({ sessionId: "s1", label: "Example", kind: "password", origins: [SITE], value });
+    const hex = Buffer.from(value).toString("hex");
+    assert.equal(secrets.redactText(`dump: ${hex.match(/.{1,2}/g).join(" ")} end`), "dump: [secret] end");
+    assert.equal(secrets.redactText(hex.match(/.{1,32}/g).join("\n")), "[secret]");
+    for (const prefix of ["", "u", "us"]) for (const width of [4, 7, 64, 76]) for (const line of ["\n", "\r\n"]) {
+      const encoded = Buffer.from(`${prefix}${value}`).toString("base64");
+      const redacted = secrets.redactText(`-----BEGIN-----\n${encoded.match(new RegExp(`.{1,${width}}`, "g")).join(line)}\n-----END-----`);
+      // At most the characters that hold the prefix alone are left.
+      assert.match(redacted, /^-----BEGIN-----\n[A-Za-z0-9]{0,2}\[secret\]\n-----END-----$/, `${prefix.length} bytes before, lines of ${width}`);
+    }
+  }
+});
+
+test("redact: a placeholder is withheld in the encodings a value is, and only whole", () => {
+  const { secrets, placeholder } = seeded();
+  const bytes = Buffer.from(placeholder);
+  const spelled = {
+    percent: [...placeholder].map((char) => `%${char.charCodeAt(0).toString(16)}`).join(""),
+    mixed: [...placeholder].map((char, index) => index % 3 === 0 ? `%${char.charCodeAt(0).toString(16).toUpperCase()}` : index % 3 === 1 ? `&#${char.charCodeAt(0)};` : `\\u00${char.charCodeAt(0).toString(16)}`).join(""),
+    hex: bytes.toString("hex"), HEX: bytes.toString("hex").toUpperCase(), grouped: bytes.toString("hex").match(/.{2}/g).join(" "),
+    base64: bytes.toString("base64"), base64url: bytes.toString("base64url"), wrapped: bytes.toString("base64").match(/.{1,16}/g).join("\n"),
+  };
+  for (const [name, form] of Object.entries(spelled)) {
+    assert.equal(secrets.redactText(form), "[secret placeholder]", name);
+    assert.equal(secrets.redactText(`typed ${form} here`), "typed [secret placeholder] here", name);
+  }
+  for (const [before, after] of [["u", ""], ["us", "!"], ["user:", "!!"]]) {
+    const encoded = Buffer.from(`${before}${placeholder}${after}`).toString("base64");
+    const redacted = secrets.redactText(encoded);
+    assert.ok(redacted.includes("[secret placeholder]") && redacted.length < 40, `base64 after ${before.length} bytes`);
+  }
+  // Part of a placeholder, or another store's, is nobody's.
+  const elsewhere = Buffer.from(seeded().placeholder).toString("hex");
+  assert.equal(secrets.redactText(elsewhere), elsewhere);
+  assert.equal(secrets.redactText(spelled.hex.slice(0, 62)), spelled.hex.slice(0, 62));
+  assert.equal(secrets.redactText(spelled.percent.slice(0, -3)), spelled.percent.slice(0, -3));
+});
+
+test("redactText with a limit cuts after redacting: a match that reaches across the cut goes whole", () => {
+  const { secrets, placeholder } = seeded();
+  const text = `0123456789${PLAIN} tail ${placeholder} end`;
+  assert.equal(secrets.redactText(text, 5), "01234");
+  assert.equal(secrets.redactText(text, 10), "0123456789");
+  for (const limit of [11, 12, 10 + PLAIN.length]) assert.equal(secrets.redactText(text, limit), "0123456789[secret]", `cut at ${limit}`);
+  assert.equal(secrets.redactText(text, 10 + PLAIN.length + 3), "0123456789[secret] ta");
+  assert.equal(secrets.redactText(text, 10 + PLAIN.length + 7), "0123456789[secret] tail [secret placeholder]");
+  assert.equal(secrets.redactText(text, 1000), "0123456789[secret] tail [secret placeholder] end");
+  assert.equal(secrets.redactText(text, 0), "");
+  assert.equal(secrets.redactText("short", 3), "sho");
+  // The cut is counted in the text as it was read, so what is replaced before it never pulls later text into view.
+  assert.equal(secrets.redactText(`${PLAIN}${PLAIN}0123456789${PLAIN}`, PLAIN.length * 2 + 5), "[secret][secret]01234");
+  // A text read `span` characters past its cut holds every encoding of a secret that starts before the cut.
+  const { span } = secrets.redactor();
+  const deepest = [...Buffer.from(PLAIN)].map((byte) => `%25252525${byte.toString(16)}`).join("");
+  assert.ok(Number.isInteger(span) && span >= deepest.length && span >= 512);
+  assert.equal(secrets.redactText(`${"x".repeat(299)}${deepest} after`.slice(0, 300 + span), 300), `${"x".repeat(299)}[secret]`);
+});
+
+test("a value stays redacted after its secret is removed or the store is cleared, for as long as the store lives", () => {
+  for (const end of ["remove", "clearSession", "clear"]) {
+    const { secrets, secret, placeholder, clock } = seeded({ value: AWKWARD });
+    const before = secrets.redactor();
+    if (end === "remove") secrets.remove("s1", secret.secretRef);
+    if (end === "clearSession") secrets.clearSession("s1");
+    if (end === "clear") secrets.clear();
+    clock.at += 86_400_000;
+    assert.deepEqual(secrets.list("s1"), [], end);
+    assert.equal(secrets.describe("s1", secret.secretRef), null, end);
+    // A site that was sent the value can show it back at any time, raw or encoded.
+    const echoed = { raw: `Your password is ${AWKWARD}`, base64: Buffer.from(`user:${AWKWARD}`).toString("base64"), [`key ${encodeURIComponent(AWKWARD)}`]: [Buffer.from(AWKWARD).toString("hex"), placeholder] };
+    const clean = { raw: "Your password is [secret]", base64: `${Buffer.from("user:").toString("base64").slice(0, 6)}[secret]`, "key [secret]": ["[secret]", "[secret placeholder]"] };
+    for (const redact of [secrets.redact, before.redact, secrets.redactor().redact]) assert.deepEqual(redact(echoed), clean, end);
+    assert.equal(secrets.redactText(`${"x".repeat(8)}${AWKWARD}`, 10), "xxxxxxxx[secret]", end);
+    assert.ok(secrets.redactor().span >= before.span, end);
+    // The value is used for nothing else: no placeholder can be issued for it and no request is rewritten with it.
+    assert.throws(() => secrets.issue({ sessionId: "s1", secretRef: secret.secretRef, tabId: TAB, origin: SITE, ref: "e2" }), { code: "unknown_secret" });
+    assert.deepEqual(secrets.rewrite(jsonRequest({ password: placeholder })), { action: "continue" });
+    // A later secret is redacted next to it.
+    secrets.add({ sessionId: "s1", label: "Later", kind: "token", origins: [SITE], value: "fake-later-token" });
+    assert.equal(secrets.redactText(`${AWKWARD} fake-later-token`), "[secret] [secret]", end);
+    assert.equal(before.redactText(`${AWKWARD} fake-later-token`), "[secret] [secret]", end);
+  }
 });

@@ -65,6 +65,11 @@ async function site() {
       if (url.pathname.endsWith("no-cors")) delete headers["Access-Control-Allow-Origin"];
       response.writeHead(200, headers); response.end(body); return;
     }
+    if (url.pathname === "/collect/echo-document") {
+      const received = new URLSearchParams(body.toString()).get("password") || "";
+      response.writeHead(200, headers);
+      response.end(`<!doctype html><title>Echo response</title><p>${htmlEscape(received)}</p>`); return;
+    }
     if (url.pathname === "/collect/latin") {
       response.writeHead(200, { "Content-Type": "text/html" });
       response.end(`<!doctype html><title>${htmlEscape(VALUE)}</title><p>Echo ${htmlEscape(VALUE)}</p><button>Continue</button>`); return;
@@ -182,6 +187,26 @@ async function run() {
   const notSent = (c, tab, receipt) => { c.check(c.state(tab) === "not_sent", "an unsent secret was not reported not_sent"); c.check(JSON.stringify(receipt).includes("browser_handoff"), "the receipt did not direct a handoff"); };
   const install = (c, tab, code) => c.page(tab, `window.run = async () => { ${code} }; true`);
   const pathFor = () => `/collect/case-${++serial}`;
+
+  add("screenshots stay blocked after a native response echoes the secret into a new document", () => using({}, async c => {
+    c.facts.responseEcho = true;
+    const tab = await c.open();
+    await c.page(tab, "window.native=true; document.getElementById('login').action='/collect/echo-document'; true");
+    verified(c, await c.fill(tab));
+    await c.click(tab);
+    expect(await until(async () => await c.page(tab, "document.title") === "Echo response"), "the native form committed its echo response");
+    expect(await c.page(tab, "document.body.innerText") === VALUE, "the new document actually holds the echoed value");
+    const image = await c.observe(tab, { includeImage: true });
+    c.check(image.ok === false && image.code === "credential_on_screen", "a response document exposed its echoed value through an image");
+    c.store.remove(SESSION, c.secret.secretRef);
+    const afterRemoval = await c.observe(tab, { includeImage: true });
+    c.check(afterRemoval.ok === false && afterRemoval.code === "credential_on_screen", "removing the secret cleared screenshot protection while an echo remained");
+    // The echo is still on the page: text read by operations that begin after the removal holds none of it.
+    const text = await c.observe(tab, { mode: "full", includeText: true });
+    const extracted = await c.request(tab, "extract", { question: "Echo", maxChars: 8000 });
+    c.check(text.ok === true && text.text === "[secret]", "removing the secret let a later observation read the echoed value");
+    clean([text, extracted, await c.request(tab, "tabs")], spellings(VALUE), "removing the secret let a later readback hold the echoed value");
+  }));
 
   for (const native of [true, false]) add(`1 baseline ${native ? "native POST" : "fetch JSON"}`, () => using({}, async c => {
     const tab = await c.open(), path = pathFor();

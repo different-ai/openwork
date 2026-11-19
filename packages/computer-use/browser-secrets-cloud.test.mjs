@@ -613,7 +613,7 @@ describe("secret handles on the cloud browser, on a real Chromium", { skip: foun
 
   test("a placeholder stops working when its tab closes underneath or its page is left", async () => {
     reset();
-    const host = cloudBrowser({ storeOptions: { lingerMs: 300 } });
+    const host = cloudBrowser();
     const left = await sendFromLab(host, "form");
     await allowed.received("/form");
     for (const deadline = Date.now() + 5000; Date.now() < deadline && host.secrets.live(left.tabId); await wait(50));

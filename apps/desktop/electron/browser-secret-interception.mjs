@@ -1,8 +1,14 @@
-// Request interception for secret handles in the built-in browser. While a tab has a live
-// placeholder, every request of that tab pauses in `webContents.debugger` and the shared decision
+// Request interception for secret handles in the built-in browser. While a placeholder is live,
+// and until the tab closes after any rewrite, its requests pause in `webContents.debugger`. The shared decision
 // in `@openwork/computer-use/browser-secrets` answers it: continue as sent, continue with the
 // placeholder swapped for the value, or fail. A paused request can hold a value (a redirect hop
 // repeats the rewritten body), so nothing of one is ever logged, kept or put in an error.
+//
+// Only the tab's own page session is intercepted. That covers the page, its same-process frames
+// and its dedicated workers. A cross-site frame, a service worker and a shared worker are
+// debugger targets of their own and are never attached or intercepted: what they send keeps its
+// placeholder. Workers are shared by every tab of their origin, and a frame target can be
+// replaced while a rewritten body is still in flight, so neither may hold a value.
 import { decidePausedRequest } from "@openwork/computer-use/browser-secrets";
 
 /** @typedef {{ tabId: string, view: { webContents: import("electron").WebContents } }} InterceptedTab */
@@ -11,19 +17,14 @@ import { decidePausedRequest } from "@openwork/computer-use/browser-secrets";
 /**
  * @typedef {{
  *   tab: InterceptedTab, tabId: string, contents: import("electron").WebContents, cdp: import("electron").Debugger,
- *   attachedByUs: boolean, detachDeferred: boolean, enabled: boolean, autoAttach: boolean, lost: boolean,
+ *   attachedByUs: boolean, detachDeferred: boolean, enabled: boolean, lost: boolean, rewritten: boolean,
  *   ready: Promise<boolean>, arming: Promise<boolean>, releasing: Promise<void> | null,
- *   graceUntil: number, graceTimer: NodeJS.Timeout | null, work: Set<Promise<unknown>>, children: Set<string>,
+ *   graceUntil: number, graceTimer: NodeJS.Timeout | null, work: Set<Promise<unknown>>,
  *   onMessage: (event: unknown, method: string, params: unknown, sessionId?: string) => void, onDetach: () => void, onGone: () => void, onDestroyed: () => void,
  * }} Held
  */
 
 const REQUEST_STAGE = Object.freeze({ patterns: [{ urlPattern: "*", requestStage: "Request" }] });
-// Cross-site frames and service workers are debugger targets of their own. Each one found is
-// intercepted like its page; `waitForDebuggerOnStart` stays off so a page never waits on OpenWork,
-// which means a request such a target makes before its interception is on keeps its placeholder.
-const AUTO_ATTACH = Object.freeze({ autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-const NO_AUTO_ATTACH = Object.freeze({ autoAttach: false, waitForDebuggerOnStart: false, flatten: true });
 
 /** @param {unknown} value @param {string} key @returns {unknown} */
 const field = (value, key) => value && typeof value === "object" ? Reflect.get(value, key) : undefined;
@@ -55,11 +56,11 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
   };
   /** @param {Held} state */
   const attached = (state) => !state.contents.isDestroyed() && state.cdp.isAttached();
-  /** A debugger command that settles: a target that never answers rejects after `commandTimeoutMs`. @param {Held} state @param {string} method @param {object} [params] @param {string} [sessionId] */
-  function command(state, method, params, sessionId) {
+  /** A debugger command that settles: a target that never answers rejects after `commandTimeoutMs`. @param {Held} state @param {string} method @param {object} [params] */
+  function command(state, method, params) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("debugger_timeout")), commandTimeoutMs);
-      state.cdp.sendCommand(method, params, sessionId).then(
+      state.cdp.sendCommand(method, params).then(
         (result) => { clearTimeout(timer); resolve(result); },
         () => { clearTimeout(timer); reject(new Error("debugger_command_failed")); },
       );
@@ -72,7 +73,7 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
     work.then(done, done);
     return work;
   }
-  /** Resolves once every answer and child setup in flight has settled, or stopped answering. @param {Held} state */
+  /** Resolves once every answer in flight has settled, or stopped answering. @param {Held} state */
   async function quiet(state) {
     const deadline = Date.now() + commandTimeoutMs;
     while (state.work.size && Date.now() < deadline) {
@@ -105,50 +106,27 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
   /**
    * Answers one paused request exactly once. A rewrite Chromium refuses, or any other failure,
    * fails the request; when even that cannot be sent the request went away with its target.
-   * @param {Held} state @param {unknown} params @param {string} [sessionId]
+   * @param {Held} state @param {unknown} params
    */
-  async function answer(state, params, sessionId) {
+  async function answer(state, params) {
     const requestId = field(params, "requestId");
-    // The page's own session reports itself as an empty id, which no command accepts.
-    const session = sessionId || undefined;
     try {
       if (!isPausedRequest(params)) throw new Error("not a paused request");
       // Only requests are decided here; a response paused by another pattern goes on as it is.
       const reply = field(params, "responseStatusCode") !== undefined || field(params, "responseErrorReason") !== undefined
         ? { method: "Fetch.continueRequest", params: { requestId } }
         : await decidePausedRequest(secrets, state.tabId, params, { readBody: async () => carriedBody(params) });
-      await state.cdp.sendCommand(reply.method, reply.params, session);
+      // A debugger lost after a rewrite may release a browser-owned POST redirect. Remember
+      // that this target has held real bytes, without keeping a body, value or request descriptor.
+      if (reply.method === "Fetch.continueRequest" && ("postData" in reply.params || "headers" in reply.params)) state.rewritten = true;
+      await state.cdp.sendCommand(reply.method, reply.params);
     } catch {
-      try { await state.cdp.sendCommand("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, session); } catch { /* the request or its target is gone */ }
+      try { await state.cdp.sendCommand("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }); } catch { /* the request or its target is gone */ }
     }
   }
 
-  /** Intercepts a frame or worker target the page's session reported. @param {Held} state @param {unknown} params */
-  async function adopt(state, params) {
-    const child = field(params, "sessionId");
-    if (typeof child !== "string" || state.releasing || state.lost) return;
-    state.children.add(child);
-    try {
-      // A dedicated worker has no Fetch domain: its requests pause in its page's session.
-      await command(state, "Fetch.enable", REQUEST_STAGE, child);
-      await command(state, "Target.setAutoAttach", AUTO_ATTACH, child);
-    } catch { /* not a target that loads through its own session */ }
-    if (field(params, "waitingForDebugger") === true) await command(state, "Runtime.runIfWaitingForDebugger", undefined, child).catch(() => {});
-  }
-
-  /** Turns interception on for a tab already recorded in `held`. Never rejects. @param {Held} state */
-  async function enable(state) {
-    try {
-      await command(state, "Fetch.enable", REQUEST_STAGE);
-    } catch { return false; }
-    try {
-      await command(state, "Target.setAutoAttach", AUTO_ATTACH);
-      state.autoAttach = true;
-      // Frames and workers that already exist were reported before that answer.
-      await quiet(state);
-    } catch { /* the page itself is intercepted; its other targets keep their placeholders */ }
-    return true;
-  }
+  /** Turns interception on for the page session of a tab already recorded in `held`. Never rejects. @param {Held} state */
+  const enable = (state) => command(state, "Fetch.enable", REQUEST_STAGE).then(() => true, () => false);
 
   /**
    * Removes interception without leaving a request paused: the listener keeps answering until
@@ -162,11 +140,7 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
     await quiet(state);
     let clean = true;
     if (!state.lost && attached(state)) {
-      // A frame or worker that already went away has nothing left to turn off.
-      await Promise.all([...state.children].map((child) => command(state, "Fetch.disable", undefined, child).catch(() => {})));
-      // Ending auto-attach detaches every frame and worker session, which also ends their interception.
-      if (state.autoAttach) clean = await command(state, "Target.setAutoAttach", NO_AUTO_ATTACH).then(() => true, () => false);
-      clean = await command(state, "Fetch.disable").then(() => true, () => false) && clean;
+      clean = await command(state, "Fetch.disable").then(() => true, () => false);
       await quiet(state);
     }
     const lost = state.lost;
@@ -185,6 +159,9 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
     if (state.lost) return;
     state.lost = true;
     state.enabled = false;
+    // Revoking the placeholder cannot revoke a body Chromium already owns. Unexpected debugger
+    // loss fails closed by closing this target without a page-controlled beforeunload dialog.
+    if (state.rewritten && !state.contents.isDestroyed()) state.contents.close({ waitForBeforeUnload: false });
     unlisten(state);
     forget(state);
     secrets.interceptionLost(state.tabId);
@@ -200,10 +177,10 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
   /** @param {string} tabId */
   function releaseWhenIdle(tabId) {
     const state = held.get(tabId);
-    if (!state || state.releasing || !state.enabled || Date.now() < state.graceUntil || secrets.live(tabId)) return;
+    if (!state || state.releasing || !state.enabled || Date.now() < state.graceUntil || secrets.guarded(tabId)) return;
     void release(state);
   }
-  const unsubscribe = secrets.onLiveChange((tabId, live) => { if (!live) releaseWhenIdle(tabId); });
+  const unsubscribe = secrets.onGuardChange((tabId, guarded) => { if (!guarded) releaseWhenIdle(tabId); });
 
   /** @param {InterceptedTab} tab @returns {Promise<boolean>} */
   function start(tab) {
@@ -215,13 +192,13 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
     } catch { return Promise.resolve(false); }
     /** @type {Held} */
     const state = {
-      tab, tabId: tab.tabId, contents, cdp, attachedByUs, detachDeferred: false, enabled: false, autoAttach: false, lost: false,
+      tab, tabId: tab.tabId, contents, cdp, attachedByUs, detachDeferred: false, enabled: false, lost: false, rewritten: false,
       ready: Promise.resolve(false), arming: Promise.resolve(false), releasing: null,
-      graceUntil: 0, graceTimer: null, work: new Set(), children: new Set(),
+      graceUntil: 0, graceTimer: null, work: new Set(),
       onMessage(_event, method, params, sessionId) {
-        if (method === "Fetch.requestPaused") void track(state, answer(state, params, sessionId));
-        else if (method === "Target.attachedToTarget") void track(state, adopt(state, params));
-        else if (method === "Target.detachedFromTarget") state.children.delete(String(field(params, "sessionId")));
+        // The page's own session reports an empty id. A request paused in any other session was
+        // paused by whoever else uses this debugger, and is never decided with this tab's secrets.
+        if (method === "Fetch.requestPaused" && !sessionId) void track(state, answer(state, params));
       },
       onDetach() { lose(state); },
       // A dead renderer sends nothing more: its placeholders end at once, then interception is removed.
@@ -248,9 +225,10 @@ export function createSecretInterception({ secrets, hasDocument = (_tab) => true
 
   return {
     /**
-     * Resolves true once every request of the tab's page pauses here, and those of the cross-site
-     * frames and service workers it has at that moment. False when the tab has no document, its
-     * renderer is gone, or its debugger belongs to someone else (DevTools open on the page).
+     * Resolves true once every request of the tab's own page session pauses here; cross-site
+     * frames, service workers and shared workers are not covered. False when the tab has no
+     * document, its renderer is gone, or its debugger belongs to someone else (DevTools open on
+     * the page).
      * Safe to call again and concurrently.
      * @param {InterceptedTab} tab @returns {Promise<boolean>}
      */

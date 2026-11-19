@@ -8,7 +8,7 @@ const ref = z.string().max(64);
 const action = z.discriminatedUnion("type", [
   z.object({ type: z.literal("click"), ref: ref.optional(), x: z.number().optional(), y: z.number().optional() }),
   z.object({ type: z.literal("fill"), ref, text: z.string().max(8000) }),
-  z.object({ type: z.literal("fill_secret"), ref, secretRef: z.string().min(1).max(128).describe("A secretRef the observation lists in availableSecrets. The secret's value is never shown to you.") }),
+  z.object({ type: z.literal("fill_secret"), ref, secretRef: z.string().min(1).max(128).describe("A secretRef the observation lists in availableSecrets. The secret's value is never shown to you.") }).strict(),
   z.object({ type: z.literal("select"), ref, values: z.array(z.string().max(8000)).max(200).describe("Option values from the observed native select. Use [] to clear the selection.") }),
   z.object({ type: z.literal("set_checked"), ref, checked: z.boolean().describe("The desired checkbox, radio or switch state; checked radios cannot be cleared directly.") }),
   z.object({ type: z.literal("attach"), ref: ref.describe("The page's upload button or file input."),

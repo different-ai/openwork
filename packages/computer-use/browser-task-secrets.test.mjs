@@ -136,7 +136,8 @@ function world({ flag = true, withStore = true, origins = [SITE], kind = "passwo
   const secrets = { ...core,
     describe(...args) { calls.push("describe"); return core.describe(...args); },
     issue(input) { calls.push("issue"); return core.issue(input); },
-    redact: (value) => state.redacting ? core.redact(value) : value };
+    redact: (value) => state.redacting ? core.redact(value) : value,
+    redactor: () => state.redacting ? core.redactor() : { span: 0, redact: (value) => value, redactText: (text, limit) => limit === undefined ? text : text.slice(0, limit) } };
   const page = createPage(calls, { url, text });
   const typed = () => calls.filter((call) => Array.isArray(call) && call[0] === "insertText").map((call) => call[1]);
   const contents = {
@@ -472,6 +473,28 @@ test("a document that received a secret takes no more images, whatever the field
   assert.equal((await observe({ includeImage: true })).code, "credential_on_screen");
 });
 
+test("a tab that received a secret takes no more images on any later page, even with the secret removed, until it closes", async () => {
+  const { page, act, observe, secret, core, host } = world({ kind: "token" });
+  page.input("Access token", "text");
+  assert.equal((await act([{ type: "fill_secret", ref: "e1", secretRef: secret.secretRef }])).ok, true);
+  // The form's answer is a new document with no field at all, which shows the token back. Nothing in it says
+  // a secret was entered: only the host remembers.
+  page.elements.length = 0;
+  page.context.__openworkCredentialEntered = undefined;
+  page.context.__openworkBrowserRefs = undefined;
+  page.url = `${SITE}/welcome`;
+  page.text = `Your token is ${VALUE}`;
+  core.documentChanged(TAB);
+  assert.equal((await observe({ mode: "full" })).text, "Your token is [secret]");
+  for (const after of ["navigation", "removal"]) {
+    if (after === "removal") core.remove(SESSION, secret.secretRef);
+    const refused = await observe({ includeImage: true });
+    assert.deepEqual([refused.ok, refused.code, "image" in refused], [false, "credential_on_screen", false], after);
+  }
+  host.invalidate(TAB, { closed: true });
+  assert.equal((await observe({ includeImage: true })).image.mimeType, "image/png");
+});
+
 test("a single action returns the fill receipt without any value", async () => {
   const { page, request, observe, secret, typed } = world();
   page.input("Password", "password");
@@ -649,6 +672,102 @@ test("an observation whose page text echoes the value, in any encoding, is redac
   }
 });
 
+test("a secret echoed across a cut is redacted whole before the cut, in every text of an observation", async () => {
+  const head = VALUE.slice(0, 5);
+  const before = (limit) => "x".repeat(limit - 5);
+  const { page, observe, request, core } = world({ text: `${before(16_000)}${VALUE}` });
+  page.title = `${before(300)}${VALUE}`;
+  page.input(`${before(120)}${VALUE}`, "search");
+  page.input("Described", "search", { attributes: { "aria-describedby": "note", id: "described" } });
+  page.element("span", { id: "note" }, { text: `${before(200)}${VALUE}` });
+  page.element("div", { role: "status" }, { text: `${before(300)}${VALUE_URL}` });
+  page.element("p", {}, { text: `${before(200)}${VALUE_BASE64}` });
+  for (const args of [{ includeText: true }, { mode: "full" }]) {
+    const observation = await observe(args);
+    assert.equal(observation.ok, true);
+    for (const hidden of [head, VALUE_URL.slice(0, 5), VALUE_BASE64.slice(0, 5)]) assert.ok(!holds(observation, hidden), "the start of an echoed secret was left at a cut");
+    assert.equal(observation.title, `${before(300)}[secret]`);
+    assert.equal(observation.text, `${before(16_000)}[secret]`);
+  }
+  // A secret that begins past the cut is simply cut off, and nothing is read back longer than before.
+  page.title = `${"x".repeat(300)}${VALUE}`;
+  assert.equal((await observe({ mode: "full" })).title, "x".repeat(300));
+  assert.equal((await request("tabs")).tabs[0].title, "x".repeat(300));
+  // The page is given a number of characters to read past each cut, and nothing of any secret.
+  assert.ok(page.scripts.every((code) => !code.includes(VALUE)));
+  assert.ok(core.redactor().span >= VALUE.length * 11 && page.scripts.some((code) => code.includes(`"reach":${core.redactor().span}`)));
+});
+
+test("a secret that begins and ends with spaces is found before any text is trimmed", async () => {
+  const spaced = "  fake spaced value \t";
+  const { page, observe, request, core } = world({ text: spaced });
+  core.add({ sessionId: SESSION, label: "Spaced", kind: "token", origins: [SITE], value: spaced });
+  page.input(spaced, "search");
+  page.element("div", { role: "status" }, { text: spaced });
+  page.element("div", { role: "alert" }, { text: " \n " });
+  page.element("button", { "aria-label": "  Continue  " });
+  for (const args of [{ includeText: true }, { mode: "full" }]) {
+    const observation = await observe(args);
+    assert.ok(!holds(observation, "fake spaced"), "what was left of a trimmed secret was read back");
+    assert.equal(observation.text, "[secret]");
+    assert.equal(observation.elements[0].name, "[secret]");
+    assert.ok(observation.elements.some((element) => element.name === "Continue"));
+    if (!args.mode) assert.deepEqual(observation.status, ["[secret]"]);
+  }
+  const extracted = await request("extract", { question: "fake spaced value" });
+  assert.deepEqual([extracted.passages, extracted.pageChars], [[], 8]);
+  // Names are still matched as the agent reads them.
+  assert.equal((await observe({ query: { name: "continue" } })).elements.length, 1);
+});
+
+test("a spaced secret echoed in the text a field refers to is found before it is trimmed", async () => {
+  const spaced = "  fake spaced value \t";
+  const { page, observe, core } = world();
+  core.add({ sessionId: SESSION, label: "Spaced", kind: "token", origins: [SITE], value: spaced });
+  page.input("Unnamed", "search", { attributes: { type: "search", "aria-labelledby": "label", "aria-describedby": "note", "aria-errormessage": "error", "aria-invalid": "true" } });
+  for (const id of ["label", "note", "error"]) page.element("span", { id }, { text: spaced });
+  page.input("Fallback", "search", { attributes: { type: "search", "aria-label": "Fallback", "aria-labelledby": "blank" } });
+  page.element("span", { id: "blank" }, { text: " \n " });
+  for (const args of [{}, { mode: "full" }]) {
+    const observation = await observe(args);
+    assert.ok(!holds(observation, "fake spaced"), "the inside of a trimmed secret was read back");
+    const [field, fallback] = observation.elements;
+    assert.equal(field.name, "[secret]");
+    // A reference to blank text names nothing, as before.
+    assert.equal(fallback.name, "Fallback");
+  }
+});
+
+test("after the person removes a secret, a new request still reads none of what the site shows back of it", async () => {
+  const echo = { ok: true, result: { echoed: VALUE, encoded: [VALUE_BASE64, VALUE_URL] } };
+  const { request, observe, page, core, secret } = world({ runSiteTool: async () => echo, text: `Your token is ${VALUE}` });
+  page.input("Search", "search");
+  page.title = `Signed in with ${VALUE}`;
+  assert.equal(core.remove(SESSION, secret.secretRef), true);
+  // Every operation here begins after the removal.
+  const results = [await request("site_tool", { toolId: "t1", input: {} }), await observe({ mode: "full" }), await request("extract", { question: "token" }), await request("tabs")];
+  assertClean(results);
+  assert.deepEqual(results[0].result, { echoed: "[secret]", encoded: ["[secret]", "[secret]"] });
+  assert.equal(results[1].text, "Your token is [secret]");
+  assert.equal(results[3].tabs[0].title, "Signed in with [secret]");
+  assert.equal(results[1].availableSecrets, undefined);
+  core.clear();
+  assertClean([await request("site_tool", { toolId: "t1", input: {} }), await observe({ mode: "full" })]);
+});
+
+test("an extract chooses, cuts and counts only what is left after redaction", async () => {
+  const long = `${"word ".repeat(117)}${VALUE} token`;
+  const { request, page } = world({ text: `${VALUE}\nreference ${long}` });
+  page.input("Search", "search");
+  // A page that shows only the secret has the same length whatever the secret's.
+  assert.equal((await request("extract", { question: "reference" })).pageChars, `[secret]\nreference ${"word ".repeat(117)}[secret] token`.length);
+  // A long line is cut at 600 characters: the secret that crosses the cut is gone before it.
+  const cut = await request("extract", { question: "reference token" });
+  assert.ok(cut.passages[0].endsWith("word [secr…") && !holds(cut, VALUE.slice(0, 5)));
+  // Words of the secret itself match no line: asking for them does not confirm a guess.
+  assert.deepEqual((await request("extract", { question: "real 42" })).passages, []);
+});
+
 test("an extract whose passages echo the value is redacted", async () => {
   const { request, page } = world({ text: `Account\nYour token is ${VALUE}\nEncoded token: ${VALUE_BASE64}\nToken link: https://app.example/t?x=${VALUE_URL}` });
   page.input("Search", "search");
@@ -679,4 +798,39 @@ test("site tools, their results, tab titles and coded errors that echo the value
   assert.equal(failed.code, "site_tool_failed");
   assert.equal(failed.error, "The site answered [secret]");
   assertClean(failed);
+});
+
+test("a request_id is reserved before anything is awaited: the same id in another tab at the same moment is refused", async () => {
+  const calls = [];
+  const pages = new Map(["tab-1", "tab-2"].map((tabId) => [tabId, createPage(calls)]));
+  const tabs = new Map([...pages].map(([tabId, page]) => [tabId, { tabId, webMcpRevision: 1, webMcpToolCount: 0, view: { webContents: {
+    isDestroyed: () => false, isLoading: () => false, getURL: () => page.url, getTitle: () => page.title,
+    executeJavaScriptInIsolatedWorld: async (_world, [{ code }]) => structuredClone(await vm.runInContext(code, page.context)),
+    async insertText(text) { calls.push([tabId, text]); page.document.activeElement.value = text; },
+    sendInputEvent: async () => {}, captureObservation: async () => Buffer.from("stand-in image"),
+    debugger: { isAttached: () => true, attach() {}, detach() {}, on() {}, removeListener() {}, sendCommand: async () => {} } } } }]));
+  let waiting = 0, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const host = createBrowserTaskHost({ getTab: (id) => tabs.get(id) ?? null, tabsFor: () => [...tabs.values()], ownerOf: (id) => tabs.has(id) ? SESSION : null, activeFor: () => "tab-1",
+    isVisible: () => true, openTab: async () => { throw new Error("This test opens no tab."); }, navigate: async () => {}, allowed: async () => true, enabled: () => true, changed: () => {},
+    siteTools: async () => ({ ok: true, tools: [] }), runSiteTool: async () => ({ ok: true }),
+    // Both requests are held here, after the id was looked up and before anything is typed.
+    beforeInput: async () => { waiting++; await gate; } });
+  const act = async (tabId, text) => {
+    pages.get(tabId).input("Name", "text");
+    const observation = await host.request({ sessionId: SESSION, operation: "observe", args: { tabId, mode: "interactive" } });
+    return () => host.request({ sessionId: SESSION, operation: "act", args: { tabId, observationId: observation.observationId, request_id: "same-id", actions: [{ type: "fill", ref: "e1", text }] } });
+  };
+  const [first, second] = [await act("tab-1", "first"), await act("tab-2", "second")];
+  const running = [first(), second()];
+  for (let turn = 0; turn < 50 && waiting < 1; turn++) await new Promise((resolve) => setTimeout(resolve, 10));
+  release();
+  const [one, two] = await Promise.all(running);
+  assert.deepEqual([one.ok, two.ok, two.code, two.dispatched], [true, false, "request_conflict", false]);
+  assert.deepEqual(calls.filter((call) => Array.isArray(call)), [["tab-1", "first"]]);
+  assert.equal(waiting, 1, "the second request never reached the page");
+  // The first receipt is the one kept, and the refused request left nothing behind.
+  assert.deepEqual(await first(), one);
+  assert.equal((await second()).code, "request_conflict");
+  assert.deepEqual(calls.filter((call) => Array.isArray(call)), [["tab-1", "first"]]);
 });

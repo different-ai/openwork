@@ -7,7 +7,7 @@ import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { settingsNavigationFromPathname } from "@/react-app/shell/workspace-routes"
 
-import { browserSecretKindLabel, siteName } from "../panel/browser-secrets"
+import { browserSecretKindLabel } from "../panel/browser-secrets"
 
 /** "com.apple.TextEdit" reads as "TextEdit"; the agent's own purpose says the rest. */
 function appLabel(appId: string | undefined) {
@@ -237,7 +237,7 @@ function SecretRequest({ sessionId, request, site, secret }: { sessionId: string
   }
 
   const label = revealHidden(secret.label)
-  const where = site ? revealHidden(siteName(site)) : null
+  const where = site ? revealHidden(site) : null
   const hidden = label.hidden + (where?.hidden ?? 0)
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential" data-credential="secret">
