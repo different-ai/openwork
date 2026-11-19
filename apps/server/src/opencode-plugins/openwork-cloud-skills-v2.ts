@@ -208,8 +208,10 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
         registration = undefined;
         await current?.dispose();
       } else if (!registration) {
+        // The organization's skill replaces any local skill with the same ID, so
+        // a folder named openwork-cloud-<name> cannot stand in for what Den published.
         const current = await context.skill.transform(editor => {
-          for (const skill of skills) if (!editor.get(skill.id)) editor.add(skill);
+          for (const skill of skills) editor.add(skill);
         });
         if (closed) { await current.dispose(); return; }
         registration = current;
