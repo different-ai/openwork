@@ -3,8 +3,9 @@ import { formatFileSize } from "@/lib/utils"
 
 export const LOW_STORAGE_FEATURE = "lowStorageWarning"
 
-/** A warning that was dismissed is not repeated sooner than this unless the disk gets fuller. */
-export const LOW_STORAGE_REPEAT_MS = 24 * 60 * 60 * 1000
+export const LOW_STORAGE_CLEANED_UP_BYTES = 4 * 1024 ** 3
+
+export const LOW_STORAGE_SAVE_FAILED_REPEAT_MS = 60 * 60 * 1000
 
 export type LowStorageLevel = "low" | "critical"
 
@@ -12,12 +13,6 @@ export type LowStorageAnnouncement = { level: LowStorageLevel; at: number }
 
 export type LowStorageNotice = { level: LowStorageLevel; title: string; description: string }
 
-/**
- * The warning to show for a disk-space reading, or null when there is nothing
- * new to say: the disk has room, or the person was already told and it has
- * not become fuller since. A save that just failed for lack of space is
- * always worth saying again.
- */
 export function lowStorageNotice(input: {
   status: OpenworkDiskSpace
   announced: LowStorageAnnouncement | null
@@ -26,14 +21,16 @@ export function lowStorageNotice(input: {
 }): LowStorageNotice | null {
   const { status, announced, now, saveFailed } = input
   if (status.level === "ok" || status.freeBytes === null) return null
-  const alreadyTold = announced !== null
-    && now - announced.at < LOW_STORAGE_REPEAT_MS
-    && (announced.level === "critical" || status.level === "low")
-  if (alreadyTold && !saveFailed) return null
+  const alreadyTold = announced !== null && (announced.level === "critical" || status.level === "low")
+  if (alreadyTold && !(saveFailed && now - announced.at >= LOW_STORAGE_SAVE_FAILED_REPEAT_MS)) return null
   const left = `${formatFileSize(status.freeBytes)} left.`
   return status.level === "critical"
     ? { level: "critical", title: "Your disk is full", description: `${left} OpenWork can't save changes until you free up space.` }
     : { level: "low", title: "Your disk is almost full", description: `${left} Free up space so OpenWork can keep saving your work.` }
+}
+
+export function lowStorageCleanedUp(status: OpenworkDiskSpace): boolean {
+  return status.level === "ok" && status.freeBytes !== null && status.freeBytes >= LOW_STORAGE_CLEANED_UP_BYTES
 }
 
 /** Reads a stored announcement defensively: anything unexpected reads as never announced. */
