@@ -1,6 +1,10 @@
 "use client"
 
 import * as React from "react"
+import type { DynamicToolUIPart, ToolUIPart } from "ai"
+import { Badge } from "@/components/ui/badge"
+import { t } from "@/i18n"
+import { sandboxGroupTag, sandboxRunningToolStep } from "@/lib/tool-activity"
 
 import type { SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import {
@@ -59,4 +63,25 @@ export function useCurrentToolLifecycleResolver(): (
 /** The App spans tools, so waiting belongs to the session, not its last tool. */
 export function useCurrentSessionActivityStatus(): SessionActivityStatus | null {
   return React.useContext(CurrentToolLifecycleContext)?.activityStatus ?? null
+}
+
+export const SandboxActivityContext = React.createContext<string | null>(null);
+
+export function toolRanInSandbox(part: DynamicToolUIPart | ToolUIPart) {
+  return part.callProviderMetadata?.openwork?.sandbox === true;
+}
+
+export function useSandboxToolStep(part: DynamicToolUIPart | ToolUIPart | undefined, running: boolean) {
+  const step = React.useContext(SandboxActivityContext);
+  return sandboxRunningToolStep(part, running, step);
+}
+
+export function SandboxGroupTag({ parts }: { parts: readonly (DynamicToolUIPart | ToolUIPart)[] }) {
+  const tag = sandboxGroupTag(parts.map(toolRanInSandbox));
+  if (!tag) return null;
+  return <Badge variant="secondary" data-testid="sandbox-group-tag">{tag.kind === "all" ? t("sandbox.tag") : t("sandbox.tag_some", { count: tag.count })}</Badge>;
+}
+
+export function SandboxToolTag({ part }: { part: DynamicToolUIPart | ToolUIPart }) {
+  return toolRanInSandbox(part) ? <Badge variant="secondary" data-testid="sandbox-tag">{t("sandbox.tag")}</Badge> : null;
 }

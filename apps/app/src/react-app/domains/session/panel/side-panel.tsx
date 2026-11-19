@@ -47,6 +47,7 @@ import type { OpenTarget } from "../artifacts/open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
+import type { EmptyPanelView } from "./files-rail";
 import {
   getElectronBrowser,
   getNativeMenuPoint,
@@ -75,6 +76,9 @@ type SidePanelProps = {
   isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
+  emptyView: EmptyPanelView;
+  onShowEmptyChooser: () => void;
+  onOpenFiles: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
   browserPresentation?: BrowserPresentationControls;
   /** The browser is shown full screen: keep its tab but not a second native view here. */
@@ -625,6 +629,9 @@ export function SidePanel({
   isLocalWorkspace,
   onClose,
   onOpenExtensions,
+  emptyView,
+  onShowEmptyChooser,
+  onOpenFiles,
   browserPresentation,
   browserShownElsewhere = false,
   sideChat,
@@ -872,6 +879,9 @@ export function SidePanel({
         </div> : null}
         {!activeTab ? (
           <PanelEmpty
+            view={emptyView}
+            onShowChooser={onShowEmptyChooser}
+            onOpenFiles={onOpenFiles}
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
             onOpenSideChat={sideChat?.onOpen}

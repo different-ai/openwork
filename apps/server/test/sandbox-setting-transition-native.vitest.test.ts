@@ -18,6 +18,10 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
   const imported = join(root, "host-plugin-imported");
   await writeFile(join(hostile, ".opencode", "plugins", "hostile.ts"), `import { writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(imported)}, "module imported"); export default { id: "hostile-transition-fixture", setup() {} };`);
   const offered: string[][] = [];
+  let holdInference = false;
+  let hostToolAfterHold = false;
+  const continuedHostTask = join(safe, "continued-host-task");
+  let releaseInference = () => {};
   let organizationRequiresSandbox = false;
   const fixture = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const path = new URL(request.url).pathname;
@@ -27,8 +31,14 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     if (path === "/v1/chat/completions") {
       const body: unknown = await request.json();
       offered.push(record(body) && Array.isArray(body.tools) ? body.tools.filter(record).flatMap(tool => record(tool.function) && typeof tool.function.name === "string" ? [tool.function.name] : []).sort() : []);
+      const continueOnHost = hostToolAfterHold;
+      hostToolAfterHold = false;
+      if (holdInference) await new Promise<void>(resolve => { releaseInference = resolve; });
       const chunk = (delta: unknown, finish: string | null) => `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", created: 1, model: "gpt-6.1-sol", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
-      return new Response(chunk({ role: "assistant", content: "transition complete" }, null) + chunk({}, "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      const delta = continueOnHost ? { role: "assistant", tool_calls: [{ index: 0, id: "continue-host-tool", type: "function", function: {
+        name: "shell", arguments: JSON.stringify({ command: `printf 'active turn completed its next host tool' > '${continuedHostTask}'`, description: "Complete the active turn", timeout: 5_000 }),
+      } }] } : { role: "assistant", content: "transition complete" };
+      return new Response(chunk(delta, null) + chunk({}, continueOnHost ? "tool_calls" : "stop") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
     }
     return new Response(null, { status: 404 });
   } });
@@ -62,6 +72,11 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
   };
   try {
     const originalPid = await pid();
+    const chat = await (await request("/workspace/safe/opencode2/api/session", "POST", { title: "Active ordinary chat", model: { providerID: "transition_fixture", id: "gpt-6.1-sol" }, permissions: [{ action: "*", resource: "*", effect: "allow" }] })).json();
+    holdInference = true; hostToolAfterHold = true;
+    const continuingChat = request(`/workspace/safe/opencode2/api/session/${chat.data.id}/prompt`, "POST", { text: "Write the completion marker, then finish." });
+    for (let attempt = 0; attempt < 200 && offered.length === 0; attempt++) await delay(25);
+    expect(offered.length).toBeGreaterThan(0);
     const created = await (await request("/workspace/safe/opencode2/api/session", "POST", { title: "Unrelated running work" })).json();
     expect(record(created) && record(created.data) && typeof created.data.id === "string").toBe(true);
     const sessionId = created.data.id;
@@ -69,29 +84,60 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     const task = request(`/workspace/safe/opencode2/api/session/${sessionId}/shell`, "POST", { command: `printf started > '${started}'; sleep 2; printf survived > '${survived}'` });
     for (let attempt = 0; attempt < 200 && !await access(started).then(() => true, () => false); attempt++) await delay(25);
     await access(started);
-    const busy = await request("/workspace/safe/sandbox-settings", "PUT", { allowHostExecution: false });
-    expect(busy.status, await busy.clone().text()).toBe(409);
+    config.workspaces.push({ id: "hostile", name: "Hostile", path: hostile, preset: "starter", workspaceType: "local" });
+    const use = await request("/workspace/safe/sandbox-settings", "PUT", { useSandbox: true });
+    expect(use.status, await use.clone().text()).toBe(200);
+    expect(await use.json()).toMatchObject({ useSandbox: true, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: false, pending: false });
     expect(await pid()).toBe(originalPid);
-    expect(await (await request("/workspace/safe/sandbox-settings")).json()).toMatchObject({ allowHostExecution: true });
+    const busy = await request("/workspace/safe/sandbox-settings", "PUT", { forceSandbox: true });
+    expect(busy.status, await busy.clone().text()).toBe(200);
+    expect(await busy.json()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: true, pending: true });
+    expect(await pid()).toBe(originalPid);
+    expect(await (await request("/workspace/safe/sandbox-settings")).json()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: true, pending: true });
+    // Progress/history use the global native APIs without opening a location.
+    const activeWhilePending = await request("/workspace/safe/opencode2/api/session/active");
+    expect(activeWhilePending.status, await activeWhilePending.clone().text()).toBe(200);
+    const historyWhilePending = await request(`/workspace/safe/opencode2/api/session/${chat.data.id}/message`);
+    expect(historyWhilePending.status, await historyWhilePending.clone().text()).toBe(200);
+    const coldRead = await request("/workspace/hostile/opencode2/api/agent");
+    expect(coldRead.status).toBe(409);
+    const wrongHome = await request(`/workspace/hostile/opencode2/api/session/${chat.data.id}/message`);
+    expect(wrongHome.status).toBe(404);
+    await expect(access(imported)).rejects.toThrow();
+    // Saving a restriction never admits new host work through the old process.
+    const denied = await request(`/workspace/safe/opencode2/api/session/${sessionId}/shell`, "POST", { command: "printf forbidden" });
+    expect(denied.status).toBe(409);
+    const pendingPrompt = await request(`/workspace/safe/opencode2/api/session/${sessionId}/prompt`, "POST", { text: "Must not start in the old host process." });
+    expect(pendingPrompt.status).toBe(409);
+    expect(await pendingPrompt.json()).toMatchObject({ code: "sandbox_engine_policy_pending", message: "Your sandbox setting is saved and applies when current tasks finish. Send this again then." });
+    // Existing inference may issue its next host tool after the saved denial.
+    // It uses applied local policy, not desired intent, until this turn ends.
+    holdInference = false; releaseInference();
+    expect((await continuingChat).status).toBe(200);
+    for (let attempt = 0; attempt < 200 && !await access(continuedHostTask).then(() => true, () => false); attempt++) await delay(25);
+    expect(await readFile(continuedHostTask, "utf8").catch(async () => JSON.stringify({ offered, settings: await (await request("/workspace/safe/sandbox-settings")).json(), messages: await (await request(`/workspace/safe/opencode2/api/session/${chat.data.id}/message`)).json() }))).toBe("active turn completed its next host tool");
     await task;
     for (let attempt = 0; attempt < 200 && !await access(survived).then(() => true, () => false); attempt++) await delay(25);
     expect(await readFile(survived, "utf8")).toBe("survived");
-    let idle = false;
-    let lastActivity: unknown;
-    for (let attempt = 0; attempt < 200 && !idle; attempt++) {
-      const active: unknown = await (await request("/workspace/safe/opencode2/api/session/active")).json();
-      const jobs: unknown = await (await request("/workspace/safe/opencode2/api/experimental/job?status=running")).json();
-      lastActivity = { active, jobs };
-      idle = record(active) && record(active.data) && Object.keys(active.data).length === 0
-        && record(jobs) && Array.isArray(jobs.data) && jobs.data.length === 0;
-      if (!idle) await delay(25);
+    // No second save or admission request is needed to apply a durable choice.
+    let automaticallyApplied = false;
+    for (let attempt = 0; attempt < 200 && !automaticallyApplied; attempt++) {
+      const settings: unknown = await (await request("/workspace/safe/sandbox-settings")).json();
+      automaticallyApplied = record(settings) && settings.pending === false && settings.effectiveAllowHostExecution === false;
+      if (!automaticallyApplied) await delay(25);
     }
-    expect(idle, JSON.stringify(lastActivity)).toBe(true);
-    // Do not open the hostile location in the old project-enabled process.
-    config.workspaces.push({ id: "hostile", name: "Hostile", path: hostile, preset: "starter", workspaceType: "local" });
+    expect(automaticallyApplied, automaticallyApplied ? undefined : JSON.stringify({
+      settings: await (await request("/workspace/safe/sandbox-settings")).json(),
+      status: await status(),
+    })).toBe(true);
+    expect(await pid()).not.toBe(originalPid);
+    // The hostile location was not initialized in the old project-enabled process.
     const setting = await request("/workspace/hostile/sandbox-settings", "PUT", { allowHostExecution: false });
     expect(setting.status, await setting.clone().text()).toBe(200);
-    expect(await setting.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, managed: false, featureEnabled: true });
+    expect(await setting.json()).toEqual({
+      useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, managedUse: false, managedForce: false,
+      allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: true, verification: "verified",
+    });
     const isolatedPid = await pid(); expect(isolatedPid).not.toBe(originalPid);
     const plugins = await request("/workspace/hostile/opencode2/api/agent");
     expect(plugins.status, await plugins.clone().text()).toBe(200);
@@ -109,8 +155,33 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
       if (record(active) && record(active.data) && Object.keys(active.data).length === 0) break;
       await delay(25);
     }
+    // A normal chat stays alive while the reverse transition is saved too.
+    holdInference = true;
+    offered.length = 0;
+    const currentChat = request(`/workspace/hostile/opencode2/api/session/${next.data.id}/prompt`, "POST", { text: "Say transition complete again." });
+    for (let attempt = 0; attempt < 200 && offered.length === 0; attempt++) await delay(25);
+    expect(offered.length).toBeGreaterThan(0);
     const restore = await request("/workspace/hostile/sandbox-settings", "PUT", { allowHostExecution: true });
     expect(restore.status, await restore.clone().text()).toBe(200);
+    expect(await restore.json()).toMatchObject({ allowHostExecution: true, effectiveAllowHostExecution: false, pending: true });
+    expect(await pid()).toBe(isolatedPid);
+    // Stop is an explicit person action and remains available during pending.
+    // The earlier ordinary turn already proved there is no automatic abort.
+    const stop = await request(`/workspace/hostile/opencode2/api/session/${next.data.id}/interrupt`, "POST", {});
+    expect(stop.status, await stop.clone().text()).toBe(200);
+    expect(await stop.json()).toMatchObject({ interrupted: true });
+    releaseInference(); holdInference = false;
+    expect((await currentChat).status).toBe(200);
+    let restored = false;
+    for (let attempt = 0; attempt < 200 && !restored; attempt++) {
+      const settings: unknown = await (await request("/workspace/hostile/sandbox-settings")).json();
+      restored = record(settings) && settings.pending === false && settings.effectiveAllowHostExecution === true;
+      if (!restored) await delay(25);
+    }
+    expect(restored, restored ? undefined : JSON.stringify({
+      settings: await (await request("/workspace/hostile/sandbox-settings")).json(),
+      status: await status(),
+    })).toBe(true);
     expect(await pid()).not.toBe(isolatedPid);
     // Explicit ordinary mode must really re-enable project discovery.
     expect((await request("/workspace/hostile/opencode2/api/agent")).status).toBe(200);
@@ -141,6 +212,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     for (let attempt = 0; attempt < 200 && !await access(managedMarker).then(() => true, () => false); attempt++) await delay(25);
     expect(await readFile(managedMarker, "utf8")).toBe("imported");
   } finally {
+    releaseInference();
     await server.stop(); await fixture.stop();
     for (const [key, value] of previous) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await rm(root, { recursive: true, force: true });

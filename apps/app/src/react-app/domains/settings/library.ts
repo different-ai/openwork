@@ -16,7 +16,8 @@ export type ComposerSettingsSection =
   | "plugins"
   | "connections"
   | "extensions"
-  | "providers";
+  | "providers"
+  | "permissions";
 
 /** Fallback when Configure has no + menu section (opens the full inventory). */
 export const COMPOSER_CONFIGURE_SECTION = "extensions" satisfies ComposerSettingsSection;
@@ -153,13 +154,14 @@ export function libraryAgentsFromOpencode(
 
 export type ComposerConfigureDestination =
   | { kind: "library"; path: string }
-  | { kind: "settings"; route: "/settings/ai" };
+  | { kind: "settings"; route: "/settings/ai" | "/settings/permissions" };
 
 /** Configure from the composer opens the matching Library filter, except providers. */
 export function composerConfigureDestination(
   section: ComposerSettingsSection,
 ): ComposerConfigureDestination {
   if (section === "providers") return { kind: "settings", route: "/settings/ai" };
+  if (section === "permissions") return { kind: "settings", route: "/settings/permissions" };
   return { kind: "library", path: libraryPathForSection(section) };
 }
 

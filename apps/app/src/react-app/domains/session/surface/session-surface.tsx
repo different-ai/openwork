@@ -11,8 +11,14 @@ import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRe
 import type { UIMessage } from "ai";
 import { hashKey, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
-import { Check, Minimize2 } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Minimize2 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
+import { SandboxActivityContext } from "@/components/chat/current-tool-lifecycle-context";
+import { Badge } from "@/components/ui/badge";
+import { sandboxSendDisposition } from "@/react-app/kernel/sandbox-transition";
+import { useSandboxSettings, useSandboxStatus } from "@/react-app/infra/use-sandbox";
+import { SandboxModePill } from "@/react-app/domains/session/surface/composer/sandbox-mode-pill";
+import { sandboxCurrentStepText, sandboxEffectiveMode, sandboxPillView } from "@/react-app/kernel/sandbox-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
@@ -126,6 +132,7 @@ import { PermissionApprovalPanel } from "@/react-app/domains/session/chat/permis
 import { ComputerRequestPanel } from "@/react-app/domains/session/computer/computer-request-panel";
 import { useComputerRequest, useComputerStore } from "@/react-app/domains/session/computer/computer-store";
 import { QuestionPanel } from "@/react-app/domains/session/modals/question-modal";
+import { AgentFormCard } from "@/react-app/domains/session/modals/agent-form-card";
 import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentParts } from "@/react-app/domains/session/surface/composer/composer-subagent-tracker";
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
@@ -1401,6 +1408,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     endpoint: { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
     sessionId: props.sessionId,
   };
+  const sandboxConnection = { client: props.client, workspaceId: props.workspaceId };
+  const { settings: sandboxSettings } = useSandboxSettings(sandboxConnection);
+  const sandboxPending = sandboxSettings.data?.pending === true;
+  const sandboxMode = sandboxEffectiveMode(sandboxSettings.data);
+  const observeSandbox = sandboxPending || sandboxMode !== "off";
+  const { status: sandboxStatus } = useSandboxStatus(sandboxConnection, observeSandbox);
+  const sandboxPill = sandboxPillView(sandboxSettings.data, sandboxStatus.data);
+  const sandboxActivity = observeSandbox && sandboxStatus.data?.state === "preparing" ? sandboxCurrentStepText(sandboxStatus.data) : null;
+  const [sandboxSendNotice, setSandboxSendNotice] = useState<{ owner: string; message: string } | null>(null);
   const [ownedError, setOwnedError] = useState<{ owner: string; error: SessionError } | null>(null);
   const error = ownedError?.owner === sessionOwner ? ownedError.error : null;
   const setError = useCallback((nextError: SessionError | null) => {
@@ -2294,6 +2310,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
+  const questionInThreadEnabled = useDesktopFeature("questionInThread");
+  const skipThreadQuestionBeforeSendRef = useRef<(() => void) | null>(null);
   const followUpSuggestion = useFollowUpSuggestion({
     enabled: followUpSuggestionsEnabled && !archived && !snapshot?.session.parentID,
     client: opencodeClient,
@@ -2471,6 +2489,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     pendingSendsRef.current.set(submissionId, sessionOwner);
     setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
+    setSandboxSendNotice(null);
     try {
       if (archived || !archiveStateKnown) throw new Error("This session is read-only. Restore it before sending.");
       if (sessionModelPending) throw new Error("The conversation's model is still loading. Retry shortly.");
@@ -2523,6 +2542,27 @@ export function SessionSurface(props: SessionSurfaceProps) {
       }
       return result;
     } catch (nextError) {
+      const disposition = sandboxSendDisposition(isPromptAdmissionUnknown(nextError) ? promptAdmissionFailure(nextError) : nextError, sandboxPending || sandboxMode === "force");
+      if (disposition.kind === "deferred" && getQueuedSendGeneration(props.sessionId) === generation) {
+        dispatchQueuedDrain(props.sessionId, { type: "send_error", itemId });
+        if (activeSessionOwnerRef.current === sessionOwner) {
+          setSandboxSendNotice({ owner: sessionOwner, message: disposition.note });
+          setAwaitingAssistantBaseline(null);
+          const state = useComposerStateStore.getState();
+          if (!onPrepared && !composerSessionHasContent(state.sessions[props.sessionId])) {
+            useComposerStateStore.setState({ sessions: { ...state.sessions, [props.sessionId]: {
+              draft: nextDraft.text,
+              attachments: nextDraft.attachments,
+              mentions: {},
+              pasteParts: nextDraft.parts.filter((part) => part.type === "paste"),
+              revertMessageId: null,
+            } } });
+            props.onDraftChange(nextDraft);
+            if (options.consumeQueuedItem) removeQueuedDraftFromStore(props.sessionId, itemId);
+          }
+        }
+        throw nextError;
+      }
       const wall = autoAccessWallFromError(nextError, sessionModel.selectedModel);
       if (wall && !isPromptAdmissionUnknown(nextError)) {
         await rememberRejection(wall);
@@ -2565,7 +2605,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
+  }, [snapshot?.session.parentID, archived, archiveStateKnown, sessionModelPending, interruptionClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages, sandboxPending, sandboxMode]);
 
   const clearComposer = useCallback(() => {
     clearPersistedDraft();
@@ -2601,6 +2641,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const sourceAttachments = submittedComposer?.attachments ?? attachments;
     const text = originalDraft.trim();
     if (!text && sourceAttachments.length === 0) return;
+    skipThreadQuestionBeforeSendRef.current?.();
     const focusedComposer = document.activeElement;
     const savedComposer = snapshotComposerSessionState(submittedComposer ?? {
       draft: originalDraft, attachments: sourceAttachments, mentions, pasteParts, revertMessageId: null,
@@ -3701,6 +3742,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId, sessionOwner, props.activeQuestion, props.respondQuestion, baseRenderedMessages, props.isControlTarget, props.draftScope, archived, archiveStateKnown, archiveHeld]);
   const composerQuestion = composerQuestionForConnectionDecision(props.activeQuestion, nativeConnectionRequest);
+  const threadQuestion = questionInThreadEnabled ? composerQuestion : null;
+  const dockedQuestion = questionInThreadEnabled ? null : composerQuestion;
+  skipThreadQuestionBeforeSendRef.current = threadQuestion && props.respondQuestion && !props.questionReplyBusy
+    ? () => { void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {}); }
+    : null;
   // The agent is waiting for computer use in this chat (setup or allowance).
   const computerRequest = useComputerRequest(props.sessionId);
   // A turn that ended on a Connect card picks up once its sign-in lands, as if the person said so.
@@ -4013,6 +4059,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                         messages={visibleMessages}
                         active={!archived && archiveStateKnown && !archiveHeld && Boolean(props.onOpenLibraryDetail)}
                       >
+                        <SandboxActivityContext.Provider value={sandboxActivity}>
                         <MessageList
                           messageIdReplacements={pendingReconciliation.messageIdReplacements}
                           viewport={messageViewport}
@@ -4023,6 +4070,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                           retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                           syncHealth={runSyncHealth}
                         />
+                        </SandboxActivityContext.Provider>
                       </SkillSharingProvider>
                     </MessageListProvider>
                   </EnvironmentVariableProvider>
@@ -4030,6 +4078,37 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </DevProfiler>
             )}
             </SessionHistoryBoundary>
+            {threadQuestion ? (
+              <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
+{threadQuestion.form ? (
+                  <AgentFormCard
+                    key={threadQuestion.id}
+                    form={threadQuestion.form}
+                    busy={props.questionReplyBusy ?? false}
+                    onReply={(answers) => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                    }}
+                    onDismiss={props.respondQuestion ? () => {
+                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                    } : undefined}
+                  />
+                ) : (
+                                <QuestionPanel
+                  key={threadQuestion.id}
+                  variant="thread"
+                  questions={threadQuestion.questions}
+                  busy={props.questionReplyBusy ?? false}
+                  requestId={threadQuestion.id}
+                  onReply={(answers) => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+                  }}
+                  onDismiss={props.respondQuestion ? () => {
+                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+                  } : undefined}
+                />
+                )}
+              </div>
+            ) : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
@@ -4110,7 +4189,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         </div> : null}
         <RemoteAccessAsk />
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
+        {sandboxSendNotice?.owner === sessionOwner ? <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{sandboxSendNotice.message}</p> : null}
         <ReactSessionComposer
+          sandboxModeControl={<SandboxModePill pill={sandboxPill} onOpenPermissions={() => props.onOpenSettingsSection?.("permissions")} />}
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}
           mentions={mentions}
@@ -4188,9 +4269,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
         pastedText={pasteParts}
         onExpandPastedText={handleExpandPastedText}
         onRemovePastedText={handleRemovePastedText}
-          compactTopSpacing={Boolean(composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
+          compactTopSpacing={Boolean(dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown)}
           topAccessory={
-            composerQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
+            dockedQuestion || (props.todos ?? []).some((todo) => todo.content.trim()) || props.activePermission || computerRequest || queuedItems.length > 0 || subagentTrackerShown || backgroundTasksShown ? (
               <div>
                 {queuedItems.length > 0 ? (
                   <QueuedMessagesPanel
@@ -4228,22 +4309,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     onStop={snapshotEngine === "v2" ? handleStopBackgroundTask : undefined}
                   />
                 ) : null}
-                {composerQuestion ? (
+                {dockedQuestion ? (
                   <div data-composer-interaction="question">
                   <QuestionPanel
-                    questions={composerQuestion.questions}
+                    questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
                     collapsible={questionMinimizeEnabled}
-                    requestId={composerQuestion.id}
+                    requestId={dockedQuestion.id}
                     shortcutActive={props.isControlTarget}
                     onReply={(answers) => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, answers)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {});
                       }
                     }}
                     onDismiss={props.respondQuestion ? () => {
-                      if (composerQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(composerQuestion.id, null)).catch(() => {});
+                      if (dockedQuestion) {
+                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, null)).catch(() => {});
                       }
                     } : undefined}
                   />

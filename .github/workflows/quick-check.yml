@@ -86,6 +86,8 @@ jobs:
           node --test
           .github/scripts/alpha-macos.test.mjs
           .github/scripts/desktop-helper-cache.test.mjs
+          apps/desktop/scripts/prepare-runtime-node-modules.test.mjs
+          apps/desktop/scripts/prepare-packaged-sandbox-image.test.mjs
           .github/scripts/alpha-windows.test.mjs
           .github/scripts/contributor-pr.test.mjs
           .github/scripts/contributor-screen.test.mjs

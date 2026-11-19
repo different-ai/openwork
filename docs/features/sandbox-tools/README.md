@@ -4,27 +4,47 @@ Feature `sandboxTools`, cloud and self-hosted, **off by default**. Owner: `benja
 
 ## What changes
 
-OpenCode v2 can use a local microsandbox microVM in two ways:
+OpenCode v2 can use a local sandbox on the member's computer. Two settings control it; see [modes.md](modes.md)
+for the full contract (labels, storage, policy, API, lifecycle).
 
-- Extra tools: `sandbox_shell`, `sandbox_read`, `sandbox_write`, `sandbox_edit`, `sandbox_glob`, `sandbox_grep`.
-- Sandbox only: native `shell/read/write/edit/glob/grep` are removed and replaced under the same names. All other
-  tools and MCP transports are withheld initially, including desktop computer use and the built-in browser.
+- **Use OpenWork Sandbox** (opt-in): adds `sandbox_shell`, `sandbox_read`, `sandbox_write`, `sandbox_edit`,
+  `sandbox_glob`, `sandbox_grep` next to the normal tools. Nothing is removed; the agent picks the sandbox for
+  risky or isolated work.
+- **Force OpenWork Sandbox**: native `shell/read/write/edit/glob/grep` are removed and replaced under the same
+  names. All other tools and MCP transports are withheld, including desktop computer use and the built-in browser.
+  Force implies Use.
 
-A sandbox failure never executes a host implementation. This is agent-tool confinement, not an OS jail for the
-trusted engine process. Authorized live rw bind mounts intentionally let the guest change their host files.
+Both off is the default and is the behavior without the feature. A sandbox failure never runs anything on the
+computer instead. This is agent-tool confinement, not an OS jail for the trusted engine process. Authorized live
+read-write folders intentionally let the sandbox change their files.
+
+Packaged verification, screenshots and timings: [modes-verification.md](modes-verification.md).
 
 ## Control it
 
-Den member/team agent permissions add **Run tools on this computer**. Turn it off to require sandbox-only.
-Settings -> Permissions has the same editable local control below Authorized Folders. Effective restriction is
-stricter-wins: local Allow cannot undo org Deny. Managed restrictions lock the local switch. The setting is
-engine-global, not imported from workspace files. Mode changes safely refresh the native engine before being
-acknowledged; busy or unknown activity returns 409 without changing the preference or stopping someone else's task.
-Required startup disables project configuration and project extension discovery; a tool reload alone is not enough.
+Settings -> Permissions shows both switches for a single user. In Den, member/team agent permissions let an
+admin require Use and/or Force with the same words; the desktop then shows that switch locked with "Managed by
+your organization". The stricter of the local and organization choice wins. The settings are engine-global, not
+imported from workspace files.
 
-Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and host tools do not
-come back. Older desktops get conservative compatibility rules; use managed version constraints for organizations
-requiring complete confinement, because old binaries cannot enforce new read-tool restrictions.
+- Use applies on the next message. A sandbox command already offered in the current turn still finishes.
+- Force keeps the idle-boundary process restart: saving during a task returns `pending: true` ("Saved. Applies
+  when current tasks finish."), current tasks keep their mode, and the change applies automatically when sessions
+  and background jobs are idle. A message sent meanwhile gets a neutral note, not an error.
+- Turning either on starts preparing the sandbox in the background (image, start, folders) with visible progress,
+  then Ready with the folders it can see. It also prepares at app start when a setting is on, and before a message
+  runs. Opening Settings never starts it. Failures show a plain message and Retry.
+- One sandbox per project is kept by the server across chats and across the restart a Force change needs.
+
+Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and the computer's
+tools do not come back. Older desktops: see the capability table in [modes.md](modes.md).
+
+### Settings and status API
+
+`GET`/`PUT /workspace/:id/sandbox-settings`, `GET /workspace/:id/sandbox-status` and
+`POST /workspace/:id/sandbox-status/prepare` are specified in [modes.md](modes.md). The GETs answer from local
+state: they never wait for the network and never start the sandbox. The first release's
+`{ allowHostExecution }` body and response fields are still accepted and returned.
 
 ## Folders and runtime
 
@@ -33,8 +53,10 @@ engine-wide `permission.external_directory` row, **not** `config.authorizedRoots
 encode a separate write mode; readonly server mounts are ro, and policies that cannot safely become binds are
 refused. Canonical aliases and protected runtime paths are checked before mounting.
 
-Changing grants stops/recreates the guest before reuse. Host bind contents survive; guest-only scratch is reset,
-with a restart receipt. In-flight operations are bounded, not promised instantaneous descendant cancellation.
+Changing grants stops/recreates the guest before reuse and prepares the replacement right away, so the next
+command does not pay for it. Host bind contents survive; guest-only scratch is reset, with a restart notice on the
+next result. A command queued behind a grant change never runs in a sandbox that still has the revoked folder.
+In-flight operations are bounded, not promised instantaneous descendant cancellation.
 
 Use Apple Silicon macOS or Linux KVM, a short `MSB_HOME` on macOS, and the normal feature registry for rollout in a
 disposable test organization. No production rollout is changed here. Missing runtime/image/hypervisor support is
@@ -53,6 +75,8 @@ from a live Claude CLI/SDK-provider test, which remains unverified.
 ## Evidence
 
 [Design](design.md), [verification](verification.md), [Fable](model-check-fable.md), [Sol](model-check-sol.md).
+Those original source-run results do not establish packaged availability. See the
+[packaged repair acceptance boundary](packaged-verification.md) for the distributable regression and final build evidence.
 Proofs: `evals/proofs/sandbox-only.proof.test.ts` (native Electron/real microVM on Mac) and
 `sandbox-controls.proof.test.ts` (portable Den/Settings UI). Real readonly provider checks supplement the UI proof.
 Daytona had no usable KVM access for its default user, so microVM proof is explicitly local.

@@ -10,7 +10,7 @@ import { createV2BrowserBridge } from "./opencode-v2-browser-bridge.js";
 import { DRIVE_UPLOAD_PERMISSION, GMAIL_DRAFT_PERMISSION, OPENWORK_CLOUD_UPLOADS_EXTENSION_ID, OUTLOOK_DRAFT_PERMISSION } from "./extensions/cloud-upload-constants.js";
 import { createDriveFileTools, DRIVE_FILE_ACTIONS, type DriveFileAction } from "./opencode-plugins/drive-file-tools.js";
 import { SESSION_GROUP_COMMAND_IDS } from "./opencode-plugins/openwork-session-groups.js";
-import { ASK_WITHOUT_WAITING, askArgs } from "./opencode-plugins/openwork-agent-questions.js";
+import { ASK_FORM, ASK_WITHOUT_WAITING, askArgs, askFormArgs, formQuestions } from "./opencode-plugins/openwork-agent-questions.js";
 import { askWithoutWaiting } from "./opencode-v2-background-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
@@ -20,7 +20,7 @@ import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ...DRIVE_FILE_ACTIONS]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
   // The calling tool's place in its chat, where a Drive approval is shown.
@@ -285,12 +285,13 @@ export async function createV2ContextBridge(
         return Response.json(await read("/experimental/connect/skills/read", { method: "POST", body: JSON.stringify(input) }));
       }
       // A question in the calling chat that no tool call waits on.
-      if (call.name === ASK_WITHOUT_WAITING) {
-        const args = askArgs.parse(call.input);
+      if (call.name === ASK_WITHOUT_WAITING || call.name === ASK_FORM) {
+        const form = call.name === ASK_FORM ? askFormArgs.parse(call.input) : undefined;
+        const args = form ? { questions: formQuestions(form) } : askArgs.parse(call.input);
         const current = engine?.();
         if (!call.sessionId || !call.caller || !current) throw new Error("OpenWork cannot ask the person from here, so nothing was asked.");
         if (openQuestions >= MAX_OPEN_QUESTIONS) throw new Error("Too many questions are waiting for answers, so nothing was asked. Wait for the person to answer one first.");
-        const asked = await askWithoutWaiting(current, { directory: call.caller.directory, sessionId: call.sessionId, questions: args.questions }, request.signal, questions.signal);
+        const asked = await askWithoutWaiting(current, { directory: call.caller.directory, sessionId: call.sessionId, questions: args.questions, ...(form ? { form } : {}) }, request.signal, questions.signal);
         openQuestions += 1;
         void asked.settled.finally(() => { openQuestions -= 1; });
         return Response.json({ ok: true, id: asked.id, message: "Asked. Their answer arrives as a message in this chat; keep working on what does not depend on it." });

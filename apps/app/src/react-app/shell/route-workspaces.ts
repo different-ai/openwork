@@ -19,6 +19,7 @@ import {
   safeStringify,
 } from "@/app/utils";
 import { t } from "@/i18n";
+import { proxyFailure } from "@/react-app/kernel/sandbox-transition";
 
 export type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -190,6 +191,8 @@ export function isTransientStartupError(message: string | null | undefined) {
 }
 
 export function describeRouteError(error: unknown) {
+  const { message } = proxyFailure(error);
+  if (message) return message;
   if (error instanceof Error) {
     return error.message;
   }
@@ -198,12 +201,7 @@ export function describeRouteError(error: unknown) {
 }
 
 export function classifyRouteSessionReadError(error: unknown): "not-found" | "retryable" | "error" {
-  const status = error instanceof Error && "status" in error && typeof error.status === "number"
-    ? error.status
-    : null;
-  const code = error instanceof Error && "code" in error && typeof error.code === "string"
-    ? error.code
-    : "";
+  const { code, status } = proxyFailure(error);
   if (code === "session_not_found") return "not-found";
   if (
     code === "opencode_unconfigured" ||

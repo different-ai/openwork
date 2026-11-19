@@ -461,6 +461,16 @@
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
     },
+    "./agent-form": {
+      "types": {
+        "openwork-build": "./dist/types/src/agent-form.d.ts",
+        "default": "./src/agent-form.ts"
+      },
+      "development": "./src/agent-form.ts",
+      "bun": "./src/agent-form.ts",
+      "browser": "./src/agent-form.ts",
+      "default": "./dist/agent-form.js"
+    },
     "./session-link": {
       "types": {
         "openwork-build": "./dist/types/src/session-link.d.ts",

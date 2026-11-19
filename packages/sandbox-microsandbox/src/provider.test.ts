@@ -29,7 +29,10 @@ function fakeDriver(onRun: RunHandler = async () => ({ exitCode: 0, stdout: "", 
     found.info = { ...found.info, status }
   }
   const driver: MicrosandboxDriver = {
-    async create(config) {
+    async create(config, _timeoutMs, onProgress) {
+      onProgress?.({ kind: "resolved", reference: config.image, manifestDigest: "sha256:fixture", layerCount: 1, totalDownloadBytes: 64 })
+      onProgress?.({ kind: "layerDownloadProgress", layerIndex: 0, digest: "sha256:layer", downloadedBytes: 32, totalBytes: 64 })
+      onProgress?.({ kind: "startup", phase: "activating", completedBytes: 1 })
       if (guests.has(config.name)) throw new MicrosandboxDriverError("sandboxAlreadyExists", `sandbox already exists: ${config.name}`)
       const taken = config.ports.find(port => takenPorts.has(port.hostPort))
       if (taken) throw new MicrosandboxDriverError("portInUse", `failed to publish TCP port 127.0.0.1:${taken.hostPort}`)
@@ -94,6 +97,18 @@ async function rejectsWith(operation: () => unknown, code: SandboxErrorCode) {
 
 for (const c of sandboxProviderConformanceCases(() => providerWith().provider)) test(c.name, c.run)
 for (const c of sandboxBlockConformanceCases(() => providerWith().provider, ["files", "pause"])) test(c.name, c.run)
+
+test("forwards image and startup progress from the driver to the creation caller", async () => {
+  const { provider } = providerWith()
+  const events: unknown[] = []
+  const result = await provider.create(spec("progress"), { ...opts, onProgress: event => events.push(event) })
+  assert.equal(result.state, "running")
+  assert.deepEqual(events, [
+    { kind: "resolved", reference: "alpine", manifestDigest: "sha256:fixture", layerCount: 1, totalDownloadBytes: 64 },
+    { kind: "layerDownloadProgress", layerIndex: 0, digest: "sha256:layer", downloadedBytes: 32, totalBytes: 64 },
+    { kind: "startup", phase: "activating", completedBytes: 1 },
+  ])
+})
 
 test("claims a Linux microVM without detached exec, volumes or memory restore", () => {
   const capabilities = providerWith().provider.describe()

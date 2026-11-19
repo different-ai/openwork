@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   isAlphaChannelAllowedByDesktopConfig,
   isAlphaUpdateAllowed,
-  isAlphaUpdateAllowedByVersionCeiling,
   resolveAutomaticStableDesktopUpdate,
   resolveDesktopUpdateChannel,
   resolveFreshStableDesktopUpdate,
@@ -30,40 +29,21 @@ describe("alpha desktop update policy", () => {
     expect(resolveDesktopUpdateChannel("stable", desktopConfig)).toBe("stable");
   });
 
-  test("blocks policy-disabled alpha builds before consulting Den", async () => {
-    await expect(
-      isAlphaUpdateAllowed("999.0.0-alpha.1", { allowAlphaUpdates: false }),
-    ).resolves.toBe(false);
+  test("blocks every alpha build when the organization turns alpha off", () => {
+    expect(isAlphaUpdateAllowed("999.0.0-alpha.1", { allowAlphaUpdates: false })).toBe(false);
   });
 
-  test("lets an installed alpha advance within its release while Den metadata lags", () => {
-    expect(isAlphaUpdateAllowedByVersionCeiling({
-      updateVersion: "0.18.37-alpha.2492+4921a02",
-      currentVersion: "0.18.37-alpha.2491+64d2d37",
-      denLatestAppVersion: "0.18.35",
-      desktopConfig: { allowAlphaUpdates: true },
-    })).toBe(true);
+  test("installs the newest alpha even when it is several releases past the stable version", () => {
+    expect(isAlphaUpdateAllowed("0.18.70-alpha.4466", {})).toBe(true);
+    expect(isAlphaUpdateAllowed("0.18.70-alpha.4466", { allowAlphaUpdates: true })).toBe(true);
+    expect(isAlphaUpdateAllowed("0.19.0-alpha.1", null)).toBe(true);
   });
 
-  test("does not let an installed alpha bypass the ceiling for a newer release", () => {
-    expect(isAlphaUpdateAllowedByVersionCeiling({
-      updateVersion: "0.18.38-alpha.2493+abcdef0",
-      currentVersion: "0.18.37-alpha.2491+64d2d37",
-      denLatestAppVersion: "0.18.35",
-      desktopConfig: { allowAlphaUpdates: true },
-    })).toBe(false);
-  });
+  test("lets alpha run one patch past an organization's highest allowed version", () => {
+    const desktopConfig = { allowAlphaUpdates: true, allowedDesktopVersions: ["0.18.35"] };
 
-  test("keeps an explicit organization ceiling in force", () => {
-    expect(isAlphaUpdateAllowedByVersionCeiling({
-      updateVersion: "0.18.37-alpha.2492+4921a02",
-      currentVersion: "0.18.37-alpha.2491+64d2d37",
-      denLatestAppVersion: "0.18.35",
-      desktopConfig: {
-        allowAlphaUpdates: true,
-        allowedDesktopVersions: ["0.18.35"],
-      },
-    })).toBe(false);
+    expect(isAlphaUpdateAllowed("0.18.36-alpha.2492+4921a02", desktopConfig)).toBe(true);
+    expect(isAlphaUpdateAllowed("0.18.37-alpha.2492+4921a02", desktopConfig)).toBe(false);
   });
 });
 

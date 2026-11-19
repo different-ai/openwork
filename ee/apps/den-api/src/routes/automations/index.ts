@@ -41,7 +41,8 @@ import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { requireFeature } from "../../features.js"
 import { hasPermission } from "../org/shared.js"
-import { getAutomationSharing, replaceAutomationSharing, listSharedAutomations } from "../../automations/sharing.js"
+import { getAutomationSharing, replaceAutomationSharing, listSharedAutomations, SHARED_AUTOMATION_PAGE_MAX } from "../../automations/sharing.js"
+import { keysetCursorQuerySchema } from "../../list-pagination.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { addAuditRequestResource } from "../../audit/request-capture.js"
 import { registerSessionRunnerRoutes } from "../session-runners/index.js"
@@ -168,6 +169,11 @@ const routeDescription = [
   "Deactivation stops future runs but does not cancel a run already in progress.",
 ].join(" ")
 
+const listSharedAutomationsQuerySchema = z.object({
+  cursor: keysetCursorQuerySchema.optional(),
+  limit: z.coerce.number().int().min(1).max(SHARED_AUTOMATION_PAGE_MAX).default(SHARED_AUTOMATION_PAGE_MAX),
+})
+
 export function registerAutomationRoutes<T extends { Variables: RouteVariables }>(
   app: Hono<T>,
   options: {
@@ -241,11 +247,15 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "listSharedAutomations", "x-mcp": true,
       summary: "List Automation definitions shared with you",
-      description: "Returns up to 200 shared definitions, newest share first. No runs or results are exposed. To use one, add your own paused copy and review it before activating; copies use your own connections and models.",
-      responses: { 200: jsonResponse("Shared definitions.", sharedAutomationListSchema), 404: jsonResponse("Sharing disabled.", notFoundSchema) },
+      description: "Returns shared definitions, newest share first. Pass nextCursor from the previous page as cursor to continue; nextCursor is null on the last page. No runs or results are exposed. To use one, add your own paused copy and review it before activating; copies use your own connections and models.",
+      responses: {
+        200: jsonResponse("Shared definitions.", sharedAutomationListSchema),
+        400: jsonResponse("Invalid cursor or limit.", invalidRequestSchema),
+        404: jsonResponse("Sharing disabled.", notFoundSchema),
+      },
     }),
-    orgMemberRoute(), requireFeature("automationSharing"),
-    async (c) => c.json(await listSharedAutomations(scope(c))),
+    orgMemberRoute(), requireFeature("automationSharing"), queryValidator(listSharedAutomationsQuerySchema),
+    async (c) => c.json(await listSharedAutomations(scope(c), c.req.valid("query"))),
   )
   app.post(
     "/v1/shared-automations/:id/copy",

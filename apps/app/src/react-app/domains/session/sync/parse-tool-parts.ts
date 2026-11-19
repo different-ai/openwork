@@ -5,6 +5,7 @@ import {
   connectionActionPayloadSchema,
 } from "@openwork/types/connection-action-app";
 
+import { sandboxToolRenderer } from "@/lib/build-in-tools";
 import { safeStringify } from "@/app/utils";
 import { connectRemoteSessionAction } from "@/lib/capability-call";
 import { normalizeErrorText } from "@/lib/error-text";
@@ -92,14 +93,17 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
     : null;
   const toolCompletedAt = (appBuilder || computer) && "time" in part.state && "end" in part.state.time && typeof part.state.time.end === "number"
     && Number.isFinite(part.state.time.end) ? part.state.time.end : null;
-  const fileDestination = part.tool === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
-    : part.tool === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
+  const toolName = sandboxToolRenderer(part.tool);
+  const fileDestination = toolName === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
+    : toolName === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
   const workspacePaths = isJsonValue(stateMetadata.openworkWorkspacePaths) ? stateMetadata.openworkWorkspacePaths : null;
   // An edit's own line counts, for the text-first rail's "+11 −3".
-  const filediff = part.tool === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
+  const filediff = toolName === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
   const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
     ? { added: filediff.additions, removed: filediff.deletions } : null;
   const openwork = {
+    ...(stateMetadata.sandbox === true || part.metadata?.sandbox === true ? { sandbox: true } : {}),
+    ...(toolName !== part.tool ? { sandboxTool: true, sourceToolName: part.tool } : {}),
     ...(computer && stateMetadata.isError === true ? { computerFailure: true } : {}),
     ...(fileDestination ? { fileDestination } : {}),
     ...(workspacePaths ? { workspacePaths } : {}),
@@ -158,7 +162,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
   if (part.state.status === "error") {
     return {
       type: "dynamic-tool",
-      toolName: part.tool,
+      toolName: sandboxToolRenderer(part.tool),
       toolCallId: part.callID,
       state: "output-error",
       input: part.state.input,
@@ -170,7 +174,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
   if (part.state.status === "completed") {
     if (part.metadata?.openworkV2CodeMode === true && part.state.metadata.error === true) {
       return {
-        type: "dynamic-tool", toolName: part.tool, toolCallId: part.callID,
+        type: "dynamic-tool", toolName: sandboxToolRenderer(part.tool), toolCallId: part.callID,
         state: "output-error", input: part.state.input,
         errorText: normalizeErrorText(part.state.output).display,
         callProviderMetadata: toolCallProviderMetadata(part),
@@ -178,7 +182,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     }
     return {
       type: "dynamic-tool",
-      toolName: part.tool,
+      toolName: sandboxToolRenderer(part.tool),
       toolCallId: part.callID,
       state: "output-available",
       input: part.state.input,
@@ -195,7 +199,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
 
   return {
     type: "dynamic-tool",
-    toolName: part.tool,
+    toolName: sandboxToolRenderer(part.tool),
     toolCallId: part.callID,
     // The engine's running event means the full builder input was submitted;
     // pending events still represent the model writing its arguments.

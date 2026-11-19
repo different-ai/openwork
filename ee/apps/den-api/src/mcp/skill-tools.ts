@@ -2,6 +2,7 @@ import type { CallToolResult, McpServer, ToolAnnotations } from "@modelcontextpr
 import { z } from "zod"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { tokenize } from "./search.js"
+import type { SkillFile } from "../skill-files.js"
 
 /**
  * Direct skill tools for the `/mcp/agent` endpoint.
@@ -55,7 +56,7 @@ export type GetSkillPayload = z.infer<typeof GET_SKILL_OUTPUT_SCHEMA>
  * `blocked` carries the readiness hint and the action that unblocks it.
  */
 export type RemoteSkillSource =
-  | { content: string; provenance?: string }
+  | { content: string; provenance?: string; files?: SkillFile[] }
   | { blocked: { status: string; message: string; action: unknown } }
   | null
 

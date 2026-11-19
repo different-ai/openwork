@@ -59,6 +59,7 @@ export type EmbeddedServerOptions = CliArgs & {
   anonymousInference?: ServerConfig["anonymousInference"];
   /** Desktop/bootstrap-owned control plane for signed-out feature discovery. */
   trustedDenOrigin?: string;
+  engineSystemProxyEnv?: ServerConfig["engineSystemProxyEnv"];
   /** Desktop marks a brand-new install so it starts on OpenCode v2. */
   freshInstallEngine?: ServerConfig["freshInstallEngine"];
   /** Copy v1 chats with a backup and switch when idle by default; false is a local opt-out. */
@@ -88,6 +89,7 @@ export async function startEmbeddedServer(options: EmbeddedServerOptions): Promi
   config.driveFileApproval = options.driveFileApproval;
   config.anonymousInference = options.anonymousInference;
   config.trustedDenOrigin = options.trustedDenOrigin;
+  config.engineSystemProxyEnv = options.engineSystemProxyEnv;
   config.freshInstallEngine = options.freshInstallEngine;
   if (options.engineAutoUpgrade !== undefined) {
     config.engineAutoUpgrade = options.engineAutoUpgrade;

@@ -36,8 +36,9 @@ not a competing application-facing contract.
 
 The native SDK loads in the server, not a plugin bundle. Local backend selection is pinned; no SDK-hosted cloud
 backend can be silently selected. Apple Silicon macOS and Linux KVM are supported targets; Windows remains outside
-v1. The guest image is currently `alpine:3.22`; digest-pinned product images and packaged-runtime release validation
-remain rollout prerequisites.
+v1. The Alpine 3.22 guest image is digest-pinned per architecture in `packaged-sandbox-image.json`. Packaged builds
+ship a verified OCI archive and import it into a fresh SDK home; missing packaged assets cannot fall back to a
+registry download. See [packaged verification](packaged-verification.md) for the distributable acceptance boundary.
 
 Implementation:
 
@@ -123,6 +124,11 @@ native execution must not be presumed confined by this evidence.
 
 ## 6. Controls: local plus organization, stricter wins
 
+> The single "Run tools on this computer" switch described below shipped in the first release. It is now two
+> settings, **Use OpenWork Sandbox** and **Force OpenWork Sandbox**; [modes.md](modes.md) is the current contract.
+> Force is exactly the `hostExecution: deny` behavior this section specifies, and every guarantee here still holds
+> for it. Use is the "Extra tools" row of section 1, now opt-in instead of following the rollout.
+
 Definition in `packages/types/src/den/agent-permissions.ts`:
 
 - Key `hostExecution`, host action `host_execution`, Commands section, toggle **Run tools on this computer**.
@@ -141,12 +147,17 @@ allow, managed status and feature availability. Writes use the existing collabor
 explicit local preference fails restrictive. A managed requirement locks the row; a direct local-allow request
 still cannot weaken the effective org decision.
 
-Saving waits for a serialized, fenced native-sidecar refresh when process isolation must change, in either
-direction. It probes pinned global session/job activity before persistence: busy or unknown activity returns 409,
-leaving the preference and running tasks intact. An idle transition changes PID and acknowledges only after the
-new process is ready. A refresh failure after persistence is 503, retaining restrictive admission rather than
-falling back. Org-policy changes and later verified ordinary authority use the same safe admission flow, and
-forwarding resolves fresh connection credentials after the fence. Guest scratch can reset during such refreshes;
+Saving records desired intent separately from applied local policy. Busy or unknown native activity returns a
+successful save with `pending: true`; current tasks retain their applied local authority, while the switch and its
+state line explicitly show the saved choice and whether current work can still use this computer. No running task
+is killed. New admissions wait behind the pending policy boundary. Safe global activity reads, owned existing-chat
+reads and explicit Stop remain available without initializing a new workspace location.
+
+A reconciler automatically applies the saved choice after global sessions/background jobs are idle, refreshing the
+native process under the engine fence in either direction. The panel polls until the pending state clears. Cold
+startup applies durable intent before spawning. Organization restrictions remain independently strict/live; local
+pending intent is never an org-policy bypass. A refresh failure remains restrictive rather than falling back, and
+forwarding resolves fresh connection credentials after the fence. Guest scratch can reset during refreshes;
 workspace/Authorized Folder bind data remains intact.
 
 The host sends `X-OpenWork-Sandbox-Only: 1` for desktop config. Den filters unknown actions for older clients and

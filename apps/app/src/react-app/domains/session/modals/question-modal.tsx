@@ -29,6 +29,7 @@ export type QuestionPanelProps = {
   requestId?: string;
   /** Whether this panel answers the collapse chord; one pane at a time. */
   shortcutActive?: boolean;
+  variant?: "composer" | "thread";
 };
 
 type QuestionState = {
@@ -135,7 +136,7 @@ export function clearQuestionDrafts() {
 }
 
 const QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE =
-  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto wrap-anywhere text-sm leading-6 text-gray-11";
+  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto pl-7.5 wrap-anywhere text-sm leading-6 text-gray-11";
 const QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
 
 export function QuestionPanel(props: QuestionPanelProps) {
@@ -253,6 +254,148 @@ export function QuestionPanel(props: QuestionPanelProps) {
   };
 
   if (!currentQuestion) return null;
+
+  if (props.variant === "thread") {
+    const otherSelected = customAnswerEnabled && state.customAnswerActive;
+    const radio = (on: boolean) => (
+      <span
+        aria-hidden="true"
+        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+          on ? "border-blue-9 bg-blue-9" : "border-gray-7 bg-transparent"
+        }`}
+      >
+        {on ? (currentQuestion.multiple ? <Check size={10} className="text-white" strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />) : null}
+      </span>
+    );
+    const pick = (label: string, idx: number) => {
+      if (props.busy) return;
+      dispatch({ type: "setFocusedOptionIndex", value: idx });
+      if (currentQuestion.multiple) {
+        dispatch({ type: "toggleMultipleOption", option: label });
+        return;
+      }
+      dispatch({ type: "selectOption", option: label });
+      if (customAnswerEnabled) {
+        dispatch({ type: "setCustomAnswerActive", value: false });
+        dispatch({ type: "setCustomInput", value: "" });
+      }
+    };
+    const pickOther = () => {
+      if (props.busy) return;
+      if (!currentQuestion.multiple) dispatch({ type: "selectOption", option: "" });
+      dispatch({ type: "setCustomAnswerActive", value: true });
+    };
+    const selection = state.currentSelection.filter(Boolean);
+    const threadCanProceed =
+      (customAnswerEnabled && state.customInput.trim().length > 0) || selection.length > 0;
+    const submitThread = () => {
+      if (!threadCanProceed || props.busy) return;
+      const nextAnswer = [...selection];
+      if (customAnswerEnabled && state.customInput.trim()) nextAnswer.push(state.customInput.trim());
+      const newAnswers = [...state.answers];
+      newAnswers[state.currentIndex] = nextAnswer;
+      if (isLastQuestion) {
+        dispatch({ type: "setAnswers", answers: newAnswers });
+        reply(newAnswers);
+      } else {
+        dispatch({ type: "advance", answers: newAnswers });
+      }
+    };
+    return (
+      <section
+        className="my-4 overflow-hidden rounded-2xl border border-dls-border bg-dls-surface"
+        data-question-variant="thread"
+        aria-label={currentQuestion.header || t("common.question")}
+      >
+        <div className="flex items-center gap-2 px-4 pt-3 text-xs font-medium text-amber-11">
+          <span className="size-1.5 rounded-full bg-amber-9" aria-hidden="true" />
+          {t("question_modal.needs_input")}
+          {props.questions.length > 1 ? (
+            <span className="font-normal text-gray-9">
+              {t("question_modal.question_counter", undefined, {
+                current: state.currentIndex + 1,
+                total: props.questions.length,
+              })}
+            </span>
+          ) : null}
+        </div>
+        <div className="max-h-[min(12rem,30vh)] overflow-y-auto wrap-anywhere px-4 pb-3 pt-1.5 text-sm leading-6 text-gray-12" data-question-text="">
+          {currentQuestion.question}
+        </div>
+        <div className="divide-y divide-dls-border border-t border-dls-border" role={currentQuestion.multiple ? "group" : "radiogroup"}>
+          {options.map((opt, idx) => {
+            const on = selection.includes(opt.label);
+            return (
+              <button
+                key={`${opt.label}:${idx}`}
+                type="button"
+                role={currentQuestion.multiple ? "checkbox" : "radio"}
+                aria-checked={on}
+                disabled={props.busy}
+                onClick={() => pick(opt.label, idx)}
+                className="flex w-full items-start gap-3 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {radio(on)}
+                <span className="min-w-0">
+                  <span className="block text-gray-12">{opt.label}</span>
+                  {opt.description && opt.description !== opt.label ? (
+                    <span className="mt-0.5 block text-xs leading-5 text-gray-10">{opt.description}</span>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+          {customAnswerEnabled ? (
+            <div className="px-4 py-2.5">
+              <button
+                type="button"
+                role={currentQuestion.multiple ? "checkbox" : "radio"}
+                aria-checked={otherSelected}
+                disabled={props.busy}
+                onClick={pickOther}
+                className="flex w-full items-start gap-3 text-left text-sm text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {radio(otherSelected)}
+                <span>{t("question_modal.other")}</span>
+              </button>
+              {otherSelected ? (
+                <input
+                  type="text"
+                  autoFocus
+                  value={state.customInput}
+                  disabled={props.busy}
+                  onChange={(event) => dispatch({ type: "setCustomInput", value: event.currentTarget.value })}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    event.stopPropagation();
+                    submitThread();
+                  }}
+                  placeholder={t("question_modal.custom_answer_placeholder")}
+                  className="ml-7 mt-2 w-[calc(100%-1.75rem)] rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:border-dls-accent focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-2.5">
+          <span className="text-xs text-gray-9">
+            {props.busy ? "Submitting..." : props.onDismiss ? t("question_modal.send_skips_hint") : null}
+          </span>
+          <div className="flex shrink-0 gap-2">
+            {props.onDismiss ? (
+              <Button variant="ghost" size="sm" disabled={props.busy} title={t("question_modal.dismiss_hint")} onClick={dismiss}>
+                {t("question_modal.skip")}
+              </Button>
+            ) : null}
+            <Button size="sm" disabled={!threadCanProceed || props.busy} onClick={submitThread}>
+              {isLastQuestion ? t("common.submit") : t("common.next")}
+              {!isLastQuestion ? <ChevronRight data-icon="inline-end" /> : null}
+            </Button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const body = (
       <div className={QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE} data-question-body="">
@@ -391,7 +534,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                     })}
                   </div>
                 </div>
-                <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
               </div>
             )}
             <CollapsibleTrigger
@@ -422,6 +564,9 @@ export function QuestionPanel(props: QuestionPanelProps) {
               </Button>
             ) : null}
           </div>
+          {collapsed ? null : (
+            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
+          )}
         </div>
         <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
       </Collapsible>
@@ -447,7 +592,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 })}
               </div>
             </div>
-            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
           </div>
           {props.onDismiss ? (
             <Button
@@ -463,6 +607,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
             </Button>
           ) : null}
         </div>
+        <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
       </div>
 
       {body}

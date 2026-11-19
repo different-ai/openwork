@@ -1202,7 +1202,7 @@ export const sharedAutomationSchema = z.object({
   id: z.string(),
   name: z.string(),
   sharedBy: z.object({ memberId: z.string(), name: z.string() }),
-  sharedAt: z.number(),
+  sharedAt: z.string().datetime(),
   schedule: automationScheduleSchema,
   executionTarget: automationExecutionTargetSchema,
   action: automationActionSchema,
@@ -1211,6 +1211,7 @@ export type SharedAutomation = z.infer<typeof sharedAutomationSchema>
 
 export const sharedAutomationListSchema = z.object({
   items: z.array(sharedAutomationSchema),
+  nextCursor: z.string().nullable(),
 }).meta({ ref: "SharedAutomationList" })
 export type SharedAutomationList = z.infer<typeof sharedAutomationListSchema>
 

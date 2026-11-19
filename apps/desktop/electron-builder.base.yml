@@ -24,6 +24,11 @@ files:
     to: node_modules
     filter: ["**/*", *noSourceMaps, *noTypeDeclarations, *noTypeScriptTools]
 extraResources:
+  - from: .electron-runtime/sandbox-image
+    to: sandbox-image
+    filter:
+      - alpine.oci.tar
+      - manifest.json
   - from: .electron-runtime/openwork-sentry.json
     to: openwork-sentry.json
   - from: ../app/dist
@@ -49,6 +54,9 @@ asarUnpack:
   - server/dist/opencode-plugin-deps-*.tgz
   - node_modules/.pnpm/@lydell+node-pty*/**
   - node_modules/node-pty/**
+  # Rust opens/spawns these paths directly, outside Electron's ASAR filesystem.
+  # Keep msb beside its matching firmware library and N-API binding.
+  - "**/@superradcompany/microsandbox-*/**"
   # Blender loads computer use's script bridge from a real file.
   - electron/computer-scripting/**
 npmRebuild: false
@@ -67,6 +75,10 @@ mac:
   notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # afterPack signs this executable with its dedicated Hypervisor entitlement.
+  # Do not replace that signature with Electron's inherited entitlements.
+  signIgnore:
+    - "/@superradcompany/microsandbox-darwin-arm64/bin/msb$"
   extendInfo:
     NSMicrophoneUsageDescription: OpenWork uses the microphone when you allow a page to access audio input.
     NSAppleEventsUsageDescription: OpenWork controls this app with a script when you approve a computer use task.

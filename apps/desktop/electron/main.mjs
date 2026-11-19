@@ -23,9 +23,10 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { createSystemProxyRelay, systemProxyRelayEnv } from "./system-proxy-relay.mjs";
 import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
-import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
+import { createRuntimeManager, createSystemCaCertificateVerifyProc, sandboxFeatureDenOrigin } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
@@ -1563,10 +1564,28 @@ function validateSkillName(raw) {
 
 // Apply the build opt-out before the runtime captures inherited environment values.
 await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
+// Started the first time an engine is to follow the computer's proxy
+// settings, and kept for the life of the app: engines hold its address.
+let systemProxyRelay;
+const engineSystemProxyEnv = async () => {
+  await app.whenReady();
+  systemProxyRelay ??= createSystemProxyRelay({
+    resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    log: (message) => console.log(message),
+  }).start();
+  try {
+    return systemProxyRelayEnv((await systemProxyRelay).url);
+  } catch (error) {
+    systemProxyRelay = undefined;
+    throw error;
+  }
+};
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  engineSystemProxyEnv,
+  trustedDenOrigin: async () => sandboxFeatureDenOrigin((await workspaceStore.getDesktopBootstrapConfig()).apiBaseUrl),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
   driveFileApproval: async ({ provider, action, path: filePath, name, fileId, webViewLink, mode }) => {

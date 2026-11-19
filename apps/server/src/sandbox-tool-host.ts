@@ -85,7 +85,7 @@ export function createSandboxToolHost(dependencies: SandboxToolHostDependencies)
       const run = provider.blocks?.run;
       const files = provider.blocks?.files;
       const needsRun = name === "shell" || name === "glob" || name === "grep";
-      if (needsRun ? !run : !files) throw new Error(`Sandbox provider does not support ${needsRun ? "run" : "files"}; host fallback is disabled.`);
+      if (needsRun ? !run : !files) throw new Error(`The sandbox can't ${needsRun ? "run commands" : "open files"} right now. Nothing ran on this computer.`);
       const handle = await dependencies.acquire();
       call.signal.throwIfAborted();
       if (handle.ref.providerId !== provider.id || handle.state !== "running") throw new Error("Sandbox handle must be running and belong to the configured provider.");

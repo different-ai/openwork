@@ -46,6 +46,7 @@ import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, lo
 import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
 import { applyClaudePromptCache } from "./prompt-cache.js"
+import { createLearnedOutputLimits, fitOutputCap, knownOutputLimit, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap } from "./output-limit.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -829,6 +830,7 @@ function restOfPath(pathname: string, inferenceProviderId: string) {
 }
 
 export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRouteDependencies) {
+  const learnedOutputLimits = createLearnedOutputLimits()
   const dependencies: GatewayDependencies = {
     checkUsage: input.checkUsage ?? checkGatewayUsage,
     fetch: input.fetch,
@@ -1038,6 +1040,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestPricing = price && selection.upstreamModel ? fixedModelPricing(provider.provider_id, selection.upstreamModel, price) : undefined
     }
     rewriteSelectedModel(prepared, resolved, selection.upstreamModel)
+    // Never ask for more output than the model is known to allow: the provider would refuse the whole request.
+    const outputLimitKey = selection.row.model ? `${selection.row.model.id}\u001f${selection.upstreamModel ?? ""}` : null
+    const outputLimit = knownOutputLimit(modelOutputLimit(selection.row.model?.model_config), outputLimitKey ? learnedOutputLimits.get(outputLimitKey, dependencies.now().getTime()) : null)
+    if (prepared.json && fitOutputCap(prepared.json, resolved.protocol, outputLimit)) prepared.body = JSON.stringify(prepared.json)
     if (resolved.family === "bedrock_mantle" && resolved.regionDerived) {
       // Mantle serves some models under /openai/v1; the path comes from the trusted catalog, never the request.
       const apiPath = (selection.upstreamModel === null ? undefined : catalog?.modelApiPaths?.get(selection.upstreamModel)) ?? BEDROCK_MANTLE_DEFAULT_API_PATH
@@ -1193,6 +1199,31 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         validateInferenceUrl(prepared.url)
         lifetime.signal.throwIfAborted()
         upstream = await dependencies.fetch(prepared.url, { method, headers, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+        const requestedCap = prepared.json ? requestedOutputCap(prepared.json, resolved.protocol) : null
+        if (prepared.json && requestedCap !== null && (upstream.status === 400 || upstream.status === 422)) {
+          // The provider refused before generating anything. When it refused the output cap, send the
+          // same request once more with the limit it named, or with no cap, instead of failing the turn.
+          const refusal = new TextDecoder().decode(await readBoundedBody({ body: upstream.body, signal: lifetime.signal }, 1_048_576).catch(() => new Uint8Array()))
+          const rejection = rejectedOutputCap(upstream.status, refusal, requestedCap)
+          if (rejection && relaxOutputCap(prepared.json, resolved.protocol, rejection.limit)) {
+            if (rejection.limit !== null && outputLimitKey) learnedOutputLimits.learn(outputLimitKey, rejection.limit, dependencies.now().getTime())
+            gatewayLog.info("provider refused the output cap, retrying", {
+              request_id: openworkRequestId,
+              organization_id: identity.organizationId,
+              inference_provider_id: provider.id,
+              requested_output_cap: requestedCap,
+              provider_output_limit: rejection.limit,
+            })
+            prepared.body = JSON.stringify(prepared.json)
+            const retryHeaders = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
+            if (auth.kind === "header") retryHeaders.set(auth.header.name, auth.header.value)
+            else auth.sign({ method, url: prepared.url, headers: retryHeaders, body: prepared.body })
+            lifetime.signal.throwIfAborted()
+            upstream = await dependencies.fetch(prepared.url, { method, headers: retryHeaders, body: prepared.body, signal: lifetime.signal, redirect: "error" })
+          } else {
+            upstream = new Response(refusal, { status: upstream.status, statusText: upstream.statusText, headers: upstream.headers })
+          }
+        }
       } catch (error) {
         const failure = describeUpstreamFetchFailure(error, {
           clientAborted: request.signal.aborted,

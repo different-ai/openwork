@@ -3,7 +3,7 @@ import { approvalLoopbackFetch } from "./approval-loopback-fetch.js";
 import { registerCloudSkillDiscovery, type CloudSkillContext } from "./openwork-cloud-skills-v2.js";
 import { server as browserTools } from "./openwork-chrome-devtools.js";
 import { server as computerTools } from "./openwork-computer-use.js";
-import { ASK_WITHOUT_WAITING, askArgs, askDescription } from "./openwork-agent-questions.js";
+import { ASK_FORM, ASK_WITHOUT_WAITING, askArgs, askDescription, askFormArgs, askFormDescription } from "./openwork-agent-questions.js";
 import { DRIVE_FILE_TOOLS } from "./drive-file-tools.js";
 import { addProviderSafeTool } from "./provider-safe-tool-schema.js";
 
@@ -159,6 +159,11 @@ export default {
         name: ASK_WITHOUT_WAITING, description: askDescription, input: z.toJSONSchema(askArgs),
         options: { codemode: false },
         execute: (input, call) => driveCall(ASK_WITHOUT_WAITING, input, call, "Asking failed"),
+      });
+      if (browser && process.env.OPENWORK_ASK_FORM === "1") addProviderSafeTool(editor, {
+        name: ASK_FORM, description: askFormDescription, input: z.toJSONSchema(askFormArgs),
+        options: { codemode: false },
+        execute: (input, call) => driveCall(ASK_FORM, input, call, "Asking failed"),
       });
       const bridged = { ...browserDefinitions, ...computerDefinitions };
       if (browser) for (const [name, definition] of Object.entries(bridged)) {

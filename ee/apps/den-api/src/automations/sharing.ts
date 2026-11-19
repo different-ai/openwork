@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ne, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, lt, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, AutomationRevisionTable, AutomationShareTable, AutomationTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { AutomationSharing, SharedAutomation } from "@openwork/types/automations"
@@ -6,6 +6,7 @@ import { db } from "../db.js"
 import { listTeamsForMember } from "../member-teams.js"
 import { withPrimaryReads } from "../read-routing.js"
 import { peopleMemberCondition } from "../setup-agent-members.js"
+import { keysetPage, type KeysetCursor } from "../list-pagination.js"
 
 type Scope = { organizationId: string; ownerMemberId: string }
 const identities = (scope: Scope) => ({
@@ -80,18 +81,31 @@ export async function replaceAutomationSharing(scope: Scope, id: string, request
   })
 }
 
-/** Definition-only read: never reconciles or loads the source's runs or results. */
-export function listSharedAutomations(scope: Scope, automationId?: string): Promise<{ items: SharedAutomation[] }> {
-  return withPrimaryReads(() => readSharedAutomations(scope, automationId))
+export const SHARED_AUTOMATION_PAGE_MAX = 200
+
+type SharedAutomationQuery = { automationId?: string; cursor?: KeysetCursor; limit?: number }
+
+/** Definition-only read: never reconciles or loads the source's runs or results. Newest share first. */
+export function listSharedAutomations(scope: Scope, query: SharedAutomationQuery = {}): Promise<{ items: SharedAutomation[]; nextCursor: string | null }> {
+  return withPrimaryReads(() => readSharedAutomations(scope, query))
 }
 
-async function readSharedAutomations(scope: Scope, automationId?: string): Promise<{ items: SharedAutomation[] }> {
+async function readSharedAutomations(scope: Scope, query: SharedAutomationQuery): Promise<{ items: SharedAutomation[]; nextCursor: string | null }> {
   const caller = identities(scope)
-  if (automationId && !isDenTypeId("automation", automationId)) return { items: [] }
+  const { automationId, cursor } = query
+  const limit = query.limit ?? SHARED_AUTOMATION_PAGE_MAX
+  if (automationId && !isDenTypeId("automation", automationId)) return { items: [], nextCursor: null }
+  if (cursor && !isDenTypeId("automation", cursor.id)) return { items: [], nextCursor: null }
   const teams = await listTeamsForMember(caller)
+  // The cursor time is bound with the share column's own encoding (UTC), as
+  // the aggregate has no column to encode it.
+  const afterCursor = (sharedAt: typeof grants.sharedAt, after: KeysetCursor) => {
+    const at = sql.param(after.at, AutomationShareTable.created_at)
+    return or(lt(sharedAt, at), and(eq(sharedAt, at), lt(AutomationTable.id, normalizeDenTypeId("automation", after.id))))
+  }
   const grants = db.select({
     automationId: AutomationShareTable.automation_id,
-    sharedAt: sql<number>`unix_timestamp(min(${AutomationShareTable.created_at})) * 1000`.mapWith(Number).as("shared_at"),
+    sharedAt: sql<Date>`min(${AutomationShareTable.created_at})`.mapWith(AutomationShareTable.created_at).as("shared_at"),
   }).from(AutomationShareTable).where(and(eq(AutomationShareTable.organization_id, caller.organizationId), or(
     eq(AutomationShareTable.org_wide, true), eq(AutomationShareTable.org_membership_id, caller.memberId),
     teams.length ? inArray(AutomationShareTable.team_id, teams.map((team) => team.id)) : undefined,
@@ -109,11 +123,13 @@ async function readSharedAutomations(scope: Scope, automationId?: string): Promi
     .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(and(eq(AutomationTable.organization_id, caller.organizationId), ne(AutomationTable.owner_member_id, caller.memberId),
       ne(AutomationTable.state, "archived"), peopleMemberCondition(),
-      automationId ? eq(AutomationTable.id, normalizeDenTypeId("automation", automationId)) : undefined))
-    .orderBy(desc(grants.sharedAt), desc(AutomationTable.id)).limit(200)
-  return { items: rows.map((row) => ({
+      automationId ? eq(AutomationTable.id, normalizeDenTypeId("automation", automationId)) : undefined,
+      cursor ? afterCursor(grants.sharedAt, cursor) : undefined))
+    .orderBy(desc(grants.sharedAt), desc(AutomationTable.id)).limit(limit + 1)
+  const page = keysetPage(rows, limit, (row) => ({ at: row.sharedAt, id: row.id }))
+  return { nextCursor: page.nextCursor, items: page.items.map((row) => ({
     id: row.id, name: row.name, sharedBy: { memberId: row.memberId, name: row.ownerName },
-    sharedAt: row.sharedAt, schedule: row.schedule, executionTarget: row.executionTarget,
+    sharedAt: row.sharedAt.toISOString(), schedule: row.schedule, executionTarget: row.executionTarget,
     action: row.action ?? { kind: "agent", instructions: row.instructions, model: { providerId: row.providerId, modelId: row.modelId, variant: row.variant } },
   })) }
 }

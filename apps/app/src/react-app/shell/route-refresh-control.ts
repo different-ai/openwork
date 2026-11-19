@@ -298,3 +298,15 @@ export function planRouteConnectionGap(input: { desktopRuntime: boolean }): Rout
   }
   return { retainExistingState: false, markRouteReady: true };
 }
+
+export async function publishSettingsShellAndLoadHistory<T>({ isCurrent, publishShell, loadHistory, publishHistory }: {
+  isCurrent: () => boolean;
+  publishShell: () => void;
+  loadHistory: () => Promise<T>;
+  publishHistory: (history: T) => void;
+}) {
+  if (!isCurrent()) return;
+  publishShell();
+  const history = await loadHistory();
+  if (isCurrent()) publishHistory(history);
+}
