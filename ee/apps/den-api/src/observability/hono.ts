@@ -1,5 +1,6 @@
 import type { Context, Env, Hono, MiddlewareHandler } from "hono"
 import { HTTPException } from "hono/http-exception"
+import { normalizeErrorResponse } from "../operational-errors.js"
 import type { AppLogger } from "./logger.js"
 import { appLogger } from "./logger.js"
 import { countDbQueries } from "./db-query-count.js"
@@ -127,14 +128,9 @@ export function registerAppErrorHandler<E extends Env>(app: Hono<E>, responseFor
     }
 
     const customResponse = await responseForError?.(safeError, c, requestId)
-    if (customResponse) {
-      return customResponse
-    }
-
-    if (safeError instanceof HTTPException) {
-      return safeError.getResponse()
-    }
-
-    return c.json({ error: "internal_server_error" }, 500)
+    const response = customResponse ?? (safeError instanceof HTTPException
+      ? safeError.getResponse()
+      : c.json({ error: "internal_server_error" }, 500))
+    return normalizeErrorResponse(c.req.path, response, requestId)
   })
 }

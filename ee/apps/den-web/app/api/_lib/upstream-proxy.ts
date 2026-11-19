@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { createErrorReferenceCapture } from "./error-reference-capture";
 
 import { denWebLogger, reportScimProxyFailure } from "../../../observability/runtime-logger";
 import { canonicalScimProxyPath, scimProxyFailureFields } from "../../../observability/scim-proxy-failure";
@@ -530,26 +531,38 @@ function createUpstreamAbort(clientSignal: AbortSignal, deadlineMs: number): Ups
 function streamUpstreamBody(
   upstreamBody: ReadableStream<Uint8Array>,
   upstreamAbort: UpstreamAbort,
+  onComplete?: (referenceId?: string) => void,
 ): ReadableStream<Uint8Array> {
   const reader = upstreamBody.getReader();
+  const capture = onComplete ? createErrorReferenceCapture() : undefined;
+  let completed = false;
+  const complete = () => {
+    if (completed) return;
+    completed = true;
+    onComplete?.(capture?.referenceId());
+  };
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const chunk = await reader.read();
         if (chunk.done) {
           upstreamAbort.cleanup();
+          complete();
           controller.close();
           return;
         }
+        capture?.append(chunk.value);
         controller.enqueue(chunk.value);
       } catch (error) {
         upstreamAbort.cleanup();
+        complete();
         controller.error(error);
       }
     },
     async cancel(reason) {
       upstreamAbort.abort("downstream");
       upstreamAbort.cleanup();
+      complete();
       await reader.cancel(reason);
     },
   });
@@ -813,15 +826,17 @@ export async function proxyUpstream(
       );
     }
 
-    denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
+    const responseDurationMs = elapsedMs(startedAtMs);
+    const logCompleted = (denReferenceId?: string) => denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
       route_prefix: options.routePrefix,
       method: request.method,
       upstream_origin: upstreamOrigin(apiBase),
       upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
       status: upstream.status,
+      ...(denReferenceId ? { reference_id: denReferenceId } : {}),
       ...(declaredSize.bytes === undefined ? {} : { declared_bytes: declaredSize.bytes }),
       ...(bodyRead.observedBytes === undefined ? {} : { observed_bytes: bodyRead.observedBytes }),
-      duration_ms: elapsedMs(startedAtMs),
+      duration_ms: responseDurationMs,
       request_id: referenceId,
     });
 
@@ -831,9 +846,13 @@ export async function proxyUpstream(
       applyCloudInstanceCorsHeaders(responseHeaders, instanceOrigin);
     }
 
+    const captureReference = !upstream.ok && !shouldDropBody && upstream.body !== null
+      && upstream.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "application/json"
+      && canonicalScimProxyPath(options.routePrefix, normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath) === null;
+    if (!captureReference) logCompleted();
     const responseBody = shouldDropBody || !upstream.body
       ? null
-      : streamUpstreamBody(upstream.body, upstreamAbort);
+      : streamUpstreamBody(upstream.body, upstreamAbort, captureReference ? logCompleted : undefined);
     streamsResponse = responseBody !== null;
     return new Response(responseBody, {
       status: upstream.status,

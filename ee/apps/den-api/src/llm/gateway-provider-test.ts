@@ -4,6 +4,7 @@
 import type { GatewayProviderTestResult } from "@openwork/types/den/gateway"
 import type { GatewayCustomModel } from "@openwork/types/den/gateway-custom-providers"
 import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/utils/provider-test-signature"
+import { appLogger } from "../observability/logger.js"
 
 export type GatewayProviderTestInput = {
   providerId: string
@@ -49,12 +50,12 @@ export async function requestGatewayProviderTest(input: GatewayProviderTestInput
     })
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
-      console.warn("[gateway-provider-test] gateway answered", response.status)
+      appLogger.warn("gateway provider test rejected", { http_status_code: response.status, upstream_request_id: response.headers.get("x-openwork-request-id") ?? response.headers.get("x-request-id") ?? response.headers.get("request-id") })
       return unreachable
     }
     return readResult(await response.json(), input.model) ?? unreachable
   } catch (error) {
-    console.warn("[gateway-provider-test] could not reach the gateway", error instanceof Error ? error.message : error)
+    appLogger.warn("gateway provider test could not reach the gateway", { error })
     return unreachable
   }
 }

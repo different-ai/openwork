@@ -28,6 +28,7 @@ import type { MemberTeamsContext, OrganizationContextVariables, UserOrganization
 import { buildOperationId, htmlResponse, jsonResponse } from "./openapi.js"
 import { publicOpenApiDocument } from "./openapi-public.js"
 import { appLogger } from "./observability/logger.js"
+import { createRequestContextMiddleware } from "./observability/request-context.js"
 import { isWebOriginApprovedByAnyOrganization } from "./organization-web-origins.js"
 import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddleware, registerAppErrorHandler, registerObservabilityMiddleware } from "./observability/hono.js"
 import { registerAdminRoutes } from "./routes/admin/index.js"
@@ -64,7 +65,7 @@ import { inventoryRevisionMiddleware } from "./middleware/inventory-revision.js"
 import { preclaimScopeMiddleware } from "./middleware/preclaim-scope.js"
 import { auditRequestMiddleware } from "./audit/request-capture.js"
 import { confineConfigTokens } from "./config-blobs/token.js"
-import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
+import { isOperationalErrorPath, normalizeErrorResponse, operationalErrorResponse } from "./operational-errors.js"
 import { noIndex, sanitizePublicResponseHeaders } from "./public-response-headers.js"
 import { isDraining } from "./drain-state.js"
 import { AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER } from "@openwork/types/automations"
@@ -122,11 +123,12 @@ function withExplicitOperationSecurity(document: OpenApiDocument): OpenApiDocume
   return document
 }
 
-registerObservabilityMiddleware(app)
 app.use("*", requestId({
   headerName: "",
   generator: () => createDenTypeId("request"),
 }))
+app.use("*", createRequestContextMiddleware())
+registerObservabilityMiddleware(app)
 app.use("*", async (c, next) => {
   await next()
   sanitizePublicResponseHeaders(c.res.headers)
@@ -140,7 +142,7 @@ app.use("*", noIndex)
 app.use("*", createTelemetryErrorSanitizerMiddleware())
 app.use("*", async (c, next) => {
   await next()
-  c.res = await normalizeOperationalErrorResponse(c.req.path, c.res, c.get("requestId"))
+  c.res = await normalizeErrorResponse(c.req.path, c.res, c.get("requestId"))
 })
 app.use("*", createRequestAccessLogMiddleware())
 app.use("*", inventoryRevisionMiddleware)

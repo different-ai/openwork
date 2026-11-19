@@ -51,7 +51,10 @@ const validationIssueSchema = z.object({
   path: z.array(z.union([z.string(), z.number()])).optional(),
 }).passthrough()
 
+const referenceIdSchema = denTypeIdSchema("request").optional()
+
 export const invalidRequestSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.literal("invalid_request"),
   message: z.string().optional(),
   details: z.array(validationIssueSchema),
@@ -59,10 +62,12 @@ export const invalidRequestSchema = z.object({
 }).meta({ ref: "InvalidRequestError" })
 
 export const unauthorizedSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.literal("unauthorized"),
 }).meta({ ref: "UnauthorizedError" })
 
 export const forbiddenSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.enum(["forbidden", "reauth"]),
   reason: z.string().optional(),
   message: z.string().optional(),
@@ -70,6 +75,7 @@ export const forbiddenSchema = z.object({
 
 /** the organization requires SSO and this session did not sign in through it. */
 export const ssoRequiredSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.literal("sso_required"),
   message: z.string(),
   organizationId: z.string(),
@@ -80,12 +86,14 @@ export const ssoRequiredSchema = z.object({
 }).meta({ ref: "SsoRequiredError" })
 
 export const enterprisePlanRequiredSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.literal("enterprise_plan_required"),
   feature: z.string(),
   message: z.string(),
 }).meta({ ref: "EnterprisePlanRequiredError" })
 
 export const notFoundSchema = z.object({
+  referenceId: referenceIdSchema,
   error: z.string(),
   message: z.string().optional(),
 }).meta({ ref: "NotFoundError" })

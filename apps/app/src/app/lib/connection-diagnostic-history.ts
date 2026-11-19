@@ -1,3 +1,5 @@
+import { denErrorReferenceId } from "@openwork/types/den/error-reference";
+
 export const CONNECTION_HISTORY_LIMIT = 500;
 export const CONNECTION_HISTORY_TTL_MS = 60 * 60 * 1_000;
 const COALESCE_MS = 5_000;
@@ -45,6 +47,7 @@ export type ConnectionDiagnosticMetadata = {
   durationMs?: number;
   retryCount?: number;
   httpStatus?: number;
+  referenceId?: string;
 };
 export type ConnectionDiagnosticEvent = ConnectionDiagnosticMetadata & {
   at: number;
@@ -112,6 +115,7 @@ export function createConnectionDiagnosticHistory(now: () => number = () => Date
       source: safeNumber(source, Number.MAX_SAFE_INTEGER) ?? 0,
       reason,
       kind,
+      referenceId: denErrorReferenceId(metadata),
       durationMs: safeNumber(metadata.durationMs, CONNECTION_HISTORY_TTL_MS),
       retryCount: safeNumber(metadata.retryCount, 1_000_000),
       httpStatus: typeof metadata.httpStatus === "number" && metadata.httpStatus <= 599
@@ -120,7 +124,7 @@ export function createConnectionDiagnosticHistory(now: () => number = () => Date
     };
     const previous = events.findLast((entry) => entry.source === event.source);
     if (previous && previous.reason === reason && previous.kind === kind
-      && previous.httpStatus === event.httpStatus && at >= previous.lastAt
+      && previous.httpStatus === event.httpStatus && previous.referenceId === event.referenceId && at >= previous.lastAt
       && at - previous.at < COALESCE_MS) {
       previous.lastAt = at;
       previous.count = Math.min(previous.count + 1, 1_000_000);

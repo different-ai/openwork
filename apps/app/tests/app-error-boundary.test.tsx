@@ -66,6 +66,15 @@ test("the copy payload carries message, stack, app version and distribution flav
   ]);
 });
 
+test("copied Den failure details carry the reference without changing the visible message", () => {
+  const referenceId = "req_01h2xcejqtf2nbrexx3vqjhp41";
+  const error = Object.assign(new Error("Request failed"), { referenceId });
+  const crash = describeCrash(error);
+  expect(crash.message).toBe("Request failed");
+  expect(buildCrashReport(crash, context)).toContain(JSON.stringify({ referenceId }));
+  expect(renderFallback(error)).not.toContain(referenceId);
+});
+
 test("the copy payload omits an empty stack", () => {
   expect(buildCrashReport({ message: "plain", stack: "" }, context)).toBe(
     "OpenWork 0.18.44 (desktop, enterprise)\n\nplain",

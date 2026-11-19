@@ -1,4 +1,5 @@
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer";
+import { denErrorReferenceId } from "@openwork/types/den/error-reference";
 
 const URL_PATTERN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>()]+/gi;
 // Quoted values also end at the work cutoff; an absent closing quote must fail closed.
@@ -54,10 +55,12 @@ function diagnosticField(value: unknown, key: string): string | undefined {
   return undefined;
 }
 
-export function formatCrashDiagnostic(thrown: unknown, fallbackName = "Error"): { name: string; message: string; stack: string } {
+export function formatCrashDiagnostic(thrown: unknown, fallbackName = "Error"): { name: string; message: string; stack: string; referenceId?: string } {
+  const referenceId = denErrorReferenceId({ referenceId: diagnosticField(thrown, "referenceId") });
   const primitive = thrown === null || (typeof thrown !== "object" && typeof thrown !== "function");
   const message = diagnosticField(thrown, "message") ?? (primitive ? String(thrown) : FALLBACK_MESSAGE);
   return {
+    ...(referenceId ? { referenceId } : {}),
     name: redactCrashText(diagnosticField(thrown, "name") ?? fallbackName).slice(0, 100),
     message: redactCrashText(message).slice(0, 1000),
     stack: redactCrashText(diagnosticField(thrown, "stack") ?? "").slice(0, 8000),

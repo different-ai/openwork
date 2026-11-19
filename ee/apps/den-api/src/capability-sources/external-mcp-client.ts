@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { currentRequestId } from "../observability/request-context.js"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { db } from "../db.js"
@@ -460,7 +461,7 @@ function buildTransport(
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
   }
-  const diagnostic = new ExternalMcpDiagnosticTracker(diagnosticReferenceId ?? randomUUID(), {
+  const diagnostic = new ExternalMcpDiagnosticTracker(currentRequestId() ?? diagnosticReferenceId ?? randomUUID(), {
     authType: connection.authType,
     credentialMode: connection.credentialMode,
   })

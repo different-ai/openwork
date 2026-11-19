@@ -84,6 +84,7 @@ import {
 } from "./desktop";
 import { enterpriseActivationRequired } from "./enterprise-activation";
 import { observeDenRequest } from "./den-request-diagnostics";
+import { denErrorReferenceId } from "@openwork/types/den/error-reference";
 import { getOpenworkGatewayOrigin, readOpenworkGatewayDenBaseUrl } from "./gateway-runtime";
 import { clearDesktopSignInIntent, clearOrgSelectionPending, readOrgSelectionPending } from "./den-sign-in-intent";
 import { rememberDenOrganization } from "./den-org-memory";
@@ -545,6 +546,7 @@ export type DenAppVersionMetadata = {
 };
 
 type RawJsonResponse<T> = {
+  referenceId?: string;
   ok: boolean;
   status: number;
   json: T | null;
@@ -556,6 +558,7 @@ type RawJsonResponse<T> = {
 const RESOLVED_PLUGINS_BATCH_SIZE = 100;
 
 export class DenApiError extends Error {
+  referenceId?: string;
   status: number;
   code: string;
   details?: unknown;
@@ -3053,7 +3056,7 @@ async function requestJsonRaw<T>(
       json = null;
     }
     const retryAfter = response.ok ? "" : response.headers?.get("Retry-After")?.trim() ?? "";
-    return { ok: response.ok, status: response.status, json, ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
+    return { ok: response.ok, status: response.status, json, referenceId: response.ok ? undefined : denErrorReferenceId(json), ...(/^\d{1,6}$/.test(retryAfter) ? { retryAfterSeconds: Number(retryAfter) } : {}) };
   };
   return options.unobserved ? send() : observeDenRequest(send);
 }
@@ -3069,6 +3072,7 @@ async function requestJson<T>(
     const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
     const message = getErrorMessage(payload, `Request failed with ${raw.status}.`);
     const error = new DenApiError(raw.status, code, message, isRecord(payload) ? payload.details : undefined);
+    error.referenceId = raw.referenceId;
     if (raw.retryAfterSeconds !== undefined) error.retryAfterSeconds = raw.retryAfterSeconds;
     throw error;
   }
