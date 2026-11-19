@@ -25,6 +25,24 @@ function write(root, file, content) {
   writeFileSync(join(root, file), content);
 }
 
+// createPackage resolves before its write stream flushes, so a fast read can
+// see zeros past the end of the archive. Wait for every packed byte.
+async function archiveWritten(archive) {
+  const { header, headerSize } = asar.getRawHeader(archive);
+  let end = 0;
+  (function visit(node) {
+    for (const entry of Object.values(node.files ?? {})) {
+      if (entry.files) visit(entry);
+      else if (!entry.unpacked && "offset" in entry) end = Math.max(end, Number(entry.offset) + entry.size);
+    }
+  })(header);
+  const expected = 8 + headerSize + end;
+  for (let attempt = 0; statSync(archive).size < expected; attempt += 1) {
+    if (attempt === 500) throw new Error(`ASAR fixture was not fully written: ${archive}`);
+    await new Promise((done) => setTimeout(done, 10));
+  }
+}
+
 async function fixture(t, { omit = [], helperModule = "microsandbox", aliases = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "packaged-sandbox-boundary-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -52,6 +70,7 @@ async function fixture(t, { omit = [], helperModule = "microsandbox", aliases = 
   }
   const archive = join(root, "app.asar");
   await asar.createPackageWithOptions(source, archive, { unpackDir: `${nativeRoot}{,/**}` });
+  await archiveWritten(archive);
   const image = Buffer.from("OCI archive fixture");
   const lock = JSON.parse(files["server/dist/packaged-sandbox-image.json"]);
   write(root, "sandbox-image/alpine.oci.tar", image);
@@ -127,7 +146,8 @@ test("packaged binary resolver maps ASAR aliases to physical files and leaves no
   const code = `import {join} from 'node:path'; ${packagedMicrosandboxResolver(source)} console.log(locate('/App/Contents/Resources/app.asar/node_modules/native')); console.log(locate('/plain/node_modules/native'));`;
   const result = spawnSync(process.execPath, ["--input-type=module", "--eval", code], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, "/App/Contents/Resources/app.asar.unpacked/node_modules/native/bin/msb\n/plain/node_modules/native/bin/msb\n");
+  // The transform keeps the SDK's own path.join, so output uses host separators.
+  assert.equal(result.stdout, `${join("/App/Contents/Resources/app.asar.unpacked/node_modules/native", "bin", "msb")}\n${join("/plain/node_modules/native", "bin", "msb")}\n`);
   assert.throws(() => packagedMicrosandboxResolver("changed upstream implementation"), /resolver changed/);
 });
 
