@@ -49,7 +49,7 @@ export function foregroundTabEmulationCommands() {
  * for a page that is off screen.
  */
 export const AGENT_VIEWPORTS = Object.freeze({
-  panel: Object.freeze({ label: "Panel", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false, fitsPanel: true }),
+  panel: Object.freeze({ label: "Normal", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false, fitsPanel: true }),
   desktop: Object.freeze({ label: "Desktop", width: BACKGROUND_TAB_VIEWPORT.width, height: BACKGROUND_TAB_VIEWPORT.height, mobile: false }),
   tablet: Object.freeze({ label: "Tablet", width: 820, height: 1180, mobile: false }),
   phone: Object.freeze({ label: "Phone", width: 390, height: 844, mobile: true }),
