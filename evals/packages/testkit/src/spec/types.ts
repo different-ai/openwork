@@ -20,6 +20,8 @@ export interface SeeOptions {
 export interface ClickOptions {
   /** Last resort for an intentionally covered target; still clicks its trusted CDP center. */
   hitTest?: boolean;
+  /** Keys held during the click, e.g. ["Shift"] for a range or ["Meta"] / ["Control"] to add one item. */
+  modifiers?: readonly ("Alt" | "Control" | "Meta" | "Shift")[];
 }
 
 export interface TypeOptions extends FieldTypingOptions {

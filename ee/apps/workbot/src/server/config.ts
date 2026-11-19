@@ -62,8 +62,13 @@ const schema = z.object({
   WORKBOT_VERSION: optionalText,
 })
 
-/** The OpenWork phone app, where Workbot lives on phones (its production build). Same ID as the desktop app. */
+/** The OpenWork phone app's Android package, where Workbot lives on Android phones (its production build). */
 export const WORKBOT_APP_ID = "com.differentai.openwork"
+/**
+ * The OpenWork iPhone app's App ID (its production build). Apple keeps `com.differentai.openwork` for the desktop
+ * app, so the iPhone app has its own; iOS only returns sign-in to the App ID the server names.
+ */
+export const WORKBOT_IOS_APP_ID = "com.differentai.openwork.ios"
 /**
  * Where the phone app comes back after signing in: a page on Workbot itself that iOS and Android open only in the
  * OpenWork app they verified (/.well-known); any other app can't receive it, and a browser just shows the page.

@@ -3152,7 +3152,7 @@ export function SessionRoute() {
     modelPicker.setOpen(true);
   }, [selectedSessionId]);
 
-  const { archiveSession, archiveSessionInWorkspace, archiveDialog } = useSessionArchive({
+  const { archiveSession, archiveSessionInWorkspace, archiveSessionsInWorkspaces, archiveDialog } = useSessionArchive({
     workspaces,
     sessionsByWorkspaceId,
     endpointForSessionWorkspace,
@@ -4330,6 +4330,7 @@ export function SessionRoute() {
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+      onArchiveSessions={opencodeClient ? async (sessions, archived) => { await archiveSessionsInWorkspaces(sessions, archived); } : undefined}
       statusBar={{
         // No per-session loading state here: the account row renders only
         // app-scoped facts. Session loading lives in the pane; an unresolved
