@@ -14,8 +14,11 @@ import {
   sameSkillFiles,
   selectSkillFilesBySize,
   skillFilesLeftOutMessage,
+  skillFileMimeType,
+  skillFileText,
   skillFilesFromPayload,
   skillFileUri,
+  storedSkillFileList,
 } from "../src/skill-files.js"
 
 const skill: RemoteSkillDescriptor = {
@@ -52,32 +55,47 @@ test("refuses paths that leave the skill, replace SKILL.md, or repeat", () => {
   assert.ok("files" in checkSkillFiles([{ path: "nested/SKILL.md", text: "x" }]))
 })
 
-test("refuses binary content and files over the size limit", () => {
-  assert.ok("problem" in checkSkillFiles([{ path: "a.bin", text: "a\u0000b" }]))
-  assert.ok("problem" in checkSkillFiles([{ path: "a.bin", text: "a�b" }]))
+test("accepts any file as base64, and refuses bad base64, missing or doubled contents, and files over the size limit", () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff])
+  const checked = checkSkillFiles([{ path: "assets/logo.png", base64: png.toString("base64") }])
+  assert.ok("files" in checked)
+  assert.deepEqual([...checked.files[0]!.bytes], [...png])
+  assert.ok("problem" in checkSkillFiles([{ path: "a.bin", base64: "not base64!" }]))
+  assert.ok("problem" in checkSkillFiles([{ path: "a.bin" }]))
+  assert.ok("problem" in checkSkillFiles([{ path: "a.bin", text: "x", base64: "eA==" }]))
   assert.ok("problem" in checkSkillFiles([{ path: "big.md", text: "x".repeat(SKILL_FILE_MAX_BYTES + 1) }]))
+  assert.equal(skillFileText(new Uint8Array(png)), null)
+  assert.equal(skillFileText(new Uint8Array(Buffer.from("# Forms\n"))), "# Forms\n")
+  assert.equal(skillFileMimeType("assets/logo.png", false), "image/png")
+  assert.equal(skillFileMimeType("bin/tool", false), "application/octet-stream")
 })
 
-test("accepts a fair-sized skill: full-size files up to the total, but no more", () => {
-  const full = (count: number, char = "x") => Array.from({ length: count }, (_, index) => ({ path: `references/part-${index}.md`, text: char.repeat(SKILL_FILE_MAX_BYTES) }))
-  assert.equal(SKILL_FILES_MAX_TOTAL_BYTES / SKILL_FILE_MAX_BYTES, 8)
-  const fits = checkSkillFiles(full(8))
-  assert.ok("files" in fits && fits.files.length === 8)
-  const over = checkSkillFiles(full(9))
-  assert.ok("problem" in over && /total at most 8 MiB/.test(over.problem.message))
-  // Text that doubles when JSON-escaped could not be stored, so it is refused up front instead of failing the write.
-  const escaped = checkSkillFiles(full(8, "\""))
-  assert.ok("problem" in escaped && /too large to store/.test(escaped.problem.message))
+test("a skill can carry 30 MiB, as Anthropic's Agent Skills do, in files of up to 10 MiB", () => {
+  const full = (count: number) => Array.from({ length: count }, (_, index) => ({ path: `references/part-${index}.md`, text: "x".repeat(SKILL_FILE_MAX_BYTES) }))
+  assert.equal(SKILL_FILES_MAX_TOTAL_BYTES, 30 * 1024 * 1024)
+  assert.equal(SKILL_FILES_MAX_TOTAL_BYTES / SKILL_FILE_MAX_BYTES, 3)
+  const fits = checkSkillFiles(full(3))
+  assert.ok("files" in fits && fits.files.length === 3)
+  const over = checkSkillFiles(full(4))
+  assert.ok("problem" in over && /total at most 30 MiB/.test(over.problem.message))
   assert.ok("files" in checkSkillFiles(Array.from({ length: SKILL_FILES_MAX_COUNT }, (_, index) => ({ path: `notes/${index}.md`, text: "x" }))))
 })
 
-test("reads stored files from a version payload and treats a malformed one as none", () => {
-  assert.equal(skillFilesFromPayload({ files }).length, 2)
+test("reads a version's file list: digests as stored now, and text that older versions kept inline", () => {
+  const digest = createHash("sha256").update("# Forms\n").digest("hex")
+  assert.deepEqual(skillFilesFromPayload({ files: [{ path: "references/FORMS.md", sha256: digest, size: 8 }] }), [{ path: "references/FORMS.md", sha256: digest, size: 8 }])
+  const legacy = skillFilesFromPayload({ files })
+  assert.deepEqual(legacy.map((entry) => [entry.path, entry.sha256, entry.size]), [["references/FORMS.md", digest, 8], ["scripts/extract.py", createHash("sha256").update("print('hi')\n").digest("hex"), 12]])
+  assert.equal(Buffer.from(legacy[0]!.inline!).toString("utf8"), "# Forms\n")
+  assert.deepEqual(storedSkillFileList(legacy)[0], { path: "references/FORMS.md", sha256: digest, size: 8 })
   assert.deepEqual(skillFilesFromPayload(null), [])
   assert.deepEqual(skillFilesFromPayload({ files: [{ path: "../x", text: "x" }] }), [])
-  assert.equal(sameSkillFiles(files, [...files].reverse()), true)
-  assert.equal(sameSkillFiles(files, [files[0]!]), false)
-  assert.equal(sameSkillFiles(files, [files[0]!, { path: "references/FORMS.md", text: "changed" }]), false)
+  assert.deepEqual(skillFilesFromPayload({ files: [{ path: "a.md", sha256: "nope", size: 1 }] }), [])
+
+  const bodies = (list: typeof files) => list.map((file) => ({ path: file.path, bytes: new Uint8Array(Buffer.from(file.text)) }))
+  assert.equal(sameSkillFiles(legacy, bodies([...files].reverse())), true)
+  assert.equal(sameSkillFiles(legacy, bodies([files[0]!])), false)
+  assert.equal(sameSkillFiles(legacy, bodies([files[0]!, { path: "references/FORMS.md", text: "changed" }])), false)
 })
 
 test("percent-encodes each path segment of a file URI", () => {
@@ -92,7 +110,7 @@ test("tells a supporting file URI from SKILL.md and the index", () => {
 })
 
 test("the skill manifest lists SKILL.md and every supporting file with digest and size", async () => {
-  const sources = new Map<string, RemoteSkillSource>([[skill.capability, { content: source, files }]])
+  const sources = new Map<string, RemoteSkillSource>([[skill.capability, { content: source, files: skillFilesFromPayload({ files }) }]])
   const resolved = resolveSkills([skill], sources)
 
   const handlers = new Map<string, (params: { uri?: string }) => Promise<unknown>>()
@@ -110,10 +128,10 @@ test("the skill manifest lists SKILL.md and every supporting file with digest an
   assert.equal(entry.uri, "skill://pdf-processing/SKILL.md")
   assert.deepEqual(entry.resources.map((resource) => resource.uri), [
     "skill://pdf-processing/SKILL.md",
-    "skill://pdf-processing/scripts/extract.py",
     "skill://pdf-processing/references/FORMS.md",
+    "skill://pdf-processing/scripts/extract.py",
   ])
-  assert.deepEqual(entry.resources[2], {
+  assert.deepEqual(entry.resources[1], {
     uri: "skill://pdf-processing/references/FORMS.md",
     digest: sha256("# Forms\n"),
     size: 8,
@@ -124,9 +142,9 @@ test("the skill manifest lists SKILL.md and every supporting file with digest an
 })
 
 test("a supporting file is readable only when a loadable skill lists it", () => {
-  const loadable = resolveSkills([skill], new Map<string, RemoteSkillSource>([[skill.capability, { content: source, files }]]))
+  const loadable = resolveSkills([skill], new Map<string, RemoteSkillSource>([[skill.capability, { content: source, files: skillFilesFromPayload({ files }) }]]))
   const file = findSkillFile(loadable, "skill://pdf-processing/references/FORMS.md")
-  assert.equal(file?.text, "# Forms\n")
+  assert.equal(file?.digest, sha256("# Forms\n"))
   assert.equal(file?.mimeType, "text/markdown")
   assert.equal(findSkillFile(loadable, "skill://pdf-processing/references/OTHER.md"), undefined)
   assert.equal(findSkillFile(loadable, "skill://other-skill/references/FORMS.md"), undefined)

@@ -82,6 +82,35 @@ function decryptDatabaseValue(value: string) {
   return decrypted
 }
 
+// Binary values: the prefix bytes, a 12-byte IV, the 16-byte GCM tag, then the ciphertext.
+const ENCRYPTED_BYTES_PREFIX = new Uint8Array(Buffer.from("enc:b1:", "utf8"))
+
+export function encryptDatabaseBytes(value: Uint8Array): Uint8Array {
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, getDatabaseEncryptionKey(), new Uint8Array(iv))
+  const encrypted = [cipher.update(value), cipher.final()]
+  // The tag exists only once final() has run.
+  const parts = [ENCRYPTED_BYTES_PREFIX, iv, cipher.getAuthTag(), ...encrypted]
+  return new Uint8Array(Buffer.concat(parts.map((part) => new Uint8Array(part))))
+}
+
+export function decryptDatabaseBytes(value: Uint8Array): Uint8Array {
+  const buffer = Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+  const headerLength = ENCRYPTED_BYTES_PREFIX.length + 12 + 16
+  if (buffer.length < headerLength || !buffer.subarray(0, ENCRYPTED_BYTES_PREFIX.length).equals(ENCRYPTED_BYTES_PREFIX)) {
+    throw new Error("Encrypted bytes are missing a supported prefix")
+  }
+  const ivStart = ENCRYPTED_BYTES_PREFIX.length
+  const decipher = crypto.createDecipheriv(
+    ENCRYPTION_ALGORITHM,
+    getDatabaseEncryptionKey(),
+    new Uint8Array(buffer.subarray(ivStart, ivStart + 12)),
+  )
+  decipher.setAuthTag(new Uint8Array(buffer.subarray(ivStart + 12, headerLength)))
+  const parts = [decipher.update(new Uint8Array(buffer.subarray(headerLength))), decipher.final()]
+  return new Uint8Array(Buffer.concat(parts.map((part) => new Uint8Array(part))))
+}
+
 type EncryptedColumnOptions<TData> = {
   dataType?: "text" | "mediumtext"
   serialize: (value: TData) => string
@@ -148,6 +177,20 @@ export const mediumBlobColumn = (columnName: string) =>
     },
     fromDriver(value) {
       return Uint8Array.from(value)
+    },
+  })(columnName)
+
+/** Binary data encrypted at rest; holds up to 16 MiB less 35 bytes of encryption header. */
+export const encryptedMediumBlobColumn = (columnName: string) =>
+  customType<{ data: Uint8Array; driverData: Uint8Array }>({
+    dataType() {
+      return "mediumblob"
+    },
+    toDriver(value) {
+      return encryptDatabaseBytes(value)
+    },
+    fromDriver(value) {
+      return decryptDatabaseBytes(Uint8Array.from(value))
     },
   })(columnName)
 

@@ -1,17 +1,19 @@
 import { relations, sql } from "drizzle-orm"
 import {
   boolean,
+  char,
   index,
   int,
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn } from "../../columns"
+import { denTypeIdColumn, encryptedColumn, encryptedMediumBlobColumn, encryptedMediumTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
 import { TeamTable } from "../teams"
 
@@ -96,6 +98,25 @@ export const ConfigObjectVersionTable = mysqlTable(
     index("config_object_version_source_revision_ref").on(table.sourceRevisionRef),
     index("config_object_version_lookup_latest").on(table.configObjectId, table.createdAt, table.id),
   ],
+)
+
+/**
+ * The contents of skills' supporting files, stored once per organization and
+ * keyed by their sha256. A skill version lists its files as { path, sha256,
+ * size } in normalizedPayloadJson.files, so a new version that keeps a file
+ * reuses its row, and reading a version's file list never loads contents.
+ * Rows are written before the version that names them and never changed.
+ */
+export const SkillFileBlobTable = mysqlTable(
+  "skill_file_blob",
+  {
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    sha256: char("sha256", { length: 64 }).notNull(),
+    size: int("size").notNull(),
+    bytes: encryptedMediumBlobColumn("bytes").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "skill_file_blob_pk", columns: [table.organizationId, table.sha256] })],
 )
 
 export const PluginTable = mysqlTable(

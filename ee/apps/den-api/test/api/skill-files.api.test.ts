@@ -5,6 +5,7 @@
  * An agent can save them with create_skill and replace them with update_skill.
  */
 import assert from "node:assert/strict"
+import { randomBytes } from "node:crypto"
 import { after, test } from "node:test"
 import { bootDen, field, list, summary, text, type Json } from "./harness.js"
 
@@ -152,29 +153,108 @@ test("an agent creates a skill with its supporting files, keeps them across upda
   assert.deepEqual(await loadedPaths(), ["templates/report.md"])
 })
 
-test("a fair-sized skill, 8 MiB of supporting files, saves through create_skill and the plugin API and reads back", async () => {
+test("a 30 MiB skill with a binary file saves through create_skill, and binary files read back as bytes", async () => {
   const { orgId, owner } = await den.createOrg(await den.signUp("Blake Builder"), "Large skill files org")
   const token = await den.mintMcpToken(owner, orgId)
   const MiB = 1024 * 1024
   const line = "A line of reference text that an agent reads when the skill asks it to.\n"
-  const part = line.repeat(Math.floor(MiB / line.length))
-  const files = Array.from({ length: 8 }, (_, index) => ({ path: `references/part-${index}.md`, text: `${part.slice(0, -40)}part-${index} proof phrase\n` }))
-  assert.ok(files.reduce((total, file) => total + file.text.length, 0) > 7.9 * MiB)
+  const part = line.repeat(Math.floor(10 * MiB / line.length))
+  const binary = randomBytes(10 * MiB - 4096)
+  const files = [
+    { path: "references/part-0.md", text: `${part.slice(0, -40)}part-0 proof phrase\n` },
+    { path: "references/part-1.md", text: `${part.slice(0, -40)}part-1 proof phrase\n` },
+    { path: "assets/template.bin", base64: binary.toString("base64") },
+  ]
 
   const skillName = `large-files-${den.stamp}`
   const skillMarkdown = `---\nname: ${skillName}\ndescription: Proves a large skill fits.\n---\n\nRead references/part-0.md first.`
   const created = await den.callMcpTool(token, "create_skill", { pluginName: skillName, skillMarkdown, files })
   assert.equal(created.isError, false, created.raw.slice(0, 400))
   const loaded = await den.callMcpTool(token, "get_skill", { name: skillName })
-  assert.equal(list(field(loaded.structured, "files")).length, 8)
-  const last = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/part-7.md" })
-  assert.equal(last.text, files[7]!.text)
+  assert.deepEqual(list(field(loaded.structured, "files")).map((file) => [file.path, file.size]), [
+    ["assets/template.bin", binary.byteLength],
+    ["references/part-0.md", Buffer.byteLength(files[0]!.text!)],
+    ["references/part-1.md", Buffer.byteLength(files[1]!.text!)],
+  ])
+  const text = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/part-1.md" })
+  assert.equal(text.text, files[1]!.text)
 
-  // The plugin API takes the same skill: its payload limit is no longer 1 MiB.
+  // get_skill describes a binary file instead of putting its bytes in the model's context...
+  const described = await den.callMcpTool(token, "get_skill", { name: skillName, file: "assets/template.bin" })
+  assert.equal(described.isError, false, described.raw.slice(0, 400))
+  assert.equal(field(described.structured, "file", "binary"), true)
+  assert.match(described.text, /binary file \(application\/octet-stream, 10481664 bytes\)/)
+  // ...and its skill:// resource returns the exact bytes.
+  const uri = text_(field(loaded.structured, "location")).replace(/SKILL\.md$/, "assets/template.bin")
+  const read = await mcp(token, "resources/read", { uri })
+  const contents = list(field(read.result, "contents"))
+  assert.equal(contents[0]?.mimeType, "application/octet-stream")
+  assert.ok(Buffer.from(String(contents[0]?.blob), "base64").equals(binary))
+
+  // The plugin API takes text skills up to its 11 MiB request body.
   const restName = `${skillName}-rest`
   const viaApi = await den.as(owner, orgId)("POST", "/v1/plugins", {
     name: restName,
-    components: [{ type: "skill", input: { rawSourceText: skillMarkdown.replace(skillName, restName), normalizedPayloadJson: { files } } }],
+    components: [{ type: "skill", input: { rawSourceText: skillMarkdown.replace(skillName, restName), normalizedPayloadJson: { files: [files[0]] } } }],
   })
   assert.equal(viaApi.status, 201, summary(viaApi))
 })
+
+test("a file is stored once however many versions list it, and files older versions kept inline still read and move to storage", async () => {
+  const { db } = await import("../../src/db.js")
+  const { ConfigObjectVersionTable, SkillFileBlobTable } = await import("@openwork-ee/den-db/schema")
+  const { createDenTypeId, normalizeDenTypeId } = await import("@openwork-ee/utils/typeid")
+  const { and, desc, eq } = await import("@openwork-ee/den-db/drizzle")
+  const { orgId, owner } = await den.createOrg(await den.signUp("Casey Keeper"), "Stored once org")
+  const organizationId = normalizeDenTypeId("organization", orgId)
+  const token = await den.mintMcpToken(owner, orgId)
+  const blobCount = async () => (await db.select({ sha256: SkillFileBlobTable.sha256 }).from(SkillFileBlobTable).where(eq(SkillFileBlobTable.organizationId, organizationId))).length
+  const latestPayload = async (configObjectId: string) => (await db.select({ payload: ConfigObjectVersionTable.normalizedPayloadJson }).from(ConfigObjectVersionTable)
+    .where(and(eq(ConfigObjectVersionTable.organizationId, organizationId), eq(ConfigObjectVersionTable.configObjectId, normalizeDenTypeId("configObject", configObjectId))))
+    .orderBy(desc(ConfigObjectVersionTable.createdAt), desc(ConfigObjectVersionTable.id)).limit(1))[0]?.payload
+
+  const skillName = `stored-once-${den.stamp}`
+  const skillMarkdown = `---\nname: ${skillName}\ndescription: Proves files are stored once.\n---\n\nUse the logo.`
+  const logo = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01])
+  const created = await den.callMcpTool(token, "create_skill", { pluginName: skillName, skillMarkdown, files: [
+    { path: "assets/logo.png", base64: logo.toString("base64") },
+    { path: "assets/copy-of-logo.png", base64: logo.toString("base64") },
+    { path: "references/GUIDE.md", text: "# Guide\n" },
+  ] })
+  assert.equal(created.isError, false, created.raw.slice(0, 400))
+  const skillId = text_(field(created.structured, "skillId"))
+  // Two distinct contents, three paths; the version lists digests, not contents.
+  assert.equal(await blobCount(), 2)
+  const stored = list(field(await latestPayload(skillId), "files"))
+  assert.deepEqual(stored.map((file) => Object.keys(file).sort()), [["path", "sha256", "size"], ["path", "sha256", "size"], ["path", "sha256", "size"]])
+
+  // A new version that keeps the files adds no contents.
+  const edited = await den.callMcpTool(token, "update_skill", { skillId, skillMarkdown: `${skillMarkdown}\nThen check the guide.` })
+  assert.equal(edited.isError, false, edited.raw.slice(0, 400))
+  assert.equal(await blobCount(), 2)
+
+  // A version saved before this change kept text inline. It still reads...
+  await db.insert(ConfigObjectVersionTable).values({
+    id: createDenTypeId("configObjectVersion"),
+    organizationId,
+    configObjectId: normalizeDenTypeId("configObject", skillId),
+    normalizedPayloadJson: { files: [{ path: "references/OLD.md", text: "inline proof phrase\n" }] },
+    rawSourceText: skillMarkdown,
+    createdVia: "cloud",
+    createdAt: new Date(),
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const old = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/OLD.md" })
+  assert.equal(old.text, "inline proof phrase\n")
+  // ...and the next save moves it into storage.
+  const migrated = await den.callMcpTool(token, "update_skill", { skillId, skillMarkdown })
+  assert.equal(migrated.isError, false, migrated.raw.slice(0, 400))
+  assert.equal(await blobCount(), 3)
+  assert.deepEqual(list(field(await latestPayload(skillId), "files")).map((file) => [file.path, typeof file.text, typeof file.sha256]), [["references/OLD.md", "undefined", "string"]])
+  const after = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/OLD.md" })
+  assert.equal(after.text, "inline proof phrase\n")
+})
+
+function text_(value: unknown): string {
+  return text(value, "value")
+}

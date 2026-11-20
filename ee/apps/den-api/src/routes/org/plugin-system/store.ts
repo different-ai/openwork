@@ -87,8 +87,11 @@ import {
   selectSkillFilesBySize,
   skillFilesFromPayload,
   skillFilesLeftOutMessage,
-  type SkillFile,
+  storedSkillFileList,
+  type SkillFileBody,
+  type SkillFileEntry,
 } from "../../../skill-files.js"
+import { storeInlineSkillFiles, storeSkillFileBodies } from "../../../skill-file-blobs.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -303,7 +306,7 @@ type GithubPluginMcpImportPlugin = {
 type GithubPluginSkillImportSkill = {
   description: string | null
   /** Text files beside SKILL.md, read only for the skills an import will store. */
-  files?: SkillFile[]
+  files?: SkillFileBody[]
   /** Files in the skill's folder the import could not bring: not text, or past the size limits. */
   filesLeftOut?: string[]
   name: string
@@ -655,15 +658,17 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
 }
 
 /**
- * What a skill version stores beside its SKILL.md: its supporting files, under
- * `files`. A write that names no payload keeps the files of the version before
- * it, so editing SKILL.md alone never drops them; a payload replaces them.
+ * What a skill version stores beside its SKILL.md: the list of its supporting
+ * files, under `files`, whose contents go to skill_file_blob first. A write
+ * that names no payload keeps the files of the version before it, so editing
+ * SKILL.md alone never drops them; a payload replaces them. Call it before the
+ * version's transaction: storing contents is one statement per new file.
  */
-function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigObjectInput }): Record<string, unknown> | null {
+async function skillVersionPayload(input: { organizationId: string; previousPayload?: unknown; value: ConfigObjectInput }): Promise<Record<string, unknown> | null> {
   const payload = input.value.normalizedPayloadJson
   if (payload === undefined) {
-    const kept = skillFilesFromPayload(input.previousPayload)
-    return kept.length > 0 ? { files: kept } : null
+    const kept = await storeInlineSkillFiles(input.organizationId, skillFilesFromPayload(input.previousPayload))
+    return kept.length > 0 ? { files: storedSkillFileList(kept) } : null
   }
   const { files: rawFiles, ...rest } = payload
   if (rawFiles === undefined) return Object.keys(rest).length > 0 ? rest : null
@@ -675,7 +680,8 @@ function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigOb
       checked.problem.path ? `${checked.problem.message} (${checked.problem.path})` : checked.problem.message,
     )
   }
-  const next = checked.files.length > 0 ? { ...rest, files: checked.files } : rest
+  const stored = await storeSkillFileBodies(input.organizationId, checked.files)
+  const next = stored.length > 0 ? { ...rest, files: storedSkillFileList(stored) } : rest
   return Object.keys(next).length > 0 ? next : null
 }
 
@@ -1690,6 +1696,9 @@ export async function createConfigObject(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
+  const normalizedPayloadJson = input.objectType === "skill"
+    ? await skillVersionPayload({ organizationId, value: input.value })
+    : input.value.normalizedPayloadJson ?? null
 
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectTable).values({
@@ -1719,9 +1728,7 @@ export async function createConfigObject(input: {
         createdVia: input.sourceMode,
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: input.objectType === "skill"
-          ? skillVersionPayload({ value: input.value })
-          : input.value.normalizedPayloadJson ?? null,
+        normalizedPayloadJson,
         organizationId,
         rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1830,7 +1837,8 @@ export async function createConfigObjectVersion(input: {
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
   const normalizedPayloadJson = row.objectType === "skill"
-    ? skillVersionPayload({
+    ? await skillVersionPayload({
+      organizationId: row.organizationId,
       previousPayload: input.value.normalizedPayloadJson === undefined
         ? (await getLatestVersions([row.id])).get(row.id)?.normalizedPayloadJson
         : undefined,
@@ -5108,7 +5116,7 @@ function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: Gith
  * The text files in a skill's folder besides SKILL.md, read from the repository,
  * and the files left out: not text, or past the size limits.
  */
-async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFile[]; leftOut: string[] }> {
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFileBody[]; leftOut: string[] }> {
   const entries = githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries })
   const selection = selectSkillFilesBySize(entries)
   const discoveryPathByPath = new Map(entries.map((entry) => [entry.path, entry.discoveryPath]))
@@ -5117,7 +5125,7 @@ async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnap
     discoveryPath: discoveryPathByPath.get(path) ?? path,
     snapshot: input.snapshot,
   }))
-  const files: SkillFile[] = []
+  const files: Array<{ path: string; text: string }> = []
   const leftOut = [...selection.leftOut]
   for (const [index, path] of selection.included.entries()) {
     const text = texts[index]
@@ -6074,7 +6082,7 @@ async function grantImportAccessToPluginArchResource(input: {
 }
 
 type ImportedGithubObject = {
-  files: SkillFile[]
+  files: SkillFileEntry[]
   id: ConfigObjectId
   mcpUrlKeys: string[]
   objectType: "mcp" | "skill"
