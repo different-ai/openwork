@@ -5,25 +5,16 @@ export type SettingsSearchOs = "macos" | "windows" | "linux";
 
 const DESKTOP: SettingsSearchOs[] = ["macos", "windows", "linux"];
 
-/**
- * One setting inside a settings page, as Cmd/Ctrl+K finds it. `title` and
- * `detail` repeat the row's own label and description so a search for the
- * words on the page lands on it.
- */
 export type SettingsSearchEntry = {
   tab: SettingsTab;
-  /** The row's `LayoutSectionItem anchor`, unique within its page. */
   anchor: string;
   title: string;
   detail?: string;
-  /** Heading the setting sits under, shown in the result's path. */
   section?: string;
   keywords?: string[];
-  /** Desktop systems that show this setting. Omitted: shown everywhere. */
   os?: SettingsSearchOs[];
 };
 
-/** Read at search time so titles follow the chosen language. */
 export function getSettingsSearchEntries(): SettingsSearchEntry[] {
   return [
     {

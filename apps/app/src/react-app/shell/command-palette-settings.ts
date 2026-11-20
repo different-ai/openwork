@@ -46,7 +46,6 @@ const LIBRARY_SECTIONS = [
 export function buildCommandPaletteSettingsItems(input: {
   developerMode: boolean;
   capabilities: Pick<PlatformCapabilities, "autoUpdate">;
-  /** The desktop app's system. Left out on the web, which has no desktop-only settings. */
   os?: SettingsSearchOs;
   /** Desktop policy checker; when `allowControlSettings` is blocked only the Cloud tabs remain. */
   checkRestriction?: DesktopAppRestrictionChecker;
@@ -54,7 +53,6 @@ export function buildCommandPaletteSettingsItems(input: {
   onOpenExtensions: (section?: string) => void;
 }): PaletteItem[] {
   const checkRestriction = input.checkRestriction ?? (() => false);
-  // The settings sidebar's pages, in its order (`useSettingsNavGroups`).
   const tabs = ([
     "general",
     ...getWorkspaceSettingsTabs(),
@@ -102,8 +100,6 @@ export function buildCommandPaletteSettingsItems(input: {
       }))
     : [];
 
-  // One result per setting inside a page, so a search for an option's own
-  // name opens the page at that option.
   const settingItems = getSettingsSearchEntries()
     .filter((entry) => tabs.includes(entry.tab))
     .filter((entry) => !entry.os || (input.os !== undefined && entry.os.includes(input.os)))
@@ -117,8 +113,6 @@ export function buildCommandPaletteSettingsItems(input: {
       action: () => input.onOpenSettings(`/settings/${entry.tab}/${entry.anchor}`),
     }));
 
-  // Settings inside pages come last: the empty palette previews the first few
-  // entries, which stay the pages themselves.
   return input.developerMode
     ? [...advancedItems, ...tabItems, ...libraryItems, ...settingItems]
     : [...tabItems, ...advancedItems, ...libraryItems, ...settingItems];

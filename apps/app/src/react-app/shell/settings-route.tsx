@@ -110,7 +110,7 @@ import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/auth
 import { SandboxPanel } from "@/react-app/domains/settings/panels/sandbox-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
-import { isSettingAnchor, useRevealSetting } from "@/react-app/domains/settings/settings-anchor";
+import { isSettingAnchor, RequestedSettingContext } from "@/react-app/domains/settings/settings-anchor";
 import { SETTINGS_DISCOVERY_TIMEOUT_MS, settingsWorkspaceState, type WorkspaceRegistryState } from "@/react-app/domains/settings/state/workspace-discovery";
 import { SETTINGS_FIND_LABEL } from "@/react-app/domains/settings/find/settings-find";
 import { useSettingsFindStore } from "@/react-app/domains/settings/find/settings-find-store";
@@ -302,7 +302,6 @@ export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
   redirectPath: string | null;
   advancedSection?: string;
-  /** One setting on the page, opened from search: `/settings/<tab>/<anchor>`. */
   anchor?: string;
   extensionsSection?: ExtensionsSection;
   extensionDetailId?: string;
@@ -332,7 +331,6 @@ export function parseSettingsPath(pathname: string): {
     case "import":
       return { tab: head, redirectPath: null, anchor: isSettingAnchor(tail) ? tail : undefined };
     case "advanced":
-      // The tail names a whole section (AdvancedView scrolls to it) or one setting in it.
       return { tab: "advanced", redirectPath: null, advancedSection: tail, anchor: isSettingAnchor(tail) ? tail : undefined };
     case "cloud-account":
     case "cloud-providers":
@@ -510,7 +508,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     : props.standaloneExtensions
       ? parseExtensionsPath(location.pathname)
       : parseSettingsPath(location.pathname);
-  useRevealSetting(route.anchor, location.key);
+  const requestedSetting = useMemo(
+    () => (route.anchor ? { anchor: route.anchor, navigationKey: location.key } : null),
+    [route.anchor, location.key],
+  );
   const navigationWorkspaceId = readNavigationWorkspaceId(location.state);
   const navigationSessionId = readNavigationSessionId(location.state);
 
@@ -2872,6 +2873,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   })();
 
   return (
+    <RequestedSettingContext value={requestedSetting}>
     <GatewayModelAccessProvider
       providers={gatewayConnectProviders}
       disabledProviders={disabledProviders}
@@ -3062,6 +3064,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onClose={() => modelPicker.setOpen(false)}
       />
     </GatewayModelAccessProvider>
+    </RequestedSettingContext>
   );
 }
 

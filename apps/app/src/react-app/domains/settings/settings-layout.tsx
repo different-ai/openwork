@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { useRevealWhenRequested } from "./settings-anchor";
 
 export interface LayoutStackProps {
   children: React.ReactNode;
@@ -62,18 +63,16 @@ export function LayoutSectionDescription({ children, className }: LayoutSectionD
 }
 
 interface LayoutSectionItemProps {
-  /**
-   * Names this setting so search can open the page at it:
-   * `/settings/<tab>/<anchor>`. List it in `settings-search-index.ts`.
-   */
   anchor?: string;
   children: React.ReactNode;
   className?: string;
 }
 
 export function LayoutSectionItem({ anchor, children, className }: LayoutSectionItemProps) {
+  const revealWhenRequested = useRevealWhenRequested(anchor);
   return (
     <div
+      ref={revealWhenRequested}
       data-setting-anchor={anchor}
       tabIndex={anchor ? -1 : undefined}
       className={cn(

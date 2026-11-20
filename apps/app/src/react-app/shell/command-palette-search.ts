@@ -49,8 +49,6 @@ function itemSearchText(item: PaletteItem) {
     .join(" ");
 }
 
-// A menu path copied from a chat or a result ("Settings → Advanced → Runtime")
-// is searched by its words; the separators are not part of any name.
 const PATH_SEPARATORS = /[→›»>]/g;
 
 function normalizeSearchText(value: string) {
@@ -99,10 +97,6 @@ export function rankPaletteItems(
   const normalizedQuery = normalizeSearchText(searchQuery);
   if (!normalizedQuery) return [];
   const tokens = normalizedQuery.split(" ");
-  // Items that contain every typed word win outright. A looser match, the
-  // typed letters in order anywhere in an item, only counts when no item
-  // contains the words: typos still find something, and real matches are not
-  // buried under coincidences.
   const wordMatchedItems = candidates.filter((item) => {
     const text = normalizeSearchText(itemSearchText(item));
     return tokens.every((token) => text.includes(token));

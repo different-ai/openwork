@@ -1,9 +1,6 @@
-import { useEffect } from "react";
+import { createContext, use, useCallback } from "react";
 
-/** How long a setting opened from search stays outlined. */
-const FOUND_MS = 1600;
-/** Rows that wait on loaded state get about a second to appear. */
-const MAX_FRAMES = 60;
+const FOUND_OUTLINE_MS = 1600;
 
 const ANCHOR_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -11,36 +8,26 @@ export function isSettingAnchor(value: string | undefined): value is string {
   return value !== undefined && ANCHOR_PATTERN.test(value);
 }
 
-/**
- * Scrolls the setting named by `/settings/<tab>/<anchor>` into view, moves
- * focus to it and outlines it briefly, so someone who searched for one option
- * does not have to scan the page for it. `navigationKey` re-runs the reveal
- * when the same setting is opened again.
- */
-export function useRevealSetting(anchor: string | undefined, navigationKey: string) {
-  useEffect(() => {
-    if (!isSettingAnchor(anchor)) return;
-    let frame = 0;
-    let frames = 0;
-    let timer = 0;
-    let found: HTMLElement | null = null;
-    const reveal = () => {
-      found = document.querySelector<HTMLElement>(`[data-setting-anchor="${anchor}"]`);
-      if (!found) {
-        frames += 1;
-        if (frames < MAX_FRAMES) frame = requestAnimationFrame(reveal);
-        return;
-      }
-      found.scrollIntoView({ block: "center" });
-      found.focus({ preventScroll: true });
-      found.setAttribute("data-setting-found", "");
-      timer = window.setTimeout(() => found?.removeAttribute("data-setting-found"), FOUND_MS);
-    };
-    frame = requestAnimationFrame(reveal);
+export type RequestedSetting = { anchor: string; navigationKey: string };
+
+export const RequestedSettingContext = createContext<RequestedSetting | null>(null);
+
+export function useRevealWhenRequested(anchor: string | undefined) {
+  const requested = use(RequestedSettingContext);
+  const requestedNavigation = anchor !== undefined && requested?.anchor === anchor ? requested.navigationKey : null;
+  return useCallback((row: HTMLElement | null) => {
+    if (!row || requestedNavigation === null) return;
+    let outlineTimer = 0;
+    const frame = requestAnimationFrame(() => {
+      row.scrollIntoView({ block: "center" });
+      row.focus({ preventScroll: true });
+      row.setAttribute("data-setting-found", "");
+      outlineTimer = window.setTimeout(() => row.removeAttribute("data-setting-found"), FOUND_OUTLINE_MS);
+    });
     return () => {
       cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-      found?.removeAttribute("data-setting-found");
+      window.clearTimeout(outlineTimer);
+      row.removeAttribute("data-setting-found");
     };
-  }, [anchor, navigationKey]);
+  }, [requestedNavigation]);
 }
