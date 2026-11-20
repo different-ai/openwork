@@ -31,7 +31,7 @@ import {
 import {
   getSsoDomainVerificationDnsName,
   getSsoDomainVerificationHost,
-} from "@openwork-ee/sso"
+} from "@openwork-ee/den-sso"
 import { createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import { checkOidcDiscovery } from "../../sso-oidc-discovery.js"
 import { defaultSsoConnectionName, normalizeSsoDomains, parseSsoDomains, serializeSsoDomains } from "../../sso-domains.js"

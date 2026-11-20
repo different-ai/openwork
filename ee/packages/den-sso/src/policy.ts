@@ -1,7 +1,7 @@
 /**
  * Pure rules for how an organization's SSO applies at sign-in and when
  * someone opens the organization. No database access, so they are unit tested
- * directly (ee/packages/sso/test/policy.test.ts). Den API enforces them; Den web
+ * directly (ee/packages/den-sso/test/policy.test.ts). Den API enforces them; Den web
  * reads the same policy to show the settings and the reauthentication choices.
  *
  * On single-organization deployments an enabled SSO connection on a verified

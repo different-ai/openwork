@@ -1,5 +1,5 @@
 {
-  "name": "@openwork-ee/sso",
+  "name": "@openwork-ee/den-sso",
   "private": true,
   "type": "module",
   "description": "Den organization SSO rules shared by Den API and Den Web: who must sign in with SSO, login routing, the last sign-in cookie, domain verification names and SAML policy. No I/O; safe in the browser.",

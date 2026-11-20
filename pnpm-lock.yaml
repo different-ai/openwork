@@ -646,9 +646,9 @@ importers:
       '@openwork-ee/headless-protocol':
         specifier: workspace:*
         version: link:../../packages/headless-protocol
-      '@openwork-ee/sso':
+      '@openwork-ee/den-sso':
         specifier: workspace:*
-        version: link:../../packages/sso
+        version: link:../../packages/den-sso
       '@openwork-ee/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -909,9 +909,9 @@ importers:
       '@openwork-ee/gateway-catalog':
         specifier: workspace:*
         version: link:../../packages/gateway-catalog
-      '@openwork-ee/sso':
+      '@openwork-ee/den-sso':
         specifier: workspace:*
-        version: link:../../packages/sso
+        version: link:../../packages/den-sso
       '@openwork-ee/telemetry-contracts':
         specifier: workspace:*
         version: link:../../packages/telemetry-contracts
@@ -1454,7 +1454,7 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
 
-  ee/packages/sso:
+  ee/packages/den-sso:
     devDependencies:
       '@types/node':
         specifier: ^20.11.30

@@ -7,7 +7,7 @@ import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
-import { readOrganizationSsoPolicy } from "@openwork-ee/sso";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
 import type { DenOrgContext } from "../_lib/den-org";
 import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 

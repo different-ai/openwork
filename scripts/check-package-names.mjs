@@ -41,7 +41,8 @@ export function packageNameProblems(folder, scope, name) {
   }
   const base = path.posix.basename(folder);
   const problems = [];
-  if (name !== `${scope}/${base}`) problems.push(`${folder} is named ${name}; name it ${scope}/${base}, or rename the folder to match`);
+  // A folder without a package.json (an Xcode app, the docs site) has no name to compare.
+  if (name !== undefined && name !== `${scope}/${base}`) problems.push(`${folder} is named ${name}; name it ${scope}/${base}, or rename the folder to match`);
   if (base.startsWith("openwork-")) problems.push(`${folder} repeats "openwork"; the scope already says it`);
   return problems;
 }
@@ -54,8 +55,7 @@ export function checkPackageNames(repoRoot = root) {
     for (const entry of readdirSync(absolute, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const manifest = path.join(absolute, entry.name, "package.json");
-      if (!existsSync(manifest)) continue;
-      const { name } = JSON.parse(readFileSync(manifest, "utf8"));
+      const name = existsSync(manifest) ? JSON.parse(readFileSync(manifest, "utf8")).name : undefined;
       problems.push(...packageNameProblems(`${dir}/${entry.name}`, scope, name));
     }
   }

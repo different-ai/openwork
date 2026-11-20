@@ -1,4 +1,4 @@
-# @openwork-ee/sso
+# @openwork-ee/den-sso
 
 The rules for organization SSO in Den, shared by Den API (`ee/apps/den-api`), which enforces them,
 and Den Web (`ee/apps/den-web`), which shows them:
@@ -19,4 +19,4 @@ It ships TypeScript source, like `@openwork/features`: Node strips the types at 
 to be built before Den API starts. Files import each other through the package name, and use only syntax
 Node can strip (`scripts/check-node-source-imports.mjs`). `build` only emits type declarations.
 
-Test: `pnpm --filter @openwork-ee/sso test`.
+Test: `pnpm --filter @openwork-ee/den-sso test`.

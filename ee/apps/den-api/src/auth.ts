@@ -55,7 +55,7 @@ import {
   ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
   ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
   SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
-} from "@openwork-ee/sso";
+} from "@openwork-ee/den-sso";
 import { hashSessionTokens } from "./session-token.js";
 import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js";
 import { beginDesktopDeviceClaim, desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, requireDesktopDeviceClaim } from "./desktop-device-login.js";

@@ -74,7 +74,7 @@ import {
   listOrganizationSsoConnections,
   renameOrganizationSsoConnection,
 } from "../../sso.js"
-import { getSsoDomainVerificationDnsName, isOrganizationSsoReady } from "@openwork-ee/sso"
+import { getSsoDomainVerificationDnsName, isOrganizationSsoReady } from "@openwork-ee/den-sso"
 import { defaultSsoConnectionName, parseSsoDomains } from "../../sso-domains.js"
 import { getSsoTestPresentation, ssoConnectionEnableBlocker } from "../../sso-test-lifecycle.js"
 import { ConfigApplyItemError, defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ConfigPreflightInfo, type ConfigPreflightResult } from "../area.js"

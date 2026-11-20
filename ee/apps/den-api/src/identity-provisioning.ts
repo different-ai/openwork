@@ -7,7 +7,7 @@ import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershi
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
 import { restoreScimProvisionedMembership } from "./scim-reprovisioning.js"
 import { readSsoPerOrganization } from "./organization-sso-access.js"
-import { allowsVerifiedDomainAutoJoin, readOrganizationSsoPolicy, ORGANIZATION_SSO_JIT_ROLE } from "@openwork-ee/sso"
+import { allowsVerifiedDomainAutoJoin, readOrganizationSsoPolicy, ORGANIZATION_SSO_JIT_ROLE } from "@openwork-ee/den-sso"
 import { getOrganizationSeatAddEligibility } from "./stripe-billing.js"
 
 /**
