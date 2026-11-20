@@ -52,7 +52,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { useDenAuth } from "../../cloud/den-auth-provider";
-import { panelSessionForFileLink, panelSessionForWorkbench } from "./workbench-panel-session";
+import { panelSessionForChatItem, panelSessionForWorkbench } from "./workbench-panel-session";
 import { WorkbenchPanelGroup, PRIMARY_PANEL_ID, SECONDARY_PANEL_ID } from "./workbench-panel-group";
 import ProviderAuthModal, { type ProviderAuthModalProps } from "../../connections/provider-auth/provider-auth-modal";
 import { RenameSessionModal } from "../modals/rename-session-modal";
@@ -94,6 +94,7 @@ import { fileOriginForRuntime, nativeFileAction, planFileOpen, resolveCollectibl
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
+import { PanelSessionProvider } from "@/react-app/kernel/panel-session-context";
 import { isFilesRailActive, openFileTabId, type EmptyPanelView } from "../panel/files-rail";
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
 import { useBrowserPresentationController } from "../panel/use-browser-presentation";
@@ -788,6 +789,18 @@ export function SessionPage(props: SessionPageProps) {
     return target.value;
   }, []);
   const createBrowserTab = useCreateTab();
+  const panelSessionForItemFrom = useCallback((sourceSessionId: string | null) => panelSessionForChatItem({
+    sourceSessionId,
+    panelSessionId: panelSessionId ?? null,
+    primarySessionId: props.selectedSessionId ?? null,
+    primaryWorkspaceId: props.selectedWorkspaceId,
+    split: splitSession,
+    splitTakesPanel: sideChatPanelEnabled,
+  }), [panelSessionId, props.selectedSessionId, props.selectedWorkspaceId, sideChatPanelEnabled, splitSession]);
+  const panelSessionForChat = useCallback(
+    (chatSessionId: string) => panelSessionForItemFrom(chatSessionId) ?? chatSessionId,
+    [panelSessionForItemFrom],
+  );
   const openTargetForRuntime = useCallback((runtime: {
     client: OpenworkServerClient | null;
     runtimeWorkspaceId: string | null;
@@ -859,14 +872,7 @@ export function SessionPage(props: SessionPageProps) {
         return;
       }
 
-      const tabSessionId = panelSessionForFileLink({
-        sourceSessionId: sessionId ?? null,
-        panelSessionId: panelSessionId ?? null,
-        primarySessionId: props.selectedSessionId ?? null,
-        primaryWorkspaceId: props.selectedWorkspaceId,
-        split: splitSession,
-        splitTakesPanel: sideChatPanelEnabled,
-      });
+      const tabSessionId = panelSessionForItemFrom(sessionId ?? null);
       if (!tabSessionId) return;
       openTab(tabSessionId, {
         id: fileTarget.id,
@@ -903,7 +909,7 @@ export function SessionPage(props: SessionPageProps) {
       }
       await openNative(plan.path, plan.action);
     })().catch(reportOpenError);
-  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, panelSessionId, props.selectedSessionId, props.selectedWorkspaceId, sideChatPanelEnabled, splitSession]);
+  }, [browserUrlForTarget, createBrowserTab, openOwnerSidePanel, openTab, panelSessionForItemFrom, panelSessionId]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -1531,6 +1537,7 @@ export function SessionPage(props: SessionPageProps) {
       isReferenceCurrent={props.isSessionReferenceCurrent}
       onOpenReference={handleOpenSessionReference}
     >
+    <PanelSessionProvider value={panelSessionForChat}>
     <div ref={props.ref} data-chat-viewport className="flex h-full min-h-0 flex-col bg-[radial-gradient(circle_at_top,rgba(74,111,255,0.12),transparent_42%),var(--app-bg,#0b1020)] text-dls-text max-lg:fixed max-lg:inset-x-0 max-lg:top-[var(--chat-viewport-top,0px)] max-lg:h-[var(--chat-viewport-height,100dvh)] max-lg:overflow-hidden max-lg:pt-[env(safe-area-inset-top)] mac:bg-transparent">
       <SidebarProvider
         open={sidebarOpen}
@@ -2318,6 +2325,7 @@ export function SessionPage(props: SessionPageProps) {
 
       {/* Cloud provider notifications are now handled globally by CloudProvidersToast in app-root.tsx */}
     </div>
+    </PanelSessionProvider>
     </SessionReferenceProvider>
   );
 }
