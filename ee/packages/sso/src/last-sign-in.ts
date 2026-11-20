@@ -29,6 +29,17 @@ export function isLastSignInMethod(value: unknown): value is LastSignInMethod {
   return typeof value === "string" && LAST_SIGN_IN_METHODS.some((method) => method === value)
 }
 
+/** The remembered method in a `document.cookie` string, or null. Den web reads it before the email step. */
+export function readLastSignInMethod(cookieHeader: string): LastSignInMethod | null {
+  for (const part of cookieHeader.split(";")) {
+    const separator = part.indexOf("=")
+    if (separator < 0 || part.slice(0, separator).trim() !== LAST_SIGN_IN_METHOD_COOKIE) continue
+    const value = part.slice(separator + 1).trim()
+    if (isLastSignInMethod(value)) return value
+  }
+  return null
+}
+
 /**
  * What a finished Better Auth request means for the cookie. Only requests that
  * created a session change it; `provider` is the social provider id from the

@@ -55,6 +55,7 @@
     "@openwork-ee/gateway-catalog": "workspace:*",
     "@openwork-ee/gateway-upstreams": "workspace:*",
     "@openwork-ee/headless-protocol": "workspace:*",
+    "@openwork-ee/sso": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/managed-deployments": "workspace:*",
