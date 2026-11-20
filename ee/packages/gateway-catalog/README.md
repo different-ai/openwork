@@ -13,6 +13,12 @@ Den API (`ee/apps/den-api`) and Den Web (`ee/apps/den-web`), so each rule is wri
 It does no I/O and imports no database, server or environment code, so Den Web can use
 it in the browser. Code that reaches a provider or reads storage stays in the apps.
 
+It ships TypeScript source (like `@openwork/features`): Node strips the types at runtime, so
+nothing has to be built before the Gateway or Den starts. Files import each other through the
+package name (`@openwork-ee/gateway-catalog/litellm`), because a relative import without a real
+file name fails under plain Node (`scripts/check-node-source-imports.mjs`). `build` only emits
+the type declarations other packages typecheck against.
+
 The model catalog data (`ee/apps/gateway/src/models`) and its publish scripts still live
 in the Gateway.
 

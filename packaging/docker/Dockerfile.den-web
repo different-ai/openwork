@@ -32,11 +32,10 @@ COPY ee/packages/gateway-catalog /app/ee/packages/gateway-catalog
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/apps/den-web /app/ee/apps/den-web
 
-# @openwork-ee/utils and @openwork-ee/gateway-catalog resolve to dist/ in production
-# builds and nothing else in this image builds them; without this step a cold (cache-miss) image build fails
+# @openwork-ee/utils resolves to dist/ in production builds and nothing else in
+# this image builds it; without this step a cold (cache-miss) image build fails
 # in next build with "Can't resolve '@openwork-ee/utils'".
 RUN pnpm --dir /app/ee/packages/utils run build
-RUN pnpm --dir /app/ee/packages/gateway-catalog run build
 
 WORKDIR /app/ee/apps/den-web
 
