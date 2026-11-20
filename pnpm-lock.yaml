@@ -404,8 +404,8 @@ importers:
         specifier: npm:@lydell/node-pty@1.2.0-beta.12
         version: '@lydell/node-pty@1.2.0-beta.12'
       undici:
-        specifier: 6.29.1
-        version: 6.29.1
+        specifier: 8.12.4
+        version: 8.12.4
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -517,8 +517,8 @@ importers:
         specifier: ^11.0.8
         version: 11.0.9
       undici:
-        specifier: 6.29.1
-        version: 6.29.1
+        specifier: 8.12.4
+        version: 8.12.4
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -803,8 +803,8 @@ importers:
         specifier: ^5.5.4
         version: 5.9.3
       undici:
-        specifier: 7.30.1
-        version: 7.30.1
+        specifier: 8.12.4
+        version: 8.12.4
       unpdf:
         specifier: 1.9.1
         version: 1.9.1
@@ -855,8 +855,8 @@ importers:
         specifier: 4.13.16
         version: 4.13.16
       undici:
-        specifier: 7.30.1
-        version: 7.30.1
+        specifier: 8.12.4
+        version: 8.12.4
       zod:
         specifier: ^4.6.6
         version: 4.6.6
@@ -1319,8 +1319,8 @@ importers:
         specifier: ^3.23.1
         version: 3.24.2(@types/node@20.12.12)
       undici:
-        specifier: 7.30.1
-        version: 7.30.1
+        specifier: 8.12.4
+        version: 8.12.4
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
@@ -11167,6 +11167,10 @@ packages:
   undici@7.30.1:
     resolution: {integrity: sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg==}
     engines: {node: '>=20.18.1'}
+
+  undici@8.12.4:
+    resolution: {integrity: sha512-8Mx+uNKKER2bA4AdtedkqRbwUCIJFr2nJckXRe5yrDqzePqwLP7VNcctN8/XdmDSbF7mS+jJKIszlL+vbam1VA==}
+    engines: {node: '>=22.19.0'}
 
   unenv@2.0.0-rc.24:
     resolution: {integrity: sha512-i7qRCmY42zmCwnYlh9H2SvLEypEFGye5iRmEMKjcGi7zk9UquigRjFtTLz0TYqr0ZGLZhaMHl/foy1bZR+Cwlw==}
@@ -21458,6 +21462,8 @@ snapshots:
   undici@6.29.1: {}
 
   undici@7.30.1: {}
+
+  undici@8.12.4: {}
 
   unenv@2.0.0-rc.24:
     dependencies:

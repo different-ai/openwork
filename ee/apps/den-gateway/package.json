@@ -16,7 +16,7 @@
     "@openwork-ee/utils": "workspace:*",
     "dotenv": "^16.4.5",
     "hono": "4.13.16",
-    "undici": "7.30.1",
+    "undici": "8.12.4",
     "zod": "^4.6.6"
   },
   "devDependencies": {

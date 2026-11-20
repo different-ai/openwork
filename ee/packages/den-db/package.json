@@ -178,7 +178,7 @@
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.2",
     "mysql2": "^3.23.1",
-    "undici": "7.30.1"
+    "undici": "8.12.4"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
