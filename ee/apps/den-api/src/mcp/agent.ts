@@ -1063,7 +1063,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     registerAgentSkillTools({
       server,
-      create: async ({ pluginName, skillMarkdown }) => {
+      create: async ({ pluginName, skillMarkdown, files }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1088,7 +1088,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
               return createPluginBundle({
                 context: skillContext,
                 name: pluginName,
-                components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) } }],
               })
             })
             const memberships = await listPluginMemberships({
@@ -1131,7 +1131,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           throw error
         }
       },
-      update: async ({ skillId, skillMarkdown, reason }) => {
+      update: async ({ skillId, skillMarkdown, files, reason }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1158,7 +1158,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
                 context: skillContext,
                 configObjectId,
                 reason,
-                value: { rawSourceText: skillMarkdown },
+                value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) },
               }),
             }
           }, { result: (value) => value.created ? null : 400 }))
