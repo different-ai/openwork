@@ -1,4 +1,5 @@
-import { listZipEntries, readZipEntryData, utf8Text, xmlText, type ZipEntry } from "./ooxml-package.js";
+import { listZipEntries, readZipEntryData, utf8Text, xmlText, zipEntryMap, type ZipEntry } from "./ooxml-package.js";
+import { extractOfficeOutline, type OfficeOutline } from "./office-outline.js";
 import {
   columnLetters,
   formulaSummary,
@@ -137,8 +138,15 @@ async function extractXlsxText(bytes: Uint8Array, options: OfficeTextOptions): P
   return lines.join("\n").slice(0, MAX_OFFICE_TEXT_CHARS);
 }
 
+/** The outline retains slide and paragraph structure for a human-readable preview. */
+export function extractOfficeText(kind: "docx" | "pptx", bytes: Uint8Array, options: { format: "outline" }): Promise<OfficeOutline>;
 /** Text of a .docx or .pptx (body, headers, notes) or a preview of a .xlsx. Throws when nothing can be extracted safely. */
-export async function extractOfficeText(kind: OfficeKind, bytes: Uint8Array, options: OfficeTextOptions = {}): Promise<string> {
+export function extractOfficeText(kind: OfficeKind, bytes: Uint8Array, options?: OfficeTextOptions): Promise<string>;
+export async function extractOfficeText(kind: OfficeKind, bytes: Uint8Array, options: OfficeTextOptions | { format: "outline" } = {}): Promise<string | OfficeOutline> {
+  if ("format" in options) {
+    if (kind === "xlsx") throw new Error("Workbook outlines are not supported.");
+    return extractOfficeOutline(kind, bytes, zipEntryMap(listZipEntries(bytes)), MAX_OFFICE_TEXT_CHARS);
+  }
   if (kind === "xlsx") return await extractXlsxText(bytes, options);
   const entries = listZipEntries(bytes).filter((entry) => relevantXmlEntry(kind, entry.name)).sort(compareEntryName);
   if (entries.length === 0) throw new Error("No supported Office XML text entries were found.");
