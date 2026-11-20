@@ -505,7 +505,13 @@ export function fitSessionReadBudget(
   let used = 0;
   for (const message of ordered) {
     const size = JSON.stringify(message).length;
-    if (kept.length > 0 && used + size > budget) break;
+    if (used + size > budget) {
+      if (kept.length > 0) break;
+      const minimal: RichMessage = { id: message.id, type: message.type, time: message.time, truncated: true };
+      kept.push(minimal);
+      used += JSON.stringify(minimal).length;
+      break;
+    }
     kept.push(message);
     used += size;
   }
