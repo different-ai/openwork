@@ -101,3 +101,21 @@ export function resolveReauthSsoTarget(input: {
   // one when that organization requires SSO.
   return domainSso ? { signInUrl: domainSso.signInUrl, ssoOnly: domainSso.organizationRequired } : null;
 }
+
+/** Missing hints on older servers preserve the existing sign-in options. */
+export function parseReauthSessionMethods(payload: unknown) {
+  if (!isRecord(payload) || typeof payload.sessionUsesSso !== "boolean" || typeof payload.hasPasswordCredential !== "boolean") return null;
+  return { sessionUsesSso: payload.sessionUsesSso, hasPasswordCredential: payload.hasPasswordCredential };
+}
+
+export function reauthPasswordOption(input: {
+  loading: boolean;
+  ssoOnly: boolean;
+  legacyPasswordAvailable: boolean;
+  methods: ReturnType<typeof parseReauthSessionMethods>;
+}): "hidden" | "visible" | "disclosed" {
+  if (input.loading || input.ssoOnly) return "hidden";
+  if (!input.methods) return input.legacyPasswordAvailable ? "visible" : "hidden";
+  if (!input.methods.hasPasswordCredential) return "hidden";
+  return input.methods.sessionUsesSso ? "disclosed" : "visible";
+}
