@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, OrganizationTable, SessionSsoProofTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, summary, text, type Member } from "./harness.js"
 
@@ -38,6 +38,43 @@ before(async () => {
   })
   assert.equal(saml.status, 201, summary(saml))
   await den.arrangeSsoConnectionEnabled(orgId)
+})
+
+test("sign-in options distinguish the current session's SSO proof from the account's password", async () => {
+  const path = "/v1/me/sso-sign-in"
+  assert.equal((await den.request(null, "GET", path)).status, 401)
+
+  const user = await den.signUp("Sign-in options")
+  const readOptions = () => den.request(user.token, "GET", path)
+  const passwordSession = await readOptions()
+  assert.equal(passwordSession.status, 200, summary(passwordSession))
+  assert.equal(field(passwordSession.body, "sessionUsesSso"), false)
+  assert.equal(field(passwordSession.body, "hasPasswordCredential"), true)
+
+  const { body: profile } = await den.request(user.token, "GET", "/v1/me")
+  const sessionId = normalizeDenTypeId("session", text(field(profile, "session", "id"), "session ID"))
+  const userId = normalizeDenTypeId("user", user.userId)
+  // A proof written for a different session does not affect this session.
+  const other = await den.signIn(user.email)
+  assert.equal(other.status, 200, summary(other))
+  const otherProfile = await den.request(text(field(other.body, "token"), "other session token"), "GET", "/v1/me")
+  const otherId = normalizeDenTypeId("session", text(field(otherProfile.body, "session", "id"), "other session ID"))
+  assert.notEqual(otherId, sessionId)
+  const proof = {
+    userId,
+    organizationId: normalizeDenTypeId("organization", orgId),
+    ssoProviderId: "fixture-provider",
+    authenticatedAt: new Date(),
+  }
+  await db.insert(SessionSsoProofTable).values({ ...proof, sessionId: otherId })
+  assert.equal(field((await readOptions()).body, "sessionUsesSso"), false)
+
+  await db.insert(SessionSsoProofTable).values({ ...proof, sessionId })
+  await db.update(AuthAccountTable).set({ password: null }).where(eq(AuthAccountTable.userId, userId))
+  const ssoSession = await readOptions()
+  assert.equal(ssoSession.status, 200, summary(ssoSession))
+  assert.equal(field(ssoSession.body, "sessionUsesSso"), true)
+  assert.equal(field(ssoSession.body, "hasPasswordCredential"), false)
 })
 
 test("an agent cannot enable Require SSO without a real SSO session", async () => {

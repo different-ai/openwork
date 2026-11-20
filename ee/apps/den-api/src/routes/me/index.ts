@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable, SessionSsoProofTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
@@ -61,6 +61,8 @@ const meInvitationsResponseSchema = z.object({
 }).meta({ ref: "CurrentUserInvitationsResponse" })
 
 const meSsoSignInResponseSchema = z.object({
+  sessionUsesSso: z.boolean(),
+  hasPasswordCredential: z.boolean(),
   organizations: z.array(z.object({
     organizationId: denTypeIdSchema("organization"),
     organizationSlug: z.string(),
@@ -264,8 +266,22 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     userSessionRoute(),
     async (c) => {
       const user = c.get("user")
-      const organizations = await listMemberSsoSignIns(user.id)
+      const userId = normalizeDenTypeId("user", user.id)
+      const sessionId = c.get("signInSessionId")
+      const [organizations, proofs, credentials] = await Promise.all([
+        listMemberSsoSignIns(user.id),
+        sessionId ? db.$primary.select({ sessionId: SessionSsoProofTable.sessionId })
+          .from(SessionSsoProofTable)
+          .where(and(eq(SessionSsoProofTable.sessionId, sessionId), eq(SessionSsoProofTable.userId, userId)))
+          .limit(1) : [],
+        db.$primary.select({ id: AuthAccountTable.id }).from(AuthAccountTable)
+          .where(and(eq(AuthAccountTable.userId, userId), eq(AuthAccountTable.providerId, "credential"), sql`${AuthAccountTable.password} <> ''`))
+          .limit(1),
+      ])
+      // These hints choose what the dialog shows; they are never accepted as proof.
       return c.json({
+        sessionUsesSso: proofs.length > 0,
+        hasPasswordCredential: credentials.length > 0,
         organizations: organizations.map((organization) => ({
           ...organization,
           signInUrl: ssoSignInUrl(organization.signInPath),
