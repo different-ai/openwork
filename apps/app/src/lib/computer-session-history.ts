@@ -128,8 +128,7 @@ function stepApps(parts: readonly DynamicToolUIPart[]): Map<string, string> {
     const input = record(part.input) ? part.input : {}
     if (opensApp(part)) {
       const output = result(part)
-      const named = record(output) && typeof output.app_name === "string" && output.app_name.trim() ? output.app_name.trim()
-        : typeof input.app_id === "string" && input.app_id.trim() ? input.app_id.trim() : undefined
+      const named = record(output) && typeof output.app_name === "string" && output.app_name.trim() ? output.app_name.trim() : undefined
       if (!named) continue
       latest = named
       if (record(output) && typeof output.session_id === "string") bySession.set(output.session_id, named)
