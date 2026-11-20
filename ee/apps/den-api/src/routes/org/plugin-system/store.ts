@@ -318,6 +318,8 @@ type GithubPluginSkillImportSkill = {
   sourceSchemaVersion: string | null
   sourcePath: string
   supported: boolean
+  /** Files in the skill's folder besides SKILL.md. */
+  supportingFileCount?: number
 }
 
 type GithubPluginMcpImportPlan = {
@@ -326,6 +328,8 @@ type GithubPluginMcpImportPlan = {
   marketplace: GithubMarketplaceInfo | null
   plugins: GithubPluginMcpImportPlugin[]
   repositoryFullName: string
+  /** No plugin manifest: nothing is selected for the person, and an import must name each skill. */
+  requiresSkillSelection: boolean
   rootPath: string
   servers: GithubPluginMcpImportServer[]
   skills: GithubPluginSkillImportSkill[]
@@ -5105,6 +5109,12 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
 
 /** The files in a skill's folder besides SKILL.md, as paths relative to that folder, with their sizes. */
 function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: GithubDiscoveryTreeEntry[] }) {
+  // A link straight to a skill folder puts its SKILL.md at the top of the tree.
+  if (input.sourcePath === "SKILL.md") {
+    return input.treeEntries
+      .filter((entry) => entry.kind === "blob" && entry.path !== input.sourcePath)
+      .map((entry) => ({ discoveryPath: entry.path, path: entry.path, size: entry.size }))
+  }
   if (!input.sourcePath.endsWith("/SKILL.md")) return []
   const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
   return input.treeEntries
@@ -5151,6 +5161,7 @@ async function computeGithubPluginMcpImportPlan(input: {
   const discovery = buildGithubRepoDiscovery({
     entries: snapshot.treeEntries,
     fileTextByPath,
+    skillFoldersPluginName: snapshot.rootPath.split("/").filter(Boolean).at(-1) || snapshot.repositoryFullName.split("/").at(-1) || "GitHub skills",
   })
   const importPlansByPluginKey = buildGithubDiscoveryImportPlans({
     discoveredPlugins: discovery.discoveredPlugins,
@@ -5198,6 +5209,10 @@ async function computeGithubPluginMcpImportPlan(input: {
       skill.files = read.files
       skill.filesLeftOut = read.leftOut
     }
+  }
+
+  for (const skill of skills) {
+    skill.supportingFileCount = githubSkillFolderEntries({ sourcePath: skill.sourcePath, treeEntries: snapshot.treeEntries }).length
   }
 
   // Say before the import which skills cannot bring all their files.
@@ -5256,6 +5271,7 @@ async function computeGithubPluginMcpImportPlan(input: {
     marketplace: discovery.marketplace,
     plugins,
     repositoryFullName: snapshot.repositoryFullName,
+    requiresSkillSelection: discovery.classification === "skill_folders_repo",
     rootPath: snapshot.rootPath,
     servers,
     skills,
@@ -6254,6 +6270,11 @@ export async function importGithubPluginMcps(input: {
     includeSkillFilesFor: input.selectedSkillKeys === undefined ? "all" : selectedSkillKeys,
     organizationId: input.context.organizationContext.organization.id,
   })
+  // Without a manifest nobody vouched for which folders are skills, so the
+  // caller must name each one; importing "everything" is never assumed.
+  if (plan.requiresSkillSelection && selectedSkillKeys.size === 0) {
+    throw new PluginArchRouteFailure(400, "skill_selection_required", "This repository has no plugin manifest. Choose the skills to import by listing their skillKey values in selectedSkillKeys.")
+  }
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
   const consideredServers = selectedServerKeys.size > 0
@@ -7050,7 +7071,8 @@ function discoveryMappingsForPlugin(plugin: GithubDiscoveredPlugin) {
   return [
     ...plugin.componentPaths.skills.map((selector) => ({
       objectType: "skill" as const,
-      selector: plugin.sourceKind === "agent_plugin_manifest" ? selector : `${selector}/**`,
+      // These list each SKILL.md itself rather than a folder to search.
+      selector: plugin.sourceKind === "agent_plugin_manifest" || plugin.sourceKind === "skill_folder" ? selector : `${selector}/**`,
     })),
     ...plugin.componentPaths.commands.map((selector) => ({ objectType: "command" as const, selector: `${selector}/**` })),
     ...plugin.componentPaths.agents.map((selector) => ({ objectType: "agent" as const, selector: `${selector}/**` })),

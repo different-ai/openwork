@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, FileText, Github, Server } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
+import { DenCheckbox } from "../../_components/ui/checkbox";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
@@ -13,6 +14,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   normalizePublicGitHubPluginUrl,
   parsePluginImportPreview,
+  pluginImportSkillFolderUrl,
   pluginImportSourceLabel,
   savePluginImportDraft,
   type PluginImportAuthType,
@@ -23,6 +25,8 @@ import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 type PreviewItem = {
   detail: string;
+  /** The skill's folder on GitHub, shown when there is no manifest so it can be checked. */
+  href: string | null;
   key: string;
   kind: "skill" | "mcp";
   name: string;
@@ -41,6 +45,11 @@ function serverStatus(preview: PluginImportPreview["servers"][number]): string {
   return "Unsupported";
 }
 
+function skillFolderLabel(sourcePath: string): string {
+  const folder = sourcePath.replace(/\/?SKILL\.md$/, "");
+  return folder ? `${folder}/` : "Linked folder";
+}
+
 export function PluginImportScreen() {
   const router = useRouter();
   const { orgSlug, runReauthableAction } = useOrgDashboard();
@@ -50,6 +59,7 @@ export function PluginImportScreen() {
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
   const [authType, setAuthType] = useState<PluginImportAuthType>("oauth");
   const [credentialMode, setCredentialMode] = useState<PluginImportCredentialMode>("per_member");
+  const [confirmedSource, setConfirmedSource] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,7 +96,11 @@ export function PluginImportScreen() {
       setGithubUrl(normalizedGithubUrl);
       setPreview(nextPreview);
       setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
-      setSelectedSkillKeys(nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
+      // Without a plugin manifest nothing is chosen for the person: they pick each skill.
+      setSelectedSkillKeys(nextPreview.requiresSkillSelection
+        ? []
+        : nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
+      setConfirmedSource(false);
     } catch (previewError) {
       setError(previewError instanceof Error ? previewError.message : "Failed to preview GitHub plugin components.");
     } finally {
@@ -97,6 +111,10 @@ export function PluginImportScreen() {
   function continueToCreate() {
     if (!preview || (selectedServerKeys.length === 0 && selectedSkillKeys.length === 0)) {
       setError("Select at least one supported MCP server or skill.");
+      return;
+    }
+    if (preview.requiresSkillSelection && !confirmedSource) {
+      setError("Confirm that you checked these skill folders and trust their source.");
       return;
     }
     try {
@@ -124,11 +142,15 @@ export function PluginImportScreen() {
           key: skill.skillKey,
           kind: "skill",
           name: skill.name,
-          detail: skill.description ?? skill.sourcePath,
+          detail: preview.requiresSkillSelection
+            ? `${skillFolderLabel(skill.sourcePath)}${skill.supportingFileCount ? ` · ${skill.supportingFileCount} more file${skill.supportingFileCount === 1 ? "" : "s"}` : ""}`
+            : skill.description ?? skill.sourcePath,
+          href: preview.requiresSkillSelection ? pluginImportSkillFolderUrl(preview, skill.sourcePath) : null,
           supported: skill.supported,
           status: skill.supported ? "Ready" : "Unsupported skill",
         })),
         ...preview.servers.map((server): PreviewItem => ({
+          href: null,
           key: server.serverKey,
           kind: "mcp",
           name: server.name,
@@ -173,6 +195,7 @@ export function PluginImportScreen() {
                 setPreview(null);
                 setSelectedServerKeys([]);
                 setSelectedSkillKeys([]);
+                setConfirmedSource(false);
                 setError(null);
               }}
               placeholder="https://github.com/anthropics/knowledge-work-plugins/tree/main/sales"
@@ -192,12 +215,27 @@ export function PluginImportScreen() {
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Preview</p>
               <h2 className="mt-1 text-[18px] font-semibold text-gray-900">{pluginImportSourceLabel(preview)}</h2>
-              <p className="mt-1 text-[13px] text-gray-500">Choose the components to include in your plugin.</p>
+              <p className="mt-1 text-[13px] text-gray-500">
+                {preview.requiresSkillSelection
+                  ? "Choose each skill folder to include. None are selected for you."
+                  : "Choose the components to include in your plugin."}
+              </p>
             </div>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600">
               {selectedCount} selected
             </span>
           </div>
+
+          {preview.requiresSkillSelection ? (
+            <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900">
+              <p className="font-medium">No plugin manifest</p>
+              <p className="mt-1">
+                {preview.repositoryFullName} isn&apos;t packaged as a plugin, so nobody has said which folders are skills.
+                Open each folder you choose and check it before importing. The import reads commit{" "}
+                <span className="font-mono">{preview.sourceRevisionRef.slice(0, 7)}</span>.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mt-5 overflow-hidden rounded-2xl border border-gray-100">
             {previewItems.map((item) => {
@@ -225,6 +263,16 @@ export function PluginImportScreen() {
                     <span className="block truncate text-[14px] font-medium text-gray-900">{item.name}</span>
                     <span className="block truncate text-[12px] text-gray-500" title={item.detail}>{item.detail}</span>
                   </span>
+                  {item.href ? (
+                    <a
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="shrink-0 text-[12px] text-gray-500 underline hover:text-gray-900"
+                    >
+                      View on GitHub
+                    </a>
+                  ) : null}
                   <span className={`shrink-0 text-[12px] ${item.supported ? "text-emerald-600" : "text-amber-700"}`}>
                     {item.status}
                   </span>
@@ -256,6 +304,13 @@ export function PluginImportScreen() {
             </div>
           ) : null}
 
+          {preview.requiresSkillSelection ? (
+            <label className="mt-4 flex items-start gap-3 text-[14px] text-gray-700">
+              <DenCheckbox className="mt-0.5" checked={confirmedSource} disabled={busy} onCheckedChange={setConfirmedSource} />
+              <span>These folders aren&apos;t published as a plugin. I&apos;ve checked them and trust this source.</span>
+            </label>
+          ) : null}
+
           {preview.warnings.length > 0 ? (
             <div className="mt-4 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">
               {preview.warnings.join(" ")}
@@ -274,7 +329,10 @@ export function PluginImportScreen() {
         <Link href={getNewPluginRoute(orgSlug)} className="text-[14px] text-gray-500 hover:text-gray-900">
           Cancel
         </Link>
-        <DenButton onClick={continueToCreate} disabled={!preview || selectedCount === 0 || busy}>
+        <DenButton
+          onClick={continueToCreate}
+          disabled={!preview || selectedCount === 0 || busy || (preview.requiresSkillSelection && !confirmedSource)}
+        >
           Continue to create
           <ArrowRight size={15} />
         </DenButton>
