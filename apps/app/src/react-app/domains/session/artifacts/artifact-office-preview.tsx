@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { extractOfficeText, OfficeSizeLimitError, type OfficeOutline } from "@openwork/workbook";
 
 import { t } from "@/i18n";
@@ -7,26 +7,31 @@ import { t } from "@/i18n";
 import { OfficePreviewLoading, PreviewError } from "./preview";
 
 type OfficeFormat = OfficeOutline["kind"];
-type Result = OfficeOutline | "too-large" | "unreadable";
+
+const bufferIds = new WeakMap<ArrayBuffer, number>();
+let nextBufferId = 0;
+function bufferId(bytes: ArrayBuffer): number {
+  const existing = bufferIds.get(bytes);
+  if (existing !== undefined) return existing;
+  const id = nextBufferId++;
+  bufferIds.set(bytes, id);
+  return id;
+}
 
 export function ArtifactOfficePreview({ format, bytes }: { format: OfficeFormat; bytes: ArrayBuffer }) {
-  const [loaded, setLoaded] = useState<{ format: OfficeFormat; bytes: ArrayBuffer; result: Result } | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const finish = (result: Result) => {
-      if (!cancelled) setLoaded({ format, bytes, result });
-    };
-    void extractOfficeText(format, new Uint8Array(bytes), { format: "outline" }).then(
-      finish,
-      (error: unknown) => finish(error instanceof OfficeSizeLimitError ? "too-large" : "unreadable"),
-    );
-    return () => { cancelled = true; };
-  }, [format, bytes]);
+  const { data: result, error, isPending } = useQuery({
+    queryKey: ["artifact-office-outline", format, bufferId(bytes)],
+    queryFn: () => extractOfficeText(format, new Uint8Array(bytes), { format: "outline" }),
+    networkMode: "always",
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  });
 
-  const result = loaded?.bytes === bytes && loaded.format === format ? loaded.result : null;
-  if (!result) return <OfficePreviewLoading />;
-  if (result === "too-large") return <PreviewError message={t("artifact.office_too_large")} role="status" />;
-  if (result === "unreadable") return <PreviewError message={t("artifact.office_unreadable")} role="status" />;
+  if (isPending) return <OfficePreviewLoading />;
+  if (error || !result) return <PreviewError message={t(error instanceof OfficeSizeLimitError ? "artifact.office_too_large" : "artifact.office_unreadable")} role="status" />;
 
   return (
     <div className="h-full space-y-3 overflow-auto p-4 text-sm leading-5 text-foreground [overflow-wrap:anywhere]">

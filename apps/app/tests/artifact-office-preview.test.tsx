@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { buildZip, MAX_COMPRESSED_BYTES, utf8Bytes } from "@openwork/workbook";
 
 const ownsDom = !GlobalRegistrator.isRegistered;
@@ -12,7 +13,9 @@ Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
+let queryClient: QueryClient;
 beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -20,11 +23,15 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+  queryClient.clear();
+  onlineManager.setOnline(true);
 });
 afterAll(async () => { if (ownsDom) await GlobalRegistrator.unregister(); });
 
 async function render(bytes: ArrayBuffer, format: "pptx" | "docx") {
-  await act(async () => { root.render(<ArtifactOfficePreview bytes={bytes} format={format} />); });
+  await act(async () => {
+    root.render(<QueryClientProvider client={queryClient}><ArtifactOfficePreview bytes={bytes} format={format} /></QueryClientProvider>);
+  });
   await act(async () => {
     for (let i = 0; i < 100 && host.querySelector('[aria-label="Loading text outline"]'); i++) {
       await Bun.sleep(5);
@@ -53,4 +60,32 @@ test("renders Word headings and paragraphs, then replaces stale text on failure"
   expect(host.textContent).not.toContain("Lab notes");
   await render(new ArrayBuffer(MAX_COMPRESSED_BYTES + 1), "pptx");
   expect(host.textContent).toContain("This file is too large to preview.");
+});
+
+test("different buffers and formats do not reuse another outline", async () => {
+  const document = (text: string) => `<w:document><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`;
+  const first = await part("word/document.xml", document("First file"));
+  const second = await part("word/document.xml", document("Other file"));
+  await render(first, "docx");
+  expect(host.textContent).toContain("First file");
+  await render(second, "docx");
+  expect(host.textContent).toContain("Other file");
+  expect(host.textContent).not.toContain("First file");
+
+  const mixed = new Uint8Array(await buildZip([
+    { name: "word/document.xml", data: utf8Bytes(document("Word body")) },
+    { name: "ppt/slides/slide1.xml", data: utf8Bytes("<p:sld><a:p><a:t>Slide body</a:t></a:p></p:sld>") },
+  ])).buffer;
+  await render(mixed, "docx");
+  expect(host.textContent).toContain("Word body");
+  await render(mixed, "pptx");
+  expect(host.textContent).toContain("Slide body");
+  expect(host.textContent).not.toContain("Word body");
+});
+
+test("local outline extraction runs while the query client is offline", async () => {
+  onlineManager.setOnline(false);
+  await render(await part("ppt/slides/slide1.xml", "<p:sld><a:p><a:t>Offline outline</a:t></a:p></p:sld>"), "pptx");
+  expect(host.textContent).toContain("Offline outline");
+  expect(host.querySelector('[aria-label="Loading text outline"]')).toBeNull();
 });

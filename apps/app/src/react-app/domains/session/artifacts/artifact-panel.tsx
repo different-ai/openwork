@@ -5,8 +5,6 @@ import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeft
 import { featureAnalytics } from "@/app/lib/analytics";
 import { markFeatureUsed } from "@/app/lib/den";
 import { t } from "@/i18n";
-import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 
 import { OpenworkServerError, type OpenworkServerClient, type OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import type { OpenTargetOptions } from "@/lib/target-provider";
@@ -20,7 +18,7 @@ import {
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
-import { useDeploymentFeature } from "../status/use-deployment-feature";
+import { useDesktopFeature } from "../status/use-desktop-feature";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
 import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
 import { HTMLPreview, ImagePreview, MarkdownPreview, OfficePreviewLoading, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
@@ -112,10 +110,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     : target.preview === "slides" && /\.pptx$/i.test(target.value) ? "pptx"
     : target.preview === "document" && /\.docx$/i.test(target.value) ? "docx"
     : null;
-  const { isSignedIn } = useDenAuth();
-  const orgOutlineEnabled = useOrgFeature("officeOutlinePreview", { active: officeFormat !== null });
-  const deploymentOutline = useDeploymentFeature("officeOutlinePreview", officeFormat !== null && !isSignedIn);
-  const showOfficeOutline = officeFormat !== null && (isSignedIn ? orgOutlineEnabled : deploymentOutline.enabled === true);
+  const officeOutlineEnabled = useDesktopFeature("officeOutlinePreview");
+  const showOfficeOutline = officeFormat !== null && officeOutlineEnabled;
   const usesObjectUrl = ["image", "pdf", "html"].includes(target.preview);
   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
   // Plain text opens directly in CodeMirror. Markdown and HTML default to
@@ -169,7 +165,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   const recordPreview = (node: HTMLDivElement | null) => {
     if (!node || !data || previewedOwner.current === owner) return;
     if (data.kind === "binary" && !showOfficeOutline && !["image", "pdf", "html", "sheet"].includes(target.preview)) return;
-    if (showOfficeOutline && isSignedIn) markFeatureUsed("officeOutlinePreview");
+    if (showOfficeOutline) markFeatureUsed("officeOutlinePreview");
     previewedOwner.current = owner;
     featureAnalytics.filePreviewed(target.preview);
   };

@@ -49,9 +49,12 @@ function paragraphText(paragraph: Element): string {
 }
 
 function isTitle(paragraph: Element): boolean {
-  for (let ancestor = paragraph.parent; ancestor && DomUtils.isTag(ancestor); ancestor = ancestor.parent) {
-    if (localName(ancestor.name) !== "sp") continue;
-    const props = ancestor.children.find((node) => DomUtils.isTag(node) && localName(node.name) === "nvSpPr");
+  let ancestor = paragraph.parent;
+  while (ancestor && DomUtils.isTag(ancestor)) {
+    const current = ancestor;
+    ancestor = current.parent;
+    if (localName(current.name) !== "sp") continue;
+    const props = current.children.find((node) => DomUtils.isTag(node) && localName(node.name) === "nvSpPr");
     const placeholder = props && elements([props], "ph").next().value;
     const type = attribute(placeholder, "type");
     return type === "title" || type === "ctrTitle";
