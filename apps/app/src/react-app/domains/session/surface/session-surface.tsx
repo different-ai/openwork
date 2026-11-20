@@ -4122,9 +4122,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   questions={threadQuestion.questions}
                   busy={props.questionReplyBusy ?? false}
                   requestId={threadQuestion.id}
-                  onReply={(answers) => {
-                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
-                  }}
+                  onReply={(answers) => Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {})}
                   onDismiss={props.respondQuestion ? () => {
                     void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
                   } : undefined}
@@ -4335,16 +4333,13 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 {dockedQuestion ? (
                   <div data-composer-interaction="question">
                   <QuestionPanel
+                    key={dockedQuestion.id}
                     questions={dockedQuestion.questions}
                     busy={props.questionReplyBusy ?? false}
                     collapsible={questionMinimizeEnabled}
                     requestId={dockedQuestion.id}
                     shortcutActive={props.isControlTarget}
-                    onReply={(answers) => {
-                      if (dockedQuestion) {
-                        void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {});
-                      }
-                    }}
+                    onReply={(answers) => Promise.resolve(props.respondQuestion?.(dockedQuestion.id, answers)).catch(() => {})}
                     onDismiss={props.respondQuestion ? () => {
                       if (dockedQuestion) {
                         void Promise.resolve(props.respondQuestion?.(dockedQuestion.id, null)).catch(() => {});
