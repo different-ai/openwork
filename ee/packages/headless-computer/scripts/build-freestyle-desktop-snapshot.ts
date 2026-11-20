@@ -62,6 +62,8 @@ const build = "/opt/openwork-desktop-build"
 const files: Record<string, string> = {
   "install-computer.sh": installComputer,
   "requirements-desktop.lock": pinned,
+  "desktop-node-packages.json": await text("desktop-node-packages.json"),
+  "desktop-node-packages.lock.json": await text("desktop-node-packages.lock.json"),
   "apps.mjs": await text("src/desktop-apps.mjs"),
   "desktop-scripting.mjs": await text("src/desktop-scripting.mjs"),
   "configure-files.sh": await text("scripts/configure-desktop-files.sh"),
@@ -100,6 +102,7 @@ printf 'openwork-command ALL=(root) NOPASSWD: /usr/local/sbin/openwork-install\\
 chmod 0440 /etc/sudoers.d/ubuntu /etc/sudoers.d/openwork-command
 mkdir -p /usr/local/share/openwork-computer /usr/local/share/openwork-desktop/scripting /workspace
 install -m 0644 $B/requirements-desktop.lock /usr/local/share/openwork-computer/requirements-desktop.lock
+install -m 0644 $B/desktop-node-packages.json $B/desktop-node-packages.lock.json /usr/local/share/openwork-computer/
 bash $B/install-computer.sh
 # Freestyle's base puts its own Python first on PATH (/usr/local/bin -> /opt/freestyle/python); the
 # computer's packages are in the system Python, so python and pip there must be the system ones.

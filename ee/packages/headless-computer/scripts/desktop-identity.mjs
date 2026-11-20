@@ -10,6 +10,7 @@ import { join, relative, sep } from "node:path";
  */
 export const IMAGE_FILES = [
   "ee/packages/headless-computer/Dockerfile.desktop", "ee/packages/headless-computer/requirements-desktop.lock",
+  "ee/packages/headless-computer/desktop-node-packages.json", "ee/packages/headless-computer/desktop-node-packages.lock.json",
   "ee/packages/headless-computer/src/image.ts", "ee/packages/headless-computer/src/scripting",
   "ee/packages/headless-computer/src/desktop-apps.mjs", "ee/packages/headless-computer/src/desktop-scripting.mjs",
   "ee/packages/headless-computer/scripts/build-desktop.mjs", "ee/packages/headless-computer/scripts/desktop-identity.mjs",

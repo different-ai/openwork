@@ -65,6 +65,20 @@ export const DESKTOP_PYTHON_IMPORTS: Record<string, string> = {
 }
 const DESKTOP_PYTHON_CHECK = `MPLBACKEND=Agg /usr/bin/python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`
 
+/**
+ * Where the desktop's preinstalled Node packages live (desktop-node-packages.json, installed exactly from its lock).
+ * The command bridge sets NODE_PATH to it, so a script anywhere can require them, as Anthropic's skills expect.
+ */
+export const DESKTOP_NODE_PATH = "/usr/local/lib/openwork-node/node_modules"
+export const DESKTOP_NODE_PACKAGES = ["docx", "pptxgenjs", "react", "react-dom", "react-icons", "sharp"]
+const DESKTOP_NODE_INSTALL = `install -d /usr/local/lib/openwork-node
+install -m 0644 /usr/local/share/openwork-computer/desktop-node-packages.json /usr/local/lib/openwork-node/package.json
+install -m 0644 /usr/local/share/openwork-computer/desktop-node-packages.lock.json /usr/local/lib/openwork-node/package-lock.json
+npm ci --prefix /usr/local/lib/openwork-node --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error
+NODE_PATH=${DESKTOP_NODE_PATH} node -e 'for (const name of ${JSON.stringify(DESKTOP_NODE_PACKAGES)}) require(name)'
+chmod -R a+rX /usr/local/lib/openwork-node
+rm -rf /root/.npm`
+
 function installScript(officePackages: string, lockedPython = false) { return `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -86,7 +100,8 @@ tar -xJf "$node_tmp/node.tar.xz" -C /usr/local --strip-components=1 --no-same-ow
 rm -rf "$node_tmp"
 test "$(node --version)" = v24.22.1
 ${lockedPython ? `python3 -m pip install --no-cache-dir --quiet --break-system-packages --require-hashes --only-binary=:all: -r /usr/local/share/openwork-computer/requirements-desktop.lock
-${DESKTOP_PYTHON_CHECK}` : `python3 -m pip install --no-cache-dir --quiet --break-system-packages \\
+${DESKTOP_PYTHON_CHECK}
+${DESKTOP_NODE_INSTALL}` : `python3 -m pip install --no-cache-dir --quiet --break-system-packages \\
   pandas numpy matplotlib openpyxl xlsxwriter python-docx python-pptx pdfplumber pypdf pillow opencv-python-headless requests beautifulsoup4 \\
   || python3 -m pip install --no-cache-dir --quiet \\
   pandas numpy matplotlib openpyxl xlsxwriter python-docx python-pptx pdfplumber pypdf pillow opencv-python-headless requests beautifulsoup4`}
