@@ -3,9 +3,7 @@
   "private": true,
   "type": "module",
   "description": "AI Gateway catalog rules shared by the Gateway, Den API and Den Web: supported provider SDKs, protocol families, default upstreams, derived catalog providers and Gateway model aliases. No I/O.",
-  "main": "./dist/index.js",
   "types": "./src/index.ts",
-  "source": "./src/index.ts",
   "exports": {
     ".": {
       "types": {
@@ -13,11 +11,68 @@
         "default": "./src/index.ts"
       },
       "development": "./src/index.ts",
-      "default": "./dist/index.js"
+      "default": "./src/index.ts"
+    },
+    "./sdk": {
+      "types": {
+        "openwork-build": "./dist/types/src/sdk.d.ts",
+        "default": "./src/sdk.ts"
+      },
+      "development": "./src/sdk.ts",
+      "default": "./src/sdk.ts"
+    },
+    "./model-alias": {
+      "types": {
+        "openwork-build": "./dist/types/src/model-alias.d.ts",
+        "default": "./src/model-alias.ts"
+      },
+      "development": "./src/model-alias.ts",
+      "default": "./src/model-alias.ts"
+    },
+    "./bedrock-mantle": {
+      "types": {
+        "openwork-build": "./dist/types/src/bedrock-mantle.d.ts",
+        "default": "./src/bedrock-mantle.ts"
+      },
+      "development": "./src/bedrock-mantle.ts",
+      "default": "./src/bedrock-mantle.ts"
+    },
+    "./microsoft-foundry": {
+      "types": {
+        "openwork-build": "./dist/types/src/microsoft-foundry.d.ts",
+        "default": "./src/microsoft-foundry.ts"
+      },
+      "development": "./src/microsoft-foundry.ts",
+      "default": "./src/microsoft-foundry.ts"
+    },
+    "./litellm": {
+      "types": {
+        "openwork-build": "./dist/types/src/litellm.d.ts",
+        "default": "./src/litellm.ts"
+      },
+      "development": "./src/litellm.ts",
+      "default": "./src/litellm.ts"
+    },
+    "./truefoundry": {
+      "types": {
+        "openwork-build": "./dist/types/src/truefoundry.d.ts",
+        "default": "./src/truefoundry.ts"
+      },
+      "development": "./src/truefoundry.ts",
+      "default": "./src/truefoundry.ts"
+    },
+    "./credentials": {
+      "types": {
+        "openwork-build": "./dist/types/src/credentials.d.ts",
+        "default": "./src/credentials.ts"
+      },
+      "development": "./src/credentials.ts",
+      "default": "./src/credentials.ts"
     }
   },
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --conditions=development --import tsx --test src/*.test.ts"
   },
   "dependencies": {
@@ -25,7 +80,6 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
-    "tsup": "^8.5.0",
     "tsx": "^4.23.1",
     "typescript": "^5.5.4"
   }
