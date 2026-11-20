@@ -67,7 +67,7 @@ Keep it general: don't present one customer's results as facts for another.
 ## Workflow
 
 1. Draft the complete \`SKILL.md\`.
-2. Execute \`create_skill\` with (omit \`files\` when the skill needs none):
+2. Execute \`create_skill\` with (omit \`files\` when the skill needs none; send images, fonts, office templates and other binary files as \`{ "path": "...", "base64": "..." }\`):
    \`\`\`json
    {
      "pluginName": "<plugin title>",

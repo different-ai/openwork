@@ -45,7 +45,7 @@ import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
 import { workflowRunNeedsLiveRuntime } from "./workflow-live-inference.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
-import { skillFilesFromPayload, type SkillFile } from "../skill-files.js"
+import { skillFilesFromPayload, type SkillFileEntry } from "../skill-files.js"
 
 import { buildMarketplaceCapabilityName, MARKETPLACE_CAPABILITY_PREFIX } from "./marketplace-capability-name.js"
 
@@ -813,7 +813,7 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
 
 /** Authorized SKILL.md source per marketplace capability, or why it is withheld. */
 export type MarketplaceSkillSource =
-  | { content: string; provenance: string; files: SkillFile[] }
+  | { content: string; provenance: string; files: SkillFileEntry[] }
   | { blocked: { status: string; message: string; action: unknown } }
 
 /**
@@ -882,7 +882,7 @@ export async function listAccessibleMarketplaceSkillSources(input: {
  * The supporting files of one skill. It checks no access: call it only for a
  * skill executeMarketplaceCapability has just served to this member.
  */
-export async function readMarketplaceSkillFiles(input: { configObjectId: string; organizationId: string }): Promise<SkillFile[]> {
+export async function readMarketplaceSkillFiles(input: { configObjectId: string; organizationId: string }): Promise<SkillFileEntry[]> {
   const version = await latestVersion(
     normalizeDenTypeId("configObject", input.configObjectId),
     normalizeDenTypeId("organization", input.organizationId),
