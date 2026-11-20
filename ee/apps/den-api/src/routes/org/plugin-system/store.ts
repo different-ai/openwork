@@ -69,7 +69,6 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
-  type DefaultMarketplacePluginEntry,
   RETIRED_DEFAULT_OPENWORK_PLUGINS,
   RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
   RETIRED_STARTER_MARKETPLACE_LOGO_URL,
@@ -873,69 +872,6 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
-  {
-    schemaVersion: 1,
-    id: "openwork-browser",
-    name: "OpenWork Browser",
-    description: "Automate the built-in browser panel that stays visible inside OpenWork.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use the OpenWork Browser extension to " },
-    setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
-      { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
-      { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
-    defaultEnabled: true,
-  },
-  {
-    schemaVersion: 1,
-    id: "openai-image-gen",
-    name: "OpenAI Image Gen",
-    description: "Generate image artifacts with gpt-image-2.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-openai.svg" },
-    composer: { prompt: "Use the OpenAI Image Gen extension to " },
-    setup: { instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions." },
-    resources: [
-      { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
-      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" }],
-    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
-  },
-  {
-    schemaVersion: 1,
-    id: "ollama",
-    name: "Ollama",
-    description: "Local model provider at http://localhost:11434.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-ollama.svg" },
-    composer: { prompt: "Use the Ollama extension to " },
-    setup: { instructions: "Run Ollama locally, choose or pull a model, then add it as an OpenCode provider." },
-    resources: [
-      { type: "local-service", id: "ollama-api", label: "Ollama API", description: "http://localhost:11434", required: true },
-      { type: "provider", id: "ollama", providerId: "ollama", packageName: "@ai-sdk/openai-compatible", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.ollama.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the Ollama extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "provider-connected", ref: "ollama", label: "Ollama provider" }],
-    lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
-  },
-] as const
-
 // Render historical seeded records without re-seeding them or reviving local setup.
 const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
   schemaVersion: 1,
@@ -950,10 +886,6 @@ const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
     { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
   ],
 } as const
-
-function defaultOpenWorkManifestForPlugin(row: PluginRow) {
-  return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
-}
 
 function extensionResourceTypeForConfigObject(objectType: string) {
   switch (objectType) {
@@ -987,7 +919,7 @@ function serializedPluginSourceFormat(row: PluginRow) {
 function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
   const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
     ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
-    : defaultOpenWorkManifestForPlugin(row)
+    : null
   if (builtInManifest) {
     return {
       description: builtInManifest.description,
@@ -3287,20 +3219,13 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
     await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
 
-    const marketplace = await ensureDefaultMarketplace({
+    await ensureDefaultMarketplace({
       context,
       createdAt: now,
       database: tx,
       description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
       logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
       name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
-    })
-    await ensureDefaultMarketplacePlugins({
-      context,
-      createdAt: now,
-      database: tx,
-      entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
-      marketplaceId: marketplace.id,
     })
   })
   return true
@@ -3341,63 +3266,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
       isNull(MarketplaceAccessGrantTable.removedAt),
     ))
   const marketplaceGrants = new Set(marketplaceGrantRows.map((grant) => grant.marketplaceId))
-  if (!marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))) {
-    return false
-  }
-
-  const defaultPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
-  const defaultPluginRows = await db
-    .select({ id: PluginTable.id, name: PluginTable.name, description: PluginTable.description })
-    .from(PluginTable)
-    .where(and(
-      eq(PluginTable.organizationId, organizationId),
-      inArray(PluginTable.name, defaultPluginEntries.map((entry) => entry.name)),
-      eq(PluginTable.status, "active"),
-      isNull(PluginTable.deletedAt),
-    ))
-
-  const pluginIdByEntry = new Map<string, PluginId>()
-  for (const entry of defaultPluginEntries) {
-    const plugin = defaultPluginRows.find((row) => row.name === entry.name && row.description === entry.description)
-    if (!plugin) {
-      return false
-    }
-    pluginIdByEntry.set(defaultMarketplacePluginEntryKey(entry), plugin.id)
-  }
-
-  const pluginIds = Array.from(pluginIdByEntry.values())
-  const pluginGrantRows = await db
-    .select({ pluginId: PluginAccessGrantTable.pluginId })
-    .from(PluginAccessGrantTable)
-    .where(and(
-      eq(PluginAccessGrantTable.organizationId, organizationId),
-      inArray(PluginAccessGrantTable.pluginId, pluginIds),
-      eq(PluginAccessGrantTable.orgWide, true),
-      eq(PluginAccessGrantTable.role, "viewer"),
-      isNull(PluginAccessGrantTable.removedAt),
-    ))
-  const pluginGrants = new Set(pluginGrantRows.map((grant) => grant.pluginId))
-  if (!pluginIds.every((pluginId) => pluginGrants.has(pluginId))) {
-    return false
-  }
-
-  const expectedMemberships = new Set<string>()
-  for (const entry of defaultPluginEntries) {
-    const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
-    if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(openWorkMarketplaceId, pluginId))
-  }
-
-  const membershipRows = await db
-    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, pluginId: MarketplacePluginTable.pluginId })
-    .from(MarketplacePluginTable)
-    .where(and(
-      eq(MarketplacePluginTable.organizationId, organizationId),
-      inArray(MarketplacePluginTable.marketplaceId, marketplaceIds),
-      inArray(MarketplacePluginTable.pluginId, pluginIds),
-      isNull(MarketplacePluginTable.removedAt),
-    ))
-  const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
-  return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+  return marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))
 }
 
 /**
@@ -3551,87 +3420,6 @@ async function retireDefaultOpenWorkPlugins(input: { database: DbTransaction; or
     .where(inArray(PluginTable.id, pluginIds))
 }
 
-function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {
-  return `${entry.name}\n${entry.description}`
-}
-
-function defaultMarketplacePluginMembershipKey(marketplaceId: MarketplaceId, pluginId: PluginId) {
-  return `${marketplaceId}:${pluginId}`
-}
-
-async function ensureDefaultMarketplacePlugins(input: {
-  context: PluginArchActorContext
-  createdAt: Date
-  database: DbTransaction
-  entries: DefaultMarketplacePluginEntry[]
-  marketplaceId: MarketplaceId
-}) {
-  const organizationId = input.context.organizationContext.organization.id
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-
-  for (const entry of input.entries) {
-    let plugin = (await input.database
-      .select()
-      .from(PluginTable)
-      .where(and(
-        eq(PluginTable.organizationId, organizationId),
-        eq(PluginTable.name, entry.name),
-        eq(PluginTable.description, entry.description),
-        isNull(PluginTable.deletedAt),
-      ))
-      .limit(1))[0]
-
-    if (!plugin) {
-      const pluginRow = {
-        createdAt: input.createdAt,
-        createdByOrgMembershipId,
-        deletedAt: null,
-        description: entry.description,
-        externalKey: null,
-        id: createDenTypeId("plugin"),
-        name: entry.name,
-        organizationId,
-        sourceFormat: null,
-        sourceRepositoryUrl: null,
-        sourceSchemaVersion: null,
-        status: "active" as const,
-        updatedAt: input.createdAt,
-      }
-      await input.database.insert(PluginTable).values(pluginRow)
-      plugin = pluginRow
-    }
-
-    await ensureOrgWidePluginAccess({ context: input.context, database: input.database, pluginId: plugin.id, role: "viewer" })
-
-    const existingMembership = (await input.database
-      .select()
-      .from(MarketplacePluginTable)
-      .where(and(
-        eq(MarketplacePluginTable.marketplaceId, input.marketplaceId),
-        eq(MarketplacePluginTable.pluginId, plugin.id),
-      ))
-      .limit(1))[0]
-
-    if (existingMembership) {
-      if (existingMembership.removedAt) {
-        await input.database.update(MarketplacePluginTable).set({ membershipSource: "system", removedAt: null }).where(eq(MarketplacePluginTable.id, existingMembership.id))
-      }
-      continue
-    }
-
-    await input.database.insert(MarketplacePluginTable).values({
-      createdAt: input.createdAt,
-      createdByOrgMembershipId,
-      id: createDenTypeId("marketplacePlugin"),
-      marketplaceId: input.marketplaceId,
-      membershipSource: "system",
-      organizationId,
-      pluginId: plugin.id,
-      removedAt: null,
-    })
-  }
-}
-
 async function ensureDefaultMarketplace(input: {
   context: PluginArchActorContext
   createdAt: Date
@@ -3707,40 +3495,6 @@ async function ensureOrgWideMarketplaceAccess(input: {
     organizationId,
     orgMembershipId: null,
     orgWide: true,
-    role: input.role,
-    teamId: null,
-  })
-}
-
-async function ensureOrgWidePluginAccess(input: {
-  context: PluginArchActorContext
-  database: DbTransaction
-  pluginId: PluginId
-  role: PluginArchRole
-}) {
-  const createdAt = new Date()
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const organizationId = input.context.organizationContext.organization.id
-
-  const existing = (await input.database
-    .select()
-    .from(PluginAccessGrantTable)
-    .where(and(eq(PluginAccessGrantTable.pluginId, input.pluginId), eq(PluginAccessGrantTable.orgWide, true)))
-    .limit(1))[0]
-  if (existing) {
-    if (existing.removedAt || existing.role !== input.role) {
-      await input.database.update(PluginAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(PluginAccessGrantTable.id, existing.id))
-    }
-    return
-  }
-  await input.database.insert(PluginAccessGrantTable).values({
-    createdAt,
-    createdByOrgMembershipId,
-    id: createDenTypeId("pluginAccessGrant"),
-    organizationId,
-    orgMembershipId: null,
-    orgWide: true,
-    pluginId: input.pluginId,
     role: input.role,
     teamId: null,
   })
@@ -3923,7 +3677,6 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
       teamIds: input.context.memberTeams.map((team) => team.id),
     },
     pluginIds,
-    desktopManifestPluginIds: pluginRows.flatMap((row) => defaultOpenWorkManifestForPlugin(row) ? [row.id] : []),
   })
 
   const plugins = pluginRows.map((row) => {

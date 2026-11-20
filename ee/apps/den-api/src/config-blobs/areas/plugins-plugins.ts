@@ -13,8 +13,9 @@
  *
  * Informational only: the GitHub repository / format it was imported from,
  * `managedBy: "source"` when a source in Plugins › Sources maps into it, and
- * `builtIn` for the plugins the OpenWork Marketplace seeds into every
- * organization (matched by name, never deleted by an import).
+ * `builtIn` for the plugins earlier Den builds seeded into the OpenWork
+ * Marketplace and someone has since filled in (matched by name, never deleted
+ * by an import).
  *
  * Which plugins: org-shared ones (see plugins-support.ts); personal plugins
  * (only their creator can reach them, e.g. each member's "Workflows") are not
