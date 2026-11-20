@@ -7,6 +7,14 @@
  */
 
 export default {
+  "artifact.office_empty": "此文件没有可读文本。请在其他应用中打开以查看原文件。",
+  "artifact.office_empty_slide": "此幻灯片没有可读文本。",
+  "artifact.office_loading": "正在加载文本大纲",
+  "artifact.office_slide": "第 {number} 张幻灯片",
+  "artifact.office_text_only": "仅显示文本大纲，不显示布局、图片和颜色。",
+  "artifact.office_too_large": "此文件过大，无法预览。请在其他应用中打开以查看完整文件。",
+  "artifact.office_truncated": "已达到预览上限，部分文本未显示。",
+  "artifact.office_unreadable": "无法读取此文件。请尝试在其他应用中打开。",
   "app.error_audit_load": "加载审计日志失败。",
   "app.error_connect_first": "请先连接到此工作区再应用运行时更改。",
   "app.error_request_failed": "请求失败",
