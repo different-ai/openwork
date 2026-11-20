@@ -1955,6 +1955,7 @@ interface MessageListProps {
   viewport?: MessageListViewport
   /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
   sessionErrorHandled?: boolean
+  trailing?: React.ReactNode
 }
 
 /**
@@ -1973,7 +1974,7 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
   return status === "submitted" || status === "streaming" || status === "retrying"
 }
 
-export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false }: MessageListProps) {
+export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false, trailing }: MessageListProps) {
   const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
   // Only this turn's reply: before it starts there is no model to show, never the previous turn's.
   const workingModel = React.useMemo<WorkingModel | null>(() => {
@@ -2160,6 +2161,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
         {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
+        {trailing}
         <LiveTurnReserve key={sessionId} active={runActive || status === "submitted"} />
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>

@@ -13,3 +13,9 @@ test("the engine's question tool and ask_without_waiting both ask for short ques
   questionToolDefinition({ toolID: "read" }, other);
   expect(other.description).toBe("Read");
 });
+
+test("questions say what they refer to and are not used to ask whether a step is done", () => {
+  expect(questionWritingGuidance).toContain("not tool output or your thinking");
+  expect(questionWritingGuidance).toContain("instead of asking whether they are done");
+  expect(askDescription).not.toContain("tell you when they are done");
+});
