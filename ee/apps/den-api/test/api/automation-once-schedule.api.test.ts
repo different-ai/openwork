@@ -8,7 +8,7 @@ const den = await bootDen({ env: { DEN_HEADLESS_RUNNER_URL: "http://127.0.0.1:9"
 after(() => den.close())
 
 for (const placement of ["desktop", "cloud"]) test(`${placement} one-off saves reject times outside the clock-skew grace period`, async () => {
-  const { orgId, owner } = await den.createOrg(await den.signUp("Schedule Owner"), "Schedule tests")
+  const { orgId, owner } = await den.createOrg(await den.signUp(`${placement} Schedule Owner`), "Schedule tests")
   const request = den.as(owner, orgId)
   const schedule = (at: number) => ({ kind: "once", at, timezone: "UTC" })
   const instructions = "Review the draft."
