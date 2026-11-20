@@ -79,6 +79,42 @@ export function checkSkillFiles(value: unknown): { files: SkillFile[] } | { prob
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)) }
 }
 
+/**
+ * Which of a skill folder's files fit, judged by path and size alone, before
+ * anything is downloaded. Files are taken in path order; the rest are named
+ * in `leftOut` so an import can say what it did not bring.
+ */
+export function selectSkillFilesBySize(entries: readonly { path: string; size: number | null }[]): { included: string[]; leftOut: string[] } {
+  const included: string[] = []
+  const leftOut: string[] = []
+  let budget = SKILL_FILES_MAX_TOTAL_BYTES
+  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
+    const fits = included.length < SKILL_FILES_MAX_COUNT
+      && entry.size !== null
+      && entry.size <= SKILL_FILE_MAX_BYTES
+      && entry.size <= budget
+      && skillFilePathProblem(entry.path) === null
+    if (!fits || entry.size === null) {
+      leftOut.push(entry.path)
+      continue
+    }
+    budget -= entry.size
+    included.push(entry.path)
+  }
+  return { included, leftOut }
+}
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 * 1024 && bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MB` : `${Math.round(bytes / 1024)} KB`
+}
+
+/** One sentence saying how many of a skill's files an import leaves out, and the limits behind it. */
+export function skillFilesLeftOutMessage(input: { skillName: string; leftOut: number; total: number; atImport?: boolean }): string {
+  const verb = input.atImport ? (input.leftOut === 1 ? "was" : "were") : "will be"
+  return `${input.skillName}: ${input.leftOut} of ${input.total} supporting file${input.total === 1 ? "" : "s"} ${verb} left out. `
+    + `A skill keeps text files only, up to ${formatBytes(SKILL_FILE_MAX_BYTES)} each, ${formatBytes(SKILL_FILES_MAX_TOTAL_BYTES)} and ${SKILL_FILES_MAX_COUNT} files in total.`
+}
+
 /** The supporting files stored on a skill version; anything malformed reads as none. */
 export function skillFilesFromPayload(payload: unknown): SkillFile[] {
   if (typeof payload !== "object" || payload === null || !("files" in payload)) return []
