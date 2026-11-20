@@ -6,11 +6,12 @@
 import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
 import { startupPhase, startupPhaseSync } from "./startup-phase.js";
+import { renameWithRetry } from "./utils.js";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
 const NPM_PACKAGE = "openwork-server";
@@ -172,44 +173,7 @@ export async function extractArchive(
   });
 }
 
-const RENAME_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
-
-function errorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
-  return typeof error.code === "string" ? error.code : undefined;
-}
-
-/**
- * Rename, retrying while Windows still holds the file. Right after the new
- * engine runs `--version`, antivirus scanning or the exiting process's image
- * handle can keep opencode.exe locked for a few seconds, and a plain rename
- * fails with EBUSY and stops the server on first run.
- */
-export async function renameWithRetry(
-  from: string,
-  to: string,
-  options: {
-    platform?: NodeJS.Platform;
-    renameImpl?: (from: string, to: string) => Promise<void>;
-    delaysMs?: readonly number[];
-  } = {},
-): Promise<void> {
-  const renameImpl = options.renameImpl ?? rename;
-  const delays = (options.platform ?? process.platform) === "win32"
-    ? options.delaysMs ?? [100, 250, 500, 1_000, 2_000, 4_000, 8_000]
-    : [];
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      await renameImpl(from, to);
-      return;
-    } catch (error) {
-      const code = errorCode(error);
-      const delay = delays[attempt];
-      if (delay === undefined || !code || !RENAME_RETRY_CODES.has(code)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
+export { renameWithRetry };
 
 /**
  * Make sure the pinned OpenCode version is installed under the data dir and
