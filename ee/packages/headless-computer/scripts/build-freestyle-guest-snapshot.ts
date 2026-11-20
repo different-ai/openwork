@@ -29,7 +29,7 @@ const [{ default: identity }, { default: guestBundle }] = await Promise.all([imp
 })
 const image = identity.image.trim()
 const guest = identity.guest.trim()
-const base = `workbot-desktop-freestyle-${image.slice(0, 16)}`
+const base = process.env.HEADLESS_COMPUTER_SNAPSHOT?.trim() || `workbot-desktop-freestyle-${image.slice(0, 16)}`
 const slug = `${base}-${guest.slice(0, 16)}`
 /** What this image and guest report from /health (Desktop.prepare), which lets the runner skip the install. */
 const version = createHash("sha256").update(identity.image).update(identity.guest).digest("hex")
