@@ -1,0 +1,20 @@
+id: start_report
+title: Start the Excel report
+surface: desktop
+label: SEEDED
+status: grounded
+requires: [employee_connected, sample_sources]
+provides: [report_started]
+do:
+  - {type: ask, turn: report, prompt: report-prompt, model: '{{model}}', same_thread: false}
+say: Let’s combine sample Outlook, Slack and Salesforce in an Excel report. I’ll show two other things while it works.
+paste:
+  report-prompt: Build our Q4 pilot risk report for Orchard and Cedar from sample Outlook mail, Slack and Salesforce. Save {{report_file}} with three next steps. Keep committed pilots separate from conditional expansion. Read only; no downloads from OneDrive or external writes.
+see: A new report chat starts working; leave it running and remember this chat.
+checks: []
+reset: [Remove only this rehearsal’s report chat and replace trial-generated report files with approved retained copies.]
+fallback: If the task cannot start, use the approved retained workbook and label it an earlier sample snapshot.
+expect_seconds: 15
+questions:
+  - {question: Why leave this chat while it runs?, beat: report_spreadsheet}
+avoid: [Deny unexpected outbound or upload approvals and stop the task.]

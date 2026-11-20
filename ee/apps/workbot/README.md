@@ -69,7 +69,7 @@ Signing out revokes the refresh token at Den.
 
 ## The phone app
 
-The [OpenWork app](../openwork-ios) for iPhone signs in through Workbot, so Den keeps one return address and the phone
+The [OpenWork app](../mobile-ios) for iPhone signs in through Workbot, so Den keeps one return address and the phone
 never holds Den tokens:
 
 1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its

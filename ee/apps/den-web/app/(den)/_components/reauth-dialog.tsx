@@ -7,7 +7,8 @@ import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
-import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata } from "../_lib/den-org";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
+import type { DenOrgContext } from "../_lib/den-org";
 import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
@@ -94,7 +95,7 @@ export function ReauthDialog({
     () => REAUTH_SOCIAL_PROVIDERS.filter((provider) => effectiveProviders.includes(provider)),
     [effectiveProviders],
   );
-  const organizationMetadata = orgContext?.organization.metadata ?? null;
+  const ssoPolicy = readOrganizationSsoPolicy(orgContext?.organization.metadata ?? null);
   const ssoTarget = resolveReauthSsoTarget({
     resolvedDomainSso,
     organizationId: orgContext?.organization.id ?? organizationId ?? null,
@@ -103,8 +104,8 @@ export function ReauthDialog({
       ? {
           slug: orgContext.organization.slug,
           hasSso: orgContext.authMethods.sso,
-          requireSso: getRequireSsoFromMetadata(organizationMetadata),
-          restrictDomainToSso: getRestrictDomainToSsoFromMetadata(organizationMetadata),
+          requireSso: ssoPolicy.requireSso,
+          restrictDomainToSso: ssoPolicy.restrictDomainToSso,
         }
       : null,
   });
@@ -114,7 +115,7 @@ export function ReauthDialog({
   const ssoOnly = ssoTarget?.ssoOnly ?? false;
   const hasManagedOrgSignIn = Boolean(
     ssoUrl ||
-      getRequireSsoFromMetadata(organizationMetadata) ||
+      ssoPolicy.requireSso ||
       orgContext?.authMethods.sso ||
       orgContext?.authMethods.scim ||
       effectiveProviders.includes("sso") ||

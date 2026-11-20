@@ -1146,6 +1146,13 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       reason: githubPluginMcpImportSkippedReasonSchema,
       reuse: githubPluginMcpImportReuseSchema,
     })),
+    skippedSkillFiles: z.array(z.object({
+      count: z.number().int().positive().describe("How many files in the skill's folder were not imported."),
+      message: z.string().describe("A sentence for the person importing: how many files were left out and the limits behind it."),
+      name: z.string(),
+      paths: z.array(z.string()).describe("The files left out, relative to the skill's folder; at most 50 are named."),
+      sourcePath: z.string(),
+    })).describe("Imported skills that could not bring every file in their folder: files that are not text or are past the size limits."),
     skippedSkills: z.array(z.object({
       name: z.string(),
       reason: z.enum(["invalid_skill"]),

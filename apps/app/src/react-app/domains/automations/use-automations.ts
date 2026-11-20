@@ -58,7 +58,7 @@ export function useAutomationListQuery(context: AutomationsDenContext) {
   })
 }
 
-export function useAutomationSharingEnabled(context: AutomationsDenContext) {
+function useAutomationFeatureEnabled(context: AutomationsDenContext, feature: "automationSharing" | "automationArchiveRestore") {
   const features = useQuery({
     queryKey: ["den", "org-features", context.organizationId],
     queryFn: () => context.client!.getOrgFeatures(context.organizationId!),
@@ -68,7 +68,15 @@ export function useAutomationSharingEnabled(context: AutomationsDenContext) {
     refetchInterval: AUTOMATIONS_SLOW_POLL_MS,
     refetchIntervalInBackground: true,
   })
-  return context.ready && features.data?.automationSharing === true
+  return context.ready && features.data?.[feature] === true
+}
+
+export function useAutomationSharingEnabled(context: AutomationsDenContext) {
+  return useAutomationFeatureEnabled(context, "automationSharing")
+}
+
+export function useAutomationArchiveRestoreEnabled(context: AutomationsDenContext) {
+  return useAutomationFeatureEnabled(context, "automationArchiveRestore")
 }
 
 export function useSharedAutomationsQuery(context: AutomationsDenContext, enabled: boolean) {

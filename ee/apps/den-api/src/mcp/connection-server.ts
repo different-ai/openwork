@@ -4,8 +4,6 @@ import {
   ProtocolError,
   ProtocolErrorCode,
   Server,
-  type ServerEvent,
-  type ServerEventBus,
 } from "@modelcontextprotocol/server"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
@@ -52,6 +50,7 @@ import {
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { buildNativeCapabilityName, connectionStatusMatch, nativeOperations } from "./native-capabilities.js"
+import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 
 /**
@@ -73,8 +72,6 @@ const connectionServerLogger = appLogger.child({ component: "connection_mcp_serv
 
 /** How long a client may keep a tools/list result; changes also send tools/list_changed. */
 export const CONNECTION_SERVER_TOOLS_TTL_MS = 60_000
-/** How often an open change subscription checks its organization's inventory revision. */
-export const CONNECTION_SERVER_REVISION_POLL_MS = 30_000
 
 export type ConnectionServerExecute = (call: CapabilityExecuteInput) => Promise<ExecuteCapabilityToolResult>
 
@@ -292,81 +289,13 @@ async function connectionUnavailableResponse(request: Request): Promise<Response
   }), { status: 200, headers: { "content-type": "application/json" } })
 }
 
-type InventoryRevision = (organizationId: string) => Promise<string | null>
-
-/**
- * Change subscriptions (`subscriptions/listen`) for connection servers. A
- * stream belongs to the organization of the request that opened it. While one
- * is open, the organization's inventory revision, which changes after any
- * write to connections, tool policy, grants or member credentials on any
- * replica, is checked; a change tells that organization's streams to list
- * their tools again.
- */
-export class ConnectionServerEventBus implements ServerEventBus {
-  private readonly organization = new AsyncLocalStorage<string>()
-  private readonly listeners = new Map<(event: ServerEvent) => void, string>()
-  private readonly watches = new Map<string, () => void>()
-
-  constructor(private readonly revision: InventoryRevision, private readonly pollMs: number) {}
-
-  run<T>(organizationId: string, callback: () => T): T {
-    return this.organization.run(organizationId, callback)
-  }
-
-  publish(event: ServerEvent): void {
-    const organizationId = this.organization.getStore()
-    if (organizationId) this.deliver(organizationId, event)
-  }
-
-  subscribe(listener: (event: ServerEvent) => void): () => void {
-    const organizationId = this.organization.getStore()
-    if (!organizationId) throw new Error("Connection server subscriptions require an authenticated organization.")
-    this.listeners.set(listener, organizationId)
-    if (!this.watches.has(organizationId)) this.watches.set(organizationId, this.watch(organizationId))
-    let live = true
-    return () => {
-      if (!live) return
-      live = false
-      this.listeners.delete(listener)
-      if ([...this.listeners.values()].includes(organizationId)) return
-      this.watches.get(organizationId)?.()
-      this.watches.delete(organizationId)
-    }
-  }
-
-  private deliver(organizationId: string, event: ServerEvent) {
-    for (const [listener, listenerOrganizationId] of this.listeners) {
-      if (listenerOrganizationId !== organizationId) continue
-      try {
-        listener(event)
-      } catch (error) {
-        connectionServerLogger.warn("Connection server change listener failed", { error })
-      }
-    }
-  }
-
-  private watch(organizationId: string): () => void {
-    let last: string | null | undefined
-    let stopped = false
-    const check = async () => {
-      const current = await this.revision(organizationId).catch(() => null)
-      // Without Redis there is no shared revision; clients rely on the list TTL.
-      if (stopped || current === null) return
-      if (last !== undefined && current !== last) this.deliver(organizationId, { kind: "tools_list_changed" })
-      last = current
-    }
-    void check()
-    const timer = setInterval(() => void check(), this.pollMs)
-    timer.unref?.()
-    return () => {
-      stopped = true
-      clearInterval(timer)
-    }
-  }
-}
-
 export function createConnectionServerHandler(input: { revision: InventoryRevision; pollMs?: number }) {
-  const bus = new ConnectionServerEventBus(input.revision, input.pollMs ?? CONNECTION_SERVER_REVISION_POLL_MS)
+  const bus = new InventoryEventBus({
+    revision: input.revision,
+    pollMs: input.pollMs,
+    events: [{ kind: "tools_list_changed" }],
+    onerror: (error) => connectionServerLogger.warn("Connection server change listener failed", { error }),
+  })
   const requestServer = new AsyncLocalStorage<Server>()
   const handler = createMcpHandler(() => {
     const server = requestServer.getStore()
@@ -380,7 +309,10 @@ export function createConnectionServerHandler(input: { revision: InventoryRevisi
   return {
     fetch: (organizationId: string, request: Request, server: Server) =>
       bus.run(organizationId, () => requestServer.run(server, () => handler.fetch(request))),
-    close: handler.close,
+    close: async () => {
+      bus.close()
+      await handler.close()
+    },
   }
 }
 

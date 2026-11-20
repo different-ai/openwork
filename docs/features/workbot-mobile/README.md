@@ -6,7 +6,7 @@
 
 Members of an organization with Workbot can sign in to the OpenWork app on
 iPhone and chat with Workbot there. The app lives in
-[`ee/apps/openwork-ios`](../../../ee/apps/openwork-ios/README.md) and talks
+[`ee/apps/mobile-ios`](../../../ee/apps/mobile-ios/README.md) and talks
 only to Workbot's `/v1/workbot/...` API. Its first release is a plain text
 chat: no attachments, notifications or background task controls.
 
@@ -33,7 +33,7 @@ chat: no attachments, notifications or background task controls.
 Phone sign-in needs an HTTPS Workbot deployment with `WORKBOT_IOS_TEAM_ID`
 set, and a build of the app signed by that team. Turn `workbotMobile` on for
 the organization in `/admin` › Features, then follow the
-[app's README](../../../ee/apps/openwork-ios/README.md).
+[app's README](../../../ee/apps/mobile-ios/README.md).
 
 ## Turning it off
 

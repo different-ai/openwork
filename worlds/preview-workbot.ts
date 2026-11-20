@@ -22,13 +22,13 @@ const NAME = "preview-workbot";
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   // Production adapters expose compiled exports. Prepare them once on the
   // controller before selecting a remote transport; no cloud work happens here.
-  await promisify(execFile)("pnpm", ["--filter", "@openwork/freestyle", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
+  await promisify(execFile)("pnpm", ["--filter", "@openwork/world-freestyle", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
   await promisify(execFile)("pnpm", ["--filter", "@openwork/sandbox-daytona", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
   await using stack = new AsyncDisposableStack();
   if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
     const { parseAppWebOptions } = await import("./lib/app-web-options.ts");
-    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
-    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/world-freestyle/src/index.ts");
     const { trackResource } = await import("../packages/world/src/ledger.ts");
     const options = parseAppWebOptions(argv, process.env);
     if (!options.ref) throw new Error("preview-workbot on Freestyle requires --source ref:dev or sha:<full-pushed-sha>.");

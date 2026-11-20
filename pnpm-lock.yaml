@@ -346,9 +346,9 @@ importers:
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../packages/enterprise-mcp-client
+        version: link:../../packages/mcp-enterprise-client
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -428,15 +428,15 @@ importers:
 
   apps/review:
     dependencies:
-      '@openwork/daytona-evidence':
+      '@openwork/evidence-daytona':
         specifier: workspace:*
-        version: link:../../packages/daytona-evidence
+        version: link:../../packages/evidence-daytona
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../../packages/evidence-provider
-      '@openwork/freestyle':
+      '@openwork/world-freestyle':
         specifier: workspace:*
-        version: link:../../packages/freestyle
+        version: link:../../packages/world-freestyle
       '@openwork/review':
         specifier: workspace:*
         version: link:../../packages/review
@@ -480,9 +480,9 @@ importers:
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../packages/enterprise-mcp-client
+        version: link:../../packages/mcp-enterprise-client
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -646,6 +646,9 @@ importers:
       '@openwork-ee/headless-protocol':
         specifier: workspace:*
         version: link:../../packages/headless-protocol
+      '@openwork-ee/den-sso':
+        specifier: workspace:*
+        version: link:../../packages/den-sso
       '@openwork-ee/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -667,9 +670,9 @@ importers:
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-client
+        version: link:../../../packages/mcp-enterprise-client
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
@@ -806,6 +809,9 @@ importers:
         specifier: ^4.6.6
         version: 4.6.6
     devDependencies:
+      '@modelcontextprotocol/client':
+        specifier: ^2.3.1
+        version: 2.3.1(patch_hash=276c86ab47f7056638d00fa9f29759a9d3a60ac21635ceebe41f513414797476)
       '@sentry/cli':
         specifier: 3.6.0
         version: 3.6.0
@@ -903,15 +909,18 @@ importers:
       '@openwork-ee/gateway-catalog':
         specifier: workspace:*
         version: link:../../packages/gateway-catalog
+      '@openwork-ee/den-sso':
+        specifier: workspace:*
+        version: link:../../packages/den-sso
       '@openwork-ee/telemetry-contracts':
         specifier: workspace:*
         version: link:../../packages/telemetry-contracts
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-client
+        version: link:../../../packages/mcp-enterprise-client
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
@@ -994,9 +1003,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.6
         version: 2.1.6(hono@4.13.16)
-      '@openwork/enterprise-mcp-mock-server':
+      '@openwork/mcp-enterprise-mock-server':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-mock-server
+        version: link:../../../packages/mcp-enterprise-mock-server
       hono:
         specifier: 4.13.16
         version: 4.13.16
@@ -1108,6 +1117,9 @@ importers:
         specifier: ^4.6.6
         version: 4.6.6
     devDependencies:
+      '@modelcontextprotocol/server':
+        specifier: ^2.3.1
+        version: 2.3.1
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
@@ -1303,6 +1315,9 @@ importers:
       mysql2:
         specifier: ^3.23.1
         version: 3.24.2(@types/node@20.12.12)
+      undici:
+        specifier: 7.30.1
+        version: 7.30.1
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
@@ -1435,6 +1450,18 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/packages/den-sso:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
@@ -1683,14 +1710,14 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/daytona-evidence:
+  packages/evidence-daytona:
     dependencies:
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../evidence-provider
-      '@openwork/freestyle':
+      '@openwork/world-freestyle':
         specifier: workspace:*
-        version: link:../freestyle
+        version: link:../world-freestyle
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1779,7 +1806,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/enterprise-mcp-client:
+  packages/mcp-enterprise-client:
     dependencies:
       '@modelcontextprotocol/client':
         specifier: ^2.3.1
@@ -1801,7 +1828,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/enterprise-mcp-mock-server:
+  packages/mcp-enterprise-mock-server:
     dependencies:
       zod:
         specifier: ^4.6.6
@@ -1855,7 +1882,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/freestyle:
+  packages/world-freestyle:
     dependencies:
       '@openwork/evidence-provider':
         specifier: workspace:*

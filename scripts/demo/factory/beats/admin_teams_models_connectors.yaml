@@ -1,0 +1,26 @@
+id: admin_teams_models_connectors
+title: Show team, model and connector scope
+surface: admin
+label: REAL
+status: grounded
+requires: [admin_signed_in, sample_sources]
+do:
+  - {type: admin_goto, path: '/dashboard/members?tab=teams'}
+  - {type: show, seconds: 3}
+  - {type: admin_goto, path: /dashboard/ai-gateway}
+  - {type: click, role: tab, name: AI Providers}
+  - {type: show, seconds: 3}
+  - {type: admin_goto, path: /dashboard/mcp-connections}
+  - {type: show, seconds: 6}
+say: '{{admin}} can govern which teams get which models and connectors. Today the employee is using fictional sources.'
+paste: {}
+see: Finance Analysts team, the sandbox models provider, and permitted sample connectors. Microsoft 365 uses per-member connection.
+checks:
+  - {type: admin_setting_equals, setting: sandbox_models_active, value: true}
+  - {type: admin_setting_equals, setting: microsoft_365_credential_mode, value: per_member}
+reset: [Return the admin tab to the dashboard without changing settings.]
+fallback: Skip this optional tour and return to Q&A.
+expect_seconds: 70
+questions:
+  - {question: Can anyone edit these grants?, answer: Show the configured admin and team scope; do not claim roles outside this demo configuration.}
+avoid: [Do not edit keys, grants, spend limits, billing or identity settings live.]
