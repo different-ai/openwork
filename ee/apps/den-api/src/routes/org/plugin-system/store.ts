@@ -1,5 +1,5 @@
 import { deriveConnectionState } from "@openwork/types/den/connection-state"
-import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, getTableColumns, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -33,7 +33,7 @@ import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
 import { isAuthoredMcpAppVersion, redactMcpAppRevision } from "@openwork/types/mcp-app"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
-import { canManageAllPluginArchResources, PluginArchAuthorizationError, pluginArchHasPermission, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
+import { canManageAllPluginArchResources, PluginArchAuthorizationError, pluginArchHasPermission, pluginOwnerId, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchPluginRoles, resolvePluginArchResourceRole } from "./access.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
 import {
   AGENT_PLUGIN_V1_VERSION,
@@ -144,6 +144,8 @@ type ConfigObjectVersionRow = typeof ConfigObjectVersionTable.$inferSelect
 type MarketplaceRow = typeof MarketplaceTable.$inferSelect
 type MarketplaceMembershipRow = typeof MarketplacePluginTable.$inferSelect
 type PluginRow = typeof PluginTable.$inferSelect
+type AttributedPluginRow = Omit<PluginRow, "createdByOrgMembershipId"> & { createdByOrgMembershipId: MemberId | null }
+const attributedPluginColumns = { ...getTableColumns(PluginTable), createdByOrgMembershipId: pluginOwnerId }
 type PluginMembershipRow = typeof PluginConfigObjectTable.$inferSelect
 type ConfigObjectId = ConfigObjectRow["id"]
 type ConfigObjectVersionId = ConfigObjectVersionRow["id"]
@@ -951,7 +953,7 @@ const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
   ],
 } as const
 
-function defaultOpenWorkManifestForPlugin(row: PluginRow) {
+function defaultOpenWorkManifestForPlugin(row: Pick<PluginRow, "name" | "description">) {
   return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
 }
 
@@ -970,7 +972,7 @@ function extensionResourceTypeForConfigObject(objectType: string) {
   }
 }
 
-function serializedPluginSourceFormat(row: PluginRow) {
+function serializedPluginSourceFormat(row: Pick<PluginRow, "sourceFormat">) {
   switch (row.sourceFormat) {
     case "agent-plugin":
     case "claude-plugin":
@@ -984,7 +986,7 @@ function serializedPluginSourceFormat(row: PluginRow) {
   }
 }
 
-function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
+function serializePluginExtension(row: AttributedPluginRow, componentCounts: Record<string, number>) {
   const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
     ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
     : defaultOpenWorkManifestForPlugin(row)
@@ -1046,7 +1048,7 @@ function serializePluginExtension(row: PluginRow, componentCounts: Record<string
   }
 }
 
-function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: PluginMarketplaceSummary[] = [], componentCounts: Record<string, number> = {}) {
+function serializePlugin(row: AttributedPluginRow, memberCount?: number, marketplaces: PluginMarketplaceSummary[] = [], componentCounts: Record<string, number> = {}) {
   return {
     createdAt: row.createdAt.toISOString(),
     createdByOrgMembershipId: row.createdByOrgMembershipId,
@@ -1229,7 +1231,7 @@ async function getConfigObjectRow(organizationId: OrganizationId, configObjectId
 
 async function getPluginRow(organizationId: OrganizationId, pluginId: PluginId) {
   const rows = await db
-    .select()
+    .select(attributedPluginColumns)
     .from(PluginTable)
     .where(and(eq(PluginTable.organizationId, organizationId), eq(PluginTable.id, pluginId)))
     .limit(1)
@@ -2334,7 +2336,7 @@ async function loadMeEffectivePluginAccessWithComponentKinds(input: { context: P
   const memberId = input.context.organizationContext.currentMember.id
   const teamIds = input.context.memberTeams.map((team) => team.id)
   const activePlugins = await db
-    .select()
+    .select(attributedPluginColumns)
     .from(PluginTable)
     .where(and(
       eq(PluginTable.organizationId, organizationId),
@@ -2752,7 +2754,7 @@ function pluginAudienceCondition(organizationId: OrganizationId, memberId?: Memb
     return sql`(${orgWide} = true OR ${grantTeam} = ${teamId})`
   }
   return sql`(
-    ${memberId ? sql`${PluginTable.createdByOrgMembershipId} = ${memberId} OR` : sql``}
+    ${memberId ? sql`${pluginOwnerId} = ${memberId} OR` : sql``}
     EXISTS (SELECT 1 FROM ${PluginAccessGrantTable}
       WHERE ${PluginAccessGrantTable.pluginId} = ${PluginTable.id}
         AND ${PluginAccessGrantTable.organizationId} = ${organizationId}
@@ -2819,10 +2821,10 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
     input.name ? sql`INSTR(LOWER(${PluginTable.name}), LOWER(${input.name})) > 0` : undefined,
     caller,
   )
-  const ownerFilter = input.ownerId ? eq(PluginTable.createdByOrgMembershipId, input.ownerId) : undefined
+  const ownerFilter = input.ownerId ? eq(pluginOwnerId, input.ownerId) : undefined
   const filters = and(baseFilters, audience, ownerFilter)
   const [rows, totalRows, teamCounts, ownerCounts] = await Promise.all([
-    db.select().from(PluginTable)
+    db.select(attributedPluginColumns).from(PluginTable)
       .where(and(filters, input.cursor ? keysetAfter({ at: PluginTable.updatedAt, id: PluginTable.id }, input.cursor) : undefined))
       .orderBy(desc(PluginTable.updatedAt), desc(PluginTable.id))
       .limit(limit + 1),
@@ -2830,8 +2832,8 @@ export async function listPlugins(input: { context: PluginArchActorContext; curs
     input.includeFacets ? db.select({ id: TeamTable.id, count: count(PluginTable.id) }).from(TeamTable)
       .leftJoin(PluginTable, and(baseFilters, ownerFilter, pluginAudienceCondition(organizationId, undefined, sql`${TeamTable.id}`)))
       .where(eq(TeamTable.organizationId, organizationId)).groupBy(TeamTable.id) : Promise.resolve([]),
-    input.includeFacets ? db.select({ id: PluginTable.createdByOrgMembershipId, count: count() }).from(PluginTable)
-      .where(and(baseFilters, audience)).groupBy(PluginTable.createdByOrgMembershipId) : Promise.resolve([]),
+    input.includeFacets ? db.select({ id: pluginOwnerId, count: count() }).from(PluginTable)
+      .where(and(baseFilters, audience)).groupBy(pluginOwnerId) : Promise.resolve([]),
   ])
   const page = keysetPage(rows, limit, (row) => ({ at: row.updatedAt, id: row.id }))
   const pageIds = page.items.map((row) => row.id)
@@ -2881,7 +2883,7 @@ export async function createPlugin(input: {
     .from(PluginTable)
     .where(and(
       eq(PluginTable.organizationId, input.context.organizationContext.organization.id),
-      eq(PluginTable.createdByOrgMembershipId, input.context.organizationContext.currentMember.id),
+      eq(pluginOwnerId, input.context.organizationContext.currentMember.id),
       eq(PluginTable.name, name),
       eq(PluginTable.status, "active"),
       isNull(PluginTable.deletedAt),
@@ -3853,7 +3855,7 @@ export async function listMarketplaceMemberships(input: { context: PluginArchAct
 
   const plugins = memberships.length === 0
     ? []
-    : await db.select().from(PluginTable).where(inArray(PluginTable.id, memberships.map((membership) => membership.pluginId)))
+    : await db.select(attributedPluginColumns).from(PluginTable).where(inArray(PluginTable.id, memberships.map((membership) => membership.pluginId)))
   const byId = new Map<string, ReturnType<typeof serializePlugin>>(plugins.map((row) => [row.id, serializePlugin(row)]))
   return { items: memberships.map((membership) => serializeMarketplaceMembership(membership, byId.get(membership.pluginId))), nextCursor: null }
 }
@@ -3879,7 +3881,7 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
   const pluginIds = memberships.map((membership) => membership.pluginId)
   const pluginRows = pluginIds.length === 0
     ? []
-    : await db.select().from(PluginTable).where(inArray(PluginTable.id, pluginIds))
+    : await db.select(attributedPluginColumns).from(PluginTable).where(inArray(PluginTable.id, pluginIds))
 
   const activePluginMemberships = pluginIds.length === 0
     ? []
@@ -4503,7 +4505,7 @@ export async function getConnectorInstanceConfiguration(input: { connectorInstan
   const pluginIds = [...new Set(mappings.map((row) => row.pluginId).filter((value): value is PluginId => Boolean(value)))]
   const pluginRows = pluginIds.length === 0
     ? []
-    : await db.select().from(PluginTable).where(inArray(PluginTable.id, pluginIds))
+    : await db.select(attributedPluginColumns).from(PluginTable).where(inArray(PluginTable.id, pluginIds))
   const memberships = pluginIds.length === 0
     ? []
     : await db
@@ -6363,7 +6365,7 @@ async function findPreviouslyImportedGithubPlugin(input: { context: PluginArchAc
     .from(PluginTable)
     .where(and(
       eq(PluginTable.organizationId, input.context.organizationContext.organization.id),
-      eq(PluginTable.createdByOrgMembershipId, input.context.organizationContext.currentMember.id),
+      eq(pluginOwnerId, input.context.organizationContext.currentMember.id),
       eq(PluginTable.name, input.name.trim()),
       eq(PluginTable.sourceRepositoryUrl, input.sourceRepositoryUrl),
       eq(PluginTable.status, "active"),
