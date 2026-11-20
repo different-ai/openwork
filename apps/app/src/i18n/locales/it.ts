@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "Il file non contiene testo leggibile. Aprilo in un’altra app per vedere l’originale.",
+  "artifact.office_empty_slide": "Questa diapositiva non contiene testo leggibile.",
+  "artifact.office_loading": "Caricamento della struttura del testo",
+  "artifact.office_slide": "Diapositiva {number}",
+  "artifact.office_text_only": "Solo la struttura del testo, senza impaginazione, immagini o colori.",
+  "artifact.office_too_large": "Il file è troppo grande per l’anteprima. Aprilo in un’altra app per vederlo per intero.",
+  "artifact.office_truncated": "Parte del testo non è visibile perché l’anteprima ha raggiunto il limite.",
+  "artifact.office_unreadable": "Impossibile leggere il file. Prova ad aprirlo in un’altra app.",
   "account.mcp_connected_one": "{count} server MCP",
   "account.mcp_connected_other": "{count} server MCP",
   "account.providers_connected_one": "{count} provider di modelli",

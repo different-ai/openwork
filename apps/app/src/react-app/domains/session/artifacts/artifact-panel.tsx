@@ -3,8 +3,12 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { featureAnalytics } from "@/app/lib/analytics";
+import { markFeatureUsed } from "@/app/lib/den";
+import { t } from "@/i18n";
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 
-import type { OpenworkServerClient, OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
+import { OpenworkServerError, type OpenworkServerClient, type OpenworkWorkspaceCatalogEntry } from "@/app/lib/openwork-server";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,15 +20,19 @@ import {
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
+import { useDeploymentFeature } from "../status/use-deployment-feature";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
 import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
-import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
+import { HTMLPreview, ImagePreview, MarkdownPreview, OfficePreviewLoading, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 
 const ArtifactTextEditor = lazy(() =>
   import("./artifact-text-editor").then((module) => ({ default: module.ArtifactTextEditor })),
 );
 const ArtifactSpreadsheetEditor = lazy(() =>
   import("./artifact-spreadsheet-editor").then((module) => ({ default: module.ArtifactSpreadsheetEditor })),
+);
+const ArtifactOfficePreview = lazy(() =>
+  import("./artifact-office-preview").then((module) => ({ default: module.ArtifactOfficePreview })),
 );
 const ArtifactCodeView = lazy(() =>
   import("./artifact-code-view").then((module) => ({ default: module.ArtifactCodeView })),
@@ -100,6 +108,15 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   const [draft, setDraft] = useState("");
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
+  const officeFormat = target.kind !== "file" ? null
+    : target.preview === "slides" && /\.pptx$/i.test(target.value) ? "pptx"
+    : target.preview === "document" && /\.docx$/i.test(target.value) ? "docx"
+    : null;
+  const { isSignedIn } = useDenAuth();
+  const orgOutlineEnabled = useOrgFeature("officeOutlinePreview", { active: officeFormat !== null });
+  const deploymentOutline = useDeploymentFeature("officeOutlinePreview", officeFormat !== null && !isSignedIn);
+  const showOfficeOutline = officeFormat !== null && (isSignedIn ? orgOutlineEnabled : deploymentOutline.enabled === true);
+  const usesObjectUrl = ["image", "pdf", "html"].includes(target.preview);
   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
   // Plain text opens directly in CodeMirror. Markdown and HTML default to
   // their rendered previews and retain the existing Edit toggle.
@@ -151,7 +168,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   const previewedOwner = useRef<string | null>(null);
   const recordPreview = (node: HTMLDivElement | null) => {
     if (!node || !data || previewedOwner.current === owner) return;
-    if (data.kind === "binary" && !["image", "pdf", "html", "sheet"].includes(target.preview)) return;
+    if (data.kind === "binary" && !showOfficeOutline && !["image", "pdf", "html", "sheet"].includes(target.preview)) return;
+    if (showOfficeOutline && isSignedIn) markFeatureUsed("officeOutlinePreview");
     previewedOwner.current = owner;
     featureAnalytics.filePreviewed(target.preview);
   };
@@ -159,7 +177,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   const [binaryObjectUrl, setBinaryObjectUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!data || data.kind !== "binary") {
+    if (!usesObjectUrl || data?.kind !== "binary") {
       setBinaryObjectUrl(null);
 
       return;
@@ -171,7 +189,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
     setBinaryObjectUrl(url);
 
     return () => URL.revokeObjectURL(url);
-  }, [data, target.preview]);
+  }, [data, target.preview, usesObjectUrl]);
 
   useEffect(() => {
     setEditing(false);
@@ -404,10 +422,16 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
           </Suspense>
         ) : null}
         <div className="min-w-0 flex-1 overflow-hidden">
-          {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
-          <PreviewLoading />
+          {isLoading || (usesObjectUrl && data?.kind === "binary" && !binaryObjectUrl) ? (
+          showOfficeOutline ? <OfficePreviewLoading /> : <PreviewLoading />
         ) : isError ? (
-          <PreviewError message={error instanceof Error ? error.message : "Failed to load artifact" } />
+          <PreviewError message={showOfficeOutline
+            ? t(error instanceof OpenworkServerError && error.status === 413 ? "artifact.office_too_large" : "artifact.office_unreadable")
+            : error instanceof Error ? error.message : "Failed to load artifact"} />
+        ) : showOfficeOutline && officeFormat && data?.kind === "binary" ? (
+          <Suspense fallback={<OfficePreviewLoading />}>
+            <ArtifactOfficePreview format={officeFormat} bytes={data.data} />
+          </Suspense>
         ) : data?.kind === "text" && (editing || isDirectTextEdit) ? (
           <TextEditor value={draft} language={target.preview === "markdown" ? "markdown" : "text"} onChange={setDraft} />
         ) : target.preview === "markdown" && data?.kind === "text" ? (

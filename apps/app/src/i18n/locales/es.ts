@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "Este archivo no contiene texto legible. Ábrelo en otra aplicación para ver el original.",
+  "artifact.office_empty_slide": "Esta diapositiva no contiene texto legible.",
+  "artifact.office_loading": "Cargando esquema de texto",
+  "artifact.office_slide": "Diapositiva {number}",
+  "artifact.office_text_only": "Solo se muestra el esquema de texto, sin diseño, imágenes ni colores.",
+  "artifact.office_too_large": "El archivo es demasiado grande para la vista previa. Ábrelo en otra aplicación para verlo completo.",
+  "artifact.office_truncated": "Parte del texto no se muestra porque la vista previa ha alcanzado su límite.",
+  "artifact.office_unreadable": "No se pudo leer el archivo. Prueba a abrirlo en otra aplicación.",
   "app.error_audit_load": "No se pudo cargar el audit log.",
   "app.error_connect_first": "Conecta a este worker antes de realizar cambios del runtime.",
   "app.error_request_failed": "Solicitud fallida",

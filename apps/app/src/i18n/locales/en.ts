@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "No readable text in this file. Open it in another app to see the original.",
+  "artifact.office_empty_slide": "No readable text on this slide.",
+  "artifact.office_loading": "Loading text outline",
+  "artifact.office_slide": "Slide {number}",
+  "artifact.office_text_only": "Text outline only. Layout, images, and colors are not shown.",
+  "artifact.office_too_large": "This file is too large to preview. Open it in another app to see the full file.",
+  "artifact.office_truncated": "Some text is not shown because the preview reached its limit.",
+  "artifact.office_unreadable": "This file couldn’t be read. Try opening it in another app.",
   "account.mcp_connected_one": "{count} MCP server",
   "account.mcp_connected_other": "{count} MCP servers",
   "account.providers_connected_one": "{count} model provider",
