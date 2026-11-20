@@ -14,7 +14,7 @@ extension FileHandoff {
     /// window that opened since the file was handed over. Nil when neither is certain.
     static func window(for file: URL, in windows: [(id: Int, title: String)], opened: Set<Int>) -> Int? {
         let names = Set([file.lastPathComponent, file.deletingPathExtension().lastPathComponent].filter { !$0.isEmpty })
-        let titled = windows.filter { window in names.contains { window.title.localizedCaseInsensitiveContains($0) } }
+        let titled = windows.filter { window in names.contains { window.title.localizedCaseInsensitiveCompare($0) == .orderedSame } }
         if titled.count == 1 { return titled[0].id }
         let new = windows.filter { opened.contains($0.id) }
         if new.count == 1 { return new[0].id }
