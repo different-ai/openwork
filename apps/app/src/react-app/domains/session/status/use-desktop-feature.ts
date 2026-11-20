@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "remoteComputers" | "followUpSuggestions" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "settingsFind" | "sessionTree" | "sessionMultiSelect" | "sideChatPanel" | "sideQuestions" | "providerFilterSyncFix" | "sandboxTools" | "browserSecretHandles" | "chatRunCommands" | "chatTableExpand" | "followUpDelivery"
+type DesktopFeatureKey = "remoteComputers" | "followUpSuggestions" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "settingsFind" | "sessionTree" | "sessionMultiSelect" | "sideChatPanel" | "sideQuestions" | "providerFilterSyncFix" | "sandboxTools" | "browserSecretHandles" | "chatRunCommands" | "chatTableExpand" | "officeOutlinePreview" | "followUpDelivery"
 
 /**
  * Reads one desktop feature from the registry. Signed in, it follows the

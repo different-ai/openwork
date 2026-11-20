@@ -1,0 +1,21 @@
+id: open_retained_artifact
+title: Open the retained pipeline Artifact
+surface: desktop
+label: MOCKED
+status: grounded
+requires: [employee_connected, artifact_retained]
+do:
+  - {type: open_chat, title: '{{artifact_chat}}'}
+  - {type: click, role: button, name: Open, pick: last}
+  - {type: show, seconds: 45}
+say: This is an interactive view, not a screenshot. It can read the fictional Salesforce source when opened or refreshed.
+paste: {}
+see: The pipeline renders beside the retained chat. Point out committed pilots and the separate conditional expansion. If rehearsed, filter Orchard, return to all accounts, and refresh sample data.
+checks:
+  - {type: artifact_frame_has, text: Orchard, last_resort: true, reason: The retained artifact renders sample records inside an iframe without a stable structured probe.}
+reset: [Return the view to all accounts and leave the retained Artifact intact.]
+fallback: Open the wide Artifact from the Artifacts catalog or show the earlier sample clip.
+expect_seconds: 70
+questions:
+  - {question: Can you build this from a prompt?, beat: build_artifact_by_prompt}
+avoid: [Do not use catalog Open in chat; it creates a launch draft. Do not claim a live Salesforce tenant.]

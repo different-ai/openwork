@@ -25,7 +25,7 @@ const REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 // A preview's Den sends its template origins to OAuth providers directly (client
 // registration, token exchange); this translates them on the way out, as the
 // preview gateway does for browsers.
-const PREVIEW_EGRESS = new URL("../packages/freestyle/src/egress.mjs", import.meta.url).href;
+const PREVIEW_EGRESS = new URL("../packages/world-freestyle/src/egress.mjs", import.meta.url).href;
 const ACME_WEB_NAME = "acme-web";
 
 export interface AcmeWebWorld {
@@ -134,8 +134,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   await using stack = new AsyncDisposableStack();
   if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
     const { parseAppWebOptions } = await import("./lib/app-web-options.ts");
-    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
-    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/world-freestyle/src/index.ts");
     const { trackResource } = await import("../packages/world/src/ledger.ts");
     const options = parseAppWebOptions(argv, process.env);
     if (!options.ref) throw new Error("ACME Freestyle requires --ref <full-pushed-sha>.");

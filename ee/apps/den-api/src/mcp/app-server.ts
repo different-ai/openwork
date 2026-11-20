@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -182,7 +182,7 @@ export function createMcpAppServer(input: {
   instructions?: string
 }) {
   const { app, tools } = input.definition
-  const server = new McpServer({ name: app.title, version: "1.0.0" }, {
+  const server = new Server({ name: app.title, version: "1.0.0" }, {
     capabilities: {
       tools: { listChanged: false },
       resources: { listChanged: false, subscribe: false },
@@ -191,10 +191,10 @@ export function createMcpAppServer(input: {
     instructions: input.instructions ?? `This is the ${app.title} artifact from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
-  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [launchTool(input.definition), ...tools.map(boundTool)],
   }))
-  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = toolArguments(request.params.arguments)
     if (request.params.name === MCP_APP_LAUNCH_TOOL_NAME) {
       if (!input.scopes.has(DEN_MCP_READ_SCOPE)) return scopeError(MCP_APP_LAUNCH_TOOL_NAME, DEN_MCP_READ_SCOPE)
@@ -224,11 +224,11 @@ export function createMcpAppServer(input: {
     return input.launchReads ? input.launchReads.call(binding, args, run) : run()
   })
 
-  server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: app.resourceUri, name: app.title, mimeType: RESOURCE_MIME_TYPE, ...(app.description ? { description: app.description } : {}) }],
   }))
-  server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
-  server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const revision = parseMcpAppResourceUri(request.params.uri)
     if (!revision || revision.appId !== app.appId || !input.scopes.has(DEN_MCP_READ_SCOPE)) {
       throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", { error: "mcp_app_not_found" })

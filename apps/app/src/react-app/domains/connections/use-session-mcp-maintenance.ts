@@ -11,6 +11,7 @@ import { recordInspectorEvent } from "../../../app/lib/app-inspector";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import type { DenAuthStatus } from "../cloud/den-auth-provider";
 import {
+  isLoopbackOpenworkServerUrl,
   OpenworkServerError,
   type OpenworkCloudMcpFailure,
   type OpenworkCloudMcpHealth,
@@ -109,7 +110,7 @@ function failedCloudMcpBackgroundSync(input: {
   };
 }
 
-export function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+export function cloudMcpMaintenanceFailure(error: unknown, serverBaseUrl?: string): CloudMcpBackgroundSyncResult {
   // A full disk fails every attempt the same way until space is freed, so
   // retrying only repeats the failure. The server's message says what to do.
   if (error instanceof OpenworkServerError && error.code === "insufficient_storage") {
@@ -131,7 +132,9 @@ export function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSy
           message: error.message,
           // policy_unavailable is verification failure, not a policy denial.
           retryable: error.code === "policy_unavailable" || error.status === 408
-            || error.status === 429 || error.status >= 500,
+            || error.status === 429 || error.status >= 500
+            || (error instanceof OpenworkServerError && error.status === 403 && error.code === "sandbox_only"
+              && !!serverBaseUrl && isLoopbackOpenworkServerUrl(serverBaseUrl)),
         })
       : undefined,
   });
@@ -275,7 +278,7 @@ export async function syncCloudControlMcpInBackground(input: {
     listed = await guarded(() => input.client.listMcp(workspaceId));
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw error;
-    return cloudMcpMaintenanceFailure(error);
+    return cloudMcpMaintenanceFailure(error, input.client.baseUrl);
   }
   const configured = listed.items.find((entry) => entry.name === CLOUD_MCP_SERVER_NAME);
   if (configured?.config.enabled === false) {

@@ -69,7 +69,6 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
-  type DefaultMarketplacePluginEntry,
   RETIRED_DEFAULT_OPENWORK_PLUGINS,
   RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
   RETIRED_STARTER_MARKETPLACE_LOGO_URL,
@@ -82,16 +81,17 @@ import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import {
-  SKILL_FILE_MAX_BYTES,
-  SKILL_FILES_MAX_COUNT,
-  SKILL_FILES_MAX_TOTAL_BYTES,
   checkSkillFiles,
   isSkillFileText,
   sameSkillFiles,
-  skillFilePathProblem,
+  selectSkillFilesBySize,
   skillFilesFromPayload,
-  type SkillFile,
+  skillFilesLeftOutMessage,
+  storedSkillFileList,
+  type SkillFileBody,
+  type SkillFileEntry,
 } from "../../../skill-files.js"
+import { storeInlineSkillFiles, storeSkillFileBodies } from "../../../skill-file-blobs.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -306,7 +306,9 @@ type GithubPluginMcpImportPlugin = {
 type GithubPluginSkillImportSkill = {
   description: string | null
   /** Text files beside SKILL.md, read only for the skills an import will store. */
-  files?: SkillFile[]
+  files?: SkillFileBody[]
+  /** Files in the skill's folder the import could not bring: not text, or past the size limits. */
+  filesLeftOut?: string[]
   name: string
   pluginKey: string
   pluginName: string
@@ -656,15 +658,17 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
 }
 
 /**
- * What a skill version stores beside its SKILL.md: its supporting files, under
- * `files`. A write that names no payload keeps the files of the version before
- * it, so editing SKILL.md alone never drops them; a payload replaces them.
+ * What a skill version stores beside its SKILL.md: the list of its supporting
+ * files, under `files`, whose contents go to skill_file_blob first. A write
+ * that names no payload keeps the files of the version before it, so editing
+ * SKILL.md alone never drops them; a payload replaces them. Call it before the
+ * version's transaction: storing contents is one statement per new file.
  */
-function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigObjectInput }): Record<string, unknown> | null {
+async function skillVersionPayload(input: { organizationId: string; previousPayload?: unknown; value: ConfigObjectInput }): Promise<Record<string, unknown> | null> {
   const payload = input.value.normalizedPayloadJson
   if (payload === undefined) {
-    const kept = skillFilesFromPayload(input.previousPayload)
-    return kept.length > 0 ? { files: kept } : null
+    const kept = await storeInlineSkillFiles(input.organizationId, skillFilesFromPayload(input.previousPayload))
+    return kept.length > 0 ? { files: storedSkillFileList(kept) } : null
   }
   const { files: rawFiles, ...rest } = payload
   if (rawFiles === undefined) return Object.keys(rest).length > 0 ? rest : null
@@ -676,7 +680,8 @@ function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigOb
       checked.problem.path ? `${checked.problem.message} (${checked.problem.path})` : checked.problem.message,
     )
   }
-  const next = checked.files.length > 0 ? { ...rest, files: checked.files } : rest
+  const stored = await storeSkillFileBodies(input.organizationId, checked.files)
+  const next = stored.length > 0 ? { ...rest, files: storedSkillFileList(stored) } : rest
   return Object.keys(next).length > 0 ? next : null
 }
 
@@ -873,69 +878,6 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
-  {
-    schemaVersion: 1,
-    id: "openwork-browser",
-    name: "OpenWork Browser",
-    description: "Automate the built-in browser panel that stays visible inside OpenWork.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use the OpenWork Browser extension to " },
-    setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
-      { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
-      { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
-    defaultEnabled: true,
-  },
-  {
-    schemaVersion: 1,
-    id: "openai-image-gen",
-    name: "OpenAI Image Gen",
-    description: "Generate image artifacts with gpt-image-2.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-openai.svg" },
-    composer: { prompt: "Use the OpenAI Image Gen extension to " },
-    setup: { instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions." },
-    resources: [
-      { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
-      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" }],
-    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
-  },
-  {
-    schemaVersion: 1,
-    id: "ollama",
-    name: "Ollama",
-    description: "Local model provider at http://localhost:11434.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-ollama.svg" },
-    composer: { prompt: "Use the Ollama extension to " },
-    setup: { instructions: "Run Ollama locally, choose or pull a model, then add it as an OpenCode provider." },
-    resources: [
-      { type: "local-service", id: "ollama-api", label: "Ollama API", description: "http://localhost:11434", required: true },
-      { type: "provider", id: "ollama", providerId: "ollama", packageName: "@ai-sdk/openai-compatible", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.ollama.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the Ollama extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "provider-connected", ref: "ollama", label: "Ollama provider" }],
-    lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
-  },
-] as const
-
 // Render historical seeded records without re-seeding them or reviving local setup.
 const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
   schemaVersion: 1,
@@ -950,10 +892,6 @@ const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
     { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
   ],
 } as const
-
-function defaultOpenWorkManifestForPlugin(row: PluginRow) {
-  return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
-}
 
 function extensionResourceTypeForConfigObject(objectType: string) {
   switch (objectType) {
@@ -987,7 +925,7 @@ function serializedPluginSourceFormat(row: PluginRow) {
 function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
   const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
     ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
-    : defaultOpenWorkManifestForPlugin(row)
+    : null
   if (builtInManifest) {
     return {
       description: builtInManifest.description,
@@ -1758,6 +1696,9 @@ export async function createConfigObject(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
+  const normalizedPayloadJson = input.objectType === "skill"
+    ? await skillVersionPayload({ organizationId, value: input.value })
+    : input.value.normalizedPayloadJson ?? null
 
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectTable).values({
@@ -1787,9 +1728,7 @@ export async function createConfigObject(input: {
         createdVia: input.sourceMode,
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: input.objectType === "skill"
-          ? skillVersionPayload({ value: input.value })
-          : input.value.normalizedPayloadJson ?? null,
+        normalizedPayloadJson,
         organizationId,
         rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1898,7 +1837,8 @@ export async function createConfigObjectVersion(input: {
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
   const normalizedPayloadJson = row.objectType === "skill"
-    ? skillVersionPayload({
+    ? await skillVersionPayload({
+      organizationId: row.organizationId,
       previousPayload: input.value.normalizedPayloadJson === undefined
         ? (await getLatestVersions([row.id])).get(row.id)?.normalizedPayloadJson
         : undefined,
@@ -3287,20 +3227,13 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
     await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
 
-    const marketplace = await ensureDefaultMarketplace({
+    await ensureDefaultMarketplace({
       context,
       createdAt: now,
       database: tx,
       description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
       logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
       name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
-    })
-    await ensureDefaultMarketplacePlugins({
-      context,
-      createdAt: now,
-      database: tx,
-      entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
-      marketplaceId: marketplace.id,
     })
   })
   return true
@@ -3341,63 +3274,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
       isNull(MarketplaceAccessGrantTable.removedAt),
     ))
   const marketplaceGrants = new Set(marketplaceGrantRows.map((grant) => grant.marketplaceId))
-  if (!marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))) {
-    return false
-  }
-
-  const defaultPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
-  const defaultPluginRows = await db
-    .select({ id: PluginTable.id, name: PluginTable.name, description: PluginTable.description })
-    .from(PluginTable)
-    .where(and(
-      eq(PluginTable.organizationId, organizationId),
-      inArray(PluginTable.name, defaultPluginEntries.map((entry) => entry.name)),
-      eq(PluginTable.status, "active"),
-      isNull(PluginTable.deletedAt),
-    ))
-
-  const pluginIdByEntry = new Map<string, PluginId>()
-  for (const entry of defaultPluginEntries) {
-    const plugin = defaultPluginRows.find((row) => row.name === entry.name && row.description === entry.description)
-    if (!plugin) {
-      return false
-    }
-    pluginIdByEntry.set(defaultMarketplacePluginEntryKey(entry), plugin.id)
-  }
-
-  const pluginIds = Array.from(pluginIdByEntry.values())
-  const pluginGrantRows = await db
-    .select({ pluginId: PluginAccessGrantTable.pluginId })
-    .from(PluginAccessGrantTable)
-    .where(and(
-      eq(PluginAccessGrantTable.organizationId, organizationId),
-      inArray(PluginAccessGrantTable.pluginId, pluginIds),
-      eq(PluginAccessGrantTable.orgWide, true),
-      eq(PluginAccessGrantTable.role, "viewer"),
-      isNull(PluginAccessGrantTable.removedAt),
-    ))
-  const pluginGrants = new Set(pluginGrantRows.map((grant) => grant.pluginId))
-  if (!pluginIds.every((pluginId) => pluginGrants.has(pluginId))) {
-    return false
-  }
-
-  const expectedMemberships = new Set<string>()
-  for (const entry of defaultPluginEntries) {
-    const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
-    if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(openWorkMarketplaceId, pluginId))
-  }
-
-  const membershipRows = await db
-    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, pluginId: MarketplacePluginTable.pluginId })
-    .from(MarketplacePluginTable)
-    .where(and(
-      eq(MarketplacePluginTable.organizationId, organizationId),
-      inArray(MarketplacePluginTable.marketplaceId, marketplaceIds),
-      inArray(MarketplacePluginTable.pluginId, pluginIds),
-      isNull(MarketplacePluginTable.removedAt),
-    ))
-  const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
-  return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+  return marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))
 }
 
 /**
@@ -3551,87 +3428,6 @@ async function retireDefaultOpenWorkPlugins(input: { database: DbTransaction; or
     .where(inArray(PluginTable.id, pluginIds))
 }
 
-function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {
-  return `${entry.name}\n${entry.description}`
-}
-
-function defaultMarketplacePluginMembershipKey(marketplaceId: MarketplaceId, pluginId: PluginId) {
-  return `${marketplaceId}:${pluginId}`
-}
-
-async function ensureDefaultMarketplacePlugins(input: {
-  context: PluginArchActorContext
-  createdAt: Date
-  database: DbTransaction
-  entries: DefaultMarketplacePluginEntry[]
-  marketplaceId: MarketplaceId
-}) {
-  const organizationId = input.context.organizationContext.organization.id
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-
-  for (const entry of input.entries) {
-    let plugin = (await input.database
-      .select()
-      .from(PluginTable)
-      .where(and(
-        eq(PluginTable.organizationId, organizationId),
-        eq(PluginTable.name, entry.name),
-        eq(PluginTable.description, entry.description),
-        isNull(PluginTable.deletedAt),
-      ))
-      .limit(1))[0]
-
-    if (!plugin) {
-      const pluginRow = {
-        createdAt: input.createdAt,
-        createdByOrgMembershipId,
-        deletedAt: null,
-        description: entry.description,
-        externalKey: null,
-        id: createDenTypeId("plugin"),
-        name: entry.name,
-        organizationId,
-        sourceFormat: null,
-        sourceRepositoryUrl: null,
-        sourceSchemaVersion: null,
-        status: "active" as const,
-        updatedAt: input.createdAt,
-      }
-      await input.database.insert(PluginTable).values(pluginRow)
-      plugin = pluginRow
-    }
-
-    await ensureOrgWidePluginAccess({ context: input.context, database: input.database, pluginId: plugin.id, role: "viewer" })
-
-    const existingMembership = (await input.database
-      .select()
-      .from(MarketplacePluginTable)
-      .where(and(
-        eq(MarketplacePluginTable.marketplaceId, input.marketplaceId),
-        eq(MarketplacePluginTable.pluginId, plugin.id),
-      ))
-      .limit(1))[0]
-
-    if (existingMembership) {
-      if (existingMembership.removedAt) {
-        await input.database.update(MarketplacePluginTable).set({ membershipSource: "system", removedAt: null }).where(eq(MarketplacePluginTable.id, existingMembership.id))
-      }
-      continue
-    }
-
-    await input.database.insert(MarketplacePluginTable).values({
-      createdAt: input.createdAt,
-      createdByOrgMembershipId,
-      id: createDenTypeId("marketplacePlugin"),
-      marketplaceId: input.marketplaceId,
-      membershipSource: "system",
-      organizationId,
-      pluginId: plugin.id,
-      removedAt: null,
-    })
-  }
-}
-
 async function ensureDefaultMarketplace(input: {
   context: PluginArchActorContext
   createdAt: Date
@@ -3707,40 +3503,6 @@ async function ensureOrgWideMarketplaceAccess(input: {
     organizationId,
     orgMembershipId: null,
     orgWide: true,
-    role: input.role,
-    teamId: null,
-  })
-}
-
-async function ensureOrgWidePluginAccess(input: {
-  context: PluginArchActorContext
-  database: DbTransaction
-  pluginId: PluginId
-  role: PluginArchRole
-}) {
-  const createdAt = new Date()
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const organizationId = input.context.organizationContext.organization.id
-
-  const existing = (await input.database
-    .select()
-    .from(PluginAccessGrantTable)
-    .where(and(eq(PluginAccessGrantTable.pluginId, input.pluginId), eq(PluginAccessGrantTable.orgWide, true)))
-    .limit(1))[0]
-  if (existing) {
-    if (existing.removedAt || existing.role !== input.role) {
-      await input.database.update(PluginAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(PluginAccessGrantTable.id, existing.id))
-    }
-    return
-  }
-  await input.database.insert(PluginAccessGrantTable).values({
-    createdAt,
-    createdByOrgMembershipId,
-    id: createDenTypeId("pluginAccessGrant"),
-    organizationId,
-    orgMembershipId: null,
-    orgWide: true,
-    pluginId: input.pluginId,
     role: input.role,
     teamId: null,
   })
@@ -3923,7 +3685,6 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
       teamIds: input.context.memberTeams.map((team) => team.id),
     },
     pluginIds,
-    desktopManifestPluginIds: pluginRows.flatMap((row) => defaultOpenWorkManifestForPlugin(row) ? [row.id] : []),
   })
 
   const plugins = pluginRows.map((row) => {
@@ -5342,36 +5103,39 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-/**
- * The text files in a skill's folder besides SKILL.md, read from the repository.
- * Files that are too large, not text, or past the per-skill limits are left out.
- */
-async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<SkillFile[]> {
+/** The files in a skill's folder besides SKILL.md, as paths relative to that folder, with their sizes. */
+function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: GithubDiscoveryTreeEntry[] }) {
   if (!input.sourcePath.endsWith("/SKILL.md")) return []
   const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
-  const candidates: Array<{ discoveryPath: string; path: string }> = []
-  let budget = SKILL_FILES_MAX_TOTAL_BYTES
-  const entries = input.snapshot.treeEntries
+  return input.treeEntries
     .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  for (const entry of entries) {
-    if (candidates.length === SKILL_FILES_MAX_COUNT) break
-    const path = entry.path.slice(directory.length + 1)
-    if (entry.size === null || entry.size > SKILL_FILE_MAX_BYTES || entry.size > budget || skillFilePathProblem(path)) continue
-    budget -= entry.size
-    candidates.push({ discoveryPath: entry.path, path })
-  }
-  const texts = await mapPublicGithubConcurrently(candidates, (candidate) => getPublicGithubTextFile({
+    .map((entry) => ({ discoveryPath: entry.path, path: entry.path.slice(directory.length + 1), size: entry.size }))
+}
+
+/**
+ * The text files in a skill's folder besides SKILL.md, read from the repository,
+ * and the files left out: not text, or past the size limits.
+ */
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFileBody[]; leftOut: string[] }> {
+  const entries = githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries })
+  const selection = selectSkillFilesBySize(entries)
+  const discoveryPathByPath = new Map(entries.map((entry) => [entry.path, entry.discoveryPath]))
+  const texts = await mapPublicGithubConcurrently(selection.included, (path) => getPublicGithubTextFile({
     branch: input.snapshot.branch,
-    discoveryPath: candidate.discoveryPath,
+    discoveryPath: discoveryPathByPath.get(path) ?? path,
     snapshot: input.snapshot,
   }))
-  const files = candidates.flatMap((candidate, index) => {
+  const files: Array<{ path: string; text: string }> = []
+  const leftOut = [...selection.leftOut]
+  for (const [index, path] of selection.included.entries()) {
     const text = texts[index]
-    return typeof text === "string" && isSkillFileText(text) ? [{ path: candidate.path, text }] : []
-  })
+    // Sizes are known before download; whether a file is text is not.
+    if (typeof text === "string" && isSkillFileText(text)) files.push({ path, text })
+    else leftOut.push(path)
+  }
   const checked = checkSkillFiles(files)
-  return "files" in checked ? checked.files : []
+  if ("files" in checked) return { files: checked.files, leftOut: leftOut.sort() }
+  return { files: [], leftOut: entries.map((entry) => entry.path).sort() }
 }
 
 async function computeGithubPluginMcpImportPlan(input: {
@@ -5430,9 +5194,19 @@ async function computeGithubPluginMcpImportPlan(input: {
   if (skillFilesFor) {
     for (const skill of skills) {
       if (!skill.supported || (skillFilesFor !== "all" && !skillFilesFor.has(skill.skillKey))) continue
-      skill.files = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
+      const read = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
+      skill.files = read.files
+      skill.filesLeftOut = read.leftOut
     }
   }
+
+  // Say before the import which skills cannot bring all their files.
+  const skillFileWarnings = skills.flatMap((skill) => {
+    if (!skill.supported) return []
+    const entries = githubSkillFolderEntries({ sourcePath: skill.sourcePath, treeEntries: snapshot.treeEntries })
+    const leftOut = skill.filesLeftOut?.length ?? selectSkillFilesBySize(entries).leftOut.length
+    return leftOut > 0 ? [skillFilesLeftOutMessage({ skillName: skill.name, leftOut, total: entries.length })] : []
+  })
 
   // Import connects each server through hosted egress, which only accepts
   // public HTTPS URLs. Apply the same rule here so the preview never promises
@@ -5458,7 +5232,7 @@ async function computeGithubPluginMcpImportPlan(input: {
     servers.splice(0, servers.length, ...await withExistingConnectionReuse({ organizationId: input.organizationId, servers }))
   }
 
-  const plugins = discovery.discoveredPlugins
+  const countedPlugins = discovery.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => ({
       description: plugin.description,
@@ -5467,7 +5241,11 @@ async function computeGithubPluginMcpImportPlan(input: {
       name: plugin.displayName,
       skillCount: skills.filter((skill) => skill.pluginKey === plugin.key && skill.supported).length,
     } satisfies GithubPluginMcpImportPlugin))
-    .filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  const plugins = countedPlugins.filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  // Say why a plugin is missing from the preview instead of leaving it out silently.
+  const emptyPluginWarnings = countedPlugins
+    .filter((plugin) => plugin.mcpCount === 0 && plugin.skillCount === 0)
+    .map((plugin) => `${plugin.name}: no skills or MCP servers that OpenWork can import were found.`)
   const sourceSchemaVersions = new Set(discovery.discoveredPlugins
     .filter((plugin) => plugin.supported && plugin.sourceKind === "agent_plugin_manifest")
     .flatMap((plugin) => plugin.sourceSchemaVersion ? [plugin.sourceSchemaVersion] : []))
@@ -5487,6 +5265,8 @@ async function computeGithubPluginMcpImportPlan(input: {
     warnings: [
       ...discovery.warnings,
       ...(snapshot.truncated ? ["GitHub truncated the repository tree; some MCP files may be missing."] : []),
+      ...emptyPluginWarnings,
+      ...skillFileWarnings,
     ],
   }
 }
@@ -6307,7 +6087,7 @@ async function grantImportAccessToPluginArchResource(input: {
 }
 
 type ImportedGithubObject = {
-  files: SkillFile[]
+  files: SkillFileEntry[]
   id: ConfigObjectId
   mcpUrlKeys: string[]
   objectType: "mcp" | "skill"
@@ -6491,13 +6271,11 @@ export async function importGithubPluginMcps(input: {
     throw new PluginArchRouteFailure(400, "no_supported_plugin_components", "No supported remote MCP servers or skills were selected from that plugin.")
   }
 
+  // No audience means private to the creator, who manages what they create.
   const access = input.access ?? {
     memberIds: [],
-    orgWide: true,
+    orgWide: false,
     teamIds: [],
-  }
-  if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
-    throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported plugin.")
   }
   const pluginName = input.name ?? importedPluginName(plan)
   const sourceRepositoryUrl = `https://github.com/${plan.repositoryFullName}`
@@ -6719,6 +6497,17 @@ export async function importGithubPluginMcps(input: {
 
   const skipped = consideredServers.flatMap((server) =>
     server.supported || !server.skippedReason ? [] : [{ mapsTo: server.mapsTo, name: server.name, reason: server.skippedReason, reuse: server.reuse }])
+  const skippedSkillFiles = supportedSkills.flatMap((skill) => {
+    const leftOut = skill.filesLeftOut ?? []
+    if (leftOut.length === 0) return []
+    return [{
+      count: leftOut.length,
+      message: skillFilesLeftOutMessage({ skillName: skill.name, leftOut: leftOut.length, total: leftOut.length + (skill.files?.length ?? 0), atImport: true }),
+      name: skill.name,
+      paths: leftOut.slice(0, 50),
+      sourcePath: skill.sourcePath,
+    }]
+  })
   const skippedSkills = consideredSkills.flatMap((skill) =>
     skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
 
@@ -6730,6 +6519,7 @@ export async function importGithubPluginMcps(input: {
     plugin: await getPluginDetail(input.context, plugin.id),
     removed,
     skipped,
+    skippedSkillFiles,
     skippedSkills,
     unchanged,
     updatedSkills,

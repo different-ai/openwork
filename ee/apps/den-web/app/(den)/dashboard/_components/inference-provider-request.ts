@@ -6,7 +6,7 @@
  */
 
 import { isSupportedGatewayNpm, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
-import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
+import { gatewayMemberSignInMethod, gatewayModelConfigurationError } from "@openwork/types/den/inference";
 import type {
   GatewayAwsSsoSettings,
   GatewayMemberSignInMethod,
@@ -14,7 +14,19 @@ import type {
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
 } from "@openwork/types/den/inference";
-import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayLiteLlmStatus, GatewayTrueFoundryStatus, GatewayUsableModel } from "@openwork/types/den/gateway";
+import type {
+  GatewayAccessGrant,
+  GatewayAccessGrantWrite,
+  GatewayAuthorizationRequest,
+  GatewayCredentialSet,
+  GatewayCredentialSetWrite,
+  GatewayLiteLlmStatus,
+  GatewayModelGroup,
+  GatewayModelGroupPatch,
+  GatewayModelGroupWrite,
+  GatewayTrueFoundryStatus,
+  GatewayUsableModel,
+} from "@openwork/types/den/gateway";
 import { gatewayCustomProviderStatusSchema, type GatewayCustomProviderStatus } from "@openwork/types/den/gateway-custom-providers";
 import { z } from "zod";
 
@@ -459,6 +471,29 @@ export function accessFromGrants(grants: GatewayAccessGrant[] | null | undefined
   };
 }
 
+export function filterSupportedGatewayCatalogModels<T extends { config: Record<string, unknown> }>(
+  providerConfig: Record<string, unknown>,
+  models: readonly T[],
+): T[] {
+  return models.filter((model) => gatewayModelConfigurationError(providerConfig, [model.config]) === null);
+}
+
+export type GatewayResourceWrite =
+  | { resource: "model-groups"; body: GatewayModelGroupWrite | GatewayModelGroupPatch }
+  | { resource: "credential-sets"; body: GatewayCredentialSetWrite }
+  | { resource: "access-grants"; body: GatewayAccessGrantWrite };
+
+const savedResourceKeys = {
+  "model-groups": "modelGroup",
+  "credential-sets": "credentialSet",
+  "access-grants": "accessGrant",
+};
+
+export function readSavedGatewayResourceId(resource: GatewayResourceWrite["resource"], payload: unknown): string | null {
+  const saved = isRecord(payload) ? payload[savedResourceKeys[resource]] : null;
+  return isRecord(saved) ? asString(saved.id) : null;
+}
+
 // --- Request bodies ---
 
 export type InferenceProviderFormInput = {
@@ -595,6 +630,84 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
     body.credential = { kind: "api_key", secret: apiKey };
   }
   return body;
+}
+
+type MatrixSyncInput = {
+  provider: Pick<DenInferenceProviderDetails, "id" | "modelGroups" | "credentialSets" | "accessGrants">;
+  allowAllModels: boolean;
+  modelIds: string[];
+  credentialMode: InferenceProviderCredentialMode;
+  credentialBody: Pick<InferenceProviderRequestBody, "credential" | "apiKeys" | "oauthClientId" | "oauthClientSecret" | "oauthTenantId" | "awsSso">;
+  access: InferenceProviderFormInput["access"];
+  saveResource: (id: string | null, input: GatewayResourceWrite) => Promise<string>;
+  deleteResource: (resource: "access-grants", id: string) => Promise<void>;
+};
+
+/** Edit the first group and credential set, then reconcile grants for that pair only. */
+export async function syncInferenceProviderMatrix({
+  provider, allowAllModels, modelIds, credentialMode, credentialBody, access, saveResource, deleteResource,
+}: MatrixSyncInput): Promise<void> {
+  type Audience = GatewayAccessGrantWrite["audience"];
+  const desired: Audience[] = [
+    ...[...new Set(access.teamIds)].map((teamId): Audience => ({ type: "team", teamId })),
+    ...[...new Set(access.memberIds)].map((memberId): Audience => ({ type: "member", memberId })),
+  ];
+  if (access.allMembers) desired.unshift({ type: "organization" });
+
+  const existingGroup = provider.modelGroups[0] ?? null;
+  let groupId = existingGroup?.id ?? null;
+  if (allowAllModels || modelIds.length > 0) {
+    const groupDetails: Pick<GatewayModelGroupWrite, "name" | "description" | "status"> = {
+      name: existingGroup?.name ?? "All Allowed Models",
+      description: existingGroup?.description ?? null,
+      status: "active",
+    };
+    const body: GatewayModelGroupWrite = allowAllModels
+      ? { ...groupDetails, allModels: true }
+      : { ...groupDetails, modelIds: [...new Set(modelIds)] };
+    groupId = await saveResource(groupId, { resource: "model-groups", body });
+  }
+  if (!groupId && desired.length > 0) {
+    throw new Error("Could not save the provider's model group before granting access.");
+  }
+
+  const existingSet = provider.credentialSets[0] ?? null;
+  let setId = existingSet?.id ?? null;
+  const { credential, apiKeys, oauthClientId, oauthClientSecret, oauthTenantId, awsSso } = credentialBody;
+  const hasCredentialWrite = Boolean(credential || apiKeys || credentialMode === "member" || (existingSet && existingSet.credentialMode !== credentialMode));
+  if (hasCredentialWrite) {
+    const body: GatewayCredentialSetWrite = {
+      name: existingSet?.name ?? "Default credentials",
+      credentialMode,
+      status: "active",
+      ...(credential ? { credential } : {}),
+      ...(apiKeys ? { apiKeys } : {}),
+      ...(oauthClientId !== undefined ? { oauthClientId } : {}),
+      ...(oauthClientSecret !== undefined ? { oauthClientSecret } : {}),
+      ...(oauthTenantId !== undefined ? { oauthTenantId } : {}),
+      ...(awsSso !== undefined ? { awsSso } : {}),
+    };
+    setId = await saveResource(setId, { resource: "credential-sets", body });
+  }
+  if (!setId) {
+    if (desired.length > 0) throw new Error("Paste a key or configure sign-in before sharing these models.");
+    return;
+  }
+  if (!groupId) return;
+
+  const key = (audience: Audience) => audience.type === "organization" ? "organization"
+    : audience.type === "team" ? `team:${audience.teamId}` : `member:${audience.memberId}`;
+  const existing = provider.accessGrants.filter((grant) => grant.modelGroupId === groupId && grant.credentialSetId === setId);
+  const desiredKeys = new Set(desired.map(key));
+  const existingKeys = new Set(existing.map((grant) => key(grant.audience)));
+  for (const grant of existing) {
+    if (!desiredKeys.has(key(grant.audience))) await deleteResource("access-grants", grant.id);
+  }
+  for (const audience of desired) {
+    if (!existingKeys.has(key(audience))) {
+      await saveResource(null, { resource: "access-grants", body: { audience, modelGroupId: groupId, credentialSetId: setId } });
+    }
+  }
 }
 
 /**

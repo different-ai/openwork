@@ -31,7 +31,7 @@ import type {
 } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
 
-import { readDenSettings } from "@/app/lib/den"
+import { markFeatureUsed, readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -64,6 +64,7 @@ import {
   AUTOMATIONS_FAST_POLL_MS,
   describeAutomationError,
   useAutomationActions,
+  useAutomationArchiveRestoreEnabled,
   useAutomationDetailQuery,
   useAutomationListQuery,
   useAutomationRunsQuery,
@@ -192,6 +193,9 @@ export function AutomationsPage(props: {
 
   const denContext = useAutomationsDenContext()
   const sharingEnabled = useAutomationSharingEnabled(denContext)
+  const archiveRestoreEnabled = useAutomationArchiveRestoreEnabled(denContext)
+  const [archivedFilter, setArchivedFilter] = useState(false)
+  const showArchived = archiveRestoreEnabled && archivedFilter
   const { client, organizationId, ready, queryRoot } = denContext
   const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
@@ -239,13 +243,13 @@ export function AutomationsPage(props: {
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? []
+    const items = listQuery.data?.items.filter((item) => (item.automation.state === "archived") === showArchived) ?? []
     if (!normalized) return items
     return items.filter((item) => (
       item.automation.name.toLowerCase().includes(normalized)
       || item.revision.instructions.toLowerCase().includes(normalized)
     ))
-  }, [listQuery.data, query])
+  }, [listQuery.data, query, showArchived])
 
   const openAutomation = (automationId: string | null) => {
     const next = new URLSearchParams()
@@ -408,7 +412,7 @@ export function AutomationsPage(props: {
       ? automationLocalSessionRoute(selectedReceipt.run.executionThread)
       : null
 
-    const editable = detail.revision.action?.kind !== "saved_script"
+    const editable = task.state !== "archived" && detail.revision.action?.kind !== "saved_script"
     const detailPlacement = detail.revision.executionTarget ?? "desktop"
 
     if (editing && editable) {
@@ -508,12 +512,23 @@ export function AutomationsPage(props: {
               >
                 <Play />Activate
               </Button>
+            ) : task.state === "archived" && archiveRestoreEnabled ? (
+              <Button
+                variant="outline"
+                disabled={busyAction !== null}
+                onClick={() => void act("restore", async () => {
+                  await client.deactivateAutomation(organizationId, task.id)
+                  markFeatureUsed("automationArchiveRestore")
+                }, t("automations.restored"))}
+              >
+                {t("automations.restore")}
+              </Button>
             ) : null}
-            {detailPlacement === "desktop" && cloudRunAvailable ? (
+            {task.state !== "archived" && detailPlacement === "desktop" && cloudRunAvailable ? (
               <Button
                 variant="outline"
                 data-automation-run-in-cloud
-                disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
+                disabled={busyAction !== null || task.state === "needs_attention"}
                 onClick={() => void act("run-cloud", async () => {
                   const run = await client.runAutomationNow(organizationId, task.id, { executionTarget: "cloud" })
                   setSearchParams(new URLSearchParams({ automation: task.id, run: run.id }))
@@ -522,19 +537,23 @@ export function AutomationsPage(props: {
                 <Cloud />Run in cloud
               </Button>
             ) : null}
-            <Button
-              disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
-              onClick={() => void act("run", async () => {
-                const run = await client.runAutomationNow(organizationId, task.id)
-                const next = new URLSearchParams({ automation: task.id, run: run.id })
-                setSearchParams(next)
-              }, "Automation queued")}
-            >
-              <Play />Run now
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Archive Automation" onClick={() => setArchiveOpen(true)}>
-              <Archive />
-            </Button>
+            {task.state !== "archived" ? (
+              <>
+                <Button
+                  disabled={busyAction !== null || task.state === "needs_attention"}
+                  onClick={() => void act("run", async () => {
+                    const run = await client.runAutomationNow(organizationId, task.id)
+                    const next = new URLSearchParams({ automation: task.id, run: run.id })
+                    setSearchParams(next)
+                  }, "Automation queued")}
+                >
+                  <Play />Run now
+                </Button>
+                <Button variant="ghost" size="icon" aria-label="Archive Automation" onClick={() => setArchiveOpen(true)}>
+                  <Archive />
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -764,26 +783,35 @@ export function AutomationsPage(props: {
       {props.headerActionsTarget
         ? createPortal(newAutomation, props.headerActionsTarget)
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
-      <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-        <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+      <div className="flex max-w-md items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+          <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+        </div>
+        {archiveRestoreEnabled ? (
+          <Button variant={showArchived ? "secondary" : "outline"} aria-pressed={showArchived} onClick={() => setArchivedFilter(!showArchived)}>
+            <Archive />{t("automations.archived")}
+          </Button>
+        ) : null}
       </div>
       {filteredItems.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>{query ? "No matching Automations" : "No Automations yet"}</EmptyTitle>
-            <EmptyDescription>
-              {query
-                ? "Try a different search."
-                : placementChoices.length > 1
-                  ? "Create a task that runs on your desktops or in the cloud."
-                  : placement === "cloud"
-                    ? "Create a task that runs on your cloud computer, even when your desktop is offline."
-                    : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
-            </EmptyDescription>
+            <EmptyTitle>{query ? "No matching Automations" : showArchived ? t("automations.no_archived") : "No Automations yet"}</EmptyTitle>
+            {query || !showArchived ? (
+              <EmptyDescription>
+                {query
+                  ? "Try a different search."
+                  : placementChoices.length > 1
+                    ? "Create a task that runs on your desktops or in the cloud."
+                    : placement === "cloud"
+                      ? "Create a task that runs on your cloud computer, even when your desktop is offline."
+                      : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
+              </EmptyDescription>
+            ) : null}
           </EmptyHeader>
-          {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
+          {!query && !showArchived ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
         </Empty>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -820,7 +848,7 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
-      {sharingEnabled ? (
+      {sharingEnabled && !showArchived ? (
         <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
       ) : null}
     </div>

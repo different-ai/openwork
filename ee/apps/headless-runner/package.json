@@ -43,6 +43,7 @@
     "axios": "1.20.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "^2.3.1",
     "@types/node": "^24.0.0",
     "esbuild": "0.25.12",
     "tsx": "^4.23.1",

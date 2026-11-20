@@ -66,13 +66,23 @@ export type GatewayAudience =
   | { type: "team"; teamId: string }
   | { type: "member"; memberId: string };
 
-export interface GatewayModelGroupWrite {
-  name: string;
-  description?: string | null;
-  /** Explicit configured catalog model IDs, not row/wire IDs. Empty means no models. */
-  modelIds: string[];
-  status?: GatewayResourceStatus;
-}
+export type GatewayModelGroupWrite =
+  | {
+      name: string;
+      description?: string | null;
+      /** Explicit configured catalog model IDs, not row/wire IDs. Empty means no models. */
+      modelIds: string[];
+      allModels?: never;
+      status?: GatewayResourceStatus;
+    }
+  | {
+      name: string;
+      description?: string | null;
+      /** Link every supported catalog model configured on this provider. Mutually exclusive with modelIds. */
+      allModels: true;
+      modelIds?: never;
+      status?: GatewayResourceStatus;
+    };
 
 export interface GatewayModelGroup {
   id: string;
@@ -125,7 +135,15 @@ export interface GatewayAccessGrant extends GatewayAccessGrantWrite {
   id: string;
 }
 
-export type GatewayModelGroupPatch = Partial<GatewayModelGroupWrite>;
+export type GatewayModelGroupPatch = {
+  name?: string;
+  description?: string | null;
+  /** Explicit configured catalog model IDs. Mutually exclusive with allModels. */
+  modelIds?: string[];
+  /** Link every supported catalog model configured on this provider. Mutually exclusive with modelIds. */
+  allModels?: true;
+  status?: GatewayResourceStatus;
+};
 export type GatewayCredentialSetPatch = Partial<GatewayCredentialSetWrite>;
 export type GatewayAccessGrantPatch = Partial<GatewayAccessGrantWrite>;
 

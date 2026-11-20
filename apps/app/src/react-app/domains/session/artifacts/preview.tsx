@@ -2,6 +2,8 @@
 import type * as React from "react";
 import { Loader2 } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
+import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { MarkdownBlock } from "../surface/markdown";
 
@@ -11,6 +13,16 @@ export function PreviewLoading({ className, ...props }: PreviewLoadingProps) {
   return (
     <div className={cn("flex h-full items-center justify-center text-muted-foreground", className)} {...props}>
       <Loader2 className="size-4 animate-spin" />
+    </div>
+  );
+}
+
+export function OfficePreviewLoading() {
+  return (
+    <div role="status" aria-label={t("artifact.office_loading")} className="space-y-3 p-4">
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
     </div>
   );
 }

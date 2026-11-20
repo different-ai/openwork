@@ -264,7 +264,8 @@ type StepLane = {
   /**
    * What the run's first step read over the network, which its later steps use as it is, as a turn run in one go
    * does: the person's apps' tools (for the token they were listed with) and the memory files. Every step's request
-   * so starts the same, and a later step's model call waits for neither (see laterStepTools).
+   * so starts the same, and a later step's model call waits for neither (see laterStepTools). The tools are dropped,
+   * and listed again by the next step, when the server says they changed while a connection was open.
    */
   tools?: { token: string; specs: ToolSpec[] }
   memoryFiles?: MemoryFiles
@@ -615,11 +616,11 @@ export class Runner {
    * Connects to the person's apps. One failed connect (a deploy there, a dropped connection) shouldn't end the turn,
    * so it is tried again after a short wait. Throws the last failure, or the signal's reason once the turn is stopped.
    */
-  private async connectTools(mcp: McpConnector, token: string, signal: AbortSignal): Promise<ToolSession> {
+  private async connectTools(mcp: McpConnector, token: string, signal: AbortSignal, onToolsChanged?: () => void): Promise<ToolSession> {
     const sleep = this.options.sleep ?? abortableSleep
     for (let attempt = 0; ; attempt += 1) {
       try {
-        return await mcp({ token, signal })
+        return await mcp({ token, signal, ...(onToolsChanged ? { onToolsChanged } : {}) })
       } catch (error) {
         if (signal.aborted || attempt >= MCP_CONNECT_RETRY_MS.length) throw error
         await sleep(MCP_CONNECT_RETRY_MS[attempt], signal)
@@ -633,14 +634,14 @@ export class Runner {
    * a call). When that connection can't be made, the step's calls to them were never sent and say so; the next step
    * connects again.
    */
-  private laterStepTools(mcp: McpConnector, token: string, specs: ToolSpec[], signal: AbortSignal): ToolSession & { prepare(name: string): void } {
+  private laterStepTools(mcp: McpConnector, token: string, specs: ToolSpec[], signal: AbortSignal, onToolsChanged: () => void): ToolSession & { prepare(name: string): void } {
     const names = new Set(specs.map((tool) => tool.name))
     // Ends a connection attempt still under way when the step is over.
     const closing = new AbortController()
     let connecting: Promise<ToolSession> | null = null
     const connect = () => {
       if (!connecting) {
-        connecting = this.connectTools(mcp, token, AbortSignal.any([signal, closing.signal]))
+        connecting = this.connectTools(mcp, token, AbortSignal.any([signal, closing.signal]), onToolsChanged)
         // Each call awaits it; a failure before any call does must not go unhandled.
         connecting.catch(() => undefined)
       }
@@ -1914,11 +1915,17 @@ export class Runner {
         // list the tools; later steps show the model that list and connect only for a call.
         let later: ReturnType<Runner["laterStepTools"]> | null = null
         if (needsTools && this.options.mcp && credentials.mcpToken) {
+          // The server said the person's tools changed (an app connected or removed, a policy changed) while a
+          // connection was open: the next step lists them again instead of showing the model the old list.
+          const token = credentials.mcpToken
+          const toolsChanged = () => {
+            if (lane.tools?.token === token) lane.tools = undefined
+          }
           if (lane.tools?.token === credentials.mcpToken) {
-            tools = later = this.laterStepTools(this.options.mcp, credentials.mcpToken, lane.tools.specs, signal)
+            tools = later = this.laterStepTools(this.options.mcp, credentials.mcpToken, lane.tools.specs, signal, toolsChanged)
           } else {
             try {
-              tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal)
+              tools = await this.connectTools(this.options.mcp, credentials.mcpToken, signal, toolsChanged)
             } catch (error) {
               if (signal.aborted) throw error
               return end("failed", "mcp_unavailable")

@@ -285,7 +285,7 @@ export type SharedPlugins = {
   ids: Set<string>
   /** Plugins a source maps into (their contents come from that source). */
   sourceMapped: Set<string>
-  /** Plugins the OpenWork Marketplace seeds into every organization. */
+  /** Plugins earlier Den builds seeded into the OpenWork Marketplace that are still live. */
   builtIn: Set<string>
 }
 

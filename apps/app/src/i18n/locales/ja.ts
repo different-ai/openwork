@@ -3,6 +3,14 @@
  */
 
 export default {
+  "artifact.office_empty": "このファイルには読み取れるテキストがありません。元のファイルは別のアプリで開いてください。",
+  "artifact.office_empty_slide": "このスライドには読み取れるテキストがありません。",
+  "artifact.office_loading": "テキストの概要を読み込み中",
+  "artifact.office_slide": "スライド {number}",
+  "artifact.office_text_only": "テキストの概要のみです。レイアウト、画像、色は表示されません。",
+  "artifact.office_too_large": "ファイルが大きすぎてプレビューできません。全体を見るには別のアプリで開いてください。",
+  "artifact.office_truncated": "プレビューの上限に達したため、一部のテキストは表示されていません。",
+  "artifact.office_unreadable": "ファイルを読み取れませんでした。別のアプリで開いてみてください。",
   "app.error_audit_load": "監査ログの読み込みに失敗しました。",
   "app.error_connect_first": "ランタイム変更を適用する前にこのワークスペースに接続してください。",
   "app.error_request_failed": "リクエストに失敗しました",

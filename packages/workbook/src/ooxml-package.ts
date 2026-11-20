@@ -24,6 +24,8 @@ const MAX_TOTAL_UNCOMPRESSED_BYTES = 10 * 1024 * 1024;
 export const MAX_ENTRY_UNCOMPRESSED_BYTES = 2 * 1024 * 1024;
 const MAX_ZIP_COMPRESSION_RATIO = 100;
 
+export class OfficeSizeLimitError extends Error {}
+
 export type ZipEntry = {
   name: string;
   flags: number;
@@ -84,7 +86,7 @@ async function readStreamBounded(stream: ReadableStream<Uint8Array>, limit: numb
       total += value.byteLength;
       if (total > limit) {
         await reader.cancel();
-        throw new Error(`ZIP entry ${label} inflated beyond its declared size.`);
+        throw new OfficeSizeLimitError(`ZIP entry ${label} inflated beyond its declared size.`);
       }
       chunks.push(value);
     }
@@ -145,7 +147,7 @@ function localSizeMatches(localFlags: number, localSize: number, centralSize: nu
 }
 
 export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
-  if (bytes.byteLength > MAX_COMPRESSED_BYTES) throw new Error("ZIP input exceeds compressed byte limit.");
+  if (bytes.byteLength > MAX_COMPRESSED_BYTES) throw new OfficeSizeLimitError("ZIP input exceeds compressed byte limit.");
   const view = dataView(bytes);
   const eocd = findEndOfCentralDirectory(bytes);
   const disk = view.getUint16(eocd + 4, true);
@@ -157,7 +159,7 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
   const centralEnd = centralOffset + centralSize;
   if (disk !== 0 || centralDisk !== 0 || countOnDisk !== count) throw new Error("Multi-disk ZIP archives are not supported.");
   if (count === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) throw new Error("ZIP64 archives are not supported.");
-  if (count > MAX_ZIP_ENTRIES) throw new Error(`ZIP entry count ${count} exceeds limit ${MAX_ZIP_ENTRIES}.`);
+  if (count > MAX_ZIP_ENTRIES) throw new OfficeSizeLimitError(`ZIP entry count ${count} exceeds limit ${MAX_ZIP_ENTRIES}.`);
   if (centralOffset + centralSize > bytes.byteLength) throw new Error("ZIP central directory is out of bounds.");
   if (centralEnd > eocd) throw new Error("ZIP central directory overlaps the end-of-central-directory record.");
 
@@ -179,11 +181,11 @@ export function listZipEntries(bytes: Uint8Array): ZipEntry[] {
     const name = utf8Text(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
     rejectUnsafeZipFlags(flags, name);
     if (method !== ZIP_STORED && method !== ZIP_DEFLATE) throw new Error(`ZIP entry ${name} uses unsupported compression method ${method}.`);
-    if (uncompressedSize > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new Error(`ZIP entry ${name} exceeds per-entry uncompressed limit.`);
+    if (uncompressedSize > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError(`ZIP entry ${name} exceeds per-entry uncompressed limit.`);
     if (uncompressedSize > 0 && compressedSize === 0) throw new Error(`ZIP entry ${name} has an invalid compression ratio.`);
-    if (compressedSize > 0 && uncompressedSize / compressedSize > MAX_ZIP_COMPRESSION_RATIO) throw new Error(`ZIP entry ${name} exceeds compression ratio limit.`);
+    if (compressedSize > 0 && uncompressedSize / compressedSize > MAX_ZIP_COMPRESSION_RATIO) throw new OfficeSizeLimitError(`ZIP entry ${name} exceeds compression ratio limit.`);
     totalUncompressed += uncompressedSize;
-    if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error("ZIP archive exceeds total uncompressed limit.");
+    if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError("ZIP archive exceeds total uncompressed limit.");
     entries.push({ name, flags, method, compressedSize, uncompressedSize, localOffset });
     cursor += 46 + nameLength + extraLength + commentLength;
   }
@@ -250,16 +252,16 @@ function crc32(bytes: Uint8Array): number {
  * descriptors, no ZIP64, one disk, and entry sizes recorded in both headers.
  */
 export async function buildZip(files: ZipFileInput[]): Promise<Uint8Array> {
-  if (files.length > MAX_ZIP_ENTRIES) throw new Error(`ZIP entry count ${files.length} exceeds limit ${MAX_ZIP_ENTRIES}.`);
+  if (files.length > MAX_ZIP_ENTRIES) throw new OfficeSizeLimitError(`ZIP entry count ${files.length} exceeds limit ${MAX_ZIP_ENTRIES}.`);
   const localChunks: Uint8Array[] = [];
   const centralChunks: Uint8Array[] = [];
   let offset = 0;
   let totalUncompressed = 0;
 
   for (const file of files) {
-    if (file.data.byteLength > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new Error(`ZIP entry ${file.name} exceeds per-entry uncompressed limit.`);
+    if (file.data.byteLength > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError(`ZIP entry ${file.name} exceeds per-entry uncompressed limit.`);
     totalUncompressed += file.data.byteLength;
-    if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new Error("ZIP archive exceeds total uncompressed limit.");
+    if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError("ZIP archive exceeds total uncompressed limit.");
     const deflated = await deflateRaw(file.data);
     // Store an entry that would compress past the reader's ratio bound, so a
     // workbook this writer produces is always one this reader accepts.
@@ -310,7 +312,7 @@ export async function buildZip(files: ZipFileInput[]): Promise<Uint8Array> {
 }
 
 export function assertSafeOfficeXml(xml: string): void {
-  if (utf8ByteLength(xml) > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new Error("Office XML exceeds the parser input limit.");
+  if (utf8ByteLength(xml) > MAX_ENTRY_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError("Office XML exceeds the parser input limit.");
   const lower = xml.toLowerCase();
   if (lower.includes("<!doctype") || lower.includes("<!entity")) throw new Error("Office XML DTD and entity declarations are not supported.");
 }

@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { browserScript } from "@openwork/cdp";
 import { evalIn } from "@openwork/behaviors";
 import { freestyleEvidenceWeb } from "@openwork/env";
-import { devHead, ensureEvidenceSnapshot } from "../../packages/freestyle/src/evidence-builder.ts";
+import { devHead, ensureEvidenceSnapshot } from "../../packages/world-freestyle/src/evidence-builder.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const git = (args: string[], cwd = root) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

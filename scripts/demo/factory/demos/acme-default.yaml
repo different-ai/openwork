@@ -1,0 +1,57 @@
+id: acme-default
+title: '{{display_name}} — employee-first demo'
+start_state:
+  auth:
+    - {surface: desktop, persona: '{{employee}}', state: signed_out}
+    - {surface: admin, persona: '{{admin}}', state: signed_in}
+  retained:
+    chats: ['{{artifact_chat}}', Q4 pilot risk rehearsal fallback]
+    files: [Acme-retained-pilot-risk.xlsx, Acme-retained-leadership.pptx, Acme-retained-leadership.pdf]
+    artifacts: [Sample Salesforce pipeline]
+    automations:
+      - {name: '{{retained_automation}}', state: active, run: succeeded}
+  facts:
+    employee_signed_out: Employee IdP browser closed and signed out; no unsent launch draft.
+    sample_sources: Seeded sample mail and labelled read-only Slack and Salesforce stand-ins.
+    artifact_retained: Retained pipeline Artifact renders from the fictional fixture.
+    automation_retained: Approved weekly schedule has its durable completed manual run receipt.
+    workflow_retained: PENDING LIVE PROOF — prepare and verify the fictional Q4 leadership review Workflow before the optional beat.
+    workbot_ready: PENDING LIVE PROOF — prepare and verify an isolated direct Workbot fixture before the optional beat.
+    sample_slack_ready: PENDING LIVE PROOF — prepare and verify an isolated sample Slack thread before the optional beat.
+    cloud_run_retained: PENDING LIVE PROOF — prepare and verify a retained fictional Cloud Automation with a Cloud placement receipt before the optional beat.
+    admin_signed_in: Admin browser stays signed in to the isolated fixture, with no active spend-limit edits.
+beats:
+  - sign_in_sso
+  - quick_slack_question
+  - start_report
+  - open_retained_artifact
+  - show_automation_run
+  - report_spreadsheet
+  - deck_from_report
+  - create_automation_by_prompt
+optional:
+  - admin_teams_models_connectors
+  - show_workflow
+  - workbot_chat
+  - workbot_in_sample_slack
+  - cloud_automation_run
+desktops:
+  - id: rehearsal-linux
+    surfaces: [desktop, admin]
+  - id: optional-rehearsal
+    surfaces: [workbot, slack]
+variables:
+  display_name: Acme Robotics
+  employee: Dana Lee
+  admin: Morgan Reyes
+  industry: robotics
+  employee_email: dana.lee@acme-robotics.example.test
+  model: GPT-6.1 Sol
+  artifact_chat: Live sample pipeline dashboard
+  retained_automation: Acme sample pipeline and risk
+  new_automation: Weekly Q4 leadership pack
+  report_file: Acme-Q4-pilot-risk.xlsx
+  deck_file: Acme-Q4-leadership.pptx
+  deck_preview: Acme-Q4-leadership.pdf
+  scim_employee: Sample Provisioned Employee
+  scim_team: Sample Warehouse Operations

@@ -77,6 +77,12 @@ function useAutomationMutation<TInput, TResult>(mutationFn: (input: TInput) => P
   });
 }
 
+export function useRestoreAutomation() {
+  return useAutomationMutation(async (automationId: string) => automationDetailSchema.parse(
+    await payload(`/v1/automations/${encodeURIComponent(automationId)}/deactivate`, { method: "POST" }),
+  ));
+}
+
 export function useCancelAutomationRun() {
   return useAutomationMutation<string, ReturnType<typeof automationRunSchema.parse>>(
     async (runId) => {

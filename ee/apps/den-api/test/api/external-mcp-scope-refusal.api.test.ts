@@ -5,7 +5,7 @@ import {
   EnterpriseMcpClientError,
   createEnterpriseMcpClient,
   type EnterpriseMcpOAuthPersistence,
-} from "@openwork/enterprise-mcp-client"
+} from "@openwork/mcp-enterprise-client"
 import {
   ExternalMcpDiagnosticTracker,
   createExternalMcpDiagnosticFetch,

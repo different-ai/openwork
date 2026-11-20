@@ -1436,6 +1436,13 @@
       "when": 1795029329721,
       "tag": "0205_automation_share",
       "breakpoints": true
+    },
+    {
+      "idx": 206,
+      "version": "5",
+      "when": 1795139540657,
+      "tag": "0206_skill_file_blob",
+      "breakpoints": true
     }
   ]
 }

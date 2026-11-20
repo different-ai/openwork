@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { emailFirstStepWhenSignUpClosed, isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
-import { readLastSignInMethod, type LastSignInMethod } from "../_lib/last-sign-in";
+import { readLastSignInMethod, type LastSignInMethod } from "@openwork-ee/den-sso";
 import { getErrorMessage, getSocialCallbackUrl, requestJson, type AuthMode } from "../_lib/den-flow";
 import { signsInInPlace } from "../_lib/auth-resume";
 import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";

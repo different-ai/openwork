@@ -21,7 +21,7 @@ callback and metadata URL.
 
 ## OAuth runtime and callback compatibility
 
-Den uses `@openwork/enterprise-mcp-client` for discovery, authorization,
+Den uses `@openwork/mcp-enterprise-client` for discovery, authorization,
 refresh, tool discovery, and tool calls. There is no deployment or workspace
 runtime switch.
 

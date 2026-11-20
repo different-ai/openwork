@@ -45,7 +45,7 @@ import { scoreText, tokenize, workflowSearchBoost } from "./search.js"
 import { workflowRunNeedsLiveRuntime } from "./workflow-live-inference.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
 import type { CapabilityMatch } from "./search.js"
-import { skillFilesFromPayload, type SkillFile } from "../skill-files.js"
+import { skillFilesFromPayload, type SkillFileEntry } from "../skill-files.js"
 
 import { buildMarketplaceCapabilityName, MARKETPLACE_CAPABILITY_PREFIX } from "./marketplace-capability-name.js"
 
@@ -813,7 +813,7 @@ export async function listAccessibleMarketplaceSkillDescriptors(input: {
 
 /** Authorized SKILL.md source per marketplace capability, or why it is withheld. */
 export type MarketplaceSkillSource =
-  | { content: string; provenance: string; files: SkillFile[] }
+  | { content: string; provenance: string; files: SkillFileEntry[] }
   | { blocked: { status: string; message: string; action: unknown } }
 
 /**
@@ -882,7 +882,7 @@ export async function listAccessibleMarketplaceSkillSources(input: {
  * The supporting files of one skill. It checks no access: call it only for a
  * skill executeMarketplaceCapability has just served to this member.
  */
-export async function readMarketplaceSkillFiles(input: { configObjectId: string; organizationId: string }): Promise<SkillFile[]> {
+export async function readMarketplaceSkillFiles(input: { configObjectId: string; organizationId: string }): Promise<SkillFileEntry[]> {
   const version = await latestVersion(
     normalizeDenTypeId("configObject", input.configObjectId),
     normalizeDenTypeId("organization", input.organizationId),
@@ -1445,7 +1445,6 @@ async function latestVersionsForReadiness(organizationId: OrganizationId, config
 }
 
 export async function resolveMarketplacePluginCloudReadiness(input: {
-  desktopManifestPluginIds?: PluginId[]
   member: McpMemberIdentity
   organizationId: OrganizationId
   pluginIds: PluginId[]
@@ -1474,14 +1473,13 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
 
   const objectsByPluginId = groupReadinessObjects(rows)
   const latestVersions = await latestVersionsForReadiness(input.organizationId, rows.map((row) => row.id))
-  const desktopManifestPluginIds = new Set(input.desktopManifestPluginIds ?? [])
 
   const pending: Array<{ dependencies: MarketplaceMcpDependency[]; hasInstructional: boolean; pluginId: PluginId; requiredDependencies: MarketplaceMcpDependency[] }> = []
   for (const pluginId of pluginIds) {
     const objects = objectsByPluginId.get(pluginId) ?? []
     if (objects.length === 0) {
       readiness.set(pluginId, {
-        state: desktopManifestPluginIds.has(pluginId) ? "desktop_only" : "not_synced",
+        state: "not_synced",
         hasInstructional: false,
         connections: [],
       })
