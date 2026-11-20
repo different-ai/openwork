@@ -425,6 +425,8 @@ export function gatewayRequestScope(
     : GATEWAY_DEFAULT_USAGE_SCOPE
 }
 export const GATEWAY_USAGE_LIMIT_ERROR_CODE = "openwork_gateway_usage_limit_exceeded"
+/** Every Gateway usage-limit message starts with this, with or without a provider name. */
+export const GATEWAY_USAGE_LIMIT_MESSAGE = "You have reached your AI Gateway usage limit"
 export const GATEWAY_USAGE_ACCOUNTING_ERROR_CODE = "openwork_gateway_accounting_unavailable"
 export function hasGatewayUsageLimitHttpMarker(
   response: Pick<Response, "status" | "headers">,
@@ -462,8 +464,8 @@ export function gatewayUsageLimitResponse(
         code: GATEWAY_USAGE_LIMIT_ERROR_CODE,
         source: "openwork_gateway",
         message: provider
-          ? `You have reached your AI Gateway usage limit for ${provider.name}. Models from another provider may still be available.`
-          : "You have reached your AI Gateway usage limit.",
+          ? `${GATEWAY_USAGE_LIMIT_MESSAGE} for ${provider.name}. Models from another provider may still be available.`
+          : `${GATEWAY_USAGE_LIMIT_MESSAGE}.`,
         details: { exhaustedBuckets, retryAt, ...(provider ? { provider } : {}) },
       },
     },

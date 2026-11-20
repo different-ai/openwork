@@ -1856,11 +1856,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const gatewayNotice = gatewayUsageNoticeState({ gatewaySelected: gatewayUsage.active, status: gatewayScope?.status });
   const hideGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayScope?.status,
-    errorKey: usageError?.message.id ?? null, evidence: latestUsageEvidence, rateLimited: usageError?.presentation.kind === "rate-limited",
+    errorKey: usageError?.message.id ?? null, evidence: latestUsageEvidence, rateLimited: usageError?.presentation.kind === "rate-limited" || usageError?.presentation.kind === "gateway-usage-limit",
   });
   const hideDirectGatewayError = useGatewayUsageErrorHandled({
     scopeKey: gatewayUsage.scopeKey, sessionOwner, gatewaySelected: gatewayUsage.active, status: gatewayScope?.status,
-    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null, rateLimited: error?.presentation?.kind === "rate-limited",
+    errorKey: error?.message ?? null, evidence: error?.presentation?.gatewayUsage ?? null, rateLimited: error?.presentation?.kind === "rate-limited" || error?.presentation?.kind === "gateway-usage-limit",
   });
   const visibleMessages = useMemo(() => {
     if (!hideGatewayError) return renderedMessages;
@@ -1871,7 +1871,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (message === usageError?.message) return false;
       if (index < lastUser) return true;
       const presentation = sessionErrorPresentationFromUIMessage(message);
-      return !presentation || (presentation.kind !== "rate-limited" && !presentation.gatewayUsage);
+      return !presentation || (presentation.kind !== "rate-limited" && presentation.kind !== "gateway-usage-limit" && !presentation.gatewayUsage);
     });
   }, [hideGatewayError, renderedMessages, usageError]);
   const renderedMessagesRef = useRef(renderedMessages);
