@@ -1,0 +1,25 @@
+---
+title: "Plan OpenWork on Railway"
+sidebarTitle: "Railway"
+description: "Plan OpenWork on Railway using container services, MySQL, private networking, and durable storage where needed."
+---
+
+Railway can run services from container images and provides a MySQL deployment option. You can use those primitives to plan an OpenWork control plane without Kubernetes. This is planning guidance; OpenWork does not provide a tested Railway template.
+
+## Deployment approach
+
+Map Den web, Den API, and the database to separate services. Railway's [Compose translation guide](https://docs.railway.com/guides/docker-compose) describes the platform mapping; use OpenWork's [common requirements](/self-host/platforms/overview#common-requirements) for the service configuration. The evaluation Compose file's development settings should not become production defaults.
+
+## What you need
+
+- Pinned images, service target ports, HTTPS web/API domains, and secrets.
+- A [MySQL-compatible database](https://docs.railway.com/databases/mysql) with private connectivity, durable data, verified TLS in production, and a restore plan.
+- A migration task completed before exposing the API.
+- Health checks and a service lifecycle that keeps required background tasks running.
+- Separate worker provisioning and persistent workspace/data storage for cloud workspaces.
+
+Review volume and replica behavior before scaling stateful services. Choosing a container service does not configure an OpenWork worker provisioner.
+
+## Next step
+
+Review [licensing](/start-here/pricing-and-licensing). For help with service configuration or a production rollout, [ask us about Railway deployment](mailto:sales@openworklabs.com?subject=OpenWork%20deployment%20on%20Railway&body=Platform%3A%20Railway%0ADocs%3A%20https%3A%2F%2Fopenworklabs.com%2Fdocs%2Fself-host%2Fplatforms%2Frailway%0ATeam%20size%3A%20%0ADeployment%20constraints%3A%20).
