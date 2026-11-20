@@ -249,6 +249,11 @@ export function PluginEditorScreen() {
     const draft = loadPluginImportDraft();
     if (!draft) return;
     setImportDraft(draft);
+    // A GitHub import starts private and unpublished: what it brings in comes
+    // from outside the organization, so the creator chooses who sees it.
+    setShareOrgWide(false);
+    setMarketplaceTouched(true);
+    setMarketplaceId("");
     setName((current) => current || pluginImportSuggestedName(draft.preview));
   }, []);
 

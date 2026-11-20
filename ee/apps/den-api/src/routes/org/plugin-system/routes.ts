@@ -1057,7 +1057,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["GitHub"],
       summary: "Create a plugin from GitHub",
-      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants, and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
+      description: "Creates one plugin from selected skills and remote MCP servers in a public GitHub plugin URL, applies the requested access grants (private to the creator when access is omitted), and optionally publishes it into an organization marketplace. Declared and known-server authentication requirements take precedence over the request-wide auth fallback.",
       responses: {
         200: jsonResponse("GitHub plugin MCPs imported successfully.", githubPluginMcpImportResponseSchema),
         400: jsonResponse("The GitHub plugin MCP import request was invalid.", invalidRequestSchema),

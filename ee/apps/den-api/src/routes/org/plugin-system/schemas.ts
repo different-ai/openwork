@@ -462,19 +462,13 @@ export const githubDiscoveryApplySchema = z.object({
   selectedKeys: z.array(z.string().trim().min(1).max(255)).max(200),
 })
 
+// Like every other create path, an import is private to its creator unless the
+// request names a wider audience.
 export const githubPluginMcpImportAccessSchema = z.object({
-  orgWide: z.boolean().optional().default(true),
+  orgWide: z.boolean().optional().default(false).describe("Share with everyone in the organization. Requires the org-wide sharing permission."),
   memberIds: z.array(memberIdSchema).max(200).optional().default([]),
   teamIds: z.array(teamIdSchema).max(200).optional().default([]),
-}).superRefine((value, ctx) => {
-  if (!value.orgWide && value.memberIds.length === 0 && value.teamIds.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Provide orgWide=true or at least one member/team grant.",
-      path: ["orgWide"],
-    })
-  }
-})
+}).describe("Who can use the imported plugin, besides its creator. Omitted or empty keeps it private to the creator.")
 
 export const githubPluginMcpImportPreviewSchema = z.object({
   githubUrl: z.string().trim().url().max(2048),
