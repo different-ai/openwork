@@ -118,6 +118,14 @@ jobs:
           scripts/ci/check-codeql-results.test.mjs
           scripts/den-db-migrate-target.test.mjs
           scripts/check.test.mjs
+      - name: Check browser secret isolation, approval and redaction
+        run: >-
+          node --test
+          packages/computer-use/browser-secrets.test.mjs
+          packages/computer-use/browser-task-secrets.test.mjs
+          packages/computer-use/browser-secrets.review.test.mjs
+          packages/computer-use/computer-control-secret-approval.test.mjs
+          apps/desktop/electron/session-runner-computer-requests.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm
@@ -155,6 +163,11 @@ jobs:
           else
             node scripts/check-code-habits.mjs
           fi
+      # Workspace folders match their package names (scripts/check-package-names.mjs).
+      - name: Check workspace package names
+        run: |
+          node --test scripts/check-package-names.test.mjs
+          node scripts/check-package-names.mjs
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
       - name: Test the feature resolver

@@ -18,4 +18,4 @@ OpenWork Cloud Automation available, and the `automationTargetAllowed` (Desktop/
 Cloud) toggle stays on. Den still reads each owner's calendar at most every few
 minutes only for owners with an active calendar-triggered Automation.
 
-See `reports/ga-feature-retirement.md` for the retirement record.
+See `docs/reports/ga-feature-retirement.md` for the retirement record.

@@ -7,18 +7,7 @@
  */
 import { randomBytes } from "node:crypto"
 import { z } from "zod"
-import {
-  AwsSsoError,
-  createAwsSsoTokenFromDevice,
-  getAwsCallerIdentity,
-  getAwsSsoRoleCredentials,
-  logoutAwsSso,
-  registerAwsSsoClient,
-  startAwsSsoDeviceAuthorization,
-  type AwsSsoClient,
-  type FetchLike,
-} from "@openwork-ee/utils/aws-identity-center"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { AwsSsoError, createAwsSsoTokenFromDevice, getAwsCallerIdentity, getAwsSsoRoleCredentials, logoutAwsSso, registerAwsSsoClient, startAwsSsoDeviceAuthorization, type AwsSsoClient, type FetchLike, createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import type { GatewayAwsSsoSettings, InferenceAwsSsoSecret } from "@openwork/types/den/inference"
 
 const CLIENT_NAME = "OpenWork AI Gateway"

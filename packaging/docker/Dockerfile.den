@@ -23,7 +23,7 @@ COPY packages/free-auto/package.json /app/packages/free-auto/package.json
 COPY packages/automations/package.json /app/packages/automations/package.json
 COPY packages/codemode/package.json /app/packages/codemode/package.json
 COPY packages/email/package.json /app/packages/email/package.json
-COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
+COPY packages/mcp-enterprise-client/package.json /app/packages/mcp-enterprise-client/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
@@ -43,6 +43,9 @@ COPY evals/packages/cdp/package.json /app/evals/packages/cdp/package.json
 COPY evals/packages/labs/package.json /app/evals/packages/labs/package.json
 COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
+COPY ee/packages/gateway-catalog/package.json /app/ee/packages/gateway-catalog/package.json
+COPY ee/packages/sso/package.json /app/ee/packages/sso/package.json
+COPY ee/packages/gateway-upstreams/package.json /app/ee/packages/gateway-upstreams/package.json
 COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
 COPY packages/sandbox/package.json /app/packages/sandbox/package.json
@@ -64,7 +67,7 @@ COPY packages/free-auto /app/packages/free-auto
 COPY packages/automations /app/packages/automations
 COPY packages/codemode /app/packages/codemode
 COPY packages/email /app/packages/email
-COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
+COPY packages/mcp-enterprise-client /app/packages/mcp-enterprise-client
 COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads
@@ -74,6 +77,9 @@ COPY packages/paths /app/packages/paths
 COPY packages/browser-tabs /app/packages/browser-tabs
 COPY packages/computer-use /app/packages/computer-use
 COPY ee/packages/utils /app/ee/packages/utils
+COPY ee/packages/gateway-catalog /app/ee/packages/gateway-catalog
+COPY ee/packages/sso /app/ee/packages/sso
+COPY ee/packages/gateway-upstreams /app/ee/packages/gateway-upstreams
 COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
 COPY packages/sandbox /app/packages/sandbox

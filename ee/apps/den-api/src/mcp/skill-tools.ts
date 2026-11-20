@@ -48,6 +48,7 @@ export const GET_SKILL_OUTPUT_SCHEMA = remoteSkillDescriptorSchema.extend({
     path: z.string().describe("Path relative to the skill's folder; pass it as file to read it."),
     size: z.number().int().nonnegative().describe("Size in bytes."),
   })).optional().describe("The skill's supporting files (references, scripts, templates), when it has any."),
+  filesNote: z.string().optional().describe("How to read the supporting files: the note the text response ends with, for clients that show structured content instead of text."),
   file: z.object({
     path: z.string().describe("The supporting file that content holds."),
     mimeType: z.string().describe("Its media type."),
@@ -139,9 +140,6 @@ function jsonText(value: unknown): CallToolResult["content"] {
 export function supportingFilesNote(skill: RemoteSkillDescriptor, files: readonly { path: string }[]): string {
   if (files.length === 0) return ""
   return [
-    "",
-    "",
-    "---",
     `Supporting files of this skill. Paths in the skill are relative to its folder. Read one with get_skill ${JSON.stringify({ name: skill.capability, file: "<path>" })}:`,
     ...files.map((entry) => `- ${entry.path}`),
   ].join("\n")
@@ -250,9 +248,12 @@ export function registerAgentSkillCatalogTools(input: {
         ...describeRemoteSkill(skill),
         ...(source.provenance ? { provenance: source.provenance } : {}),
         content: standardSkillMarkdown(skill, source.content),
-        ...(files.length > 0 ? { files } : {}),
+        // Many clients show the model structured content instead of the text,
+        // so the note rides here too; content stays the exact SKILL.md.
+        ...(files.length > 0 ? { files, filesNote: supportingFilesNote(skill, files) } : {}),
       }
-      return { content: [{ type: "text", text: `${payload.content}${supportingFilesNote(skill, files)}` }], structuredContent: payload }
+      const text = payload.filesNote ? `${payload.content}\n\n---\n${payload.filesNote}` : payload.content
+      return { content: [{ type: "text", text }], structuredContent: payload }
     },
   )
 }

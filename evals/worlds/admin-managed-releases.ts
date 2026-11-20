@@ -20,6 +20,8 @@ export async function adminManagedReleasesWorld(seed: Seed, { place }: { place: 
   const den = await seed.den({ web: true, env: {
     DEN_DEPLOYMENT: "cloud", DB_MODE: "mysql", DATABASE_REDIS_URL: "",
     NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(preload)}`,
+    // This proof switches to single-administrator approval, which only the operator can allow.
+    DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL: "true",
     DEN_MANAGED_DEPLOYMENT_AWS_RELEASE: JSON.stringify({ version: "1.2.2", templateUrl: `${source}1.2.2/cloudformation.json?versionId=old-template`, bundleUrl: `${source}1.2.2/bundle.tar.gz?versionId=old-bundle`, bundleSha256: "b".repeat(64) }),
     RESEND_API_KEY: "", LOOPS_API_KEY: "", SENTRY_DSN: "", NEXT_PUBLIC_SENTRY_DSN: "",
     OTEL_SDK_DISABLED: "true", NEXT_TELEMETRY_DISABLED: "1",

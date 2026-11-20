@@ -76,7 +76,7 @@ overrides:
   "@xmldom/xmldom@>=0.7.0 <=0.8.14": 0.8.15
   "@grpc/grpc-js@<1.14.5": 1.14.5
   "@hono/node-server@<2.1.6": 2.1.6
-  "@modelcontextprotocol/sdk@>=1.12.0 <1.32.1": 1.32.1
+  "@modelcontextprotocol/sdk@>=1.12.0 <1.32.2": 1.32.2
   "axios@<1.20.0": 1.20.0
   baseline-browser-mapping: 2.11.5
   "body-parser@>=2.0.0 <2.4.0": 2.4.0

@@ -491,6 +491,17 @@ export function buildGithubRepoDiscovery(input: {
         }
       : { description: null, name: null, owner: null, version: null }
 
+    // Several plugins may share one folder (often the repository root) and
+    // differ only in the skills each declares. Their folder alone would give
+    // them the same key, and every per-plugin record is stored by key, so
+    // those plugins also carry their name. A plugin alone in its folder keeps
+    // the folder-only key that earlier imports and selections recorded.
+    const pluginsPerRoot = new Map<string, number>()
+    for (const entry of marketplaceEntries) {
+      const root = localMarketplaceRoot(entry)
+      if (root !== null) pluginsPerRoot.set(root, (pluginsPerRoot.get(root) ?? 0) + 1)
+    }
+
     const discoveredPlugins = marketplaceEntries.map((entry, index) => {
       const rootPath = localMarketplaceRoot(entry)
       if (rootPath === null) {
@@ -518,7 +529,9 @@ export function buildGithubRepoDiscovery(input: {
         description: asString(entry.description),
         displayName: asString(entry.name),
         fileTextByPath: input.fileTextByPath,
-        key: `marketplace:${rootPath}`,
+        key: (pluginsPerRoot.get(rootPath) ?? 0) > 1
+          ? `marketplace:${rootPath}:${asString(entry.name) ?? index}`
+          : `marketplace:${rootPath}`,
         knownPaths,
         manifestPath: joinPath(rootPath, ".claude-plugin/plugin.json"),
         rootPath,

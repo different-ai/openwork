@@ -1,5 +1,5 @@
-import { discoverConnectionRequirements } from "@openwork/enterprise-mcp-client"
-import type { EnterpriseMcpFetch } from "@openwork/enterprise-mcp-client"
+import { discoverConnectionRequirements } from "@openwork/mcp-enterprise-client"
+import type { EnterpriseMcpFetch } from "@openwork/mcp-enterprise-client"
 
 export const CUSTOM_OAUTH_ISSUER_REVIEW_MESSAGE = "The server's published sign-in configuration could not be verified because its issuer does not match. Ask the server owner to fix it, or have an administrator review and save both manual sign-in addresses with their own OAuth app credentials."
 

@@ -1,4 +1,4 @@
-import { discoverConnectionRequirements } from "@openwork/enterprise-mcp-client"
+import { discoverConnectionRequirements } from "@openwork/mcp-enterprise-client"
 import type { McpRegistrationOutcome } from "@openwork/types/den/mcp-registration"
 import { ALL_EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "../capability-sources/external-mcp-presets.js"
 import { externalMcpSharedCallbackUrl } from "../capability-sources/external-mcp-oauth-contract.js"

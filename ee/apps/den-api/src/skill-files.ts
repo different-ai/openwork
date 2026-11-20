@@ -10,10 +10,17 @@ import { createHash } from "node:crypto"
  */
 export type SkillFile = { path: string; text: string }
 
-// Together they keep a version's payload under the 1 MiB the config object API accepts.
-export const SKILL_FILES_MAX_COUNT = 200
-export const SKILL_FILE_MAX_BYTES = 256 * 1024
-export const SKILL_FILES_MAX_TOTAL_BYTES = 768 * 1024
+const MiB = 1024 * 1024
+export const SKILL_FILES_MAX_COUNT = 500
+// About 250,000 tokens: more than an agent can read back in one get_skill result.
+export const SKILL_FILE_MAX_BYTES = 1 * MiB
+// Every skill listing loads and hashes each listed skill's files (about 13 ms
+// and 11 MB from the database for a full 8 MiB skill), so stay well below what
+// one version can store.
+export const SKILL_FILES_MAX_TOTAL_BYTES = 8 * MiB
+// The files as stored, after JSON escaping: one encrypted MEDIUMTEXT column
+// holds about 12.5 MB of plaintext, and the rest of the payload needs room too.
+export const SKILL_FILES_MAX_STORED_BYTES = 11 * MiB
 const SKILL_FILE_PATH_MAX_CHARS = 255
 
 /** Why a path cannot be a supporting file, or null when it can. */
@@ -58,15 +65,54 @@ export function checkSkillFiles(value: unknown): { files: SkillFile[] } | { prob
     if (!isSkillFileText(entry.text)) return { problem: { path, message: "Supporting files must be UTF-8 text." } }
     const bytes = Buffer.byteLength(entry.text, "utf8")
     if (bytes > SKILL_FILE_MAX_BYTES) {
-      return { problem: { path, message: `A supporting file can be at most ${SKILL_FILE_MAX_BYTES} bytes.` } }
+      return { problem: { path, message: `A supporting file can be at most ${SKILL_FILE_MAX_BYTES / MiB} MiB.` } }
     }
     total += bytes
     if (total > SKILL_FILES_MAX_TOTAL_BYTES) {
-      return { problem: { path, message: `A skill's supporting files can total at most ${SKILL_FILES_MAX_TOTAL_BYTES} bytes.` } }
+      return { problem: { path, message: `A skill's supporting files can total at most ${SKILL_FILES_MAX_TOTAL_BYTES / MiB} MiB.` } }
     }
     files.push({ path, text: entry.text })
   }
+  if (Buffer.byteLength(JSON.stringify(files), "utf8") > SKILL_FILES_MAX_STORED_BYTES) {
+    return { problem: { path: null, message: `A skill's supporting files are too large to store once encoded; keep them under ${SKILL_FILES_MAX_TOTAL_BYTES / MiB} MiB of mostly plain text.` } }
+  }
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)) }
+}
+
+/**
+ * Which of a skill folder's files fit, judged by path and size alone, before
+ * anything is downloaded. Files are taken in path order; the rest are named
+ * in `leftOut` so an import can say what it did not bring.
+ */
+export function selectSkillFilesBySize(entries: readonly { path: string; size: number | null }[]): { included: string[]; leftOut: string[] } {
+  const included: string[] = []
+  const leftOut: string[] = []
+  let budget = SKILL_FILES_MAX_TOTAL_BYTES
+  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
+    const fits = included.length < SKILL_FILES_MAX_COUNT
+      && entry.size !== null
+      && entry.size <= SKILL_FILE_MAX_BYTES
+      && entry.size <= budget
+      && skillFilePathProblem(entry.path) === null
+    if (!fits || entry.size === null) {
+      leftOut.push(entry.path)
+      continue
+    }
+    budget -= entry.size
+    included.push(entry.path)
+  }
+  return { included, leftOut }
+}
+
+function formatBytes(bytes: number): string {
+  return bytes >= 1024 * 1024 && bytes % (1024 * 1024) === 0 ? `${bytes / (1024 * 1024)} MB` : `${Math.round(bytes / 1024)} KB`
+}
+
+/** One sentence saying how many of a skill's files an import leaves out, and the limits behind it. */
+export function skillFilesLeftOutMessage(input: { skillName: string; leftOut: number; total: number; atImport?: boolean }): string {
+  const verb = input.atImport ? (input.leftOut === 1 ? "was" : "were") : "will be"
+  return `${input.skillName}: ${input.leftOut} of ${input.total} supporting file${input.total === 1 ? "" : "s"} ${verb} left out. `
+    + `A skill keeps text files only, up to ${formatBytes(SKILL_FILE_MAX_BYTES)} each, ${formatBytes(SKILL_FILES_MAX_TOTAL_BYTES)} and ${SKILL_FILES_MAX_COUNT} files in total.`
 }
 
 /** The supporting files stored on a skill version; anything malformed reads as none. */

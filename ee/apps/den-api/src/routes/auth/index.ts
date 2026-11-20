@@ -22,7 +22,7 @@ import { db } from "../../db.js"
 import { withDesktopDeviceClaimRequest } from "../../desktop-device-login.js"
 import { env } from "../../env.js"
 import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
-import { resolveLoginSsoRouting } from "../../sso-routing.js"
+import { resolveLoginSsoRouting } from "@openwork-ee/sso"
 import {
   authorizeInitialAdminBootstrapSignup,
   completeInitialAdminBootstrapSignup,
@@ -59,6 +59,15 @@ import { withAgentAuthMetadata } from "../../agent-auth-metadata.js"
 import { registerDeviceAuthRoutes } from "./device.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerRawRoleRefusalRoutes } from "./raw-role-refusals.js"
+import {
+  getBetterAuthProxyPath,
+  isBetterAuthEmailOtpSignInRequest,
+  isBetterAuthEmailPasswordRequest,
+  isBetterAuthEmailSignupRequest,
+  isBetterAuthOrganizationCreationRequest,
+  isBetterAuthSetActiveOrganizationRequest,
+  isBetterAuthSignOutRequest,
+} from "./request-matchers.js"
 import { registerScimAuthRoutes } from "./scim.js"
 
 const logger = appLogger.child({ component: "auth" })
@@ -262,41 +271,6 @@ async function getInitialAdminBootstrapGrantFromRequest(request: Request) {
   }
 }
 
-export function getBetterAuthProxyPath(pathname: string) {
-  const prefix = "/api/auth"
-  if (!pathname.startsWith(prefix)) {
-    return pathname
-  }
-
-  return pathname.slice(prefix.length) || "/"
-}
-
-export function isBetterAuthOrganizationCreationRequest(request: Request) {
-  const url = new URL(request.url)
-  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/organization/create"
-}
-
-export function isBetterAuthSetActiveOrganizationRequest(request: Request) {
-  const url = new URL(request.url)
-  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/organization/set-active"
-}
-
-export function isBetterAuthEmailPasswordRequest(request: Request) {
-  const url = new URL(request.url)
-  const path = getBetterAuthProxyPath(url.pathname)
-  return request.method.toUpperCase() === "POST" && (path === "/sign-in/email" || path === "/sign-up/email")
-}
-
-export function isBetterAuthEmailSignupRequest(request: Request) {
-  const url = new URL(request.url)
-  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-up/email"
-}
-
-export function isBetterAuthSignOutRequest(request: Request) {
-  const url = new URL(request.url)
-  return request.method.toUpperCase() === "POST" && getBetterAuthProxyPath(url.pathname) === "/sign-out"
-}
-
 export function canSetActiveOrganizationInSingleOrgMode(input: {
   activeOrganizationId: string | null
   singleOrganizationSlug: string
@@ -355,7 +329,7 @@ async function getSingleOrgAuthGuardResponse(request: Request, context: Context,
     }
   }
 
-  if (isBetterAuthEmailPasswordRequest(request)) {
+  if (isBetterAuthEmailPasswordRequest(request) || isBetterAuthEmailOtpSignInRequest(request)) {
     const status = await getSingletonSsoStatus()
     if (status.configured) {
       return singleOrgSsoRequiredResponse(status.signInPath)

@@ -45,7 +45,7 @@ function reloadedTurn(): UIMessage {
   return message
 }
 
-async function render(messages: UIMessage[], onEditUserMessage: (...args: unknown[]) => void) {
+async function render(messages: UIMessage[], onEditUserMessage: (...args: unknown[]) => void, status: "ready" | "streaming" = "ready") {
   const container = document.createElement("div")
   document.body.append(container)
   const root = createRoot(container)
@@ -58,7 +58,7 @@ async function render(messages: UIMessage[], onEditUserMessage: (...args: unknow
       dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
       onForkAtMessage: () => {}, onEditUserMessage,
       onMcpReconnect: async () => {}, onMcpReopenAuthorization: async () => {},
-      children: createElement(MessageList, { messages, status: "ready", activityStatus: "idle" }),
+      children: createElement(MessageList, { messages, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
     }),
   }) }) })))
   return container
@@ -84,4 +84,13 @@ test("Edit restores the chips as composer tokens and mentions", async () => {
   expect(calls[0]?.[0]).toBe("msg_1")
   expect(calls[0]?.[1]).toBe("[connect-skill meeting-analysis|Meeting analysis|OpenWork|skill:meeting-analysis] today's meeting@explore")
   expect(calls[0]?.[2]).toMatchObject({ mentions: { explore: "agent" } })
+})
+
+// Hiding the row while the run starts, then showing it again when the first
+// reply arrives, made the thread drop and come back on every send.
+test("a just-sent message keeps its action row while the reply starts", async () => {
+  const container = await render([reloadedTurn()], () => {}, "streaming")
+  const bubble = container.querySelector('[data-message-role="user"]')
+  const labels = [...(bubble?.querySelectorAll("button") ?? [])].map((button) => button.getAttribute("aria-label"))
+  expect(labels).toEqual(["Copy message", "Edit message", "Revert"])
 })

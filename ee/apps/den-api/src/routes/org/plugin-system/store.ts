@@ -82,14 +82,12 @@ import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
 import {
-  SKILL_FILE_MAX_BYTES,
-  SKILL_FILES_MAX_COUNT,
-  SKILL_FILES_MAX_TOTAL_BYTES,
   checkSkillFiles,
   isSkillFileText,
   sameSkillFiles,
-  skillFilePathProblem,
+  selectSkillFilesBySize,
   skillFilesFromPayload,
+  skillFilesLeftOutMessage,
   type SkillFile,
 } from "../../../skill-files.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
@@ -307,6 +305,8 @@ type GithubPluginSkillImportSkill = {
   description: string | null
   /** Text files beside SKILL.md, read only for the skills an import will store. */
   files?: SkillFile[]
+  /** Files in the skill's folder the import could not bring: not text, or past the size limits. */
+  filesLeftOut?: string[]
   name: string
   pluginKey: string
   pluginName: string
@@ -397,7 +397,7 @@ type GrantTarget = ConfigObjectGrantTarget | MarketplaceGrantTarget | PluginGran
 
 export class PluginArchRouteFailure extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 502,
+    readonly status: 400 | 404 | 409 | 413 | 502,
     readonly error: string,
     message: string,
     options?: ErrorOptions,
@@ -682,7 +682,7 @@ function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigOb
 
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-function deriveSkillProjection(value: ConfigObjectInput) {
+export function deriveSkillProjection(value: ConfigObjectInput) {
   const rawSourceText = normalizeOptionalString(value.rawSourceText)
   if (!rawSourceText) {
     throw new PluginArchRouteFailure(
@@ -5342,36 +5342,39 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-/**
- * The text files in a skill's folder besides SKILL.md, read from the repository.
- * Files that are too large, not text, or past the per-skill limits are left out.
- */
-async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<SkillFile[]> {
+/** The files in a skill's folder besides SKILL.md, as paths relative to that folder, with their sizes. */
+function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: GithubDiscoveryTreeEntry[] }) {
   if (!input.sourcePath.endsWith("/SKILL.md")) return []
   const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
-  const candidates: Array<{ discoveryPath: string; path: string }> = []
-  let budget = SKILL_FILES_MAX_TOTAL_BYTES
-  const entries = input.snapshot.treeEntries
+  return input.treeEntries
     .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
-    .sort((a, b) => a.path.localeCompare(b.path))
-  for (const entry of entries) {
-    if (candidates.length === SKILL_FILES_MAX_COUNT) break
-    const path = entry.path.slice(directory.length + 1)
-    if (entry.size === null || entry.size > SKILL_FILE_MAX_BYTES || entry.size > budget || skillFilePathProblem(path)) continue
-    budget -= entry.size
-    candidates.push({ discoveryPath: entry.path, path })
-  }
-  const texts = await mapPublicGithubConcurrently(candidates, (candidate) => getPublicGithubTextFile({
+    .map((entry) => ({ discoveryPath: entry.path, path: entry.path.slice(directory.length + 1), size: entry.size }))
+}
+
+/**
+ * The text files in a skill's folder besides SKILL.md, read from the repository,
+ * and the files left out: not text, or past the size limits.
+ */
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFile[]; leftOut: string[] }> {
+  const entries = githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries })
+  const selection = selectSkillFilesBySize(entries)
+  const discoveryPathByPath = new Map(entries.map((entry) => [entry.path, entry.discoveryPath]))
+  const texts = await mapPublicGithubConcurrently(selection.included, (path) => getPublicGithubTextFile({
     branch: input.snapshot.branch,
-    discoveryPath: candidate.discoveryPath,
+    discoveryPath: discoveryPathByPath.get(path) ?? path,
     snapshot: input.snapshot,
   }))
-  const files = candidates.flatMap((candidate, index) => {
+  const files: SkillFile[] = []
+  const leftOut = [...selection.leftOut]
+  for (const [index, path] of selection.included.entries()) {
     const text = texts[index]
-    return typeof text === "string" && isSkillFileText(text) ? [{ path: candidate.path, text }] : []
-  })
+    // Sizes are known before download; whether a file is text is not.
+    if (typeof text === "string" && isSkillFileText(text)) files.push({ path, text })
+    else leftOut.push(path)
+  }
   const checked = checkSkillFiles(files)
-  return "files" in checked ? checked.files : []
+  if ("files" in checked) return { files: checked.files, leftOut: leftOut.sort() }
+  return { files: [], leftOut: entries.map((entry) => entry.path).sort() }
 }
 
 async function computeGithubPluginMcpImportPlan(input: {
@@ -5430,9 +5433,19 @@ async function computeGithubPluginMcpImportPlan(input: {
   if (skillFilesFor) {
     for (const skill of skills) {
       if (!skill.supported || (skillFilesFor !== "all" && !skillFilesFor.has(skill.skillKey))) continue
-      skill.files = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
+      const read = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
+      skill.files = read.files
+      skill.filesLeftOut = read.leftOut
     }
   }
+
+  // Say before the import which skills cannot bring all their files.
+  const skillFileWarnings = skills.flatMap((skill) => {
+    if (!skill.supported) return []
+    const entries = githubSkillFolderEntries({ sourcePath: skill.sourcePath, treeEntries: snapshot.treeEntries })
+    const leftOut = skill.filesLeftOut?.length ?? selectSkillFilesBySize(entries).leftOut.length
+    return leftOut > 0 ? [skillFilesLeftOutMessage({ skillName: skill.name, leftOut, total: entries.length })] : []
+  })
 
   // Import connects each server through hosted egress, which only accepts
   // public HTTPS URLs. Apply the same rule here so the preview never promises
@@ -5487,6 +5500,7 @@ async function computeGithubPluginMcpImportPlan(input: {
     warnings: [
       ...discovery.warnings,
       ...(snapshot.truncated ? ["GitHub truncated the repository tree; some MCP files may be missing."] : []),
+      ...skillFileWarnings,
     ],
   }
 }
@@ -6719,6 +6733,17 @@ export async function importGithubPluginMcps(input: {
 
   const skipped = consideredServers.flatMap((server) =>
     server.supported || !server.skippedReason ? [] : [{ mapsTo: server.mapsTo, name: server.name, reason: server.skippedReason, reuse: server.reuse }])
+  const skippedSkillFiles = supportedSkills.flatMap((skill) => {
+    const leftOut = skill.filesLeftOut ?? []
+    if (leftOut.length === 0) return []
+    return [{
+      count: leftOut.length,
+      message: skillFilesLeftOutMessage({ skillName: skill.name, leftOut: leftOut.length, total: leftOut.length + (skill.files?.length ?? 0), atImport: true }),
+      name: skill.name,
+      paths: leftOut.slice(0, 50),
+      sourcePath: skill.sourcePath,
+    }]
+  })
   const skippedSkills = consideredSkills.flatMap((skill) =>
     skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
 
@@ -6730,6 +6755,7 @@ export async function importGithubPluginMcps(input: {
     plugin: await getPluginDetail(input.context, plugin.id),
     removed,
     skipped,
+    skippedSkillFiles,
     skippedSkills,
     unchanged,
     updatedSkills,

@@ -9,7 +9,7 @@ import {
   SsoConnectionTable,
   SsoProviderTable,
 } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { ssoConnectionDisplayName, ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
@@ -19,7 +19,7 @@ import {
   readOrganizationSsoPolicy,
   type DomainSsoRequirement,
   type SignInSsoCandidate,
-} from "./sso-routing.js"
+} from "@openwork-ee/sso"
 
 /**
  * Den side of SSO routing: organization settings govern which sessions may
@@ -265,21 +265,21 @@ async function readSsoRequiredOrganizations(organizationIds: readonly string[]):
 }
 
 /** When this session proved each organization's SSO (the identity provider's authentication time). */
-async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date>> {
+async function readSessionSsoProofs(sessionId: DenTypeId<"session">): Promise<Map<string, Date>> {
   // primary: the rows are written by the SSO callback that created the session.
   const rows = await db.$primary
     .select({ organizationId: SessionSsoProofTable.organizationId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
     .from(SessionSsoProofTable)
-    .where(eq(SessionSsoProofTable.sessionId, normalizeDenTypeId("session", sessionId)))
+    .where(eq(SessionSsoProofTable.sessionId, sessionId))
   return new Map(rows.map((row) => [row.organizationId, row.authenticatedAt]))
 }
 
 /**
- * Organizations among `organizationIds` this session may not open until it
- * signs in through their SSO. A request without a session (an API key,
- * an MCP token) is checked where that credential was issued instead.
+ * Organizations among `organizationIds` this sign-in session may not open
+ * until it signs in through their SSO. A missing session ID on a sign-in flow
+ * has no proof. Agent and API key credentials do not call this gate on re-entry.
  */
-export async function findSsoBlockedOrganizations(input: { sessionId: string | null; organizationIds: readonly string[] }): Promise<Map<string, SsoAccessBlock>> {
+export async function findSsoBlockedOrganizations(input: { sessionId: DenTypeId<"session"> | null; organizationIds: readonly string[] }): Promise<Map<string, SsoAccessBlock>> {
   const required = await readSsoRequiredOrganizations(input.organizationIds)
   const result = new Map<string, SsoAccessBlock>()
   if (required.size === 0) return result
@@ -292,22 +292,21 @@ export async function findSsoBlockedOrganizations(input: { sessionId: string | n
 }
 
 /**
- * Whether this session may turn on "Require SSO" (or restrict the domain) for
- * the organization without losing access to it: the organization has no
- * enabled SSO on a verified domain yet (nothing is enforced), or the session
- * has signed in through it.
+ * Only a sign-in session may turn on "Require SSO" (or restrict the domain).
+ * If SSO is already enabled on a verified domain, the session must have
+ * signed in through it so the person won't lose access.
  */
-export async function sessionCanRequireOrganizationSso(input: { sessionId: string | null; organizationId: string }) {
+export async function sessionCanRequireOrganizationSso(input: { sessionId: DenTypeId<"session"> | null; organizationId: string }) {
+  if (!input.sessionId) return false
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   if (!(await readSsoPerOrganization([organizationId])).get(organizationId)) return true
   const rows = await readSsoOrganizations(eq(OrganizationTable.id, organizationId))
   const row = rows[0]
   if (!row) return true
-  if (!input.sessionId) return false
   return (await readSessionSsoProofs(input.sessionId)).has(organizationId)
 }
 
-export async function findSsoAccessBlock(input: { sessionId: string | null; organizationId: string | null | undefined }): Promise<SsoAccessBlock | null> {
+export async function findSsoAccessBlock(input: { sessionId: DenTypeId<"session"> | null; organizationId: string | null | undefined }): Promise<SsoAccessBlock | null> {
   if (!input.organizationId) return null
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const blocked = await findSsoBlockedOrganizations({ sessionId: input.sessionId, organizationIds: [organizationId] })

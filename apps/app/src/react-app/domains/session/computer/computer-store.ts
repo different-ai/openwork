@@ -3,6 +3,7 @@ import { create } from "zustand"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
+import { useBrowserSecretsEnabled } from "../panel/use-browser-secrets"
 import { isActiveWorkSessionStatus } from "../sidebar/utils"
 import { useDesktopFeature } from "../status/use-desktop-feature"
 
@@ -36,6 +37,7 @@ export function ComputerBridge() {
   useEffect(() => {
     void desktopBridge.computerSetRemoteEnabled(remote).catch(() => {})
   }, [remote])
+  useBrowserSecretsEnabled()
 
   // The broker raises computer-use requests only while computer use is on, but the
   // built-in browser's sign-in confirmations arrive either way.

@@ -5,6 +5,7 @@
  * `inference-providers.ts` schemas.
  */
 
+import { isSupportedGatewayNpm, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 import { gatewayMemberSignInMethod, gatewayModelConfigurationError } from "@openwork/types/den/inference";
 import type {
   GatewayAwsSsoSettings,
@@ -131,24 +132,8 @@ const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.obj
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
 });
 
-/** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
-export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
-  "@ai-sdk/anthropic",
-  "@ai-sdk/openai",
-  "@ai-sdk/mistral",
-  "@ai-sdk/azure",
-  "@ai-sdk/openai-compatible",
-  "@openrouter/ai-sdk-provider",
-  "@ai-sdk/google",
-  "@ai-sdk/google-vertex",
-  "@ai-sdk/google-vertex/anthropic",
-  "@ai-sdk/amazon-bedrock",
-  "@ai-sdk/amazon-bedrock/mantle",
-] as const;
-
-export function isSupportedGatewayNpm(npm: string | null): boolean {
-  return npm !== null && SUPPORTED_GATEWAY_NPM_PACKAGES.some((entry) => entry === npm);
-}
+/** Whether AI Gateway can proxy this models.dev `npm` package (the one list in @openwork-ee/gateway-catalog). */
+export { isSupportedGatewayNpm };
 
 export function isGoogleVertexNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic";
@@ -167,8 +152,8 @@ export function isAmazonBedrockNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
 }
 
-/** Synthetic catalog provider for Claude on Microsoft Foundry; mirrors @openwork-ee/utils/microsoft-foundry-catalog. */
-export const MICROSOFT_FOUNDRY_PROVIDER_ID = "microsoft-foundry";
+/** Synthetic catalog provider for Claude on Microsoft Foundry. */
+export { MICROSOFT_FOUNDRY_PROVIDER_ID };
 
 export function isMicrosoftFoundryProvider(providerId: string | null): boolean {
   return providerId === MICROSOFT_FOUNDRY_PROVIDER_ID;
@@ -179,7 +164,7 @@ export function isGatewayOnlyNpm(npm: string | null, providerId: string | null =
   return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
 }
 
-/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+/** Mirrors `isAwsRegion` in @openwork-ee/gateway-upstreams (egress). */
 export function isAwsRegion(value: string): boolean {
   return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
 }

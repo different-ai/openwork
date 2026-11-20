@@ -9,7 +9,7 @@ import { z } from "zod";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { readInferenceProviderFromPayload, type DenInferenceProvider } from "./inference-provider-request";
 
-export const TRUEFOUNDRY_PROVIDER_ID = "truefoundry";
+export { TRUEFOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 export const TRUEFOUNDRY_DOC_URL = "https://www.truefoundry.com";
 export const TRUEFOUNDRY_ACCESS_GROUP_NAME = "Gets a TrueFoundry key";
 export const TRUEFOUNDRY_TOO_MANY_TOKENS_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/truefoundry-too-many-tokens";

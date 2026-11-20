@@ -11,19 +11,17 @@
 //                                                   Both run the normal Gateway pipeline under the
 //                                                   member's own alias.
 // POST /api/v1/claude-code/v1/messages/count_tokens an estimate; nothing is sent upstream.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { claudeCodeModelName, matchCursorModel, parseClaudeCodeModelName } from "@openwork/types/den/gateway-cursor"
 import { forwardedHeaders, maxOutputTokens, translateResponse, type AutoTarget } from "./auto-router/handler.js"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
-import { chatToolCallIds } from "./auto-router/protocol.js"
-import type { ReasoningStore } from "./auto-router/reasoning-store.js"
-import { chatErrorToMessages, chatStreamToMessages, chatToMessages, estimateMessagesTokens, messagesReasoningEffort, messagesToChat } from "./claude-code-messages.js"
+import { isJsonObject, type JsonObject, chatToolCallIds, chatErrorToMessages, chatStreamToMessages, chatToMessages, estimateMessagesTokens, messagesReasoningEffort, messagesToChat } from "@openwork-ee/gateway-protocols"
+import type { ReasoningStore } from "@openwork-ee/gateway-protocols"
 import { cursorModels, type CursorModel } from "./cursor.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import type { ProtocolFamily } from "./protocols.js"
+import type { ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
-import type { ProviderCatalog } from "./provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
 import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 

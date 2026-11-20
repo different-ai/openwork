@@ -1,11 +1,10 @@
+import type { OrganizationSsoPolicy } from "@openwork-ee/sso";
+
 /**
  * The organization's SSO settings as saved and as drafted on the settings
- * screen.
+ * screen: the policy Den API enforces (@openwork-ee/sso).
  */
-export type SsoSettings = {
-  requireSso: boolean;
-  restrictDomainToSso: boolean;
-};
+export type SsoSettings = OrganizationSsoPolicy;
 
 export type SsoSettingsUpdate = Partial<SsoSettings>;
 

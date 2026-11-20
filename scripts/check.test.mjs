@@ -23,10 +23,20 @@ test("the checks CI requires are the commands pnpm check runs", () => {
     "pnpm features:check",
     "node .github/scripts/typecheck-shipped.mjs --all",
     "node scripts/check-app-structure.mjs",
+    "node scripts/check-package-names.mjs",
     "node scripts/check-code-habits.mjs",
   ]) {
     assert.ok(workflow.includes(command), `quick-check.yml no longer runs: ${command}`);
     assert.ok(CHECKS.some((check) => check.command.join(" ") === command), `pnpm check does not run: ${command}`);
+  }
+});
+
+test("browser secret regressions run both locally and in the required CI check", () => {
+  const workflow = readFileSync(resolve(root, ".github/workflows/quick-check.yml"), "utf8");
+  const check = CHECKS.find((item) => item.name === "browser-secrets");
+  assert.ok(check);
+  for (const path of check.command.filter((part) => part.endsWith(".test.mjs"))) {
+    assert.ok(workflow.includes(path), `quick-check.yml no longer runs ${path}`);
   }
 });
 

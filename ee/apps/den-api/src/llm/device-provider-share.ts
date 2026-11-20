@@ -1,7 +1,8 @@
 import { deviceShareProviderName, type DeviceShareProvider } from "@openwork/types/den/device-provider-share"
 import { gatewayCredentialShape } from "../credential-prompt.js"
 import { GatewayWriteError, resolveGatewayCatalog, validateGatewaySettings } from "./gateway-matrix.js"
-import { buildProviderConfigSnapshot, isSupportedGatewayNpm } from "./inference-provider-config.js"
+import { isSupportedGatewayNpm } from "@openwork-ee/gateway-catalog"
+import { buildProviderConfigSnapshot } from "./inference-provider-config.js"
 import type { ModelsDevProvider } from "./models-dev.js"
 
 /**

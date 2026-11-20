@@ -16,7 +16,7 @@ import {
   EnterpriseMcpOAuthContractError,
   selectRecoverableAuthorizationServerIssuer,
   validateMcpAuthorizationResponseIssuer,
-} from "@openwork/enterprise-mcp-client"
+} from "@openwork/mcp-enterprise-client"
 import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,

@@ -345,6 +345,14 @@
       "development": "./src/den/gateway-custom-providers.ts",
       "default": "./src/den/gateway-custom-providers.ts"
     },
+    "./den/personal-skills": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/personal-skills.d.ts",
+        "default": "./src/den/personal-skills.ts"
+      },
+      "development": "./src/den/personal-skills.ts",
+      "default": "./src/den/personal-skills.ts"
+    },
     "./den/feature-intros": {
       "types": {
         "openwork-build": "./dist/types/src/den/feature-intros.d.ts",

@@ -6,10 +6,8 @@
 // re-authorization and compare-and-set are shared.
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db"
-import { AwsSsoError, refreshAwsSsoToken, type FetchLike } from "@openwork-ee/utils/aws-identity-center"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
-import { classifyMicrosoftTokenError, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { AwsSsoError, refreshAwsSsoToken, type FetchLike, createInferenceEgressFetch, classifyMicrosoftTokenError, microsoftRefreshScopes, microsoftTokenUrl, readMicrosoftTokens } from "@openwork-ee/gateway-upstreams"
+import { liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
 import { parseGatewayProviderSecret, type GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
 import { loadGatewayAccess, sameGatewaySelection, selectGatewayGrant } from "../provider-access.js"
 import type { GatewayCredentialLookup } from "../provider-credentials.js"

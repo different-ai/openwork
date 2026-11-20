@@ -89,7 +89,7 @@ export function QuestionTool({ part }: QuestionToolProps) {
   }
 
   return (
-    <Tool toolPart={part} title={getQuestionToolTitle(part) ?? undefined} detail={summary}>
+    <Tool toolPart={part} title="You answered" detail={summary}>
       <dl className="flex flex-col gap-2" data-testid="question-tool-answers">
         {questions.map((question, index) => (
           <div key={`${index}:${question.question}`} className="flex flex-col gap-0.5">

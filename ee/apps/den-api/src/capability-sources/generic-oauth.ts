@@ -9,7 +9,7 @@ import { readProviderTenantId, resolveTenantEndpointTemplate } from "./oauth-ten
 import {
   getConnectedAccount,
   getOrgOAuthClient,
-  refreshConnectedAccountForActiveMember,
+  refreshConnectedAccountExclusively,
   type ConnectedAccountRow,
   type OrgOAuthClientRow,
 } from "./oauth-credentials.js"
@@ -509,57 +509,28 @@ export async function getValidAccessToken(input: {
     return { error: "client_not_configured" }
   }
 
-  let refreshed: TokenResponse
-  try {
-    refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
-  } catch (error) {
-    if (!isRevokedGrant(error)) throw error
-    // The provider no longer honors this grant (revoked access, password
-    // change, expired consent). Clear it so later requests ask the member to
-    // connect again instead of retrying a dead refresh token.
-    await refreshConnectedAccountForActiveMember({
-      organizationId: input.organizationId,
-      orgMembershipId: input.orgMembershipId,
-      providerId: input.credentialProviderId,
-      expectedAccountId: account.id,
-      expectedAccessToken: account.accessToken,
-      expectedRefreshToken: account.refreshToken,
-      accessToken: null,
-      refreshToken: null,
-      expiresAt: null,
-    })
-    return { error: "not_connected" }
-  }
-  const expiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null
-  const updated = await refreshConnectedAccountForActiveMember({
+  const updated = await refreshConnectedAccountExclusively({
     organizationId: input.organizationId,
     orgMembershipId: input.orgMembershipId,
     providerId: input.credentialProviderId,
     expectedAccountId: account.id,
-    expectedAccessToken: account.accessToken,
-    expectedRefreshToken: account.refreshToken,
-    accessToken: refreshed.access_token,
-    // Most providers (Google included) omit refresh_token on refresh responses; keep the existing one.
-    refreshToken: refreshed.refresh_token ?? account.refreshToken,
-    tokenType: refreshed.token_type ?? account.tokenType,
-    expiresAt,
+    isAccessTokenFresh: (expiresAt) => !expiresAt || expiresAt.getTime() - TOKEN_EXPIRY_SAFETY_WINDOW_MS > Date.now(),
+    async refresh(refreshToken) {
+      try {
+        const refreshed = await refreshTokens({ provider: input.provider, client, refreshToken })
+        return {
+          accessToken: refreshed.access_token,
+          refreshToken: refreshed.refresh_token,
+          tokenType: refreshed.token_type,
+          expiresAt: refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null,
+        }
+      } catch (error) {
+        if (!isRevokedGrant(error)) throw error
+        return null
+      }
+    },
   })
-  if (updated?.accessToken) {
-    return { accessToken: updated.accessToken, account: updated }
-  }
-
-  // Another in-flight refresh may have won the compare-and-set. Reuse its
-  // fresh token, but never recreate a row deleted by disconnect/removal/rotation.
-  const current = await getConnectedAccount({
-    organizationId: input.organizationId,
-    orgMembershipId: input.orgMembershipId,
-    providerId: input.credentialProviderId,
-  })
-  if (
-    current?.accessToken
-    && (!current.expiresAt || current.expiresAt.getTime() - TOKEN_EXPIRY_SAFETY_WINDOW_MS > Date.now())
-  ) {
-    return { accessToken: current.accessToken, account: current }
-  }
-  return { error: "not_connected" }
+  return updated?.accessToken
+    ? { accessToken: updated.accessToken, account: updated }
+    : { error: "not_connected" }
 }

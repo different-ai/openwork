@@ -31,7 +31,7 @@ const INTERNAL_PATH_PATTERNS = [
   /^apps\/story-book\//,
   /^apps\/ui-demo\//,
   /^ee\/apps\/enterprise-mock-lab\//,
-  /^packages\/enterprise-mcp-mock-server\//,
+  /^packages\/mcp-enterprise-mock-server\//,
   /(^|\/)(tests?|__tests__|fixtures)\//,
   /\.(test|spec|e2e)\.[cm]?[jt]sx?$/,
   /\.e2e\.test\.[cm]?[jt]sx?$/,

@@ -25,7 +25,12 @@ export const RESERVED_PROVIDER_IDS: readonly string[] = [
   "truefoundry",
 ]
 
-/** SDK packages the gateway can proxy that a custom provider may use (Den's SUPPORTED_GATEWAY_NPM_PACKAGES, minus cloud-specific ones). */
+/**
+ * SDK packages a custom provider may use: SUPPORTED_GATEWAY_NPM_PACKAGES from
+ * @openwork-ee/gateway-catalog minus the cloud-specific ones. Listed here because
+ * scripts/build-models.mjs runs this file with plain Node; test/model-catalog.test.ts
+ * checks every entry is supported.
+ */
 export const CUSTOM_PROVIDER_NPM_PACKAGES: readonly string[] = [
   "@ai-sdk/openai-compatible",
   "@ai-sdk/openai",

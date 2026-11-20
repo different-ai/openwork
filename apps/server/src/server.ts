@@ -3784,9 +3784,21 @@ function createRoutes(
     const body = await readJsonBody(ctx.request);
     return cloudComputerJson(await cloudComputerCall(() => cloudComputerFor(config).interact(body)));
   });
+  // Guest tools can obtain the client authority used by this server. It is not a human-consent
+  // boundary: do not expose secret enrollment or approval until a separate trusted UI channel exists.
+  for (const [method, path] of [["GET", "/cloud-computer/secrets"], ["POST", "/cloud-computer/secrets"],
+    ["DELETE", "/cloud-computer/secrets"], ["GET", "/cloud-computer/request"], ["POST", "/cloud-computer/request"]] as const) {
+    addRoute(routes, method, path, "client", async (ctx) => {
+      requireClientScope(ctx, "collaborator");
+      throw new ApiError(404, "feature_disabled", "Secrets for the cloud browser are not available yet.");
+    });
+  }
   // Electron verifies remote rollout authority here, independent of renderer state.
   addRoute(routes, "GET", "/managed-policy/remote-computers", "client", async () =>
     jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));
+  // Electron verifies the browser secret handles rollout here, independent of renderer state.
+  addRoute(routes, "GET", "/managed-policy/browser-secret-handles", "client", async () =>
+    jsonResponse({ enabled: await managedDesktopPolicy(config).browserSecretHandlesEnabled() }));
   // The desktop process reads the built-in browser's website rules here itself.
   addRoute(routes, "GET", "/managed-policy/website-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));

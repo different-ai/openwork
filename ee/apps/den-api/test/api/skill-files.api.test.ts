@@ -2,6 +2,7 @@
  * A skill's supporting files over MCP: the files beside SKILL.md are stored
  * with the skill, survive an edit of SKILL.md alone, are listed in the Skills
  * Extension manifest, and are readable only by members who can use the skill.
+ * An agent can save them with create_skill and replace them with update_skill.
  */
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
@@ -71,6 +72,11 @@ test("a skill's supporting files are stored, kept across a SKILL.md edit, listed
   assert.deepEqual(list(field(loaded.structured, "files")).map((file) => file.path), ["references/GUIDE.md", "scripts/run.sh"])
   assert.match(loaded.text, /Read references\/GUIDE\.md first\./)
   assert.match(loaded.text, /Supporting files of this skill[\s\S]*- references\/GUIDE\.md\n- scripts\/run\.sh$/)
+  // Clients that show the model structured content instead of the text get the same note there; content stays the SKILL.md.
+  const filesNote = text(field(loaded.structured, "filesNote"), "files note")
+  assert.match(filesNote, /^Supporting files of this skill[\s\S]*"file":"<path>"[\s\S]*- references\/GUIDE\.md\n- scripts\/run\.sh$/)
+  assert.ok(loaded.text.endsWith(`\n\n---\n${filesNote}`))
+  assert.equal(String(field(loaded.structured, "content")).includes("Supporting files of this skill"), false)
   const guide = await den.callMcpTool(caseyToken, "get_skill", { name: skillName, file: "./references/GUIDE.md" })
   assert.equal(guide.isError, false, guide.raw.slice(0, 400))
   assert.equal(guide.text, files[0]!.text)
@@ -112,4 +118,63 @@ test("a skill's supporting files are stored, kept across a SKILL.md edit, listed
   assert.deepEqual(list((await manifest(caseyToken))?.resources).map((resource) => resource.uri), [skillUri, `${root}scripts/run.sh`])
   const gone = await mcp(caseyToken, "resources/read", { uri: guideUri })
   assert.notEqual(gone.error, undefined)
+})
+
+test("an agent creates a skill with its supporting files, keeps them across update_skill, and can replace them", async () => {
+  const { orgId, owner } = await den.createOrg(await den.signUp("Avery Agent"), "Agent skill files org")
+  const token = await den.mintMcpToken(owner, orgId)
+  const skillName = `agent-files-${den.stamp}`
+  const skillMarkdown = `---\nname: ${skillName}\ndescription: Proves create_skill saves supporting files.\n---\n\nRun scripts/build.py, then fill templates/report.md.`
+  const files = [
+    { path: "templates/report.md", text: "# Report for {{customer}}\n" },
+    { path: "scripts/build.py", text: "print('agent-files proof')\n" },
+  ]
+  const loadedPaths = async () => list(field((await den.callMcpTool(token, "get_skill", { name: skillName })).structured, "files")).map((file) => file.path)
+
+  // A path outside the skill folder is refused and nothing is created.
+  const refused = await den.callMcpTool(token, "create_skill", { pluginName: `${skillName} bad`, skillMarkdown, files: [{ path: "../escape.md", text: "x" }] })
+  assert.equal(refused.isError, true)
+  assert.equal(field(refused.body, "error"), "invalid_skill_files", refused.raw.slice(0, 400))
+
+  const created = await den.callMcpTool(token, "create_skill", { pluginName: skillName, skillMarkdown, files })
+  assert.equal(created.isError, false, created.raw.slice(0, 400))
+  const skillId = text(field(created.structured, "skillId"), "skill id")
+  assert.deepEqual(await loadedPaths(), ["scripts/build.py", "templates/report.md"])
+  const script = await den.callMcpTool(token, "get_skill", { name: skillName, file: "scripts/build.py" })
+  assert.equal(script.text, files[1]!.text)
+
+  // Changing SKILL.md alone keeps the files; passing files replaces them.
+  const edited = await den.callMcpTool(token, "update_skill", { skillId, skillMarkdown: `${skillMarkdown}\nThen email it.` })
+  assert.equal(edited.isError, false, edited.raw.slice(0, 400))
+  assert.deepEqual(await loadedPaths(), ["scripts/build.py", "templates/report.md"])
+  const replaced = await den.callMcpTool(token, "update_skill", { skillId, skillMarkdown, files: [files[0]!] })
+  assert.equal(replaced.isError, false, replaced.raw.slice(0, 400))
+  assert.deepEqual(await loadedPaths(), ["templates/report.md"])
+})
+
+test("a fair-sized skill, 8 MiB of supporting files, saves through create_skill and the plugin API and reads back", async () => {
+  const { orgId, owner } = await den.createOrg(await den.signUp("Blake Builder"), "Large skill files org")
+  const token = await den.mintMcpToken(owner, orgId)
+  const MiB = 1024 * 1024
+  const line = "A line of reference text that an agent reads when the skill asks it to.\n"
+  const part = line.repeat(Math.floor(MiB / line.length))
+  const files = Array.from({ length: 8 }, (_, index) => ({ path: `references/part-${index}.md`, text: `${part.slice(0, -40)}part-${index} proof phrase\n` }))
+  assert.ok(files.reduce((total, file) => total + file.text.length, 0) > 7.9 * MiB)
+
+  const skillName = `large-files-${den.stamp}`
+  const skillMarkdown = `---\nname: ${skillName}\ndescription: Proves a large skill fits.\n---\n\nRead references/part-0.md first.`
+  const created = await den.callMcpTool(token, "create_skill", { pluginName: skillName, skillMarkdown, files })
+  assert.equal(created.isError, false, created.raw.slice(0, 400))
+  const loaded = await den.callMcpTool(token, "get_skill", { name: skillName })
+  assert.equal(list(field(loaded.structured, "files")).length, 8)
+  const last = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/part-7.md" })
+  assert.equal(last.text, files[7]!.text)
+
+  // The plugin API takes the same skill: its payload limit is no longer 1 MiB.
+  const restName = `${skillName}-rest`
+  const viaApi = await den.as(owner, orgId)("POST", "/v1/plugins", {
+    name: restName,
+    components: [{ type: "skill", input: { rawSourceText: skillMarkdown.replace(skillName, restName), normalizedPayloadJson: { files } } }],
+  })
+  assert.equal(viaApi.status, 201, summary(viaApi))
 })

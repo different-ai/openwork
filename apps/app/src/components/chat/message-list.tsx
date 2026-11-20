@@ -53,10 +53,11 @@ import { GrepTool } from "@/components/tools/grep"
 import { LspTool } from "@/components/tools/lsp"
 import {
   automationProposalCalls,
+  automationProposalsInParts,
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { QuestionTool } from "@/components/tools/question"
+import { QuestionTool, questionToolAnswers } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
@@ -181,6 +182,10 @@ const AppPanelFoldContext = React.createContext(false)
 /** Remote task rows a folded turn shows below its fold; inside it they render nothing. */
 const NO_PINNED_REMOTE_THREADS: ReadonlySet<string> = new Set()
 const PinnedRemoteThreadsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_REMOTE_THREADS)
+const NO_PINNED_QUESTIONS: ReadonlySet<string> = new Set()
+const PinnedQuestionsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_QUESTIONS)
+const NO_PINNED_PROPOSALS: ReadonlySet<string> = new Set()
+const PinnedAutomationProposalsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_PROPOSALS)
 const ParentRunActiveContext = React.createContext(true)
 const ComputerHistoryContext = React.createContext<ComputerHistory | null>(null)
 
@@ -269,6 +274,8 @@ function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart):
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
   const pinnedRemoteThreads = React.useContext(PinnedRemoteThreadsContext)
+  const pinnedQuestions = React.useContext(PinnedQuestionsContext)
+  const pinnedProposals = React.useContext(PinnedAutomationProposalsContext)
   // The agent following up on a task the chat shows makes it run again.
   useReviveRemoteThread(part.type === "dynamic-tool" ? part : null)
   const parentActive = React.useContext(ParentRunActiveContext)
@@ -287,7 +294,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return start ? [{ start, call }] : []
   }) : []
   const foldTool = appPanelFold && lifecycle !== "waiting" && !connectionCardParts.has(part.toolCallId) && !promptCall && !isTaskToolPart(part)
-  const proposals = calls && part.type === "dynamic-tool" ? automationProposalCalls(part) : []
+  const proposalCalls = calls && part.type === "dynamic-tool" ? automationProposalCalls(part) : []
+  const proposals = proposalCalls.filter((call) => !pinnedProposals.has(call.toolCallId))
   if (foldTool && !remoteStart && remoteStarts.length === 0 && proposals.length === 0) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
@@ -299,8 +307,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   if (part.type === "dynamic-tool") {
-    if (calls && (remoteStarts.length > 0 || proposals.length > 0)) {
-      const started = new Set([...remoteStarts.map(({ call }) => call.toolCallId), ...proposals.map((call) => call.toolCallId)])
+    if (calls && (remoteStarts.length > 0 || proposalCalls.length > 0)) {
+      const started = new Set([...remoteStarts.map(({ call }) => call.toolCallId), ...proposalCalls.map((call) => call.toolCallId)])
       return (
         <div className="flex min-w-0 flex-col gap-1">
           {!foldTool && <CodeModeTool part={part} calls={calls.filter((call) => !started.has(call.toolCallId))} lifecycle={lifecycle} connectors={connectorIdentities} />}
@@ -387,11 +395,11 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   if (isQuestionToolPart(part)) {
-    return <QuestionTool part={part} />
+    return pinnedQuestions.has(part.toolCallId) ? null : <QuestionTool part={part} />
   }
 
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
-    return <OpenWorkAutomationProposalTool part={part} />
+    return pinnedProposals.has(part.toolCallId) ? null : <OpenWorkAutomationProposalTool part={part} />
   }
 
   // OpenWork's own connection reports render as the native card: the host is
@@ -671,7 +679,7 @@ type AssistantMessageProps = {
 
 const AssistantMessage = React.memo(
   ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
-    const { showThinking, highlightQuery } = useMessageList()
+    const { showThinking, highlightQuery, onRunCommand } = useMessageList()
     const computerHistory = React.useContext(ComputerHistoryContext)
     const assistantRenderGroups = React.useMemo(
       () => {
@@ -701,6 +709,7 @@ const AssistantMessage = React.memo(
                     markdown
                     sessionReferences
                     githubReferences
+                    onRunCommand={onRunCommand}
                     isStreaming={isStreaming}
                     highlightQuery={highlightQuery}
                   >
@@ -754,7 +763,6 @@ AssistantMessage.displayName = "AssistantMessage"
 
 type UserMessageProps = {
   message: UIMessage
-  isStreaming: boolean
 }
 
 function fileBytes(part: FileUIPart) {
@@ -975,7 +983,7 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
 }
 
 const UserMessage = React.memo(
-  ({ message, isStreaming }: UserMessageProps) => {
+  ({ message }: UserMessageProps) => {
     const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
     const wall = messageAutoAccessWall(message.metadata)
@@ -1065,7 +1073,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && !wall && (
+                {!wall && (
                   <MessageActions
                     className="flex items-center gap-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100"
                   >
@@ -1131,7 +1139,7 @@ const MessageComponent = React.memo(
           technicalDetails={presentation?.technicalDetails}
           gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
-          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
+          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "gateway-usage-limit", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
       )
       if (presentation?.openworkModelsLimit) return <TranscriptOpenWorkModelsLimit limit={presentation.openworkModelsLimit} />
@@ -1160,10 +1168,7 @@ const MessageComponent = React.memo(
     }
 
     return (
-      <UserMessage
-        message={message}
-        isStreaming={isStreaming}
-      />
+      <UserMessage message={message} />
     )
   }
 )
@@ -1501,6 +1506,17 @@ function collectRemoteThreadStarts(items: UIMessageWithIndex[]) {
   return [...starts.values()]
 }
 
+function collectAnsweredQuestions(items: UIMessageWithIndex[]) {
+  return items.flatMap(({ message }) => message.role !== "assistant" || isSessionErrorMessage(message) ? [] : message.parts.flatMap((part) =>
+    isToolUIPart(part) && isQuestionToolPart(part) && !isReservedConnectionQuestionPart(part) && questionToolAnswers(part) ? [part] : []))
+}
+
+function collectAutomationProposals(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
+  return items.flatMap((item) => item.message.role === "assistant" && !isSessionErrorMessage(item.message)
+    ? automationProposalsInParts(item.message.parts)
+    : [])
+}
+
 function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
   const parts = new Map<string, DynamicToolUIPart>()
   for (const item of items) {
@@ -1681,6 +1697,10 @@ function MessageGroup({
   // need the person, so its row stays in view below a folded run.
   const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
+  const answeredQuestions = collapseSteps ? collectAnsweredQuestions(stepItems) : []
+  const answeredQuestionIds = answeredQuestions.length > 0 ? new Set(answeredQuestions.map((part) => part.toolCallId)) : NO_PINNED_QUESTIONS
+  const pinnedProposals = collapseSteps ? collectAutomationProposals(stepItems) : []
+  const pinnedProposalIds = pinnedProposals.length > 0 ? new Set(pinnedProposals.map((part) => part.toolCallId)) : NO_PINNED_PROPOSALS
   const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
   const stepCountLabel = stepRowCount ? `${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : null
   const replyWorkedLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
@@ -1764,6 +1784,8 @@ function MessageGroup({
       <AppCreationPartsContext.Provider value={creationParts}>
       <AppPanelFoldContext.Provider value={panelLive}>
       <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
+      <PinnedQuestionsContext.Provider value={answeredQuestionIds}>
+      <PinnedAutomationProposalsContext.Provider value={pinnedProposalIds}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <ComputerHistoryContext.Provider value={computerHistory}>
       <ActionContextMenu
@@ -1801,11 +1823,21 @@ function MessageGroup({
           </div>
         )
       ) : null}
+      {answeredQuestions.map((part) => (
+        <Message key={`answered-question-${part.toolCallId}`} data-answered-question="" className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+          <QuestionTool part={part} />
+        </Message>
+      ))}
       {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
       {mcpAppParts.map(appFrame)}
       {pinnedRemoteThreads.map(({ start, part }) => (
         <Message key={`remote-thread-${start.key}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
           <RemoteThreadRunLine start={start} part={part} />
+        </Message>
+      ))}
+      {pinnedProposals.map((part) => (
+        <Message key={`automation-proposal-${part.toolCallId}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+          <OpenWorkAutomationProposalTool part={part} />
         </Message>
       ))}
       {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
@@ -1867,6 +1899,8 @@ function MessageGroup({
       </ActionContextMenu>
       </ComputerHistoryContext.Provider>
       </ConnectionCardPartsContext.Provider>
+      </PinnedAutomationProposalsContext.Provider>
+      </PinnedQuestionsContext.Provider>
       </PinnedRemoteThreadsContext.Provider>
       </AppPanelFoldContext.Provider>
       </AppCreationPartsContext.Provider>

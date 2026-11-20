@@ -72,6 +72,8 @@ export type BrowserPanelOwnerPayload = {
   ownerSessionId: string | null;
   /** The page to select on a panel-opened event; absent on panel-closed. */
   tab?: BrowserPanelTab;
+  /** The person opened this page (a clicked link or a new tab), not the agent. */
+  forPerson?: boolean;
 };
 
 export type OpenBrowserUrlResult = {

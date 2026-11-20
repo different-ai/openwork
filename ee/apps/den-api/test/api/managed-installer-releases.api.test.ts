@@ -96,6 +96,12 @@ test("persistent source CAS, immutable validation, atomic pin and explicit envir
   const protectedState = await aws()
   assert.equal(protectedState.approvalMode, "independent_admin", "saving a source preserves independent approval")
   const oldPolicyPreview = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", expectedRevision: protectedState.revision }, admin.userId, verifier)
+  // One administrator cannot waive the second-administrator check by themself: the operator allows it in the environment.
+  const refusedPolicy = await den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/approval", { body: { approvalMode: "platform_admin", expectedRevision: protectedState.revision } })
+  assert.equal(refusedPolicy.status, 400, summary(refusedPolicy))
+  assert.equal(field(refusedPolicy.body, "error"), "single_admin_approval_disabled")
+  assert.equal((await aws()).revision, protectedState.revision, "a refused policy change writes nothing")
+  process.env.DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL = "true"
   const changedPolicy = await den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/approval", { body: { approvalMode: "platform_admin", expectedRevision: protectedState.revision } })
   assert.equal(changedPolicy.status, 200, summary(changedPolicy))
   const singleAdmin = await aws()
@@ -160,6 +166,43 @@ test("source changes invalidate validation and concurrent writers cannot lose a 
   const attempts = await Promise.all(["one/", "two/"].map((suffix) => den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/source", { body: { sourceBaseUrl: source + suffix, expectedRevision: current.revision } })))
   assert.deepEqual(attempts.map((call) => call.status).sort(), [200, 409])
   await assert.rejects(releases.pinInstallerRelease({ provider: "aws", validationId: preview.id, expectedRevision: (await aws()).revision, qualification }, admin.userId, fetcher), /source changed/)
+})
+
+test("a release source outside the deployment's own bucket is refused unless the operator lists it", async () => {
+  const outside = "https://someone-else.s3.us-east-1.amazonaws.com/releases/aws/"
+  const current = await aws()
+  const refused = await den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/source", { body: { sourceBaseUrl: outside, expectedRevision: current.revision } })
+  assert.equal(refused.status, 400, summary(refused))
+  assert.equal(field(refused.body, "error"), "source_not_allowed")
+  assert.equal((await aws()).sourceBaseUrl, current.sourceBaseUrl)
+  // A source saved before this check, or by another path, still cannot be validated.
+  await db.update(ManagedInstallerConfigTable).set({ source_base_url: outside }).where(eq(ManagedInstallerConfigTable.provider, "aws"))
+  const stored = await aws()
+  await assert.rejects(releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", expectedRevision: stored.revision }, admin.userId, verifier), /own release bucket/)
+  process.env.DEN_MANAGED_DEPLOYMENT_AWS_SOURCE_ALLOWLIST = " https://someone-else.s3.us-east-1.amazonaws.com/releases/ , not a url"
+  try {
+    // Listed: the source check passes and verification goes on to fetch the release (absent from the fixture bucket).
+    await assert.rejects(releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", expectedRevision: stored.revision }, admin.userId, verifier), /Could not download manifest/)
+    const saved = await den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/source", { body: { sourceBaseUrl: source, expectedRevision: stored.revision } })
+    assert.equal(saved.status, 200, summary(saved))
+  } finally { delete process.env.DEN_MANAGED_DEPLOYMENT_AWS_SOURCE_ALLOWLIST }
+})
+
+test("when the operator stops allowing single-administrator approval, a saved one-administrator policy no longer applies", async () => {
+  assert.equal((await aws()).approvalMode, "platform_admin")
+  delete process.env.DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL
+  try {
+    const restricted = await aws()
+    assert.equal(restricted.approvalMode, "independent_admin")
+    const preview = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.4", expectedRevision: restricted.revision }, admin.userId, verifier)
+    assert.equal(preview.canPin, false)
+    await assert.rejects(releases.pinInstallerRelease({ provider: "aws", validationId: preview.id, expectedRevision: restricted.revision, qualification }, admin.userId, fetcher), /different platform administrator/)
+    // Choosing a second administrator clears the inactive saved policy, so allowing it again later does not revive it.
+    const cleared = await den.request(admin.token, "PUT", "/v1/admin/managed-releases/aws/approval", { body: { approvalMode: "independent_admin", expectedRevision: restricted.revision } })
+    assert.equal(cleared.status, 200, summary(cleared))
+    process.env.DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL = "true"
+    assert.equal((await aws()).approvalMode, "independent_admin")
+  } finally { process.env.DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL = "true" }
 })
 
 test("invalid database pin never resurrects environment defaults", async () => {

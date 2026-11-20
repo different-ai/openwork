@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { decidePausedRequest } from "./browser-secrets.mjs";
 
 /** How long open and navigate wait for a page to finish loading and stop changing before they report it still loading. */
 const LOAD_SETTLE_MS = 8000;
@@ -12,6 +13,8 @@ const LOAD_SETTLE_MS = 8000;
 const NAVIGATE_TIMEOUT_MS = 30_000;
 /** How long, after the site answered, navigate waits for the new document to be readable. */
 const DOCUMENT_READY_MS = 10_000;
+/** How long a paused request waits for Chromium to hand over a body its event did not carry. */
+const BODY_READ_MS = 3000;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** Chromium's net error for a failed navigation, as a coded error that says what to do next. Never the page's text. */
 export function navigationError(errorText) {
@@ -108,7 +111,14 @@ const verifyLocalEgress = async () => {
   if (!(await browserEgressStatus()).ok) throw Object.assign(new Error("The cloud browser's private-network filter is unavailable. Reconnect the computer."), { code: "egress_unavailable" });
 };
 
-export function createCloudBrowser({ statePath, assertActive, enabled, beforeInput, endpoint = "http://127.0.0.1:9222", privateBrowsing = false, verifyEgress = verifyLocalEgress }) {
+/**
+ * `secrets` is the host's memory-only store of secret handles (`createBrowserSecrets()`); with it, a request this
+ * browser admits has a tab's live placeholder swapped for its value when the destination is one that secret allows.
+ * `secretsEnabled` is the verified rollout, read at each use, and `approveSecret` asks the person before a secret is
+ * entered. Without `secrets` every admitted request goes on exactly as the page made it.
+ */
+export function createCloudBrowser({ statePath, assertActive, enabled, beforeInput, endpoint = "http://127.0.0.1:9222", privateBrowsing = false, verifyEgress = verifyLocalEgress,
+  secrets = undefined, secretsEnabled = () => false, approveSecret = undefined }) {
   // privateBrowsing is only for operator diagnostics on a dedicated VM.
   const allowedDestination = privateBrowsing ? async () => true : publicDestination;
   const tabs = new Map();
@@ -127,7 +137,7 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     if (!response.ok) throw new Error("The cloud browser is unavailable. Reconnect the computer.");
     return response.json();
   }
-  function connection(url) {
+  function connection(url, tabId) {
     // Chromium may report its host in this URL. Never follow a remote endpoint.
     const address = new URL(url);
     if (address.protocol !== "ws:" || !["127.0.0.1", "localhost"].includes(address.hostname) || address.port !== new URL(endpoint).port) throw new Error("Invalid Chromium endpoint.");
@@ -136,6 +146,8 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     let sequence = 0;
     // A tab's connection that closed (Chromium restarted, the renderer crashed) never comes back; refresh() replaces it.
     let closed = false;
+    // Set when this host closes the connection itself; the caller then says what became of the tab's placeholders.
+    let released = false;
     const ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => { socket.close(); reject(new Error("Browser connection timed out.")); }, 5000);
       socket.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
@@ -158,20 +170,50 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       else item.resolve(message.result);
     });
     const reply = (method, params) => { try { socket.send(JSON.stringify({ id: ++sequence, method, params })); } catch {} };
-    async function admitRequest({ requestId, request }) {
-      let allowed = false;
+    /** One command whose receipt is awaited without the task's activity check: a paused request is answered even while the agent is paused. */
+    const ask = (method, params, timeoutMs) => new Promise((resolve, reject) => {
+      const id = ++sequence;
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error("Browser receipt timed out.")); }, timeoutMs);
+      pending.set(id, { resolve, reject, timer });
+      try { socket.send(JSON.stringify({ id, method, params })); }
+      catch (error) { pending.delete(id); clearTimeout(timer); reject(error); }
+    });
+    /**
+     * The bytes of a body whose event does not carry it whole. Chromium puts every in-memory byte in `postDataEntries`;
+     * an entry without bytes is a file or a stream it has not read, and nothing reads that: `Network.getRequestPostData`
+     * answers such a form with the file left out. So what is returned here is only what can be seen, never called whole.
+     */
+    async function readBody({ request, networkId }) {
+      const entries = Array.isArray(request.postDataEntries) ? request.postDataEntries : [];
+      if (entries.length) return { body: Buffer.concat(entries.flatMap((entry) => typeof entry?.bytes === "string" ? [Buffer.from(entry.bytes, "base64")] : [])), complete: false };
+      if (typeof networkId !== "string" || !networkId) throw new Error("The request body is not readable.");
+      const read = await ask("Network.getRequestPostData", { requestId: networkId }, BODY_READ_MS);
+      return { body: Buffer.from(String(read?.postData ?? ""), read?.base64Encoded === true ? "base64" : "utf8"), complete: false };
+    }
+    // The paused event is never logged, stored or echoed: a redirect hop can hold a real value.
+    async function admitRequest(params) {
+      const requestId = params?.requestId;
+      // Blocked unless everything below admits it: a failure in here never lets a request through or leaves it paused.
+      let answer = { method: "Fetch.failRequest", params: { requestId, errorReason: "BlockedByClient" } };
       try {
-        const url = new URL(request.url);
-        if (["ws:", "wss:"].includes(url.protocol)) url.protocol = url.protocol === "ws:" ? "http:" : "https:";
-        allowed = ["http:", "https:"].includes(url.protocol) ? await allowedDestination(url.href)
+        const url = new URL(params.request.url);
+        const socketAddress = ["ws:", "wss:"].includes(url.protocol);
+        if (socketAddress) url.protocol = url.protocol === "ws:" ? "http:" : "https:";
+        const allowed = ["http:", "https:"].includes(url.protocol) ? await allowedDestination(url.href)
           : ["about:", "data:", "blob:"].includes(url.protocol);
-      } catch { allowed = false; }
-      if (allowed) reply("Fetch.continueRequest", { requestId });
-      else reply("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+        // The destination check comes first and alone decides what loads. Only an admitted request can carry a
+        // secret, and a WebSocket never does.
+        if (allowed) answer = secrets && !socketAddress && params.resourceType !== "WebSocket"
+          ? await decidePausedRequest(secrets, tabId, params, { readBody: () => readBody(params) })
+          : { method: "Fetch.continueRequest", params: { requestId } };
+      } catch {}
+      reply(answer.method, answer.params);
     }
     let pageEvent = (_method, _params) => {};
     socket.addEventListener("close", () => {
       closed = true;
+      // Requests of this tab are no longer seen: none of its placeholders may be swapped by a later connection.
+      if (!released) secrets?.interceptionLost(tabId);
       for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error("Browser disconnected; inspect before retrying input.")); }
       pending.clear();
     });
@@ -190,11 +232,11 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
           catch (error) { pending.delete(id); clearTimeout(timer); reject(error); }
         });
       },
-      close() { socket.close(); },
+      close() { released = true; socket.close(); },
     };
   }
   function makeTab(target) {
-    const wire = connection(target.webSocketDebuggerUrl);
+    const wire = connection(target.webSocketDebuggerUrl, target.id);
     let currentUrl = target.url;
     let title = target.title;
     let destroyed = false;
@@ -204,7 +246,10 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     let mainNavigations = 0;
     // Request id -> start time: browser tasks wait for requests an action started.
     const inFlight = new Map();
-    const tab = { tabId: target.id, webMcpRevision: 0, inFlight, get disconnected() { return wire.closed; }, view: { webContents: {
+    const tab = { tabId: target.id, webMcpRevision: 0, inFlight, get disconnected() { return wire.closed; },
+      // True only once Chromium confirmed it pauses every request of this tab, on a connection that is still open.
+      intercepting: () => guarded.then(() => !destroyed && !wire.closed, () => false),
+      view: { webContents: {
       isDestroyed: () => destroyed,
       getURL: () => currentUrl,
       getTitle: () => title,
@@ -309,6 +354,7 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
         if (params.frame?.parentId) return;
         mainNavigations++;
         if (typeof params.frame?.url === "string") currentUrl = `${params.frame.url}${params.frame.urlFragment ?? ""}`;
+        secrets?.documentChanged(tab.tabId);
         return changed();
       }
       if (method === "Runtime.executionContextsCleared") return changed();
@@ -352,11 +398,11 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
       const known = tabs.get(target.id);
       if (recovery && known?.disconnected) {
         // The page is still there but our connection to it is not: reconnect instead of failing every operation on it.
-        host.invalidate(target.id); known.close(); tabs.set(target.id, makeTab(target));
+        host.invalidate(target.id); known.close(); secrets?.interceptionLost(target.id); tabs.set(target.id, makeTab(target));
       } else if (!known) tabs.set(target.id, makeTab(target));
       else known.update(target);
     }
-    for (const [id, tab] of tabs) if (!live.has(id)) { host.invalidate(id, { closed: true }); tab.close(); tabs.delete(id); owners.delete(id); }
+    for (const [id, tab] of tabs) if (!live.has(id)) { host.invalidate(id, { closed: true }); tab.close(); secrets?.tabClosed(id); tabs.delete(id); owners.delete(id); }
   }
   const host = createBrowserTaskHost({
     getTab: id => tabs.get(id), tabsFor: sessionId => [...tabs.values()].filter(tab => owners.get(tab.tabId) === sessionId),
@@ -382,8 +428,10 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     siteTools: async () => ({ ok: true, tools: [] }), runSiteTool: async () => ({ ok: false, dispatched: false, code: "unsupported" }),
     // Open and navigate return a page the agent can read, and reads wait out a page that is still changing.
     loadSettleMs: LOAD_SETTLE_MS,
-    // The guest log keeps unexpected failures; the page's text and addresses never go there.
-    onFailure: (failure) => console.warn(`[cloud-browser] ${JSON.stringify(failure)}`),
+    // The guest log keeps unexpected failures; the page's text and addresses never go there, nor a secret or its placeholder.
+    onFailure: (failure) => console.warn(`[cloud-browser] ${JSON.stringify(secrets ? secrets.redact(failure) : failure)}`),
+    secrets, secretsEnabled, approveSecret,
+    armSecretSwap: async (tab) => tabs.get(tab?.tabId) === tab && await tab.intercepting(),
   });
   return {
     async request(input, options) {
@@ -395,6 +443,6 @@ export function createCloudBrowser({ statePath, assertActive, enabled, beforeInp
     invalidate() { for (const id of tabs.keys()) host.invalidate(id); },
     pause() { for (const id of tabs.keys()) host.pause(id); },
     resume() { for (const id of tabs.keys()) host.resume(id); },
-    close() { for (const tab of tabs.values()) tab.close(); tabs.clear(); },
+    close() { for (const tab of tabs.values()) { tab.close(); secrets?.tabClosed(tab.tabId); } tabs.clear(); },
   };
 }

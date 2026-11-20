@@ -1,7 +1,7 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { MEMBER_FREE_STATUS_PATH, MEMBER_FREE_RESPONSES_PATH } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch, validateInferenceUrl, createGcpServiceAccountTokenMinter } from "@openwork-ee/gateway-upstreams"
 import { GATEWAY_BEARER_KEY_PREFIX } from "@openwork-ee/utils/gateway-bearer-key"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -33,7 +33,6 @@ import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from 
 import { cursorPathPrefix } from "./cursor.js"
 import { claudeCodePathPrefix } from "./claude-code.js"
 import { codexPathPrefix } from "./codex.js"
-import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
@@ -42,9 +41,9 @@ import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILAB
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
-import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "@openwork-ee/gateway-protocols"
 import type { FreeMemberHandler } from "./free/member/handler.js"
-import type { ParsedUsage } from "./usage/shared.js"
+import type { ParsedUsage } from "@openwork-ee/gateway-protocols"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {

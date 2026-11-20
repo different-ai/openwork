@@ -30,6 +30,7 @@ import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSign
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
 import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
+import { registerMePersonalSkillsRoutes } from "./personal-skills.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -186,6 +187,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
   registerMeActivationRoutes(app)
   registerMeAgentRoutes(app)
   registerMeFeatureIntroRoutes(app)
+  registerMePersonalSkillsRoutes(app)
 
   app.get(
     "/v1/me",

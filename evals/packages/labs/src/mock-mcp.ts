@@ -357,14 +357,14 @@ async function startEnterpriseProfileMock(options: StartMockMcpOptions): Promise
   const profileId = options.profileId;
   const port = options.port ?? 3979;
   const url = `http://127.0.0.1:${port}`;
-  const runner = join(REPO_ROOT, "packages", "enterprise-mcp-mock-server", "src", "cli.ts");
+  const runner = join(REPO_ROOT, "packages", "mcp-enterprise-mock-server", "src", "cli.ts");
   let child: ChildProcess | null = null;
   let output = "";
   let redirectUris: readonly string[] = [];
   let mcpUrl = `${url}/mcp`;
   const boot = async (): Promise<void> => {
     output = "";
-    const active = spawn("pnpm", ["--filter", "@openwork/enterprise-mcp-mock-server", "exec", "tsx", runner], {
+    const active = spawn("pnpm", ["--filter", "@openwork/mcp-enterprise-mock-server", "exec", "tsx", runner], {
       cwd: REPO_ROOT,
       detached: true,
       env: {

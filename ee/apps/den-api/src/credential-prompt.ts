@@ -4,10 +4,7 @@ import {
   credentialPromptSchema,
   type CredentialPrompt,
 } from "@openwork/types/den/credential-prompt"
-import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
-import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl, gatewaySdkDefaultBaseUrl, isLiteLlmProviderId, isTrueFoundryProviderId, inferenceCredentialEnvNames } from "@openwork-ee/gateway-catalog"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { env } from "./env.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./mcp/connection-navigation.js"
@@ -19,14 +16,6 @@ function text(record: unknown, ...path: string[]): string | null {
     value = Object.getOwnPropertyDescriptor(value, key)?.value
   }
   return typeof value === "string" && value.trim() ? value.trim() : null
-}
-
-/** SDK defaults mirror ee/apps/gateway/src/protocols.ts; a parity test keeps them aligned. */
-const GATEWAY_SDK_DEFAULTS: Record<string, string> = {
-  "@ai-sdk/openai": "https://api.openai.com/v1",
-  "@ai-sdk/anthropic": "https://api.anthropic.com/v1",
-  "@ai-sdk/mistral": "https://api.mistral.ai/v1",
-  "@ai-sdk/google": "https://generativelanguage.googleapis.com/v1beta",
 }
 
 /**
@@ -41,7 +30,7 @@ export function gatewayUpstreamDestination(providerId: string, providerConfig: u
   if (providerId === MICROSOFT_FOUNDRY_PROVIDER_ID) return credentialPromptDestination(microsoftFoundryBaseUrl(resourceName))
   const npm = text(providerConfig, "npm")
   if (npm === "@ai-sdk/azure" && resourceName && /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/.test(resourceName)) return `https://${resourceName.toLowerCase()}.openai.azure.com/openai`
-  return npm ? GATEWAY_SDK_DEFAULTS[npm] ?? null : null
+  return gatewaySdkDefaultBaseUrl(npm)
 }
 
 /**
