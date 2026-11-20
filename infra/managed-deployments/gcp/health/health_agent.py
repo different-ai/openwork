@@ -38,10 +38,18 @@ def fetch(url, headers=None, data=None, same_origin_redirects=False):
     if remaining <= 0:
         raise TimeoutError("health report deadline exceeded")
     with urllib.request.build_opener(redirect).open(req, timeout=min(20, remaining)) as response:
-        body = response.read(1024 * 1024 + 1)
-        if len(body) > 1024 * 1024:
-            raise ValueError("response too large")
-        return body
+        body = bytearray()
+        while True:
+            remaining = 20 if _report_deadline is None else _report_deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("health report deadline exceeded")
+            response.fp.raw._sock.settimeout(remaining)
+            chunk = response.fp.read1(min(65536, 1024 * 1024 + 1 - len(body)))
+            if not chunk:
+                return bytes(body)
+            body.extend(chunk)
+            if len(body) > 1024 * 1024:
+                raise ValueError("response too large")
 
 
 def metadata(path):
