@@ -105,6 +105,7 @@ const retiredClientFeaturesSchema = z.object({
   automationCalendarTriggers: retired,
   lastUsedSignIn: retired,
   remoteSessionHelperView: retired,
+  settingsFind: retired,
   // Removed, not GA: team pages keep their existing top tabs.
   teamSettingsSidebar: z.literal(false).default(false).meta({
     deprecated: true,

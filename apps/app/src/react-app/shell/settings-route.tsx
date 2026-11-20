@@ -1200,7 +1200,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   const runtimeWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspace?.id ?? null;
   const importOpencodeConnectionsEnabled = useDesktopFeature("importOpencodeConnections");
-  const settingsFindEnabled = useDesktopFeature("settingsFind");
   const opencodeConnectionsImport = useMemo(() => {
     if (!importOpencodeConnectionsEnabled || !openworkClient || !runtimeWorkspaceId) return undefined;
     return {
@@ -1366,7 +1365,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [developerMode, setCommandPaletteOpen, toggleDeveloperMode],
   );
   // The same find as Cmd/Ctrl+F and the header button, from the command palette.
-  const settingsFindPaletteItem = useMemo<PaletteItem | null>(() => settingsFindEnabled ? {
+  const settingsFindPaletteItem = useMemo<PaletteItem>(() => ({
     id: "settings-find.open",
     title: SETTINGS_FIND_LABEL,
     detail: "Search the settings page you have open",
@@ -1376,7 +1375,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setCommandPaletteOpen(false);
       useSettingsFindStore.getState().openFind();
     },
-  } : null, [setCommandPaletteOpen, settingsFindEnabled]);
+  }), [setCommandPaletteOpen]);
   const paletteSessionOptions = useMemo(
     () => buildCommandPaletteSessions(workspaces, sessionsByWorkspaceId, selectedWorkspaceId),
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
@@ -2894,7 +2893,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             navigationSessionId,
           )))}
           compact={props.embedded}
-          findEnabled={settingsFindEnabled}
         >
           {settingsView}
         </SettingsShell>
@@ -2941,7 +2939,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         sessions={paletteSessionOptions}
         extraItems={[
           ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]),
-          ...(settingsFindPaletteItem ? [settingsFindPaletteItem] : []),
+          settingsFindPaletteItem,
         ]}
       />
 
