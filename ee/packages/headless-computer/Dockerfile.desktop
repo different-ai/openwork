@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod 0440 /etc/sudoers.d/ubuntu /etc/sudoers.d/openwork-command
 COPY ee/packages/headless-computer/src/image.ts /tmp/openwork-computer-image.ts
 COPY ee/packages/headless-computer/requirements-desktop.lock /usr/local/share/openwork-computer/requirements-desktop.lock
+COPY ee/packages/headless-computer/desktop-node-packages.json ee/packages/headless-computer/desktop-node-packages.lock.json /usr/local/share/openwork-computer/
 RUN node --input-type=module -e "import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from '/tmp/openwork-computer-image.ts'; import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/install-computer.sh', DESKTOP_COMPUTER_INSTALL_SCRIPT)" \
     && bash /tmp/install-computer.sh && rm /tmp/install-computer.sh /tmp/openwork-computer-image.ts
 COPY ee/packages/headless-computer/src/desktop-apps.mjs /usr/local/share/openwork-desktop/apps.mjs
