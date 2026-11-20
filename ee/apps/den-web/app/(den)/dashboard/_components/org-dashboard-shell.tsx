@@ -77,6 +77,7 @@ import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 import { DownloadOpenWorkButton } from "./download-openwork-button";
 import { useWorkbotEntry } from "./workbot-entry-dialog";
+import { readSidebarBrand, selectSidebarBrand } from "./sidebar-brand";
 import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
 import { FeatureIntroHelpButton, FeatureIntroNavDot } from "../_features/feature-intros/feature-intro-help-button";
 
@@ -140,17 +141,18 @@ function OpenWorkMark({ className = "h-9 w-auto" }: { className?: string }) {
   );
 }
 
-export function SidebarBrandMark({
-  metadata,
+function SidebarBrandMark({
+  brand,
   organizationName,
 }: {
-  metadata: string | null | undefined;
+  brand: ReturnType<typeof readSidebarBrand>;
   organizationName: string;
 }) {
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [failedUrls, setFailedUrls] = useState<string[]>([]);
+  const mark = selectSidebarBrand(brand, failedUrls);
 
-  if (metadata === undefined) {
+  if (mark.kind === "loading") {
     return (
       <div
         className="h-8 w-8 rounded-lg"
@@ -160,29 +162,58 @@ export function SidebarBrandMark({
     );
   }
 
-  const iconUrl = getManagedBrandIconUrl(metadata);
-  if (!iconUrl || failedUrl === iconUrl) {
-    return (
-      <div data-sidebar-brand-icon="fallback">
-        <OpenWorkMark className="h-8 w-auto" />
-      </div>
-    );
-  }
-
-  return (
+  const imageUrl = mark.url;
+  const wordmark = mark.kind === "wordmark";
+  const image = imageUrl ? (
     <div
-      className="h-8 w-8 overflow-hidden rounded-lg"
-      data-sidebar-brand-icon={loadedUrl === iconUrl ? "ready" : "loading"}
+      className={wordmark ? "flex h-8 min-w-0 items-center" : "h-8 w-8 shrink-0 overflow-hidden rounded-lg"}
+      data-sidebar-brand-icon={loadedUrl === imageUrl ? "ready" : "loading"}
     >
       <img
-        src={iconUrl}
-        alt={`${organizationName} icon`}
-        className={`h-full w-full object-contain transition-opacity ${loadedUrl === iconUrl ? "opacity-100" : "opacity-0"}`}
-        onLoad={() => setLoadedUrl(iconUrl)}
-        onError={() => setFailedUrl(iconUrl)}
+        key={imageUrl}
+        src={imageUrl}
+        alt={wordmark ? mark.name ?? organizationName : mark.name ? "" : `${organizationName} icon`}
+        referrerPolicy="no-referrer"
+        className={wordmark ? "max-h-full max-w-full object-contain object-left" : `h-full w-full object-contain transition-opacity ${loadedUrl === imageUrl ? "opacity-100" : "opacity-0"}`}
+        onLoad={() => setLoadedUrl(imageUrl)}
+        onError={() => setFailedUrls((urls) => [...urls, imageUrl])}
       />
     </div>
+  ) : (
+    <div className="shrink-0" data-sidebar-brand-icon="fallback" aria-hidden={mark.name ? true : undefined}>
+      <OpenWorkMark className="h-8 w-auto" />
+    </div>
   );
+
+  return !wordmark && mark.name ? (
+    <div className="flex min-w-0 items-center gap-2">
+      {image}
+      <span className="truncate text-sm font-semibold text-gray-900" title={mark.name}>{mark.name}</span>
+    </div>
+  ) : image;
+}
+
+const DEFAULT_WORKSPACE_TITLE = "OpenWork Cloud";
+
+function WorkspaceTitle({ appName }: { appName: string | null }) {
+  useEffect(() => {
+    if (!appName || appName === DEFAULT_WORKSPACE_TITLE) return;
+
+    const applyTitle = () => {
+      if (document.title === DEFAULT_WORKSPACE_TITLE) document.title = appName;
+    };
+    // Next can stream the default title after this shell has rendered.
+    const observer = new MutationObserver(applyTitle);
+    observer.observe(document.head, { childList: true, subtree: true, characterData: true });
+    applyTitle();
+
+    return () => {
+      observer.disconnect();
+      if (document.title === appName) document.title = DEFAULT_WORKSPACE_TITLE;
+    };
+  }, [appName]);
+
+  return null;
 }
 
 const DEFAULT_WORKSPACE_FAVICON_HREF = "/openwork-mark.svg";
@@ -439,6 +470,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     enabled: sidebarQueriesEnabled,
   });
 
+  const brand = readSidebarBrand(orgContext?.organization.metadata, orgFeatureEnabled(orgContext, "denOrgBranding"));
+  const brandKey = JSON.stringify([orgContext?.organization.id, brand.wordmarkUrl, brand.iconUrl]);
+
   // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
     return (
@@ -456,6 +490,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   if (isOnboarding) {
     return (
       <>
+        <WorkspaceTitle appName={brand.appName} />
         <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
         <main data-testid="den-onboarding-shell">{children}</main>
       </>
@@ -680,20 +715,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               href={getOrgDashboardRoute(activeOrg.slug)}
               aria-label="Go to dashboard"
               title="Dashboard"
-              className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+              className="min-w-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
               onClick={() => setSidebarOpen(false)}
               data-testid="den-sidebar-brand-link"
             >
-              <SidebarBrandMark
-                metadata={orgContext?.organization.metadata}
-                organizationName={activeOrg.name}
-              />
+              <SidebarBrandMark key={brandKey} brand={brand} organizationName={activeOrg.name} />
             </Link>
           ) : (
-            <SidebarBrandMark
-              metadata={orgContext?.organization.metadata}
-              organizationName={runtimeConfig.singleOrgName}
-            />
+            <SidebarBrandMark key={brandKey} brand={brand} organizationName={runtimeConfig.singleOrgName} />
           )}
           <button
             type="button"
@@ -836,6 +865,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div data-den-shell={shellAppearance} className="flex min-h-screen flex-col bg-[var(--den-shell-canvas)] md:h-screen md:flex-row">
+      <WorkspaceTitle appName={brand.appName} />
       <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
       {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-[var(--den-shell-line)] bg-[var(--den-shell-sidebar)] md:flex md:h-screen md:w-[260px] md:flex-col">
