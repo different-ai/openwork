@@ -796,6 +796,53 @@ test("a step-mode run lists the person's apps' tools and reads memory once: late
   assert.deepEqual(transcript(store, session.id, "m1").filter((message) => message.role === "tool").map((message) => message.output).slice(1), ["tea"])
 })
 
+test("a step-mode run lists the person's apps' tools again when the server says they changed during a step", async () => {
+  using temp = tempDir()
+  const requests: ModelRequest[] = []
+  const model: ModelClient = {
+    async complete(request) {
+      requests.push(request)
+      if (resultsOf(request).length === 0) return { text: "", toolCalls: [{ id: "call_connect", name: "connect_app", input: { app: "mail" } }], usage }
+      if (request.tools.some((tool) => tool.name === "send_email") && resultsOf(request).length === 1) {
+        return { text: "", toolCalls: [{ id: "call_send", name: "send_email", input: { to: "team" } }], usage }
+      }
+      return { text: "Mail is connected and the email is sent.", toolCalls: [], usage }
+    },
+  }
+  let connected = false
+  let listings = 0
+  const mcp: McpConnector = async ({ onToolsChanged }) => {
+    const tools = [
+      { name: "connect_app", description: "Connects an app", inputSchema: { type: "object" } },
+      ...(connected ? [{ name: "send_email", description: "Sends an email", inputSchema: { type: "object" } }] : []),
+    ]
+    listings += 1
+    return {
+      tools,
+      async call(name) {
+        if (name === "connect_app") {
+          // Connecting an app changes what the person may use; the server says so on the open connection.
+          connected = true
+          onToolsChanged?.()
+          return { output: "connected", isError: false }
+        }
+        return { output: "sent", isError: false }
+      },
+      async close() {},
+    }
+  }
+  const { store, runner } = world(temp.directory, { model, mcp })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "m1", prompt: "Connect my mail and email the team", credentials: { mcpToken: "token" }, execution: "steps" })
+  await runner.idle()
+
+  assert.equal(store.getTurn(session.id, "m1")?.status, "completed")
+  assert.deepEqual(requests.map((request) => request.tools.some((tool) => tool.name === "send_email")), [false, true, true],
+    "the step after the change shows the model the new tool, and later steps keep that list")
+  assert.equal(listings, 2, "listed once at the start and once after the change")
+  assert.deepEqual(transcript(store, session.id, "m1").filter((message) => message.role === "tool").map((message) => message.output), ["connected", "sent"])
+})
+
 test("a later step that can't connect to the person's apps: its call was never sent and says so, and the next step connects again", async () => {
   using temp = tempDir()
   const requests: ModelRequest[] = []
