@@ -173,7 +173,7 @@ export async function upsertOrgOAuthClient(input: {
 /**
  * getConnectedAccount for listings and status checks, shared within the request.
  * Code that refreshes or uses a token keeps calling getConnectedAccount, which
- * always reads fresh: a refresh that lost a race re-reads without writing.
+ * reads from the primary without request caching.
  */
 export function getConnectedAccountForListing(input: Parameters<typeof getConnectedAccount>[0]): Promise<ConnectedAccountRow | null> {
   return requestRead(connectedAccountReadKey(input), () => readConnectedAccount(input, db))
@@ -349,6 +349,66 @@ export async function refreshConnectedAccountForActiveMember(
   },
 ): Promise<ConnectedAccountRow | null> {
   return updateExistingConnectedAccountForActiveMember(input)
+}
+
+/** Serialize native refreshes before sending a potentially single-use refresh token. */
+export async function refreshConnectedAccountExclusively(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerId: string
+  expectedAccountId: ConnectedAccountRow["id"]
+  isAccessTokenFresh: (expiresAt: Date | null) => boolean
+  // Null means the provider revoked the grant; other failures throw and roll back.
+  refresh: (refreshToken: string) => Promise<{
+    accessToken: string
+    refreshToken?: string
+    tokenType?: string
+    expiresAt: Date | null
+  } | null>
+}): Promise<ConnectedAccountRow | null> {
+  return db.transaction(async (tx) => {
+    // Read the member without a lock: only the account needs to be held
+    // across HTTP. This avoids a lock cycle with callback or deletion flows.
+    const [member] = await tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(
+        eq(MemberTable.id, input.orgMembershipId),
+        eq(MemberTable.organizationId, input.organizationId),
+        isNull(MemberTable.removedAt),
+      ))
+      .limit(1)
+    if (!member) return null
+
+    const accountKey = and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+      eq(ConnectedAccountTable.providerId, input.providerId),
+    )
+    const [account] = await tx.select().from(ConnectedAccountTable).where(accountKey).limit(1).for("update")
+    if (!account || account.id !== input.expectedAccountId || !account.accessToken) return null
+    if (input.isAccessTokenFresh(account.expiresAt)) return normalizeConnectedAccountRow(account)
+    if (!account.refreshToken) return null
+
+    const refreshed = await input.refresh(account.refreshToken)
+    await tx
+      .update(ConnectedAccountTable)
+      .set(connectedAccountChanges({
+        ...input,
+        ...(refreshed ? {
+          accessToken: refreshed.accessToken,
+          // Providers can omit the refresh token and token type on refresh.
+          refreshToken: refreshed.refreshToken ?? account.refreshToken,
+          tokenType: refreshed.tokenType ?? account.tokenType,
+          expiresAt: refreshed.expiresAt,
+        } : { accessToken: null, refreshToken: null, expiresAt: null }),
+      }))
+      .where(eq(ConnectedAccountTable.id, account.id))
+    if (!refreshed) return null
+
+    const [saved] = await tx.select().from(ConnectedAccountTable).where(accountKey).limit(1)
+    return saved ? normalizeConnectedAccountRow(saved) : null
+  })
 }
 
 export async function disconnectAccount(input: {
