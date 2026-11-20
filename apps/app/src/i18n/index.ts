@@ -1,6 +1,7 @@
 import en from "./locales/en";
 import ja from "./locales/ja";
 import zh from "./locales/zh";
+import zhTW from "./locales/zh-TW";
 import vi from "./locales/vi";
 import ptBR from "./locales/pt-BR";
 import th from "./locales/th";
@@ -14,13 +15,13 @@ export const LANGUAGE_PREF_KEY = "openwork.language";
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it";
+export type Language = "en" | "ja" | "zh" | "zh-TW" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "zh-TW", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it"];
 
 /**
  * Language options for UI - single source of truth
@@ -29,6 +30,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
   { value: "ja" as Language, label: "Japanese", nativeName: "日本語" },
   { value: "zh" as Language, label: "Chinese (Simplified)", nativeName: "简体中文" },
+  { value: "zh-TW" as Language, label: "Chinese (Traditional)", nativeName: "繁體中文" },
   { value: "vi" as Language, label: "Vietnamese", nativeName: "Tiếng Việt" },
   { value: "pt-BR" as Language, label: "Portuguese (BR)", nativeName: "Português (BR)" },
   { value: "th" as Language, label: "Thai", nativeName: "ไทย" },
@@ -39,7 +41,7 @@ export const LANGUAGE_OPTIONS = [
   { value: "it" as Language, label: "Italian", nativeName: "Italiano" },
 ] as const;
 
-const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
+const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "zh-TW", "th"]);
 
 /**
  * Current translation strings use an English-style plural suffix placeholder.
@@ -61,6 +63,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en,
   ja,
   zh,
+  "zh-TW": zhTW,
   vi,
   "pt-BR": ptBR,
   th,
@@ -127,6 +130,7 @@ const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
   en: new Intl.PluralRules("en"),
   ja: new Intl.PluralRules("ja"),
   zh: new Intl.PluralRules("zh"),
+  "zh-TW": new Intl.PluralRules("zh-TW"),
   vi: new Intl.PluralRules("vi"),
   "pt-BR": new Intl.PluralRules("pt-BR"),
   th: new Intl.PluralRules("th"),
