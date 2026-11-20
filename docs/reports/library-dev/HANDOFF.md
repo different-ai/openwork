@@ -25,7 +25,7 @@ Branch: `feat/library-ux`. This is unfinished work, not a release-ready claim.
 
 User wants a much larger Add a connector list and to try a few before rollout. Declare default-off registry flag BEFORE implementing. Preserve the existing 11 presets with flag off; gate new additions only and do not break existing saved connections when switched off. Follow repository skills and generate contracts/SDK if registry/routes require it. Do not auto-connect or authorize accounts.
 
-Existing catalog: ee/apps/den-api/src/capability-sources/external-mcp-presets.ts, consumed by routes/org/mcp-connections.ts and mcp/connector-catalog.ts. Existing automatic CIMD and DCR support is in packages/enterprise-mcp-client/src/oauth-provider.ts. Do not invent another auth path.
+Existing catalog: ee/apps/den-api/src/capability-sources/external-mcp-presets.ts, consumed by routes/org/mcp-connections.ts and mcp/connector-catalog.ts. Existing automatic CIMD and DCR support is in packages/mcp-enterprise-client/src/oauth-provider.ts. Do not invent another auth path.
 
 Read-only public endpoint probes advertised CIMD at the following candidates (NOT end-to-end OAuth proof; verify official docs and ownership again before adding):
 

@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "Aucun texte lisible dans ce fichier. Ouvrez-le dans une autre application pour voir l’original.",
+  "artifact.office_empty_slide": "Aucun texte lisible sur cette diapositive.",
+  "artifact.office_loading": "Chargement du plan textuel",
+  "artifact.office_slide": "Diapositive {number}",
+  "artifact.office_text_only": "Plan textuel uniquement, sans mise en page, images ni couleurs.",
+  "artifact.office_too_large": "Ce fichier est trop volumineux pour l’aperçu. Ouvrez-le dans une autre application pour le voir en entier.",
+  "artifact.office_truncated": "Une partie du texte est masquée, car l’aperçu a atteint sa limite.",
+  "artifact.office_unreadable": "Ce fichier n’a pas pu être lu. Essayez de l’ouvrir dans une autre application.",
   "app.error_audit_load": "Échec du chargement du journal d'audit.",
   "app.error_connect_first": "Connectez-vous d'abord à ce worker avant d'appliquer des changements d'exécution.",
   "app.error_request_failed": "Échec de la requête",

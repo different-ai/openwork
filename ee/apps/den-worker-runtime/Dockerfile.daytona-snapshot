@@ -27,7 +27,7 @@ COPY packages/calendar/ packages/calendar/
 COPY packages/codemode/ packages/codemode/
 COPY packages/computer-use/ packages/computer-use/
 COPY packages/documents/ packages/documents/
-COPY packages/enterprise-mcp-client/ packages/enterprise-mcp-client/
+COPY packages/mcp-enterprise-client/ packages/mcp-enterprise-client/
 COPY packages/free-auto/ packages/free-auto/
 COPY packages/install-config/ packages/install-config/
 COPY packages/managed-deployments/ packages/managed-deployments/

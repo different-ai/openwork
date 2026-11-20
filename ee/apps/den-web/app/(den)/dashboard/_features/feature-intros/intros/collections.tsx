@@ -41,7 +41,7 @@ export const collectionsIntros = [
       { title: "One audience for many plugins.", text: "Everyone, some teams or a few people get every plugin in the collection." },
       { title: "Grows with you.", text: "Add plugins over time; people with access get them in the desktop app." },
       { title: "Optional.", text: "To share a single plugin, choose who can use it on its own page instead." },
-      { title: "Built in.", text: "Every organization has the OpenWork Marketplace with OpenWork's own plugins." },
+      { title: "Built in.", text: "Every organization starts with the OpenWork Marketplace, shared with everyone and ready for your plugins." },
     ],
     example: {
       Component: CollectionsExample,

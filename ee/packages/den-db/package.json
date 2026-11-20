@@ -177,7 +177,8 @@
     "@openwork/types": "workspace:*",
     "@planetscale/database": "^1.19.0",
     "drizzle-orm": "^0.45.2",
-    "mysql2": "^3.23.1"
+    "mysql2": "^3.23.1",
+    "undici": "7.30.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

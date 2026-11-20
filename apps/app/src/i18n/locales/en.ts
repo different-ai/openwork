@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "No readable text in this file. Open it in another app to see the original.",
+  "artifact.office_empty_slide": "No readable text on this slide.",
+  "artifact.office_loading": "Loading text outline",
+  "artifact.office_slide": "Slide {number}",
+  "artifact.office_text_only": "Text outline only. Layout, images, and colors are not shown.",
+  "artifact.office_too_large": "This file is too large to preview. Open it in another app to see the full file.",
+  "artifact.office_truncated": "Some text is not shown because the preview reached its limit.",
+  "artifact.office_unreadable": "This file couldn’t be read. Try opening it in another app.",
   "account.mcp_connected_one": "{count} MCP server",
   "account.mcp_connected_other": "{count} MCP servers",
   "account.providers_connected_one": "{count} model provider",
@@ -860,6 +868,10 @@ export default {
   "extensions.section_openwork_meta": "{count} shared with you",
   "extensions.locked_more": "More after you sign in.",
   "extensions.sign_up_banner": "Sign in to add skills and connectors, and to use the ones your team shares.",
+  "automations.archived": "Archived",
+  "automations.no_archived": "No archived Automations",
+  "automations.restore": "Restore",
+  "automations.restored": "Automation restored. Its schedule is paused.",
   "automations.signed_out_title": "Sign in to schedule tasks that run on your desktop or in the cloud",
   "dashboard.signed_out_title": "Sign in to see the artifacts you and your team build",
   "extensions.sign_up_action": "Sign in to OpenWork Cloud",

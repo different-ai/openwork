@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { ProtocolError, ProtocolErrorCode, type McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
-import { skillFileResource, type SkillFile, type SkillFileResource } from "../skill-files.js"
+import { skillFileResource, type SkillFileEntry, type SkillFileResource } from "../skill-files.js"
 import { standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
 
 /**
@@ -35,7 +35,7 @@ export type ResolvedSkill = {
   blocked?: { status: string; message: string }
 }
 
-export function skillContent(skill: RemoteSkillDescriptor, source: string, files: readonly SkillFile[] = []): ResolvedSkillContent {
+export function skillContent(skill: RemoteSkillDescriptor, source: string, files: readonly SkillFileEntry[] = []): ResolvedSkillContent {
   const markdown = standardSkillMarkdown(skill, source)
   return {
     markdown,

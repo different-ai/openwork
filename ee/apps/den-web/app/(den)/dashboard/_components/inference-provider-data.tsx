@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite, GatewayProviderTestResult } from "@openwork/types/den/gateway";
+import type { GatewayProviderTestResult } from "@openwork/types/den/gateway";
 import { auditOperationHeaders, type AuditOperationContext } from "@openwork/types/den/audit";
 import { gatewayProviderHasUsageLimitsSchema, type GatewayProviderRemovalLimitChoice, type GatewayProviderRemovalUsageLimit } from "@openwork/types/den/gateway-usage-limits";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
@@ -11,6 +11,8 @@ import {
   readInferenceProviderFromPayload,
   readInferenceProvidersFromPayload,
   readInferenceProviderDetails,
+  readSavedGatewayResourceId,
+  type GatewayResourceWrite,
   type DenInferenceProviderDetails,
   type DenInferenceProvider,
   type InferenceProviderRequestBody,
@@ -155,17 +157,15 @@ export async function testInferenceProvider(body: InferenceProviderTestBody): Pr
   return result;
 }
 
-type GatewayResourceWrite =
-  | { resource: "model-groups"; body: GatewayModelGroupWrite }
-  | { resource: "credential-sets"; body: GatewayCredentialSetWrite }
-  | { resource: "access-grants"; body: GatewayAccessGrantWrite };
-
-export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite, auditContext?: AuditOperationContext) {
-  const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id ? `/${encodeURIComponent(id)}` : ""}`;
+export async function saveGatewayResource(providerId: string, id: string | null, input: GatewayResourceWrite, auditContext?: AuditOperationContext): Promise<string> {
+  const path = `/v1/inference-providers/${encodeURIComponent(providerId)}/${input.resource}${id !== null ? `/${encodeURIComponent(id)}` : ""}`;
   const { response, payload } = await requestJson(path, {
-    method: id ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(auditContext),
+    method: id !== null ? "PATCH" : "POST", body: JSON.stringify(input.body), headers: auditOperationHeaders(auditContext),
   }, 20000);
   if (!response.ok) throw getRequestError(payload, response, `Could not save ${input.resource} (${response.status}).`);
+  const savedId = readSavedGatewayResourceId(input.resource, payload) ?? id;
+  if (savedId === null) throw new Error("The server did not return the saved resource ID.");
+  return savedId;
 }
 
 export async function deleteGatewayResource(providerId: string, resource: GatewayResourceWrite["resource"], id: string, auditContext?: AuditOperationContext) {

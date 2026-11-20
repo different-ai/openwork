@@ -1,0 +1,20 @@
+id: show_workflow
+title: "Show a saved Workflow"
+surface: desktop
+label: REAL
+status: draft
+requires: [workflow_retained]
+do:
+  - {type: manual, instruction: "Open the approved saved Workflow and inspect its instructions without running it."}
+  - {type: show, seconds: 5}
+say: "A Workflow captures reusable instructions; it is not by itself a schedule."
+paste: {}
+see: "The saved Q4 leadership review with sample read-only instructions."
+checks:
+  - {"type": "workflow_exists", "name": "Q4 leadership review"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not claim this is the Automation just created."]

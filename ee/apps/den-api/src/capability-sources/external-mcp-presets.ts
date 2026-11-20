@@ -177,7 +177,7 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
  * protected-resource metadata were verified by probing the public
  * `/.well-known/oauth-protected-resource` endpoint; advertisement is not a
  * successful connection. OAuth presets reuse the existing CIMD/DCR pipeline
- * (`packages/enterprise-mcp-client`); no new auth path is added.
+ * (`packages/mcp-enterprise-client`); no new auth path is added.
  */
 export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
   {

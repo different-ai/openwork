@@ -19,6 +19,16 @@ export const CHECKS = [
     fix: "Fix the type errors above. Do not silence them with `any`, `as` or @ts-ignore.",
   },
   {
+    name: "demo-desktops-types",
+    command: ["pnpm", "exec", "tsc", "-p", "scripts/demo/tsconfig.json"],
+    fix: "Fix the demo launcher type errors; do not silence or cast them away.",
+  },
+  {
+    name: "demo-desktops",
+    command: ["node", "--test", "scripts/demo/launch.test.ts"],
+    fix: "Fix the offline demo snapshot, privacy, lifetime or cleanup regression; never bypass the allowlist.",
+  },
+  {
     name: "browser-secrets",
     command: ["node", "--test", "packages/computer-use/browser-secrets.test.mjs", "packages/computer-use/browser-task-secrets.test.mjs", "packages/computer-use/browser-secrets.review.test.mjs", "packages/computer-use/computer-control-secret-approval.test.mjs", "apps/desktop/electron/session-runner-computer-requests.test.mjs"],
     fix: "Fix the secret isolation, approval or redaction regression above before enabling browser secret handles.",
@@ -48,6 +58,11 @@ export const CHECKS = [
     name: "app-structure",
     command: ["node", "scripts/check-app-structure.mjs"],
     fix: "Move the code to the folder the message names. Do not add the violation to the baseline.",
+  },
+  {
+    name: "package-names",
+    command: ["node", "scripts/check-package-names.mjs"],
+    fix: "Name the package @openwork/<folder> (@openwork-ee/<folder> under ee/), family first, as the message says.",
   },
   {
     name: "code-habits",

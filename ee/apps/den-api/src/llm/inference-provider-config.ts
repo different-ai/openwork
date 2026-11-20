@@ -1,8 +1,11 @@
 import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
+import { hasUnresolvedGatewayTemplate } from "@openwork/types/den/inference"
 import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import { inferenceCredentialEnvNames, isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/gateway-catalog"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
+
+export { gatewayModelConfigurationError, hasUnresolvedGatewayTemplate } from "@openwork/types/den/inference"
 
 type JsonRecord = Record<string, unknown>
 
@@ -31,23 +34,6 @@ export function readProviderConfigNpm(providerConfig: JsonRecord): string | null
   return typeof providerConfig.npm === "string" && providerConfig.npm.trim() ? providerConfig.npm : null
 }
 
-export function hasUnresolvedGatewayTemplate(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasUnresolvedGatewayTemplate)
-  if (isRecord(value)) return Object.values(value).some(hasUnresolvedGatewayTemplate)
-  if (typeof value !== "string") return false
-  let decoded = value
-  for (let pass = 0; pass < 4; pass++) {
-    if (/[{}]|\$\(|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z_][A-Z0-9_]*>|%[A-Z_][A-Z0-9_]*%|process\.env\./.test(decoded)) return true
-    try {
-      const next = decodeURIComponent(decoded)
-      if (next === decoded) return false
-      decoded = next
-    } catch { return true }
-  }
-  // Do not accept deeply encoded substitutions we could not inspect completely.
-  return /%|[{}]|\$/.test(decoded)
-}
-
 export function gatewayConfigurationError(config: JsonRecord, settings: JsonRecord): string | null {
   const options = isRecord(config.options) ? config.options : {}
   const endpointOverride = settings.upstreamBaseUrl
@@ -58,20 +44,6 @@ export function gatewayConfigurationError(config: JsonRecord, settings: JsonReco
   return hasUnresolvedGatewayTemplate(effective)
     ? "Provider configuration contains unresolved environment/template dependencies. Set a concrete settings.upstreamBaseUrl or use a separately configured provider."
     : null
-}
-
-export function gatewayModelConfigurationError(config: JsonRecord, models: JsonRecord[]): string | null {
-  const npm = readProviderConfigNpm(config)
-  for (const model of models) {
-    const provider = isRecord(model.provider) ? model.provider : {}
-    if ([model.npm, provider.npm].some((override) => override !== undefined && override !== npm)) {
-      return "Selected models override the provider SDK. Use a separate gateway provider with the matching SDK."
-    }
-    if (hasUnresolvedGatewayTemplate({ provider, options: model.options })) {
-      return "Model configuration contains unresolved environment/template dependencies."
-    }
-  }
-  return null
 }
 
 /**

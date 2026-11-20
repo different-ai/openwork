@@ -47,6 +47,8 @@ import {
 import { mcpMemberForToken, resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, readMarketplaceSkillFiles, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { findSkillFile, registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
+import { readSkillFileBytes } from "../skill-file-blobs.js"
+import { skillFileMimeType, skillFileText } from "../skill-files.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
@@ -468,7 +470,14 @@ export function registerAgentSkillResources(input: {
     }, async () => {
       const file = findSkillFile(await fileRead.resolveSkills(), fileRead.uri)
       if (!file) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No skill file at ${fileRead.uri} is available to you.`)
-      return { contents: [{ uri: file.uri, mimeType: file.mimeType, text: file.text }] }
+      const bytes = await readSkillFileBytes(input.organizationId, file)
+      if (!bytes) throw new ProtocolError(ProtocolErrorCode.InternalError, `The skill file at ${fileRead.uri} could not be read. Try again.`)
+      const text = skillFileText(bytes)
+      return {
+        contents: [text !== null
+          ? { uri: file.uri, mimeType: file.mimeType, text }
+          : { uri: file.uri, mimeType: skillFileMimeType(file.path, false), blob: Buffer.from(bytes).toString("base64") }],
+      }
     })
   }
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
@@ -1059,6 +1068,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         member: memberIdentity,
         recordUse: read.file === undefined,
       }),
+      readFile: (file) => readSkillFileBytes(principal.organizationId, file),
     })
 
     registerAgentSkillTools({

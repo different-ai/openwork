@@ -155,7 +155,7 @@ export type DenPlugin = {
    * - "bitbucket"→ only visible after a Bitbucket account is connected
    */
   requiresProvider: "any" | "github" | "bitbucket";
-  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
+  /** A plugin Den itself supplies (a retired built-in kept for its history), not one the team made. */
   builtIn?: boolean;
 };
 
@@ -855,7 +855,7 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
   /** False when the server did not include access, so callers load it per plugin. */
   accessIncluded: boolean;
-  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
+  /** A plugin Den itself supplies (a retired built-in kept for its history), not one the team made. */
   builtIn: boolean;
   updatedAt?: string;
 };

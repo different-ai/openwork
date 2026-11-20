@@ -2,7 +2,11 @@ import type { CallToolResult, McpServer, ToolAnnotations } from "@modelcontextpr
 import { z } from "zod"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { tokenize } from "./search.js"
-import { skillFileMimeType, type SkillFile } from "../skill-files.js"
+import { skillFileMimeType, skillFileText, skillFileUri, type SkillFileEntry } from "../skill-files.js"
+
+// Small images go back as image content, which models can see.
+const VIEWABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
+const VIEWABLE_IMAGE_MAX_BYTES = 1024 * 1024
 
 /**
  * Direct skill tools for the `/mcp/agent` endpoint.
@@ -43,7 +47,7 @@ export const LIST_SKILLS_OUTPUT_SCHEMA = z.object({
 
 export const GET_SKILL_OUTPUT_SCHEMA = remoteSkillDescriptorSchema.extend({
   provenance: z.string().optional().describe("Source or attribution information for the skill, when available."),
-  content: z.string().describe("Complete authorized SKILL.md with normalized name and description frontmatter followed by the source instructions; with file, that file's text instead."),
+  content: z.string().describe("Complete authorized SKILL.md with normalized name and description frontmatter followed by the source instructions; with file, that file's text instead, or a note when the file is binary."),
   files: z.array(z.object({
     path: z.string().describe("Path relative to the skill's folder; pass it as file to read it."),
     size: z.number().int().nonnegative().describe("Size in bytes."),
@@ -52,6 +56,7 @@ export const GET_SKILL_OUTPUT_SCHEMA = remoteSkillDescriptorSchema.extend({
   file: z.object({
     path: z.string().describe("The supporting file that content holds."),
     mimeType: z.string().describe("Its media type."),
+    binary: z.boolean().optional().describe("True when the file is not text: content is a note, and the bytes come from its skill:// resource."),
   }).optional().describe("Present when a supporting file was read instead of SKILL.md."),
 })
 
@@ -65,7 +70,7 @@ export type GetSkillPayload = z.infer<typeof GET_SKILL_OUTPUT_SCHEMA>
  * `blocked` carries the readiness hint and the action that unblocks it.
  */
 export type RemoteSkillSource =
-  | { content: string; provenance?: string; files?: SkillFile[] }
+  | { content: string; provenance?: string; files?: SkillFileEntry[] }
   | { blocked: { status: string; message: string; action: unknown } }
   | null
 
@@ -158,6 +163,8 @@ export function registerAgentSkillCatalogTools(input: {
   listSkills: () => Promise<RemoteSkillDescriptor[]>
   /** The authorized SKILL.md source for one listed skill, with its supporting files; `file` is set when the call reads one of them. */
   readSkill: (skill: RemoteSkillDescriptor, read: { file?: string }) => Promise<RemoteSkillSource>
+  /** One listed supporting file's contents, or null when they cannot be read. */
+  readFile: (file: SkillFileEntry) => Promise<Uint8Array | null>
 }) {
   input.server.registerTool(
     LIST_SKILLS_TOOL_NAME,
@@ -228,7 +235,7 @@ export function registerAgentSkillCatalogTools(input: {
       if (!source) {
         return skillErrorResult("skill_unavailable", name, `Skill "${skill.name}" is no longer available. Call list_skills for the current catalog.`)
       }
-      const files = (source.files ?? []).map((entry) => ({ path: entry.path, size: Buffer.byteLength(entry.text, "utf8") }))
+      const files = (source.files ?? []).map((entry) => ({ path: entry.path, size: entry.size }))
       if (file) {
         const wanted = file.replace(/^\.\//, "")
         const match = source.files?.find((entry) => entry.path === wanted)
@@ -237,12 +244,35 @@ export function registerAgentSkillCatalogTools(input: {
             ? `Skill "${skill.name}" has no file "${file}". Pass one of the listed paths.`
             : `Skill "${skill.name}" has no supporting files.`, { files: files.map((entry) => entry.path) })
         }
-        const filePayload: GetSkillPayload = {
-          ...describeRemoteSkill(skill),
-          content: match.text,
-          file: { path: match.path, mimeType: skillFileMimeType(match.path) },
+        const bytes = await input.readFile(match)
+        if (!bytes) return skillErrorResult("skill_unavailable", name, `File "${match.path}" of skill "${skill.name}" could not be read. Try again.`)
+        const text = skillFileText(bytes)
+        if (text !== null) {
+          const filePayload: GetSkillPayload = {
+            ...describeRemoteSkill(skill),
+            content: text,
+            file: { path: match.path, mimeType: skillFileMimeType(match.path) },
+          }
+          return { content: [{ type: "text", text }], structuredContent: filePayload }
         }
-        return { content: [{ type: "text", text: match.text }], structuredContent: filePayload }
+        const mimeType = skillFileMimeType(match.path, false)
+        const viewable = VIEWABLE_IMAGE_TYPES.has(mimeType) && bytes.byteLength <= VIEWABLE_IMAGE_MAX_BYTES
+        const note = [
+          `${match.path} is a binary file (${mimeType}, ${bytes.byteLength} bytes)${viewable ? "; the image follows" : ""}.`,
+          `A client that reads MCP resources gets its bytes from ${skillFileUri(skill.name, match.path)}.`,
+        ].join(" ")
+        const binaryPayload: GetSkillPayload = {
+          ...describeRemoteSkill(skill),
+          content: note,
+          file: { path: match.path, mimeType, binary: true },
+        }
+        return {
+          content: [
+            { type: "text", text: note },
+            ...(viewable ? [{ type: "image" as const, data: Buffer.from(bytes).toString("base64"), mimeType }] : []),
+          ],
+          structuredContent: binaryPayload,
+        }
       }
       const payload: GetSkillPayload = {
         ...describeRemoteSkill(skill),

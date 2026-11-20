@@ -62,6 +62,7 @@ import {
   textOverlap,
 } from "./plugins-support.js"
 import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflight, specObject, touches } from "./route-support.js"
+import { skillPayloadWithContents } from "../../skill-file-blobs.js"
 
 const AREA = "plugins.skills"
 
@@ -150,6 +151,14 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
   const instanceNames = new Map(instances.map((instance) => [instance.id, instance.name]))
   const remoteByObject = new Map(remoteApps.map((app) => [app.configObjectId, app]))
 
+  // Skills carry their supporting files' contents, not the digests this
+  // organization stores them by, so the export imports anywhere.
+  const payloads = new Map<string, Record<string, unknown> | null>()
+  for (const row of rows) {
+    const payload = latest.get(row.id)?.normalizedPayloadJson ?? null
+    payloads.set(row.id, row.objectType === "skill" ? await skillPayloadWithContents(organizationId, payload) : payload)
+  }
+
   const items = rows.map((row): ConfigItem => {
     const version = latest.get(row.id)
     const remote = remoteByObject.get(row.id)
@@ -163,7 +172,7 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
         archived: row.status === "archived",
         content: {
           rawSourceText: version?.rawSourceText ?? null,
-          payload: version?.normalizedPayloadJson ?? null,
+          payload: payloads.get(row.id) ?? null,
           schemaVersion: version?.schemaVersion ?? null,
         },
         access: accessSpec(grants.filter((grant) => grant.resourceId === row.id), names),

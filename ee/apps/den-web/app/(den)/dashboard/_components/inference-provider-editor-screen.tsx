@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Globe, LockKeyhole, Plus, User, Users } from "lucide-react";
-import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayProviderTestResult } from "@openwork/types/den/gateway";
+import type { GatewayProviderTestResult } from "@openwork/types/den/gateway";
 import { createAuditOperationContext, type AuditOperationContext } from "@openwork/types/den/audit";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -25,8 +25,8 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, testInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
-  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, trimAwsSso, type AwsKeysInput, type AwsSsoInput,
+  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, filterSupportedGatewayCatalogModels, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
+  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, syncInferenceProviderMatrix, trimAwsSso, type AwsKeysInput, type AwsSsoInput, type InferenceProviderFormInput,
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { TRUEFOUNDRY_PROVIDER_ID } from "./truefoundry-provider-data";
@@ -64,7 +64,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [providerId, setProviderId] = useState(catalogProviderId ?? "");
   const [name, setName] = useState("");
-  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [pickedModelIds, setModelIds] = useState<string[]>([]);
   const [allowAllModels, setAllowAllModels] = useState(true);
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [credentialMode, setCredentialMode] = useState<"org" | "member">("org");
@@ -161,14 +161,18 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   ));
   const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode);
   const displayName = detail?.name ?? provider?.name ?? "provider";
-  const formInput = {
-    name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
+  // Newest first, so the latest models are easy to find and the test uses a current one.
+  const models = useMemo(() => detail ? sortModelsNewestFirst(filterSupportedGatewayCatalogModels(detail.config, detail.models)) : [], [detail]);
+  const modelIds = useMemo(() => {
+    const supportedIds = new Set(models.map((model) => model.id));
+    return pickedModelIds.filter((id) => supportedIds.has(id));
+  }, [models, pickedModelIds]);
+  const formInput: InferenceProviderFormInput = {
+    name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active",
     settings, envNames, apiKey, apiKeyValues, serviceAccountJson, oauthClientId, oauthClientSecret, access,
     ...(signInMethod === "microsoft" ? { oauthTenantId } : {}), ...(signInMethod === "aws_sso" ? { awsSso } : {}),
     ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
-  // Newest first, so the latest models are easy to find and the test uses a current one.
-  const models = useMemo(() => sortModelsNewestFirst(detail?.models ?? []), [detail]);
   // A new provider with a shared key is tested before it can be added.
   const testRequired = !provider && credentialMode === "org";
   // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
@@ -199,45 +203,21 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setRotationAcknowledged(false);
   }
 
-  /** Edits go through the matrix routes: first group, first set, and one grant per audience. */
   async function syncAccessAndCredential(auditContext: AuditOperationContext) {
     if (!provider) return;
-    const [group] = provider.modelGroups;
-    const [set] = provider.credentialSets;
-    if (!group || !set) return;
-    const groupModels = allowAllModels ? (detail?.models ?? []).map((model) => model.id) : modelIds;
-    if (groupModels.length) {
-      await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } }, auditContext);
-    }
-    const { credential, apiKeys, oauthClientId: clientId, oauthClientSecret: clientSecret, oauthTenantId: tenantId, awsSso: ssoSettings } = buildInferenceProviderRequestBody(formInput);
-    if (credential || apiKeys || credentialMode === "member" || set.credentialMode !== credentialMode) {
-      const body: GatewayCredentialSetWrite = { name: set.name, credentialMode, status: "active", credential, apiKeys };
-      if (clientId !== undefined) body.oauthClientId = clientId;
-      if (clientSecret !== undefined) body.oauthClientSecret = clientSecret;
-      if (tenantId !== undefined) body.oauthTenantId = tenantId;
-      if (ssoSettings !== undefined) body.awsSso = ssoSettings;
-      await saveGatewayResource(provider.id, set.id, { resource: "credential-sets", body }, auditContext);
-    }
-    const desired: GatewayAccessGrantWrite["audience"][] = [
-      ...(access.allMembers ? [{ type: "organization" as const }] : []),
-      ...[...new Set(access.teamIds)].map((teamId) => ({ type: "team" as const, teamId })),
-      ...[...new Set(access.memberIds)].map((memberId) => ({ type: "member" as const, memberId })),
-    ];
-    const same = (a: GatewayAccessGrantWrite["audience"], b: GatewayAccessGrantWrite["audience"]) => JSON.stringify(a) === JSON.stringify(b);
-    const existing = provider.accessGrants.filter((grant) => grant.modelGroupId === group.id && grant.credentialSetId === set.id);
-    for (const grant of existing) if (!desired.some((audience) => same(audience, grant.audience))) await deleteGatewayResource(provider.id, "access-grants", grant.id, auditContext);
-    for (const audience of desired) {
-      if (!existing.some((grant) => same(grant.audience, audience))) {
-        await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: group.id, credentialSetId: set.id } }, auditContext);
-      }
-    }
+    await syncInferenceProviderMatrix({
+      provider, allowAllModels, modelIds, credentialMode, access,
+      credentialBody: buildInferenceProviderRequestBody(formInput),
+      saveResource: (id, input) => saveGatewayResource(provider.id, id, input, auditContext),
+      deleteResource: (resource, id) => deleteGatewayResource(provider.id, resource, id, auditContext),
+    });
   }
 
   /** The checks a new shared-key configuration must pass before it is tested or added. */
   function configurationError(): string | null {
     if (catalogError) return "Retry the provider catalog first.";
     if (!detail || detail.id !== providerId) return "Wait for the provider catalog to load.";
-    if (!detail.models.length) return "No models are available in this provider's catalog. Retry the catalog first.";
+    if (!models.length) return "No models are available for this provider. Retry loading the models.";
     if (!isSupportedGatewayNpm(npm)) return "This provider is not supported by AI Gateway.";
     if (!allowAllModels && !modelIds.length) return "Pick at least one model, or choose all models.";
     for (const key of getRequiredSettingKeys(npm, providerId)) if (!settings[key]?.trim()) return `${getSettingLabel(key, providerId)} is required.`;
@@ -281,7 +261,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const invalid = configurationError();
     if (invalid) return setSaveError(invalid);
     const granting = access.allMembers || access.teamIds.length > 0 || access.memberIds.length > 0;
-    if (!provider && granting && credentialMode === "org" && !hasSharedKey()) return setSaveError("Paste a key before sharing these models.");
+    if (!configuredSet && granting && credentialMode === "org" && !hasSharedKey()) return setSaveError("Paste a key before sharing these models.");
     if (credentialMode === "member") {
       if (!signInMethod) return setSaveError("People can't sign in to this provider with their own account.");
       if (signInMethod === "aws_sso") {
@@ -309,6 +289,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         router.refresh();
       });
     } catch (cause) {
+      if (provider) await reload().catch(() => {});
       setSaveError(cause instanceof Error ? cause.message : "Could not save the provider.");
     } finally { setSaving(false); }
   }

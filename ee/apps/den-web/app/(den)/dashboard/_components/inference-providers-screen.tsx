@@ -62,8 +62,11 @@ function modelsLabel(provider: DenInferenceProvider) {
   return `${provider.modelIds.length} ${provider.modelIds.length === 1 ? "model" : "models"}`;
 }
 
-function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; orgSlug: string | null }) {
-  const { orgContext } = useOrgDashboard();
+export function ProviderRow({ provider, orgSlug, orgContext }: {
+  provider: DenInferenceProvider;
+  orgSlug: string | null;
+  orgContext: ReturnType<typeof useOrgDashboard>["orgContext"];
+}) {
   // LiteLLM and TrueFoundry per-person keys add automatic member grants; only the access group says who may use it.
   const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : provider.truefoundry ? trueFoundryAccessGroupId(provider) : null;
   const audience = describeGatewayAccess(accessGroupId ? { ...provider, accessGrants: (provider.accessGrants ?? []).filter((grant) => grant.modelGroupId === accessGroupId) } : provider, {
@@ -81,7 +84,8 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
   const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
     : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
-      : truefoundry ? truefoundry.hasAdminKey : provider.credentialStatus === "ready";
+      : truefoundry ? truefoundry.hasAdminKey
+        : provider.credentialStatus === "ready" || (provider.credentialSets ?? []).some((set) => set.credentialMode === "org" && set.credentialStatus === "ready");
   const ready = provider.status === "active" && keyReady && !syncError && !nobody;
   const status: RowStatus = provider.status === "disabled"
     ? { label: "Off", tone: "neutral" }
@@ -234,7 +238,7 @@ export function GatewayProvidersSection() {
                   : (
                     <>
                       {filteredRouters.map((router) => <SmartRouterRow key={router.id} router={router} routing={routing} orgSlug={orgSlug} />)}
-                      {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} />)}
+                      {filtered.map((provider) => <ProviderRow key={provider.id} provider={provider} orgSlug={orgSlug} orgContext={orgContext} />)}
                     </>
                   )}
               </RowList>

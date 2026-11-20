@@ -2,6 +2,7 @@
 // On a merge conflict here, keep either side and run `pnpm features:sync`.
 export { default as activationLocalSetup } from "@openwork/features/flags/activation-local-setup"
 export { default as administratorRecovery } from "@openwork/features/flags/administrator-recovery"
+export { default as automationArchiveRestore } from "@openwork/features/flags/automation-archive-restore"
 export { default as automationFailureNotifications } from "@openwork/features/flags/automation-failure-notifications"
 export { default as automationSharing } from "@openwork/features/flags/automation-sharing"
 export { default as browserDemonstrations } from "@openwork/features/flags/browser-demonstrations"
@@ -27,6 +28,7 @@ export { default as managedDeployments } from "@openwork/features/flags/managed-
 export { default as mcpThreadEvents } from "@openwork/features/flags/mcp-thread-events"
 export { default as mcpThreads } from "@openwork/features/flags/mcp-threads"
 export { default as nativeMcpEvents } from "@openwork/features/flags/native-mcp-events"
+export { default as officeOutlinePreview } from "@openwork/features/flags/office-outline-preview"
 export { default as opencodeV2Only } from "@openwork/features/flags/opencode-v2-only"
 export { default as personalSkillPortability } from "@openwork/features/flags/personal-skill-portability"
 export { default as providerFilterSyncFix } from "@openwork/features/flags/provider-filter-sync-fix"

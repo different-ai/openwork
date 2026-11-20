@@ -4,6 +4,14 @@
  */
 
 export default {
+  "artifact.office_empty": "Tệp này không có văn bản đọc được. Hãy mở bằng ứng dụng khác để xem bản gốc.",
+  "artifact.office_empty_slide": "Trang chiếu này không có văn bản đọc được.",
+  "artifact.office_loading": "Đang tải đề cương văn bản",
+  "artifact.office_slide": "Trang chiếu {number}",
+  "artifact.office_text_only": "Chỉ hiển thị đề cương văn bản, không hiển thị bố cục, hình ảnh hay màu sắc.",
+  "artifact.office_too_large": "Tệp này quá lớn để xem trước. Hãy mở bằng ứng dụng khác để xem toàn bộ tệp.",
+  "artifact.office_truncated": "Một phần văn bản không hiển thị vì bản xem trước đã đạt giới hạn.",
+  "artifact.office_unreadable": "Không thể đọc tệp này. Hãy thử mở bằng ứng dụng khác.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_connect_first": "Kết nối worker này trước khi áp dụng thay đổi runtime.",
   "app.error_request_failed": "Yêu cầu thất bại",

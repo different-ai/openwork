@@ -1,0 +1,23 @@
+id: quick_slack_question
+title: Ask a quick Slack question
+surface: desktop
+label: MOCKED
+status: grounded
+requires: [employee_connected, sample_sources]
+do:
+  - {type: ask, turn: slack_answer, prompt: slack-prompt, model: '{{model}}', same_thread: false}
+  - {type: wait_turn, turn: slack_answer, timeout_seconds: 90}
+  - {type: show, turn: slack_answer, seconds: 4}
+say: First, a quick read from our labelled Slack stand-in.
+paste:
+  slack-prompt: In the sample Slack data, what is our Q4 committed forecast and who posted it? Answer in one line. Read only; do not post.
+see: $768,000, posted by a sample finance analyst in the sample finance channel.
+checks:
+  - {type: turn_succeeded, turn: slack_answer}
+  - {type: text_contains, turn: slack_answer, text: '768,000', last_resort: true, reason: The natural-language answer exposes no typed forecast field.}
+reset: [Remove only the new Slack question chat from this rehearsal.]
+fallback: Show the recorded sample answer; do not reconnect or post to Slack.
+expect_seconds: 25
+questions:
+  - {question: Is this a live Slack workspace?, answer: No. This connector is a labelled read-only stand-in.}
+avoid: [Do not select an unrehearsed model or approve outbound actions.]

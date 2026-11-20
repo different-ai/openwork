@@ -141,6 +141,10 @@ const redisClient = env.databaseRedisUrl
   ? new Redis(env.databaseRedisUrl, {
       lazyConnect: true,
       maxRetriesPerRequest: 2,
+      // Every cached read falls back to the database on error. Without these a
+      // half-open connection would hold each auth and org lookup indefinitely.
+      connectTimeout: 2_000,
+      commandTimeout: 2_000,
     })
   : null
 
@@ -165,9 +169,9 @@ function cachedLoaderDb() {
   return activeRedisClient ? db.$primary : db
 }
 
-/** cachedLoaderDb for the feature readers, which take the root database or a transaction (one reads the primary). */
+/** cachedLoaderDb for the feature readers. Each is one plain select, so `$primary` needs no BEGIN/COMMIT round trips. */
 function readCachedFeatures<T>(read: (database: FeatureDatabase) => Promise<T>): Promise<T> {
-  return activeRedisClient ? db.transaction((tx) => read(tx)) : read(db)
+  return read(cachedLoaderDb())
 }
 
 function cacheKey(input: CacheKeyInput) {

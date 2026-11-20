@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Demo employee browser
+Exec=/home/daytona/demo/chromium.sh employee %U
+Terminal=false
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;

@@ -27,6 +27,7 @@ import type {
   AutomationRunEvent,
   AutomationRunEventType,
   AutomationRunTriggerContext,
+  AutomationSchedule,
   AutomationUsage,
   DesktopRunnerInventory,
   RemoteSessionAccessMode,
@@ -295,6 +296,14 @@ function isLockConflict(error: unknown): boolean {
     && (cause.code === "ER_LOCK_DEADLOCK" || cause.code === "ER_LOCK_WAIT_TIMEOUT")
 }
 
+// Allow a small difference between the client's clock and Den's. Keep the
+// original occurrence overdue but runnable rather than silently dropping it.
+function nextDueForSubmittedSchedule(schedule: AutomationSchedule, now: number) {
+  if (schedule.kind !== "once") return nextAutomationOccurrence(schedule, now)
+  if (schedule.at < now - 60_000) throw new Error("automation_once_time_in_past")
+  return schedule.at
+}
+
 export class DenAutomationRepository implements AutomationRepository {
   async listQueuedCloud(input: { limit: number }): Promise<string[]> {
     const rows = await db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
@@ -318,7 +327,7 @@ export class DenAutomationRepository implements AutomationRepository {
       maximumRuntimeMs,
       ...(definition.workspaceId ? { workspaceId: definition.workspaceId } : {}),
     })
-    const nextDueAt = nextAutomationOccurrence(definition.schedule, input.now)
+    const nextDueAt = nextDueForSubmittedSchedule(definition.schedule, input.now)
     await db.transaction(async (tx) => {
       await tx.insert(AutomationRevisionTable).values({
         id: newRevisionId,
@@ -391,6 +400,9 @@ export class DenAutomationRepository implements AutomationRepository {
       if (executionTarget === "desktop" && action.kind === "saved_script") throw new Error("automation_action_target_mismatch")
       const instructions = action.kind === "agent" ? action.instructions : "Execute the pinned Workflow."
       const schedule = input.changes.schedule ?? current.schedule_config
+      const nextDueAt = input.changes.schedule
+        ? nextDueForSubmittedSchedule(schedule, input.now)
+        : nextAutomationOccurrence(schedule, input.now)
       const model = action.kind === "agent"
         ? action.model
         : { providerId: AUTOMATION_FREE_MODEL.providerId, modelId: AUTOMATION_FREE_MODEL.modelId, variant: null }
@@ -437,7 +449,7 @@ export class DenAutomationRepository implements AutomationRepository {
       await tx.update(AutomationTable).set({
         name: input.changes.name ?? automation.name,
         current_revision_id: newRevisionId,
-        next_due_at: date(nextAutomationOccurrence(schedule, input.now)),
+        next_due_at: date(nextDueAt),
         state: "active",
         needs_attention_reason: null,
         updated_at: new Date(input.now),

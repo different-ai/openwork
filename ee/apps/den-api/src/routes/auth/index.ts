@@ -22,7 +22,7 @@ import { db } from "../../db.js"
 import { withDesktopDeviceClaimRequest } from "../../desktop-device-login.js"
 import { env } from "../../env.js"
 import { findDomainSsoRequirement, listOrganizationSsoSignInOptions, ssoSignInUrl } from "../../organization-sso-access.js"
-import { resolveLoginSsoRouting } from "../../sso-routing.js"
+import { resolveLoginSsoRouting } from "@openwork-ee/den-sso"
 import {
   authorizeInitialAdminBootstrapSignup,
   completeInitialAdminBootstrapSignup,

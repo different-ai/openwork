@@ -8,7 +8,10 @@ import { DenButton } from "../../_components/ui/button";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 import { DenPageHeader } from "../../_components/ui/page-header";
 import { AUTOMATION_CARD_CLASS, CARD_TITLE_CLASS, DASHBOARD_PAGE_CLASS, SECTION_TITLE_CLASS } from "../../_components/ui/dashboard-styles";
+import { orgFeatureEnabled } from "../../_lib/den-org";
+import { markFeatureUsed } from "../../_lib/feature-usage";
 import { useDenFlow } from "../../_providers/den-flow-provider";
+import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FeatureIntroGate } from "../_features/feature-intros";
 import { StatusDot } from "../_features/computers/computer-parts";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
@@ -19,6 +22,7 @@ import {
   useAutomationRuns,
   useAutomations,
   useCancelAutomationRun,
+  useRestoreAutomation,
 } from "./automation-data";
 
 type AutomationListItem = AutomationList["items"][number];
@@ -57,8 +61,10 @@ function groupItems(items: AutomationListItem[]) {
   const attention: AutomationListItem[] = [];
   const scheduled: AutomationListItem[] = [];
   const paused: AutomationListItem[] = [];
+  const archived: AutomationListItem[] = [];
   for (const item of items) {
-    if (item.latestRun && ACTIVE_RUN_STATUSES.has(item.latestRun.status)) running.push(item);
+    if (item.automation.state === "archived") archived.push(item);
+    else if (item.latestRun && ACTIVE_RUN_STATUSES.has(item.latestRun.status)) running.push(item);
     else if (item.automation.state === "needs_attention") attention.push(item);
     else if (item.automation.state === "active") scheduled.push(item);
     else paused.push(item);
@@ -68,6 +74,7 @@ function groupItems(items: AutomationListItem[]) {
     { title: "Needs attention", items: attention },
     { title: "Scheduled", items: scheduled },
     { title: "Paused", items: paused },
+    { title: "Archived", items: archived },
   ].filter((group) => group.items.length > 0);
 }
 
@@ -75,6 +82,9 @@ export function AutomationsScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { runtimeConfig } = useDenFlow();
+  const { orgContext } = useOrgDashboard();
+  const archiveRestoreEnabled = orgFeatureEnabled(orgContext, "automationArchiveRestore");
+  const restore = useRestoreAutomation();
   const automationId = searchParams.get("automation")?.trim() || null;
   const runId = searchParams.get("run")?.trim() || null;
   const listQuery = useAutomations();
@@ -99,7 +109,7 @@ export function AutomationsScreen() {
   if (listQuery.error) return <div className={`${DASHBOARD_PAGE_CLASS} text-[13px] text-[var(--ow-danger)]`}>{listQuery.error.message}</div>;
 
   if (!automationId) {
-    const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? [];
+    const items = listQuery.data?.items.filter((item) => archiveRestoreEnabled || item.automation.state !== "archived") ?? [];
     const groups = groupItems(items);
     // With feature intros on, the My Automations intro replaces the list while there are none (DESIGN.md I1, I2);
     // with the flag off, the page and its empty line render as before.
@@ -154,8 +164,13 @@ export function AutomationsScreen() {
             <p className="mt-1 text-[12px] text-[var(--dls-text-secondary)]">Revision {detail.revision.version} · {placementLabel(detail.revision.executionTarget)} · {formatAutomationSchedule(detail.revision.schedule)}</p>
           </div>
         </div>
-        <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />
+        {archiveRestoreEnabled && detail.automation.state === "archived" ? (
+          <DenButton variant="secondary" size="sm" loading={restore.isPending} onClick={() => restore.mutate(detail.automation.id, {
+            onSuccess: () => markFeatureUsed("automationArchiveRestore"),
+          })}>Restore</DenButton>
+        ) : <ManageLink item={detail} openworkWebUrl={runtimeConfig.openworkWebUrl} />}
       </div>
+      {restore.error && restore.variables === detail.automation.id ? <p role="alert" className="mt-3 text-[13px] text-[var(--ow-danger)]">{restore.error.message}</p> : null}
 
       {detail.automation.needsAttentionReason ? <div className="mt-5 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-[13px] text-[var(--dls-text-primary)]">{detail.automation.needsAttentionReason.message}</div> : null}
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">

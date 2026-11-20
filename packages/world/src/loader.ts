@@ -17,7 +17,7 @@ export const RENAMED_WORLDS: Readonly<Record<string, string>> = {
   "desktop-prod-live": "live-desktop",
   "headless-prod-live": "live-app-web",
   "solo": "preview-full --seed workspace",
-  "evidence-web": "./packages/freestyle/worlds/evidence-web.ts",
+  "evidence-web": "./packages/world-freestyle/worlds/evidence-web.ts",
   "acme-docs": "./evals/docs-shots/world.ts",
   "litellm-per-member": "./examples/litellm-per-member-keys/world.ts",
   "den-split-origin-kind": "./evals/worlds/den-split-origin-kind.world.ts",
