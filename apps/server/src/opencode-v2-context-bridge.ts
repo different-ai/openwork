@@ -20,7 +20,7 @@ import type { ServerConfig } from "./types.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 
 const requestSchema = z.object({
-  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
+  name: z.enum(["openwork_context", "openwork_query", "openwork_execute", "openwork_skills", "openwork_skill_read", "openwork_skill_folder", "openwork_drive_upload", "openwork_gmail_draft", "openwork_outlook_draft", ASK_WITHOUT_WAITING, ASK_FORM, ...DRIVE_FILE_ACTIONS]),
   input: z.unknown(),
   sessionId: z.string().max(256).optional(),
   // The calling tool's place in its chat, where a Drive approval is shown.
@@ -283,6 +283,11 @@ export async function createV2ContextBridge(
           z.object({ urls: z.array(url).min(1).max(150), use: z.boolean().optional() }).strict(),
         ]).parse(call.input);
         return Response.json(await read("/experimental/connect/skills/read", { method: "POST", body: JSON.stringify(input) }));
+      }
+      // Internal plugin read: a used skill's verified, read-only folder.
+      if (call.name === "openwork_skill_folder") {
+        const input = z.object({ url: z.string().startsWith("skill://").endsWith("/SKILL.md").max(2_048) }).strict().parse(call.input);
+        return Response.json(await read("/experimental/connect/skills/folder", { method: "POST", body: JSON.stringify(input) }));
       }
       // A question in the calling chat that no tool call waits on.
       if (call.name === ASK_WITHOUT_WAITING || call.name === ASK_FORM) {

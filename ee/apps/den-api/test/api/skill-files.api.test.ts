@@ -60,6 +60,15 @@ test("a skill's supporting files are stored, kept across a SKILL.md edit, listed
   const skillUri = text(entry.uri, "skill uri")
   const root = skillUri.slice(0, -"SKILL.md".length)
   const guideUri = `${root}references/GUIDE.md`
+
+  // The skill index lists each file with its digest, so a desktop can lay the skill out as a folder.
+  const indexRead = await mcp(caseyToken, "resources/read", { uri: "skill://index.json" })
+  const index: Json = JSON.parse(String(list(field(indexRead.result, "contents"))[0]?.text))
+  const indexed = list(field(index, "skills")).find((skill) => skill.url === skillUri)
+  assert.deepEqual(list(indexed?.files).map((file) => [file.path, file.size, String(file.digest).startsWith("sha256:")]), [
+    ["references/GUIDE.md", Buffer.byteLength(files[0]!.text), true],
+    ["scripts/run.sh", Buffer.byteLength(files[1]!.text), true],
+  ])
   assert.deepEqual(list(entry.resources).map((resource) => resource.uri), [skillUri, guideUri, `${root}scripts/run.sh`])
 
   const read = await mcp(caseyToken, "resources/read", { uri: guideUri })

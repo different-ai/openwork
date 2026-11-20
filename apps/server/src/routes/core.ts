@@ -7,7 +7,9 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, readOpenWorkConnectSkillSource, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { cloudSkillFoldersRoot } from "../cloud-skill-folders-root.js";
+import { ensureCloudSkillFolder } from "../cloud-skill-folders.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
@@ -336,6 +338,25 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     const content = await readOpenWorkConnectSkillContent(config, body.url);
     if (content === null) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
     return jsonResponse({ ok: true, content });
+  });
+
+  addRoute(routes, "POST", "/experimental/connect/skills/folder", "client", async (ctx) => {
+    // A listed skill as a verified, read-only folder, so the agent can read its
+    // files and run its scripts. Built only from bodies matching Den's digests.
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.url !== "string" || !body.url.startsWith("skill://") || !body.url.endsWith("/SKILL.md") || body.url.length > 2_048) {
+      return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
+    }
+    const url = body.url;
+    const skill = (await readOpenWorkConnectSkillIndex(config)).skills.find((entry) => entry.url === url);
+    if (!skill?.digest || skill.setup || !skill.files?.length) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
+    const path = await ensureCloudSkillFolder({
+      root: cloudSkillFoldersRoot(config),
+      spec: { name: skill.name, digest: skill.digest, files: skill.files },
+      read: () => readOpenWorkConnectSkillSource(config, url),
+    }).catch(() => null);
+    if (!path) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
+    return jsonResponse({ ok: true, path });
   });
 
   addRoute(routes, "GET", "/experimental/connect/automations", "client", async (_ctx) => {

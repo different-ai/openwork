@@ -317,6 +317,9 @@ export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[], resolved?:
         ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
         ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
         ...(entry?.content ? { digest: entry.content.digest, size: entry.content.size } : {}),
+        // Each supporting file with its digest, so a client can lay the skill
+        // out as a folder and check every file it reads.
+        ...(entry?.content?.files.length ? { files: entry.content.files.map((file) => ({ path: file.path, digest: file.digest, size: file.size })) } : {}),
         ...(entry?.blocked ? { setup: entry.blocked } : {}),
       }
     }),
