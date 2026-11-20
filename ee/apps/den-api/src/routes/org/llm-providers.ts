@@ -548,7 +548,15 @@ async function normalizeLlmProviderInput(
       throw createFailure(400, "gateway_only_provider", `${provider.name} is available through AI Gateway, not Bring your own keys.`)
     }
 
-    const requestedModelIds = [...new Set(input.modelIds ?? [])]
+    // Dedupe case-insensitively: the (llm_provider_id, model_id) unique index
+    // uses a case-insensitive collation, so "Foo" and "foo" would collide.
+    const seenModelIdKeys = new Set<string>()
+    const requestedModelIds = (input.modelIds ?? []).filter((modelId) => {
+      const key = modelId.trim().toLowerCase()
+      if (seenModelIdKeys.has(key)) return false
+      seenModelIdKeys.add(key)
+      return true
+    })
     const modelsById = new Map(provider.models.map((model) => [model.id, model]))
     // Azure model lists come from the resource's *deployments*, which admins
     // can name anything — accept ids outside the models.dev catalog for
