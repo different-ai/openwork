@@ -1,6 +1,6 @@
 import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -252,7 +252,7 @@ export function createExternalConnectionProxyServer(input: {
     (await (input.appHostClient ? listAppTools() : listDirectTools()))
       .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
   )
-  const server = new McpServer(input.descriptor.serverInfo ?? {
+  const server = new Server(input.descriptor.serverInfo ?? {
     name: connection.name,
     version: "1.0.0",
   }, {
@@ -269,14 +269,14 @@ export function createExternalConnectionProxyServer(input: {
   })
 
   if (input.descriptor.capabilities.tools) {
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: input.appHostClient
         ? [...appGatewayTools, ...await listAppTools()]
         : directClient
           ? await listDirectTools()
           : gatewayTools,
     }))
-    server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const args = toolArguments(request.params.arguments)
       if (directClient) {
         const tool = (await listDirectTools()).find((tool) => tool.name === request.params.name)
@@ -355,13 +355,13 @@ export function createExternalConnectionProxyServer(input: {
   }
 
   if (input.descriptor.capabilities.resources) {
-    server.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    server.setRequestHandler(ListResourcesRequestSchema, async () => {
       if (!input.appHostClient && !directClient) return { resources: [] }
       const allowedUris = await appResourceUris()
       return { resources: (await runtime.listResources(input.operation)).filter((resource) => allowedUris.has(resource.uri)) }
     })
-    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
-    server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
+    server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       if (!input.appHostClient && !directClient) {
         throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources require direct exposure or the OpenWork App host.")
       }
@@ -426,7 +426,7 @@ export async function externalMcpProxyProtocolErrorResponse(
 
 type ExternalMcpProxyRequestDependencies = {
   describe: typeof describeExternalMcpServer
-  serve: (server: McpServer, context: Context) => Promise<Response | undefined>
+  serve: (server: Server, context: Context) => Promise<Response | undefined>
 }
 
 const externalMcpProxyRequestDependencies: ExternalMcpProxyRequestDependencies = {
