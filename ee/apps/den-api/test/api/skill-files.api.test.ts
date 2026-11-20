@@ -151,3 +151,30 @@ test("an agent creates a skill with its supporting files, keeps them across upda
   assert.equal(replaced.isError, false, replaced.raw.slice(0, 400))
   assert.deepEqual(await loadedPaths(), ["templates/report.md"])
 })
+
+test("a fair-sized skill, 8 MiB of supporting files, saves through create_skill and the plugin API and reads back", async () => {
+  const { orgId, owner } = await den.createOrg(await den.signUp("Blake Builder"), "Large skill files org")
+  const token = await den.mintMcpToken(owner, orgId)
+  const MiB = 1024 * 1024
+  const line = "A line of reference text that an agent reads when the skill asks it to.\n"
+  const part = line.repeat(Math.floor(MiB / line.length))
+  const files = Array.from({ length: 8 }, (_, index) => ({ path: `references/part-${index}.md`, text: `${part.slice(0, -40)}part-${index} proof phrase\n` }))
+  assert.ok(files.reduce((total, file) => total + file.text.length, 0) > 7.9 * MiB)
+
+  const skillName = `large-files-${den.stamp}`
+  const skillMarkdown = `---\nname: ${skillName}\ndescription: Proves a large skill fits.\n---\n\nRead references/part-0.md first.`
+  const created = await den.callMcpTool(token, "create_skill", { pluginName: skillName, skillMarkdown, files })
+  assert.equal(created.isError, false, created.raw.slice(0, 400))
+  const loaded = await den.callMcpTool(token, "get_skill", { name: skillName })
+  assert.equal(list(field(loaded.structured, "files")).length, 8)
+  const last = await den.callMcpTool(token, "get_skill", { name: skillName, file: "references/part-7.md" })
+  assert.equal(last.text, files[7]!.text)
+
+  // The plugin API takes the same skill: its payload limit is no longer 1 MiB.
+  const restName = `${skillName}-rest`
+  const viaApi = await den.as(owner, orgId)("POST", "/v1/plugins", {
+    name: restName,
+    components: [{ type: "skill", input: { rawSourceText: skillMarkdown.replace(skillName, restName), normalizedPayloadJson: { files } } }],
+  })
+  assert.equal(viaApi.status, 201, summary(viaApi))
+})

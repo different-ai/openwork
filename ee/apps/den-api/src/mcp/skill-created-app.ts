@@ -82,7 +82,7 @@ export function registerAgentSkillTools(input: {
       inputSchema: z.object({
         pluginName: z.string().trim().min(1).max(255).describe("Display name for the new Plugin."),
         skillMarkdown: z.string().trim().min(1).max(1_048_576).describe("The skill document to save: YAML frontmatter with name and description, followed by Markdown instructions telling an agent how and when to perform the task."),
-        files: skillFilesInputSchema.optional().describe(`Supporting text files saved beside SKILL.md, which should name each one by its path. At most ${SKILL_FILES_MAX_COUNT} files and ${SKILL_FILES_MAX_TOTAL_BYTES} bytes in total.`),
+        files: skillFilesInputSchema.optional().describe(`Supporting text files saved beside SKILL.md, which should name each one by its path. At most ${SKILL_FILES_MAX_COUNT} files, ${SKILL_FILE_MAX_BYTES / 1024 / 1024} MiB each and ${SKILL_FILES_MAX_TOTAL_BYTES / 1024 / 1024} MiB in total.`),
       }),
       outputSchema: skillSavedOutputSchema,
     },

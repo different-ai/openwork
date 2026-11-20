@@ -26,6 +26,9 @@ const jsonObjectSchema = z.object({}).passthrough()
 // MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
 // while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
 const configObjectInputMaxPayloadBytes = 1_048_576
+// normalizedPayloadJson carries a skill's supporting files (up to 8 MiB of text, see
+// skill-files.ts), so it gets the room its MEDIUMTEXT column has, minus a margin.
+const configObjectInputMaxNormalizedPayloadBytes = 11 * 1_048_576
 const rawSourceTextSchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
   { message: `rawSourceText must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
@@ -179,8 +182,8 @@ export const connectorAccountRepositoryParamsSchema = connectorAccountParamsSche
 export const configObjectInputSchema = z.object({
   rawSourceText: rawSourceTextSchema.optional(),
   normalizedPayloadJson: jsonObjectSchema.refine(
-    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxPayloadBytes,
-    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxNormalizedPayloadBytes,
+    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxNormalizedPayloadBytes} bytes (11 MiB) after UTF-8 encoding.` },
   ).optional(),
   parserMode: z.string().trim().min(1).max(100).optional(),
   schemaVersion: z.string().trim().min(1).max(100).optional(),
