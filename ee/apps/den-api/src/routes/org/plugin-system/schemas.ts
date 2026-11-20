@@ -734,7 +734,7 @@ export const pluginSchema = z.object({
   sourceFormat: extensionSourceFormatSchema.nullable(),
   sourceSchemaVersion: z.string().trim().min(1).max(100).nullable(),
   status: pluginStatusSchema,
-  createdByOrgMembershipId: memberIdSchema,
+  createdByOrgMembershipId: memberIdSchema.nullable(),
   createdAt: z.string().datetime({ offset: true }),
   updatedAt: z.string().datetime({ offset: true }),
   deletedAt: nullableTimestampSchema,

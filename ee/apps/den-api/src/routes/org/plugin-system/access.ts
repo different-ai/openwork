@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -12,6 +12,7 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import type { PermissionKey } from "@openwork/types/den/permissions"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { MemberTeamSummary, OrganizationContext } from "../../../orgs.js"
 import { db } from "../../../db.js"
 import { memberPermissionsForOrganizationContext } from "../../../middleware/member-permissions.js"
@@ -48,6 +49,19 @@ type MarketplaceGrantRow = Pick<typeof MarketplaceAccessGrantTable.$inferSelect,
 type PluginGrantRow = Pick<typeof PluginAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type ConnectorInstanceGrantRow = Pick<typeof ConnectorInstanceAccessGrantTable.$inferSelect, "orgMembershipId" | "orgWide" | "removedAt" | "role" | "teamId">
 type GrantRow = ConfigObjectGrantRow | MarketplaceGrantRow | PluginGrantRow | ConnectorInstanceGrantRow
+
+// The seeder creates a plugin and its system link with the same timestamp and
+// actor. A later system link to an existing plugin doesn't make it system-owned.
+const hasSystemSeedLink = sql`EXISTS (
+  SELECT 1 FROM ${MarketplacePluginTable}
+  WHERE ${MarketplacePluginTable.pluginId} = ${PluginTable.id}
+    AND ${MarketplacePluginTable.organizationId} = ${PluginTable.organizationId}
+    AND ${MarketplacePluginTable.membershipSource} = 'system'
+    AND ${MarketplacePluginTable.createdAt} = ${PluginTable.createdAt}
+    AND ${MarketplacePluginTable.createdByOrgMembershipId} = ${PluginTable.createdByOrgMembershipId}
+)`
+export const pluginOwnerId = sql`CASE WHEN ${hasSystemSeedLink} THEN NULL ELSE ${PluginTable.createdByOrgMembershipId} END`
+  .mapWith((value: string | null): MemberId | null => value === null ? null : normalizeDenTypeId("member", value))
 
 type MarketplaceResourceLookupInput = {
   context: PluginArchActorContext
@@ -256,7 +270,7 @@ async function resolvePluginRoleForIds(context: PluginArchActorContext, pluginId
 
   const [owned] = await db.select({ id: PluginTable.id }).from(PluginTable).where(and(
     inArray(PluginTable.id, organizationPluginIds),
-    eq(PluginTable.createdByOrgMembershipId, context.organizationContext.currentMember.id),
+    eq(pluginOwnerId, context.organizationContext.currentMember.id),
   )).limit(1)
   if (owned) return "manager" satisfies PluginArchRole
 
@@ -320,7 +334,7 @@ export async function resolvePluginArchPluginRoles(context: PluginArchActorConte
   const roles = new Map<PluginId, PluginArchRole>()
   const organizationId = context.organizationContext.organization.id
   if (pluginIds.length === 0) return roles
-  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: pluginOwnerId })
     .from(PluginTable)
     .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, pluginIds)))
   const organizationPluginIds = pluginRows.map((plugin) => plugin.id)
@@ -449,7 +463,7 @@ export async function resolvePluginArchConfigObjectRoles(context: PluginArchActo
   if (memberships.length === 0) {
     return roles
   }
-  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+  const pluginRows = await db.select({ id: PluginTable.id, createdByOrgMembershipId: pluginOwnerId })
     .from(PluginTable)
     .where(and(eq(PluginTable.organizationId, organizationId), inArray(PluginTable.id, [...new Set(memberships.map((membership) => membership.pluginId))])))
   if (pluginRows.length === 0) {
@@ -508,7 +522,7 @@ export async function resolvePluginArchResourceRole(input: ResourceLookupInput) 
   }
 
   if (input.resourceKind === "plugin") {
-    const [plugin] = await db.select({ createdByOrgMembershipId: PluginTable.createdByOrgMembershipId })
+    const [plugin] = await db.select({ createdByOrgMembershipId: pluginOwnerId })
       .from(PluginTable)
       .where(and(eq(PluginTable.id, input.resourceId), eq(PluginTable.organizationId, input.context.organizationContext.organization.id)))
       .limit(1)
