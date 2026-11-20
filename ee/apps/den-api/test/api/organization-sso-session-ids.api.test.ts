@@ -32,6 +32,7 @@ for (const policy of ["requireSso", "restrictDomainToSso"]) {
   test(`${policy}: SSO agent authorization`, async (t) => {
     const { orgId, owner } = await den.createOrg(await den.signUp(`${policy} Owner`), `${policy} workspace`)
     const plain = await den.createOrg(owner, `${policy} plain workspace`)
+    const otherMember = await den.newMember(owner, orgId, `${policy} Another Member`)
     const organizationId = normalizeDenTypeId("organization", orgId)
     const plainOrganizationId = normalizeDenTypeId("organization", plain.orgId)
     const userId = normalizeDenTypeId("user", owner.userId)
@@ -67,6 +68,15 @@ for (const policy of ["requireSso", "restrictDomainToSso"]) {
     assert.ok(freshSession)
     const unrestricted = await den.request(null, "GET", "/v1/org", { headers: headersFor() })
     assert.equal(unrestricted.status, 200, summary(unrestricted))
+    await t.test("agent organization listing is credential-scoped even without required SSO; browser listing is unchanged", async () => {
+      const agent = await den.request(null, "GET", "/v1/me/orgs", { headers: headersFor() })
+      assert.equal(agent.status, 200, summary(agent))
+      assert.equal(field(agent.body, "activeOrgId"), organizationId)
+      assert.deepEqual(list(field(agent.body, "orgs")).map((org) => org.id), [organizationId])
+      const browser = await den.request(owner.token, "GET", "/v1/me/orgs")
+      assert.equal(browser.status, 200, summary(browser))
+      assert.deepEqual(list(field(browser.body, "orgs")).map((org) => org.id).sort(), [organizationId, plainOrganizationId].sort())
+    })
     await db.update(OrganizationTable).set({ metadata: JSON.stringify({ [policy]: true }) }).where(eq(OrganizationTable.id, organizationId))
 
     await t.test("browser without proof is refused, with the unchanged browser error", async () => {
@@ -136,7 +146,7 @@ for (const policy of ["requireSso", "restrictDomainToSso"]) {
         assert.equal((await findSsoBlockedOrganizations({ sessionId, organizationIds: [organizationId] })).has(organizationId), true)
         assert.equal(await sessionCanRequireOrganizationSso({ sessionId, organizationId }), false)
         assert.equal(await readSessionSsoProof({ sessionId: sessionId ?? "", userId, organizationId }), null)
-        assert.ok(await findSsoAccessBlockForCredential({ kind: "session", sessionId: sessionId ?? "" }, organizationId))
+        assert.ok(await findSsoAccessBlockForCredential({ kind: "session", sessionId: sessionId ?? "" }, organizationId, userId))
       }
       const browser = await getRequestSession(new Headers({ authorization: `Bearer ${owner.token}` }))
       assert.ok(browser)
@@ -161,7 +171,7 @@ for (const policy of ["requireSso", "restrictDomainToSso"]) {
       const principal = await verifyMcpRequest(new Headers({ authorization: `Bearer ${tokenWithProof}` }), DEN_MCP_RESOURCE)
       assert.ok(!(principal instanceof Response))
       assert.deepEqual(mcpPrincipalProofSource(principal), sessionSource)
-      assert.equal(await findSsoAccessBlockForCredential(sessionSource, organizationId), null)
+      assert.equal(await findSsoAccessBlockForCredential(sessionSource, organizationId, userId), null)
       assert.equal((await readSessionSsoProof({ sessionId: session.id, userId, organizationId }))?.providerId, providerId)
       const browser = await den.as(owner, orgId)("GET", "/v1/org")
       assert.equal(browser.status, 200, summary(browser))
@@ -180,6 +190,42 @@ for (const policy of ["requireSso", "restrictDomainToSso"]) {
       assert.deepEqual(list(field(organizations.body, "orgs")).map((org) => org.id), [organizationId])
       const foreignDelete = await den.request(null, "DELETE", `/v1/workers/${foreignWorkerId}`, { headers })
       assert.equal(foreignDelete.status, 404, summary(foreignDelete))
+    })
+
+    await t.test("a directly reused signed header cannot use an expired backing session's proof", async () => {
+      const headers = headersFor(sessionSource)
+      const [backing] = await db.$primary.select({ expiresAt: AuthSessionTable.expiresAt }).from(AuthSessionTable).where(eq(AuthSessionTable.id, session.id))
+      assert.ok(backing)
+      await db.update(AuthSessionTable).set({ expiresAt: new Date(Date.now() - 60_000) }).where(eq(AuthSessionTable.id, session.id))
+      try {
+        assert.ok(await findSsoAccessBlockForCredential(sessionSource, organizationId, userId))
+        for (const route of ["/v1/org", "/v1/me/orgs", "/v1/workers"]) {
+          assertAgentRefused(await den.request(null, "GET", route, { headers }))
+        }
+      } finally {
+        await db.update(AuthSessionTable).set({ expiresAt: backing.expiresAt }).where(eq(AuthSessionTable.id, session.id))
+      }
+    })
+
+    await t.test("a signed principal cannot borrow another member's live session and SSO proof", async () => {
+      const headers = { "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: otherMember.userId, organizationId, proofSource: sessionSource }) }
+      assert.ok(await findSsoAccessBlockForCredential(sessionSource, organizationId, otherMember.userId))
+      for (const route of ["/v1/org", "/v1/me/orgs", "/v1/workers"]) {
+        assertAgentRefused(await den.request(null, "GET", route, { headers }))
+      }
+    })
+
+    await t.test("a proof row must belong to its backing session as well as to the principal", async () => {
+      const otherUserId = normalizeDenTypeId("user", otherMember.userId)
+      await db.update(SessionSsoProofTable).set({ userId: otherUserId }).where(eq(SessionSsoProofTable.sessionId, session.id))
+      try {
+        for (const principalUserId of [userId, otherUserId]) {
+          const headers = { "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: principalUserId, organizationId, proofSource: sessionSource }) }
+          assertAgentRefused(await den.request(null, "GET", "/v1/org", { headers }))
+        }
+      } finally {
+        await db.update(SessionSsoProofTable).set({ userId }).where(eq(SessionSsoProofTable.sessionId, session.id))
+      }
     })
 
     await t.test("forged or omitted signed-header proof cannot borrow a user's existing SSO proof", async () => {

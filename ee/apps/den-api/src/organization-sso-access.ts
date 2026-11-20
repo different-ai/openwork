@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthSessionTable,
   AuthUserTable,
@@ -266,14 +266,22 @@ async function readSsoRequiredOrganizations(organizationIds: readonly string[]):
 }
 
 /** When this session proved each organization's SSO (the identity provider's authentication time). */
-async function readSessionSsoProofs(sessionId: string): Promise<Map<string, Date>> {
+async function readSessionSsoProofs(sessionId: string, principalUserId?: string): Promise<Map<string, Date>> {
   // Synthetic sessions (including internal MCP principals) cannot hold browser SSO proofs.
-  if (!isDenTypeId("session", sessionId)) return new Map()
-  // primary: the rows are written by the SSO callback that created the session.
+  if (!isDenTypeId("session", sessionId) || (principalUserId !== undefined && !isDenTypeId("user", principalUserId))) return new Map()
+  // primary: recheck the live session even when an already-verified internal header is reused.
   const rows = await db.$primary
     .select({ organizationId: SessionSsoProofTable.organizationId, authenticatedAt: SessionSsoProofTable.authenticatedAt })
     .from(SessionSsoProofTable)
-    .where(eq(SessionSsoProofTable.sessionId, normalizeDenTypeId("session", sessionId)))
+    .innerJoin(AuthSessionTable, and(
+      eq(AuthSessionTable.id, SessionSsoProofTable.sessionId),
+      eq(AuthSessionTable.userId, SessionSsoProofTable.userId),
+      gt(AuthSessionTable.expiresAt, new Date()),
+    ))
+    .where(and(
+      eq(SessionSsoProofTable.sessionId, sessionId),
+      principalUserId === undefined ? undefined : eq(SessionSsoProofTable.userId, normalizeDenTypeId("user", principalUserId)),
+    ))
   return new Map(rows.map((row) => [row.organizationId, row.authenticatedAt]))
 }
 
@@ -319,11 +327,12 @@ export async function findSsoAccessBlock(input: { sessionId: string | null; orga
 }
 
 /** Only session-backed MCP credentials currently carry a checkable organization SSO proof. */
-export async function findSsoAccessBlockForCredential(proofSource: McpCredentialProofSource | null | undefined, organizationId: string) {
-  return findSsoAccessBlock({
-    sessionId: proofSource?.kind === "session" ? proofSource.sessionId : null,
-    organizationId,
-  })
+export async function findSsoAccessBlockForCredential(proofSource: McpCredentialProofSource | null | undefined, organizationId: string, principalUserId: string) {
+  const id = normalizeDenTypeId("organization", organizationId)
+  const block = (await readSsoRequiredOrganizations([id])).get(id) ?? null
+  if (!block || proofSource?.kind !== "session" || !isDenTypeId("user", principalUserId)) return block
+  const proofs = await readSessionSsoProofs(proofSource.sessionId, principalUserId)
+  return proofs.has(id) ? null : block
 }
 
 export function agentSsoRequiredErrorBody(block: SsoAccessBlock, proofSource: McpCredentialProofSource | null) {

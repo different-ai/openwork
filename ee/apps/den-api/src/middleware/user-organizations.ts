@@ -95,7 +95,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   // Browser sessions may fall back to an openable organization; their list stays
   // complete so the person can still choose another (and be sent through its SSO).
   if (internalMcp && activeOrganizationId) {
-    const block = await findSsoAccessBlockForCredential(internalMcp.proofSource, activeOrganizationId)
+    const block = await findSsoAccessBlockForCredential(internalMcp.proofSource, activeOrganizationId, user.id)
     if (block) return c.json(agentSsoRequiredErrorBody(block, internalMcp.proofSource), 403) as never
   } else if (!apiKey && activeOrganizationId) {
     const blocked = await findSsoBlockedOrganizations({ sessionId: session?.id ?? null, organizationIds: scopedOrgs.map((org) => org.id) })

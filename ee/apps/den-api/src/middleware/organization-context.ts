@@ -106,7 +106,7 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   // session (POST /v1/api-keys runs behind this check), so they are not re-checked.
   if (!apiKey) {
     const ssoBlock = internalMcp
-      ? await findSsoAccessBlockForCredential(internalMcp.proofSource, normalizedOrganizationId)
+      ? await findSsoAccessBlockForCredential(internalMcp.proofSource, normalizedOrganizationId, userId)
       : await findSsoAccessBlock({ sessionId: session?.id ?? null, organizationId: normalizedOrganizationId })
     if (ssoBlock) {
       return c.json(internalMcp ? agentSsoRequiredErrorBody(ssoBlock, internalMcp.proofSource) : ssoRequiredErrorBody(ssoBlock), 403) as never
