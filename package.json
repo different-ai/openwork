@@ -69,6 +69,8 @@
     "evals:typecheck": "pnpm --dir evals typecheck",
     "evals:pr": "pnpm --dir evals run test:pr",
     "world": "node evals/bin/world.mjs",
+    "demo:desktops": "node scripts/demo/launch.ts",
+    "test:demo-desktops": "node --test scripts/demo/launch.test.ts",
     "release:review": "node scripts/release/review.mjs",
     "release:rollback": "node scripts/release/rollback.mjs",
     "release:cut": "node scripts/release/cut.mjs",

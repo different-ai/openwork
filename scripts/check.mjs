@@ -19,6 +19,16 @@ export const CHECKS = [
     fix: "Fix the type errors above. Do not silence them with `any`, `as` or @ts-ignore.",
   },
   {
+    name: "demo-desktops-types",
+    command: ["pnpm", "exec", "tsc", "-p", "scripts/demo/tsconfig.json"],
+    fix: "Fix the demo launcher type errors; do not silence or cast them away.",
+  },
+  {
+    name: "demo-desktops",
+    command: ["node", "--test", "scripts/demo/launch.test.ts"],
+    fix: "Fix the offline demo snapshot, privacy, lifetime or cleanup regression; never bypass the allowlist.",
+  },
+  {
     name: "browser-secrets",
     command: ["node", "--test", "packages/computer-use/browser-secrets.test.mjs", "packages/computer-use/browser-task-secrets.test.mjs", "packages/computer-use/browser-secrets.review.test.mjs", "packages/computer-use/computer-control-secret-approval.test.mjs", "apps/desktop/electron/session-runner-computer-requests.test.mjs"],
     fix: "Fix the secret isolation, approval or redaction regression above before enabling browser secret handles.",
