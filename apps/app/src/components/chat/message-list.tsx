@@ -1512,9 +1512,12 @@ function collectAnsweredQuestions(items: UIMessageWithIndex[]) {
 }
 
 function collectAutomationProposals(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
-  return items.flatMap((item) => item.message.role === "assistant" && !isSessionErrorMessage(item.message)
-    ? automationProposalsInParts(item.message.parts)
-    : [])
+  const proposals = new Map<string, DynamicToolUIPart>()
+  for (const { message } of items) {
+    if (message.role !== "assistant" || isSessionErrorMessage(message)) continue
+    for (const part of automationProposalsInParts(message.parts)) proposals.set(part.toolCallId, part)
+  }
+  return [...proposals.values()]
 }
 
 function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
@@ -1699,7 +1702,8 @@ function MessageGroup({
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
   const answeredQuestions = collapseSteps ? collectAnsweredQuestions(stepItems) : []
   const answeredQuestionIds = answeredQuestions.length > 0 ? new Set(answeredQuestions.map((part) => part.toolCallId)) : NO_PINNED_QUESTIONS
-  const pinnedProposals = collapseSteps ? collectAutomationProposals(stepItems) : []
+  // Keep the same card mounted as live steps become the folded activity log.
+  const pinnedProposals = collectAutomationProposals(items)
   const pinnedProposalIds = pinnedProposals.length > 0 ? new Set(pinnedProposals.map((part) => part.toolCallId)) : NO_PINNED_PROPOSALS
   const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
   const stepCountLabel = stepRowCount ? `${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : null
@@ -1835,12 +1839,12 @@ function MessageGroup({
           <RemoteThreadRunLine start={start} part={part} />
         </Message>
       ))}
+      {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
       {pinnedProposals.map((part) => (
         <Message key={`automation-proposal-${part.toolCallId}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
           <OpenWorkAutomationProposalTool part={part} />
         </Message>
       ))}
-      {renderItems(proseItems, stepItems.length, collapseSteps || panelLive)}
       {computerHistory ? <Message className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
         <ComputerSessionHistory key={computerHistory.id} history={computerHistory} active={isLiveGroup && parentActive} renderAction={part => <ToolMessage part={part} />}
           live={computerWorking && isLastGroup ? { watching: watchingComputer, onWatch: watching => useComputerSessionHistoryStore.getState().setWatching(sessionId, watching) } : undefined}
