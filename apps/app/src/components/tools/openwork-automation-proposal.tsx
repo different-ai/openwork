@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { AlertTriangle, CalendarClock, Check } from "lucide-react"
+import { AlertTriangle, CalendarClock, Check, ChevronRight } from "lucide-react"
 import type { DynamicToolUIPart, UIMessage } from "ai"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
@@ -108,6 +108,14 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const token = settings.authToken?.trim() ?? ""
   const organizationId = settings.activeOrgId?.trim() ?? ""
   const signedIn = denAuth.isSignedIn && Boolean(token) && Boolean(organizationId)
+  const featuresQuery = useQuery({
+    queryKey: ["den", "org-features", organizationId || null],
+    queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).getOrgFeatures(organizationId),
+    enabled: signedIn && automationsEnabled && Boolean(proposal),
+    staleTime: 30_000,
+    retry: false,
+  })
+  const simplerReview = signedIn && automationsEnabled && !featuresQuery.isError && featuresQuery.data?.automationSimpleReview === true
   // Offer the same places the Automations page does: this desktop and, when Den
   // says Cloud can run agent Automations for this member, the cloud. An older
   // Den answers null and the runtime's fixed placement stays.
@@ -217,6 +225,66 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     } finally {
       setBusy(false)
     }
+  }
+
+  const openCreated = () => navigate(`${automationsRoute()}?${new URLSearchParams({ automation: created ?? "" })}`)
+  const createDisabled = busy || targetsQuery.isLoading || blocker !== null || !resolved || resolved.resolution === "unavailable"
+  const placementLabel = (choice: AutomationCanUse) => choice === "computer" ? "This computer" : choice === "cloud-computer" ? "Your cloud computer" : "Cloud (connected accounts only)"
+  const placementPicker = !created && canUseChoices.length > 1 ? (
+    <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Where it runs" data-automation-placement-choice={placement} data-automation-can-use={canUse ?? undefined}>
+      {canUseChoices.map((choice) => (
+        <Button key={choice} type="button" size="sm" variant={canUse === choice ? "secondary" : "ghost"}
+          role="radio" aria-checked={canUse === choice} disabled={busy || (choice === "computer" && proposal.schedule.kind === "calendar")}
+          data-automation-placement={choice} onClick={() => setPicked(choice)}>
+          {simplerReview ? placementLabel(choice) : choice === "computer" ? "This computer" : choice === "cloud-computer" ? "Cloud computer" : "Cloud, connected accounts only"}
+        </Button>
+      ))}
+    </div>
+  ) : null
+
+  if (simplerReview) {
+    const reason = blocker ?? (resolved?.resolution === "unavailable" ? "This model can't run Automations. Ask for a different model before turning this on." : null)
+    const where = targetsQuery.isLoading ? "Checking where this can run…" : canUse === "accounts"
+      ? "In the cloud, using only your connected accounts."
+      : placement === "cloud" ? "On your cloud computer, even when this computer is off."
+        : "On this computer. OpenWork needs to be open and connected at the scheduled time."
+    return (
+      <div className="not-prose w-full max-w-2xl space-y-3 rounded-2xl border border-dls-border bg-dls-surface px-4 py-3"
+        data-openwork-automation-proposal data-automation-created={created ?? undefined} data-automation-model-resolution={resolved?.resolution}>
+        <div className="flex items-start gap-2.5">
+          <CalendarClock className="mt-0.5 size-4 shrink-0 text-dls-secondary" aria-hidden="true" />
+          <h3 className="min-w-0 flex-1 break-words text-sm font-medium text-dls-primary">{proposal.name}</h3>
+          <span className="shrink-0 text-xs text-dls-secondary">{created ? "On" : reason ? "Can't turn on yet" : "Draft"}</span>
+        </div>
+        <div className="space-y-1 text-sm text-dls-secondary">
+          <p className="text-dls-primary">{formatAutomationSchedule(proposal.schedule)}</p>
+          <p>{where}</p>
+          <p className="whitespace-pre-wrap break-words pt-1">{proposal.instructions}</p>
+        </div>
+        {placementPicker || modelLabel || (pinnedWorkspaceId && placement === "desktop") ? (
+          <details className="group/review">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 rounded text-sm text-dls-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+              <ChevronRight className="size-3.5 group-open/review:rotate-90" aria-hidden="true" />Details
+            </summary>
+            <div className="space-y-2 pt-2 text-xs text-dls-secondary">
+              {placementPicker}
+              {modelLabel ? <p>Model: {modelLabel}</p> : null}
+              {pinnedWorkspaceId && placement === "desktop" ? <p data-automation-pinned-workspace={pinnedWorkspaceId}>Uses this workspace</p> : null}
+            </div>
+          </details>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-dls-border pt-3">
+          {!created && reason ? <p role="status" className="min-w-0 flex-1 text-xs text-dls-secondary">{reason}</p> : null}
+          {created ? (
+            <Button type="button" variant="outline" size="sm" className="ml-auto" data-open-automation={created} onClick={openCreated}>Open Automation</Button>
+          ) : (
+            <Button type="button" size="sm" className="ml-auto" disabled={createDisabled} data-create-automation onClick={() => void create()}>
+              {busy ? "Turning on…" : "Create and turn on"}
+            </Button>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (

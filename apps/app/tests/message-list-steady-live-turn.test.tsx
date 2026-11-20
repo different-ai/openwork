@@ -3,6 +3,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { UIMessage } from "ai"
+import { MemoryRouter } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
@@ -17,6 +18,7 @@ const { PlatformProvider, createDefaultPlatform } = await import("../src/react-a
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { MessageList } = await import("../src/components/chat/message-list")
 const { DenAuthProvider } = await import("../src/react-app/domains/cloud/den-auth-provider")
+const { DesktopConfigProvider } = await import("../src/react-app/domains/cloud/desktop-config-provider")
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
 
 let mounted: { root: Root; container: HTMLElement } | null = null
@@ -53,7 +55,7 @@ function liveTurnView(status: "streaming" | "ready", content: UIMessage[] = mess
   return createElement(QueryClientProvider, { client: queryClient,
     children: createElement(DenAuthProvider, { children: createElement(PlatformProvider, {
       value: createDefaultPlatform(),
-      children: createElement(MessageListProvider, {
+      children: createElement(MemoryRouter, null, createElement(DesktopConfigProvider, null, createElement(MessageListProvider, {
         workspaceId: "workspace_fixture", sessionId: "session_fixture",
         showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
         dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
@@ -61,7 +63,7 @@ function liveTurnView(status: "streaming" | "ready", content: UIMessage[] = mess
         onMcpReconnect: async () => { throw new Error("Unexpected reconnect") },
         onMcpReopenAuthorization: async () => {},
         children: createElement(MessageList, { messages: content, status, activityStatus: status === "streaming" ? "responding" : "idle" }),
-      }),
+      }))),
     }) }) })
 }
 
@@ -87,6 +89,40 @@ test("a running turn keeps its parts in arrival order, with no steps area to hol
   expect(reserve).not.toBeNull()
   expect(working).not.toBeNull()
   expect(reserve?.previousElementSibling?.contains(working ?? null) || reserve?.previousElementSibling === working).toBe(true)
+})
+
+test("an Automation review stays mounted outside activity when the turn folds", async () => {
+  const content: UIMessage[] = [messages[0]!, {
+    id: "msg_automation",
+    role: "assistant",
+    metadata: { opencode: { created: 2, completed: 3_002 } },
+    parts: [
+      ...[1, 2, 3, 4].map((step) => ({ type: "dynamic-tool" as const, toolName: "bash", toolCallId: `step${step}`, state: "output-available" as const, input: {}, output: "Done" })),
+      { type: "dynamic-tool", toolName: "openwork_execute", toolCallId: "proposal", state: "output-available", input: {}, output: JSON.stringify({
+        ok: true, id: "automation.propose", result: { kind: "automation-proposal", created: false, proposal: {
+          name: "Morning summary", instructions: "Summarize my inbox.", schedule: { kind: "daily", timezone: "UTC", hour: 9, minute: 0 },
+        } },
+      }) },
+      { type: "text", text: "Review the Automation below." },
+    ],
+  }]
+  const container = document.createElement("div")
+  document.body.append(container)
+  const root = createRoot(container)
+  mounted = { root, container }
+  const render = (status: "streaming" | "ready") => act(async () => {
+    root.render(liveTurnView(status, content))
+  })
+  await render("streaming")
+  const selector = "[data-openwork-automation-proposal]"
+  const card = container.querySelector(selector)
+  expect(card).not.toBeNull()
+  expect(card?.closest("[data-live-steps]")).toBeNull()
+  await render("ready")
+  expect(container.querySelector('[aria-label*="Show steps"]')).not.toBeNull()
+  expect(container.querySelectorAll(selector)).toHaveLength(1)
+  expect(container.querySelector(selector)).toBe(card)
+  expect(container.textContent?.indexOf("Review the Automation below.")).toBeLessThan(container.textContent!.indexOf("Morning summary"))
 })
 
 test("a finished turn splits its steps from the answer as before", async () => {
