@@ -3,6 +3,14 @@ import { readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
+/**
+ * Secrets only the OpenWork server holds, under any Windows spelling. The
+ * managed engine never receives them, so no `{env:}` template may read them.
+ */
+export function isServerOnlyEnvironmentName(name: string): boolean {
+  return name.toUpperCase() === "OPENWORK_ENCRYPTION_KEY";
+}
+
 export interface ProviderConfigTemplateError {
   providerId: string;
   field: string;
@@ -90,7 +98,7 @@ export async function resolveProviderConfigTemplates(
         }
         // The managed v1 child removes this server-only secret too. Remote
         // definitions must never consult the server process, even as a fallback.
-        const replacement = name.toUpperCase() === "OPENWORK_ENCRYPTION_KEY" ? undefined
+        const replacement = isServerOnlyEnvironmentName(name) ? undefined
           : local ? inherited[name] ?? options.environment.get(name) : options.environment.get(name);
         if (!replacement) {
           errors.push({ providerId, field, code: "missing_environment_variable", message: `Provider ${providerId}: ${field} references missing environment variable ${name}. Set it in Settings > Environment and apply the changes.` });
