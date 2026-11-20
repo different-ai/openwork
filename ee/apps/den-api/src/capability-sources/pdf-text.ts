@@ -22,10 +22,14 @@ export type PdfTextWorkerInput = { buffer: ArrayBuffer; byteOffset: number; byte
 // makes pdf.js scan every object).
 const WORKER_HEAP_LIMIT_MB = 512
 const MAX_CONCURRENT_EXTRACTIONS = 2
+const MAX_QUEUED_EXTRACTIONS = 2
 let running = 0
 const waiting: (() => void)[] = []
 
 async function withExtractionSlot<T>(work: () => Promise<T>): Promise<T> {
+  if (running >= MAX_CONCURRENT_EXTRACTIONS && waiting.length >= MAX_QUEUED_EXTRACTIONS) {
+    throw new Error("PDF extraction queue is full")
+  }
   if (running >= MAX_CONCURRENT_EXTRACTIONS) await new Promise<void>((resolve) => waiting.push(resolve))
   running += 1
   try {
