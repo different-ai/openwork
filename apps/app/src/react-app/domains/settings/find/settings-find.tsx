@@ -21,7 +21,6 @@ const MUTATION_DEBOUNCE_MS = 100;
  * conversation", so there it is taken only while focus is inside `scopeRef`.
  */
 export function useSettingsFind(input: {
-  enabled: boolean;
   scopeRef: RefObject<HTMLElement | null>;
   besideChat: boolean;
 }) {
@@ -31,7 +30,6 @@ export function useSettingsFind(input: {
   const closeFind = useSettingsFindStore((state) => state.closeFind);
 
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!input.enabled) return;
     const mod = isMacPlatform() ? event.metaKey : event.ctrlKey;
     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
     if (input.besideChat && !input.scopeRef.current?.contains(document.activeElement)) return;
@@ -50,7 +48,7 @@ export function useSettingsFind(input: {
   // Leaving settings closes find, so it is not waiting open on the next visit.
   useEffect(() => closeFind, [closeFind]);
 
-  return { enabled: input.enabled, open: input.enabled && open, focusNonce, openFind, closeFind };
+  return { open, focusNonce, openFind, closeFind };
 }
 
 export function SettingsFindButton(props: { onOpen: () => void }) {

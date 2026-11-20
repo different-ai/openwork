@@ -140,6 +140,8 @@ export const RETIRED_FEATURE_KEYS = [
   "workbotSettingsTabs", "sandboxSlack",
   // Generally available (2026-11): choosing a new sandbox's models; stays cloud-sandbox-only.
   "sandboxModelChoice",
+  // Generally available (2026-11): Cmd/Ctrl+F finds text on the open settings page.
+  "settingsFind",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
