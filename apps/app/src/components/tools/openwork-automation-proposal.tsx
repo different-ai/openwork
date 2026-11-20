@@ -15,13 +15,13 @@ import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL, type AutomationExecutionTarget } from "@openwork/types/automations"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import {
   automationCreationPlacement,
   useAutomationDeploymentEnabled,
   useDesktopAutomationsEnabled,
+  useSimplerAutomationReview,
 } from "@/react-app/domains/automations/automation-availability"
 import {
   automationCanUseChoices,
@@ -99,7 +99,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
   const desktopAllowed = useDesktopAutomationsEnabled()
-  const simplerReview = useOrgFeature("automationSimpleReview", { active: automationsEnabled })
+  const simplerReview = useSimplerAutomationReview(automationsEnabled)
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

@@ -1702,7 +1702,6 @@ function MessageGroup({
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
   const answeredQuestions = collapseSteps ? collectAnsweredQuestions(stepItems) : []
   const answeredQuestionIds = answeredQuestions.length > 0 ? new Set(answeredQuestions.map((part) => part.toolCallId)) : NO_PINNED_QUESTIONS
-  // Keep the same card mounted as live steps become the folded activity log.
   const pinnedProposals = collectAutomationProposals(items)
   const pinnedProposalIds = pinnedProposals.length > 0 ? new Set(pinnedProposals.map((part) => part.toolCallId)) : NO_PINNED_PROPOSALS
   const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)

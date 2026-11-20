@@ -2,6 +2,11 @@ import type { AutomationExecutionTarget } from "@openwork/types/automations"
 
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider"
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
+
+export function useSimplerAutomationReview(available: boolean) {
+  return useOrgFeature("automationSimpleReview", { active: available })
+}
 
 /**
  * Deployment-level Automation availability advertised by Den.
