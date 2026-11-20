@@ -71,6 +71,11 @@ test("a skill's supporting files are stored, kept across a SKILL.md edit, listed
   assert.deepEqual(list(field(loaded.structured, "files")).map((file) => file.path), ["references/GUIDE.md", "scripts/run.sh"])
   assert.match(loaded.text, /Read references\/GUIDE\.md first\./)
   assert.match(loaded.text, /Supporting files of this skill[\s\S]*- references\/GUIDE\.md\n- scripts\/run\.sh$/)
+  // Clients that show the model structured content instead of the text get the same note there; content stays the SKILL.md.
+  const filesNote = text(field(loaded.structured, "filesNote"), "files note")
+  assert.match(filesNote, /^Supporting files of this skill[\s\S]*"file":"<path>"[\s\S]*- references\/GUIDE\.md\n- scripts\/run\.sh$/)
+  assert.ok(loaded.text.endsWith(`\n\n---\n${filesNote}`))
+  assert.equal(String(field(loaded.structured, "content")).includes("Supporting files of this skill"), false)
   const guide = await den.callMcpTool(caseyToken, "get_skill", { name: skillName, file: "./references/GUIDE.md" })
   assert.equal(guide.isError, false, guide.raw.slice(0, 400))
   assert.equal(guide.text, files[0]!.text)
