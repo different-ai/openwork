@@ -49,7 +49,7 @@ export function ComputerCrew({ members, onOpen }: { members: readonly ComputerCr
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{member.name}{member.app ? <span className="font-normal text-muted-foreground"> · {member.app}</span> : null}</span>
             <span className="block truncate text-xs font-normal text-muted-foreground">
-              <span data-computer-crew-state="">{STATES[member.state]}</span>{member.intent && member.state !== "done" ? <> · {member.intent}</> : null}
+              <span data-computer-crew-state="">{STATES[member.state]}</span>
             </span>
           </span>
           {member.frame ? <img src={`data:${member.frame.mimeType};base64,${member.frame.data}`} alt="" className="h-10 w-16 shrink-0 rounded object-contain" decoding="async" /> : null}
