@@ -44,6 +44,22 @@ export function missingLanguages(languages, analyses, shas) {
   return expected.filter((language) => !uploaded.has(`/language:${language}`));
 }
 
+/**
+ * Why a PR head's results did not match by commit. `active`: a CodeQL run is
+ * still going. `uploaded`: the checked-in workflow succeeded for this exact head;
+ * its results sit under the merge commit of that moment, which GitHub recomputes
+ * whenever dev moves, so they no longer match `merge_commit_sha`. `stale`: only
+ * the retired default setup ever ran; the next push uploads every category.
+ * `missing`: the checked-in workflow ran for this head and did not succeed.
+ */
+export function headCoverage(runs) {
+  const codeql = runs.filter((run) => codeqlWorkflowPaths.has(run.path?.split("@")[0]));
+  if (codeql.some((run) => run.status !== "completed")) return "active";
+  const advanced = codeql.filter((run) => run.path?.split("@")[0] === ".github/workflows/codeql.yml");
+  if (advanced.some((run) => run.conclusion === "success")) return "uploaded";
+  return advanced.length ? "missing" : "stale";
+}
+
 function api(path, paginate = false) {
   const args = ["api", path];
   if (paginate) args.push("--paginate", "--slurp");
@@ -64,6 +80,7 @@ async function main() {
   const pulls = number ? [api(`${prefix}/pulls/${number}`)] : api(`${prefix}/pulls?state=open&per_page=100`, true);
   const lines = ["# CodeQL result coverage", "", `Default-branch baseline languages: ${languages.join(", ")}`, ""];
   let failures = 0;
+  let stale = 0;
   for (const pull of pulls) {
     if (pull.state !== "open" || pull.head.repo?.full_name !== repo || pull.base.ref !== repository.default_branch) continue;
     const refs = [`refs/pull/${pull.number}/head`, `refs/pull/${pull.number}/merge`];
@@ -71,18 +88,20 @@ async function main() {
     const missing = missingLanguages(languages, analyses, [pull.head.sha, pull.merge_commit_sha].filter(Boolean));
     // Only query workflow state when coverage is incomplete.
     const runs = missing.length ? api(`${prefix}/actions/runs?head_sha=${pull.head.sha}&per_page=100`, true) : [];
-    const active = runs.flatMap((page) => page.workflow_runs).some((run) =>
-      codeqlWorkflowPaths.has(run.path?.split("@")[0]) && run.status !== "completed"
-    );
-    if (!missing.length) {
+    const coverage = headCoverage(runs.flatMap((page) => page.workflow_runs));
+    if (!missing.length || coverage === "uploaded") {
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): all language results uploaded.`);
-    } else if (active) {
+    } else if (coverage === "active") {
       lines.push(`- #${pull.number}: scan in progress; pending ${missing.join(", ")}.`);
+    } else if (coverage === "stale") {
+      stale++;
+      lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): head predates the CodeQL workflow; the next push uploads ${missing.join(", ")}.`);
     } else {
       failures++;
       lines.push(`- #${pull.number} (${pull.head.sha.slice(0, 7)}): **missing ${missing.join(", ")}**. See docs/codeql-results.md for recovery.`);
     }
   }
+  if (stale) lines.push("", `${stale} PR head(s) were last pushed before the checked-in CodeQL workflow existed; they are listed, not failed.`);
   lines.push("", "Coverage only: existing security alerts and merge requirements still apply.");
   const report = `${lines.join("\n")}\n`;
   console.log(report);
