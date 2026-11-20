@@ -56,7 +56,7 @@ import {
   isAutomationProposalToolPart,
   OpenWorkAutomationProposalTool,
 } from "@/components/tools/openwork-automation-proposal"
-import { QuestionTool } from "@/components/tools/question"
+import { QuestionTool, questionToolAnswers } from "@/components/tools/question"
 import { SkillTool } from "@/components/tools/skill"
 import { TodoWriteTool } from "@/components/tools/todowrite"
 import { WebfetchTool } from "@/components/tools/webfetch"
@@ -181,6 +181,8 @@ const AppPanelFoldContext = React.createContext(false)
 /** Remote task rows a folded turn shows below its fold; inside it they render nothing. */
 const NO_PINNED_REMOTE_THREADS: ReadonlySet<string> = new Set()
 const PinnedRemoteThreadsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_REMOTE_THREADS)
+const NO_PINNED_QUESTIONS: ReadonlySet<string> = new Set()
+const PinnedQuestionsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_QUESTIONS)
 const ParentRunActiveContext = React.createContext(true)
 const ComputerHistoryContext = React.createContext<ComputerHistory | null>(null)
 
@@ -269,6 +271,7 @@ function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart):
 const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
   const pinnedRemoteThreads = React.useContext(PinnedRemoteThreadsContext)
+  const pinnedQuestions = React.useContext(PinnedQuestionsContext)
   // The agent following up on a task the chat shows makes it run again.
   useReviveRemoteThread(part.type === "dynamic-tool" ? part : null)
   const parentActive = React.useContext(ParentRunActiveContext)
@@ -387,7 +390,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   }
 
   if (isQuestionToolPart(part)) {
-    return <QuestionTool part={part} />
+    return pinnedQuestions.has(part.toolCallId) ? null : <QuestionTool part={part} />
   }
 
   if (part.type === "dynamic-tool" && isAutomationProposalToolPart(part)) {
@@ -1498,6 +1501,11 @@ function collectRemoteThreadStarts(items: UIMessageWithIndex[]) {
   return [...starts.values()]
 }
 
+function collectAnsweredQuestions(items: UIMessageWithIndex[]) {
+  return items.flatMap(({ message }) => message.role !== "assistant" || isSessionErrorMessage(message) ? [] : message.parts.flatMap((part) =>
+    isToolUIPart(part) && isQuestionToolPart(part) && !isReservedConnectionQuestionPart(part) && questionToolAnswers(part) ? [part] : []))
+}
+
 function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
   const parts = new Map<string, DynamicToolUIPart>()
   for (const item of items) {
@@ -1678,6 +1686,8 @@ function MessageGroup({
   // need the person, so its row stays in view below a folded run.
   const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
+  const answeredQuestions = collapseSteps ? collectAnsweredQuestions(stepItems) : []
+  const answeredQuestionIds = answeredQuestions.length > 0 ? new Set(answeredQuestions.map((part) => part.toolCallId)) : NO_PINNED_QUESTIONS
   const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
   const stepCountLabel = stepRowCount ? `${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : null
   const replyWorkedLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
@@ -1761,6 +1771,7 @@ function MessageGroup({
       <AppCreationPartsContext.Provider value={creationParts}>
       <AppPanelFoldContext.Provider value={panelLive}>
       <PinnedRemoteThreadsContext.Provider value={pinnedRemoteIds}>
+      <PinnedQuestionsContext.Provider value={answeredQuestionIds}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <ComputerHistoryContext.Provider value={computerHistory}>
       <ActionContextMenu
@@ -1798,6 +1809,11 @@ function MessageGroup({
           </div>
         )
       ) : null}
+      {answeredQuestions.map((part) => (
+        <Message key={`answered-question-${part.toolCallId}`} data-answered-question="" className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+          <QuestionTool part={part} />
+        </Message>
+      ))}
       {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} startedAt={getMessageCreated(items[0]!.message)} completedAt={getMessageCompleted(lastItem.message)} activity={run === creationRuns.at(-1) ? panelActivity : null} active={creationLive && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
       {mcpAppParts.map(appFrame)}
       {pinnedRemoteThreads.map(({ start, part }) => (
@@ -1864,6 +1880,7 @@ function MessageGroup({
       </ActionContextMenu>
       </ComputerHistoryContext.Provider>
       </ConnectionCardPartsContext.Provider>
+      </PinnedQuestionsContext.Provider>
       </PinnedRemoteThreadsContext.Provider>
       </AppPanelFoldContext.Provider>
       </AppCreationPartsContext.Provider>
