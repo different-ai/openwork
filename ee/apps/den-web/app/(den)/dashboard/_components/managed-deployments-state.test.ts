@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { managedDeploymentSchema } from "@openwork/types/den/managed-deployments";
-import { deploymentStatus, providerName, readinessMessage, type ProviderReadiness } from "./managed-deployments-state";
+import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type ProviderReadiness } from "./managed-deployments-state";
 
 function deployment(provider: "aws" | "gcp" = "aws") {
   return managedDeploymentSchema.parse({
@@ -57,4 +57,44 @@ test("locks name the remediation owner and distinguish readiness causes", () => 
   }
   assert.match(readinessMessage({ provider: "aws", available: false }), /publish and configure a verified installer/);
   assert.equal(providerName("azure"), "Azure");
+});
+
+test("assistant settings are editable only for a newer Update and stay locked during approval or provisioning", () => {
+  const item = deployment();
+  assert.equal(assistantSettingsState(item, true, true).editable, true);
+  assert.match(assistantSettingsState(item, false, true).reason ?? "", /OpenWork operator/);
+  assert.match(assistantSettingsState(item, true, false).reason ?? "", /Read only/);
+  if (!item.run) throw new Error("Missing fixture run");
+  item.run.state = "awaiting_approval";
+  assert.match(assistantSettingsState(item, true, true).reason ?? "", /frozen/);
+  item.run.state = "provisioning";
+  assert.equal(assistantSettingsState(item, true, true).editable, false);
+  item.run.expired = true;
+  assert.equal(assistantSettingsState(item, true, true).editable, true);
+  item.updateAvailable = false;
+  assert.match(assistantSettingsState(item, true, true).reason ?? "", /Retry keeps/);
+});
+
+test("a configuration change has its own status, and one nobody approved in time leaves the health status", () => {
+  const item = deployment();
+  if (!item.run) throw new Error("Missing fixture run");
+  item.run.kind = "configure";
+  item.run.version = "0.18.56";
+  item.run.state = "awaiting_approval";
+  assert.deepEqual(deploymentStatus(item), { label: "Awaiting AWS approval", tone: "neutral" });
+  item.run.expired = true;
+  assert.deepEqual(deploymentStatus(item), { label: "Operational", tone: "neutral" }, "nothing reached AWS, so the installation is as healthy as it reports");
+  item.run.lastSeenAt = new Date().toISOString();
+  assert.deepEqual(deploymentStatus(item), { label: "AWS approval reserved", tone: "neutral" });
+  item.run.lastSeenAt = null;
+  item.run.state = "provisioning";
+  assert.deepEqual(deploymentStatus(item), { label: "Configuration change stopped reporting", tone: "danger" });
+  item.run.expired = false;
+  assert.deepEqual(deploymentStatus(item), { label: "Applying configuration change", tone: "neutral" });
+  item.run.state = "failed";
+  assert.deepEqual(deploymentStatus(item), { label: "Configuration change failed", tone: "danger" });
+  item.run.expired = true;
+  assert.deepEqual(deploymentStatus(item), { label: "Configuration change failed", tone: "danger" });
+  item.run.state = "ready";
+  assert.deepEqual(deploymentStatus(item), { label: "Operational", tone: "neutral" });
 });

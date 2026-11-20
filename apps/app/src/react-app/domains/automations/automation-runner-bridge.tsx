@@ -18,6 +18,7 @@ import { COMPUTER_DISCONNECTED_ERROR } from "@openwork/types/den/remote-devices"
 
 import { createDenClient, DenApiError, isDenSessionRevokedError, readDenSettings } from "@/app/lib/den"
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events"
+import { observeDesktopAutomationLifecycle } from "@/app/lib/analytics"
 import { isDesktopRuntime } from "@/app/utils"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
@@ -210,11 +211,14 @@ function ActivatedAutomationRunnerBridge() {
         // A disconnect usually ends this sign-in too: find out now, not at the next request.
         void refresh()
       })
+    const unsubscribeRunLifecycle = window.__OPENWORK_ELECTRON__.automationRunner
+      ?.onRunLifecycle?.(observeDesktopAutomationLifecycle)
     if (thisComputerStillDisconnected()) coordinator.computerDisconnected()
     else requestConnect()
     return () => {
       coordinator.dispose()
       unsubscribeCredentialRejected?.()
+      unsubscribeRunLifecycle?.()
       window.removeEventListener(denSettingsChangedEvent, handleSettingsChanged)
       window.removeEventListener("online", handleSettingsChanged)
       void disconnect()

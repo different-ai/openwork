@@ -8,6 +8,7 @@ import {
   type HeadlessRunnerDeps,
   type RunnerRepeatLimits,
 } from "../headless-runner/client.js"
+import { isModelAccessRefusal } from "../headless-runner/model-access-refusal.js"
 
 /**
  * Slack runs go to the shared headless runner (ee/apps/headless-runner). This adapter gives the Slack run loop
@@ -245,9 +246,11 @@ export function createSlackRunner(
         ...(modelAccessRequired ? { modelAccessRequired: true } : {}),
         ...(execution ? { execution } : {}),
       })
-    } catch {
-      // Credential/model access refusals are not a reason to retry on another model.
-      return { ok: false, error: "model_access_unavailable", retryable: false }
+    } catch (error) {
+      // Credential/model access refusals are not a reason to retry on another model. Anything else thrown here (a
+      // dropped connection to a busy runner, a failed lookup) is tried again like any other runner failure.
+      if (isModelAccessRefusal(error)) return { ok: false, error: "model_access_unavailable", retryable: false }
+      return retryable("headless_send_unavailable")
     }
     if (sent.ok) return { ok: true, accepted: sent.value.state === "accepted" }
     if (sent.status === 404) return unknownSession

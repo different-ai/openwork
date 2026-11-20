@@ -38,10 +38,13 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, teachRequest = 0, onTeachRequestSettled, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
+  /** Counts up each time the chat asks for the teaching window; `onTeachRequestSettled` says it is open. */
+  teachRequest?: number;
+  onTeachRequestSettled?(): void;
   onViewChange?(view: ComputerView): void;
   /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
@@ -81,11 +84,20 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
   const teachable = canTeach && host.browserDemonstrations === true && views.includes("browser");
+  // Asked from the chat: the Browser view with the teaching window open, ready for the person to start.
+  useEffect(() => {
+    if (!teachRequest || !teachable) return;
+    setView("browser"); setTeachOpen(true); onTeachRequestSettled?.();
+  }, [teachRequest, teachable]);
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  // The runner is replacing a computer whose desktop wouldn't start: the view says so and waits, with no Rebuild.
+  const [replacing, setReplacing] = useState(false);
+  // It outlasts a reconnect: the request that follows waits for the new computer and reports nothing until it is there.
+  useEffect(() => { setReplacing(false); }, [chat, view, task?.id]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
@@ -144,15 +156,16 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setStarting(false); setStream(null);
     const disconnect = connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
-      paused: () => setPaused(true),
+      paused: () => { setReplacing(false); setPaused(true); },
       agentPaused: setAgentPaused,
-      connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setStarting(false); setError(null); },
+      connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setReplacing(false); setStarting(false); setError(null); },
       starting: () => setStarting(true),
       reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, frameTask))); } setConnected(false); setReconnecting(true); },
       updating: () => { setConnected(false); setUpdating(true); },
+      replacing: () => { setConnected(false); setReplacing(true); },
       failed: (message, blocked = false) => {
         if (blocked) { deniedRef.current = true; setDenied(true); setSnapshot(null); setLivePage(null); setStream(null); }
-        setConnected(false); setUpdating(false); setStarting(false); setError(message);
+        setConnected(false); setUpdating(false); setReplacing(false); setStarting(false); setError(message);
       },
       page: setLivePage,
       stream: setStream,
@@ -164,10 +177,10 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   }, [host, identity, chat, view, control, paused, away, revision, task?.id, previewEnabled]);
   useEffect(() => {
     setSlow(false);
-    if (connected || paused || away || error || denied || updating || changing) return;
+    if (connected || paused || away || error || denied || updating || replacing || changing) return;
     const timer = setTimeout(() => setSlow(true), REBUILD_OFFER_AFTER_MS);
     return () => clearTimeout(timer);
-  }, [connected, paused, away, error, denied, updating, changing, revision, chat, view, control]);
+  }, [connected, paused, away, error, denied, updating, replacing, changing, revision, chat, view, control]);
   useEffect(() => {
     if (!connected || !previewEnabled || denied) return;
     const capture = () => { if (screen.current && !deniedRef.current) captureFrame(screen.current, captureKey.current); };
@@ -181,7 +194,10 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     setChanging(true); setError(null);
     try {
       const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/action", chat), { method: "POST", body: JSON.stringify({ action: next }) }, 195_000);
-      if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
+      // Resuming found a desktop that won't start, and the computer is being replaced: the view waits for the new one.
+      const replaced = !response.ok && next === "resume" && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_replacing";
+      if (replaced) setReplacing(true);
+      else if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
       if (next === "continue" || next === "rebuild") { setControl(false); setAgentPaused(false); }
       if (next === "rebuild" && task) setRebuilt(true);
       setPaused(next === "pause");
@@ -193,7 +209,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
 
   const title = task?.title || (view === "browser" ? "Workbot's browser" : "Workbot's computer");
   const header = taskHeader(task, rebuilt);
-  const status = header ? header.status : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
+  const status = header ? header.status : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : replacing ? "Replacing" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
   const hostname = (() => { try { return new URL(frontUrl).hostname; } catch { return ""; } })();
   const stop = async () => {
     if (stopping) return;
@@ -250,15 +266,15 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       {!denied && !connected && snapshot ? <img src={snapshot} alt="Last browser frame" className="pointer-events-none absolute inset-0 h-full w-full object-contain object-top" /> : null}
       {!connected && !snapshot ? <BrowserLoading toolbar={view === "browser" && !livePage} /> : null}
       <div ref={screen} className={`relative h-full w-full ${paused || error || denied ? "invisible" : ""}`} aria-label={`${view === "browser" ? "Browser" : "Computer"} live view`} aria-busy={!connected && !error} />
-      {paused || error || slow ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
+      {paused || error || slow || replacing ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
         {view === "browser" ? <Globe size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden /> : <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />}
-        <p role={paused || error ? "alert" : "status"} className="text-[14px] text-[var(--wb-text)]">{error ?? (paused ? "The browser is paused. Resume to keep browsing." : "Your computer is taking longer than usual to start. Keep waiting, or rebuild it.")}</p>
+        <p role={paused || error ? "alert" : "status"} className="text-[14px] text-[var(--wb-text)]">{error ?? (paused ? "The browser is paused. Resume to keep browsing." : replacing ? REPLACING_NOTICE : "Your computer is taking longer than usual to start. Keep waiting, or rebuild it.")}</p>
         <div className="flex flex-wrap items-center justify-center gap-1">
           {!paused && !error ? null : <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>}
-          {paused || denied ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
+          {paused || denied || (replacing && !error) ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
         </div>
       </div> : null}
-      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
+      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} onResume={() => void action("resume")} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     </div>
     <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-[var(--wb-hairline)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
       {control || agentPaused ? <button type="button" className={`${footerButton} bg-[var(--wb-ink)] text-[var(--wb-on-ink)]`} disabled={changing || denied} onClick={() => void action("continue")}>Hand back</button> : <>
@@ -276,6 +292,8 @@ type ViewerEvents = {
   reconnecting(): void;
   /** The computer is moving to a new version once its current work finishes; the view keeps asking until it has. */
   updating?(): void;
+  /** The computer's desktop wouldn't start, so it is being replaced; the view asks again, which waits for the new one. */
+  replacing?(): void;
   /** The computer is taking a while to answer: it is starting up (it can take a minute), not stuck connecting. */
   starting?(): void;
   /** Authorization denial discards every retained frame for this identity/chat/view, unlike a network failure. */
@@ -304,6 +322,7 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   const controller = new AbortController();
   let failures = 0;
   let updates = 0;
+  let replacements = 0;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   const scopeKey = frameKey(host.identity?.organizationId ?? "", host.identity?.principalId ?? "", options.chat ?? null, view);
   // Another mounted viewer can discover revocation first. Stop this stream too, including candidates
@@ -350,6 +369,12 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
         if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_updating" && updates++ < 36) {
           events.updating?.();
           retry = setTimeout(() => void connect(), 5_000);
+          return;
+        }
+        // Being replaced because its desktop wouldn't start: say so and ask again. That request waits for the new computer.
+        if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_replacing" && replacements++ < 3) {
+          events.replacing?.();
+          retry = setTimeout(() => void connect(), 1_000);
           return;
         }
         events.failed(errorMessage(payload, response.status === 403 ? "Computer access is off for your organization." : "Your computer is unavailable. Try reconnecting."));
@@ -448,6 +473,8 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   return () => { disposed = true; unsubscribe(); controller.abort(); clearTimeout(retry); clearTimeout(renewal); clearTimeout(watchdog); next?.disconnect(); client?.disconnect(); target.replaceChildren(); };
 }
 
+/** What the view says while the runner replaces a computer whose desktop wouldn't start. */
+const REPLACING_NOTICE = "Your computer's desktop didn't start, so Workbot is replacing it. This usually takes about a minute.";
 /** How long a computer may take to answer before the view says it is starting up. */
 const STARTING_AFTER_MS = 8_000;
 /** A computer that is ready connects in a second or two; past this, the person may rather rebuild it than keep waiting. */

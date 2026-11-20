@@ -24,6 +24,12 @@ export type FreePrincipal = GuestPrincipal | MemberPrincipal
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
 export const freeIdentityHash = freeInferenceDigest
 export function freePrincipalHash(principal: FreePrincipal) { return freeIdentityHash(principal.kind, principal.id) }
+/**
+ * What OpenAI receives as `safety_identifier`, so it can name and limit one person instead of the whole free key.
+ * It is the `principal_hash` on that person's usage rows: stable per member, machine, or (open requests) IP,
+ * and it carries no name, email or address.
+ */
+export const freeSafetyIdentifier = freePrincipalHash
 
 async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Database) {
   const [row] = await database.select({ userId: MemberTable.userId, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)

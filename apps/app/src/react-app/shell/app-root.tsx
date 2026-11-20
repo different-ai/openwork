@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
-import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
+import { captureAnalyticsEvent, initAnalytics, captureOnboardingEvent } from "../../app/lib/analytics";
 import {
   readDenBootstrapConfig,
   readDenSettings,
@@ -169,6 +169,9 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   // restoration a brief chance to settle before treating the user as new.
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
+      if (event.detail?.status === "error") {
+        captureOnboardingEvent("onboarding_signin_failed", { reason: "handoff_failed" });
+      }
       if (event.detail?.status !== "success") return;
       const signInLocation = locationRef.current;
       const signInAttempt = readSignInReturnTarget();

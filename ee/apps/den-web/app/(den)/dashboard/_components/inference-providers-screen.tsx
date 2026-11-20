@@ -77,9 +77,11 @@ function ProviderRow({ provider, orgSlug }: { provider: DenInferenceProvider; or
   const syncError = litellm?.lastSyncError ?? truefoundry?.lastSyncError ?? null;
   const customProvider = isGatewayCustomProviderId(provider.providerId);
   // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
+  // LiteLLM with Microsoft sign-in has no key: it is ready once its sign-in settings are saved.
   // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
-  const keyReady = litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
-    : truefoundry ? truefoundry.hasAdminKey : provider.credentialStatus === "ready";
+  const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
+    : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
+      : truefoundry ? truefoundry.hasAdminKey : provider.credentialStatus === "ready";
   const ready = provider.status === "active" && keyReady && !syncError && !nobody;
   const status: RowStatus = provider.status === "disabled"
     ? { label: "Off", tone: "neutral" }

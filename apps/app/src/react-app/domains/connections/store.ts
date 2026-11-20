@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
+import { connectorAnalyticsIdentity } from "@/react-app/domains/connections/analytics-feature-identities";
 
 import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../app/cloud/desktop-app-restrictions";
 
@@ -822,6 +824,7 @@ export function createConnectionsStore(options: {
             clientSecret: entry.oauthConfig?.clientSecret,
           },
         });
+        if (action === "added") featureAnalytics.connectionAdded(connectorAnalyticsIdentity(entry));
         const connected = await waitForManagedMcpAuthorization(
           openworkClient,
           openworkWorkspaceId,
@@ -830,7 +833,10 @@ export function createConnectionsStore(options: {
         );
         options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
         await refreshMcpServers();
-        if (connected) setStateField("mcpStatus", t("mcp.connected"));
+        if (connected) {
+          featureAnalytics.connectionSignInSucceeded(connectorAnalyticsIdentity(entry));
+          setStateField("mcpStatus", t("mcp.connected"));
+        }
         finishPerf(options.developerMode(), "mcp.connect", connected ? "done" : "blocked", startedAt, {
           name: entry.name,
           type: entryType,
@@ -983,6 +989,7 @@ export function createConnectionsStore(options: {
           }),
         );
       }
+      if (action === "added") featureAnalytics.connectionAdded(connectorAnalyticsIdentity(entry));
       options.markReloadRequired?.("mcp", { type: "mcp", name: slug, action });
       await refreshMcpServers();
 

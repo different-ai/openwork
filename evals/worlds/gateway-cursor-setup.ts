@@ -2,14 +2,18 @@ import { connect } from "node:net";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { gatewayEnvironment, seedAcmeGateway, startAcmeGateway, startAcmeUpstream } from "../../worlds/lib/acme-gateway.ts";
 import { isRecord } from "./library.ts";
-import { seededOrganizationId } from "./organization-capabilities.ts";
+import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
 
 /**
  * Cursor setup: a real Den (cloud) and AI Gateway with one Anthropic-protocol
  * provider whose only upstream is the deterministic Acme mock, every member allowed its model, 3rd party
  * tools allowed, and the owner signed in on My Library › Models.
  */
-export async function gatewayCursorSetupWorld(seed: Seed) {
+export function gatewayOpenCodeSetupWorld(seed: Seed) {
+  return gatewayCursorSetupWorld(seed, { openCode: true });
+}
+
+export async function gatewayCursorSetupWorld(seed: Seed, options?: { openCode: boolean }) {
   const stack = new AsyncDisposableStack();
   try {
     const upstream = await startAcmeUpstream(stack);
@@ -23,6 +27,7 @@ export async function gatewayCursorSetupWorld(seed: Seed) {
     if (!organizationId) throw new Error("Could not resolve the seeded organization.");
     const allowed = await seed.api(den.admin, "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify({ memberApiKeys: true }) });
     if (!allowed.response.ok) throw new Error(`Allowing 3rd party tools failed: HTTP ${allowed.response.status} ${allowed.text.slice(0, 300)}`);
+    if (options?.openCode) await enableOrganizationCapabilities(seed, den.admin, { gatewayOpenCodeSetup: true }, organizationId);
     const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/library?show=models", headless: true, viewport: { width: 1440, height: 1100 } });
     return {
       den,

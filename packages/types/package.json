@@ -46,6 +46,14 @@
       "bun": "./src/microsoft-drive-transfer.ts",
       "default": "./dist/microsoft-drive-transfer.js"
     },
+    "./den/managed-installer-releases": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/managed-installer-releases.d.ts",
+        "default": "./src/den/managed-installer-releases.ts"
+      },
+      "development": "./src/den/managed-installer-releases.ts",
+      "default": "./src/den/managed-installer-releases.ts"
+    },
     "./den/managed-deployments": {
       "types": {
         "openwork-build": "./dist/types/src/den/managed-deployments.d.ts",
@@ -337,6 +345,14 @@
       "development": "./src/den/gateway-custom-providers.ts",
       "default": "./src/den/gateway-custom-providers.ts"
     },
+    "./den/personal-skills": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/personal-skills.d.ts",
+        "default": "./src/den/personal-skills.ts"
+      },
+      "development": "./src/den/personal-skills.ts",
+      "default": "./src/den/personal-skills.ts"
+    },
     "./den/feature-intros": {
       "types": {
         "openwork-build": "./dist/types/src/den/feature-intros.d.ts",
@@ -452,6 +468,26 @@
       },
       "development": "./src/connect-link.ts",
       "default": "./src/connect-link.ts"
+    },
+    "./agent-form": {
+      "types": {
+        "openwork-build": "./dist/types/src/agent-form.d.ts",
+        "default": "./src/agent-form.ts"
+      },
+      "development": "./src/agent-form.ts",
+      "bun": "./src/agent-form.ts",
+      "browser": "./src/agent-form.ts",
+      "default": "./dist/agent-form.js"
+    },
+    "./session-link": {
+      "types": {
+        "openwork-build": "./dist/types/src/session-link.d.ts",
+        "default": "./src/session-link.ts"
+      },
+      "development": "./src/session-link.ts",
+      "bun": "./src/session-link.ts",
+      "browser": "./src/session-link.ts",
+      "default": "./dist/session-link.js"
     },
     "./opencode-config-error": {
       "types": {
@@ -593,6 +629,22 @@
       "development": "./src/den/admin-free-auto.ts",
       "default": "./src/den/admin-free-auto.ts"
     },
+    "./den/admin-runner-fleet": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-runner-fleet.d.ts",
+        "default": "./src/den/admin-runner-fleet.ts"
+      },
+      "development": "./src/den/admin-runner-fleet.ts",
+      "default": "./src/den/admin-runner-fleet.ts"
+    },
+    "./den/admin-computer-fleet": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/admin-computer-fleet.d.ts",
+        "default": "./src/den/admin-computer-fleet.ts"
+      },
+      "development": "./src/den/admin-computer-fleet.ts",
+      "default": "./src/den/admin-computer-fleet.ts"
+    },
     "./den/connection-state": {
       "types": {
         "openwork-build": "./dist/types/src/den/connection-state.d.ts",
@@ -627,7 +679,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup && tsc -p tsconfig.build.json"
+    "build": "tsup && tsc -p tsconfig.build.json",
+    "test": "node --test test/*.test.ts"
   },
   "dependencies": {
     "@openwork/managed-deployments": "workspace:*",

@@ -9,6 +9,7 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { DenSwitch } from "../../../_components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../_components/ui/tooltip";
+import { getLibraryRoute, orgFeatureEnabled } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { configBlobPaths, useConfigAreas, useConfigDownload } from "./config-blobs-data";
 import { areaLeafLabel, configExportFileName, exportAreasParam, groupConfigAreas, isExportable } from "./config-blobs-model";
@@ -24,7 +25,8 @@ function areaBlockedReason(area: ConfigAreaDescriptor): string | null {
 
 /** Settings › Config › Export: the whole organization (default) or chosen areas, downloaded after a recent sign-in. */
 export function ConfigExportSection() {
-  const { orgId, activeOrg } = useOrgDashboard();
+  const { orgId, activeOrg, orgContext } = useOrgDashboard();
+  const personalSkillsEnabled = orgFeatureEnabled(orgContext, "personalSkillPortability");
   const areasQuery = useConfigAreas(orgId);
   const download = useConfigDownload(orgId);
   const areas = useMemo(() => areasQuery.data?.areas ?? [], [areasQuery.data]);
@@ -90,9 +92,7 @@ export function ConfigExportSection() {
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-gray-900">Whole organization</p>
           <p id={descriptionId} className="mt-0.5 max-w-[620px] text-[12px] leading-5 text-gray-500">
-            Exports everything in this organization, so you can back it up or move it to another OpenWork.
-            The file is very large and may contain sensitive information such as prompts and skills.
-            Credentials are never included.
+            Exports the organization configuration you can access, including shared skills and plugins. This is not a full backup.
           </p>
         </div>
         <DenSwitch
@@ -107,6 +107,15 @@ export function ConfigExportSection() {
           testId="config-export-whole"
         />
       </div>
+
+      <DenNotice
+        tone="neutral"
+        presentation="inline"
+        message="Private skills and plugins are not included. Credentials, billing, and activity history are also excluded."
+        action={personalSkillsEnabled ? (
+          <DenButton href={`${getLibraryRoute(activeOrg?.slug)}/private-skills`} variant="secondary" size="sm">Move my private skills</DenButton>
+        ) : undefined}
+      />
 
       {areasQuery.isError ? (
         <DenNotice tone="error" message={areasQuery.error.message} action={<DenButton variant="secondary" size="sm" onClick={() => void areasQuery.refetch()}>Try again</DenButton>} />

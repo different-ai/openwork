@@ -29,6 +29,8 @@ export type ComputerOptions = {
 const DESKTOP_VIEWER_PORT = 6080
 /** What the model and the person are told while a computer waits to move to a new version. */
 const UPDATING = "This computer is updating to a new version, which starts once its other commands and background jobs finish. Try again in a moment."
+/** What a view is told when the computer it was waiting for is being replaced because its desktop wouldn't start. */
+const REPLACING = "This computer's desktop didn't start, so it is being replaced. Ask again to wait for the new one."
 /**
  * How long a computer whose replacement came up on an older image stays put before another try. A gateway's template
  * keeps its name when it is rebuilt, so what a new computer comes up on is the only sign that it moved on. Each try costs
@@ -119,8 +121,11 @@ export class Computers {
   private readonly replacing = new Map<string, Promise<SandboxHandle | null>>()
   /** Of each session's operations in flight (`working`), those still waiting for its desktop to start. */
   private readonly awaitingDesktop = new Map<string, number>()
-  /** The decision under way on a computer whose desktop won't start, which everyone waiting on that start shares. */
-  private readonly recovering = new Map<string, Promise<SandboxHandle | null>>()
+  /**
+   * The decision under way on a computer whose desktop won't start, which everyone waiting on that start shares: null
+   * when the computer stays, else the replacement it led to. Kept until that replacement ends.
+   */
+  private readonly recovering = new Map<string, Promise<{ replacement: Promise<SandboxHandle | null> } | null>>()
   /** When each session's computer was last replaced for a desktop that wouldn't start. */
   private readonly recovered = new Map<string, number>()
   /** Computers seen running moments ago, which `vm()` and `startDesktop` don't ask about again. */
@@ -200,6 +205,8 @@ export class Computers {
     const timing = this.track(sessionId, "viewer")
     let outcome = "failed"
     try {
+      // Being replaced because its desktop wouldn't start: there is nothing to look up until the new one is there.
+      await this.replaced(sessionId)
       // Seen running moments ago: it isn't paused, so nothing is asked. A view never wakes a computer, so when that
       // turns out wrong the computer is looked up after all.
       let failed: { error: unknown } | undefined
@@ -228,7 +235,7 @@ export class Computers {
     const box = await this.vm(sessionId)
     // Not woken on a wrong guess: `desktopViewer` looks it up instead.
     this.seen.take(box)
-    try { return { state: "connected" as const, ...await desktop.viewer(await this.startDesktop(sessionId, box), input) } }
+    try { return { state: "connected" as const, ...await desktop.viewer(await this.startDesktop(sessionId, box, 0, false), input) } }
     finally { this.release(sessionId) }
   }
 
@@ -295,7 +302,10 @@ export class Computers {
       await this.provider.blocks.pause(box, { timeoutMs: PAUSE_TIMEOUT_MS })
     } else if (action === "continue") {
       await this.desktop.call(box, "/continue", {})
-    } else await this.startDesktop(sessionId, box)
+    } else {
+      // Resuming is what opening the view of a paused computer does: like a view, it hears of a replacement at once.
+      await this.startDesktop(sessionId, box, 0, false)
+    }
     this.release(sessionId)
     return { ok: true }
   }
@@ -563,15 +573,20 @@ export class Computers {
    * Starts the session's desktop on `box` and returns the computer it runs on. One whose image can't serve this runner
    * is replaced at once when nothing else is running on it (`self`: the caller's own operations in flight), carrying
    * its browser profile and workspace over; otherwise the caller hears that it is updating. One whose desktop won't
-   * start is replaced the same way (`recover`), so the person isn't left to rebuild it themselves.
+   * start is replaced the same way (`recover`), so the person isn't left to rebuild it themselves. A caller that
+   * doesn't wait for that replacement (`waits` false: a view) hears `desktop_replacing` once it begins, so the person
+   * is shown what is happening; asking again waits for the new computer.
    */
-  private async startDesktop(sessionId: string, box: SandboxHandle, self = 0): Promise<SandboxHandle> {
+  private async startDesktop(sessionId: string, box: SandboxHandle, self = 0, waits = true): Promise<SandboxHandle> {
     const desktop = this.desktop
     if (!desktop) throw new Error("Desktop access is not configured.")
-    // Found current on this computer moments ago: it isn't asked for its health again.
-    if (this.seen.desktopCurrent(box)) return box
     this.awaitingDesktop.set(sessionId, (this.awaitingDesktop.get(sessionId) ?? 0) + self)
     try {
+      // Being replaced because its desktop wouldn't start: the new computer is the one to start, not this one again.
+      const under = await this.recovering.get(sessionId)
+      box = await under?.replacement ?? box
+      // Found current on this computer moments ago: it isn't asked for its health again.
+      if (this.seen.desktopCurrent(box)) return box
       await this.begin(desktop, sessionId, box)
       return box
     } catch (error) {
@@ -580,7 +595,10 @@ export class Computers {
         // A paused computer isn't unresponsive: it was paused since it was last seen, and replacing it would delete it.
         const state = (await this.provider.inspect(box).catch(() => null))?.state
         if (state === "stopped" || state === "stopping") throw error
-        const fresh = await this.recover(sessionId, box)
+        const recovery = await this.recover(sessionId, box, error.stage)
+        if (!recovery) throw error
+        if (!waits) throw new DesktopError("desktop_replacing", REPLACING)
+        const fresh = await recovery.replacement
         if (!fresh) throw error
         await this.begin(desktop, sessionId, fresh)
         return fresh
@@ -607,28 +625,42 @@ export class Computers {
   }
 
   /**
-   * The replacement for a computer whose desktop won't start, or null when the computer stays: something other than
-   * that start is running on it, or it is itself a replacement made moments ago.
+   * The replacement under way for a computer whose desktop won't start, or null when the computer stays: something
+   * other than that start is running on it, or it is itself a replacement made moments ago. `stage`: how far the start
+   * got, for the log.
    */
-  private recover(sessionId: string, box: SandboxHandle): Promise<SandboxHandle | null> {
+  private recover(sessionId: string, box: SandboxHandle, stage?: string) {
     let pending = this.recovering.get(sessionId)
     if (!pending) {
-      pending = this.replaceUnresponsive(sessionId, box).finally(() => this.recovering.delete(sessionId))
-      this.recovering.set(sessionId, pending)
+      const decided = this.replaceUnresponsive(sessionId, box, stage)
+      pending = decided
+      this.recovering.set(sessionId, decided)
+      const done = () => { if (this.recovering.get(sessionId) === decided) this.recovering.delete(sessionId) }
+      void decided.then(recovery => recovery?.replacement).then(done, done)
     }
     return pending
   }
 
-  private async replaceUnresponsive(sessionId: string, box: SandboxHandle) {
+  /** Waits out the replacement of a computer whose desktop wouldn't start, if one is under way, however it ends. */
+  private async replaced(sessionId: string) {
+    const recovery = await this.recovering.get(sessionId)?.catch(() => null)
+    await recovery?.replacement.catch(() => null)
+  }
+
+  private async replaceUnresponsive(sessionId: string, box: SandboxHandle, stage?: string) {
     if ((this.working.get(sessionId) ?? 0) > (this.awaitingDesktop.get(sessionId) ?? 0)) return null
     // Remembered by this process only: requests close enough together to replace it over and over keep the process alive.
     if (Date.now() - (this.recovered.get(sessionId) ?? 0) < RECOVERY_RETRY_MS) return null
-    // One that still answers may be running a background job; one that doesn't has nothing it can hand over.
-    const jobs = await this.runningJobs(box, 5_000).catch(() => null)
+    // One that still answers may be running a background job; one that doesn't has nothing it can hand over. What it
+    // looks like from inside is asked alongside, since replacing it deletes it and any way to tell why it was stuck.
+    const [jobs, inside] = await Promise.all([this.runningJobs(box, 5_000).catch(() => null), this.desktop?.examine(box, 5_000) ?? null])
     if (jobs) return null
     this.recovered.set(sessionId, Date.now())
-    console.log("[headless-computer] replacing a computer whose desktop didn't start", { sessionId, answers: jobs !== null })
-    return this.replace(sessionId, box, { required: true, carryWithinMs: jobs === null ? 0 : RECOVERY_CARRY_MS })
+    console.log("[headless-computer] replacing a computer whose desktop didn't start", { sessionId, answers: jobs !== null, stage: stage ?? null, inside })
+    const replacement = this.replace(sessionId, box, { required: true, carryWithinMs: jobs === null ? 0 : RECOVERY_CARRY_MS })
+    // A view that was told about it doesn't wait for it, so it may end with nobody listening.
+    replacement.catch(() => undefined)
+    return { replacement }
   }
 
   /**
@@ -667,30 +699,47 @@ export class Computers {
 
   private async move(sessionId: string, box: SandboxHandle, options: { required: boolean; carryWithinMs?: number }): Promise<SandboxHandle | null> {
     const started = Date.now()
-    const carried: Array<[CarriedState, Uint8Array]> = []
-    for (const name of ["workspace", "profile"] as const) {
+    const names = ["workspace", "profile"] as const
+    const pack = async (name: CarriedState) => {
       const left = options.carryWithinMs === undefined ? undefined : started + options.carryWithinMs - Date.now()
-      const bytes = left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null)
-      if (bytes) carried.push([name, bytes])
-      else if (!options.required) return null
+      return left !== undefined && left <= 0 ? null : await this.desktop?.exportState(box, name, left).catch(() => null) ?? null
     }
+    let packed: Array<Uint8Array | null>
+    // Someone is waiting: both at once, since they are separate folders and the wait is then the slower one, not their sum.
+    if (options.required) packed = await Promise.all(names.map(pack))
+    else {
+      // Nobody is waiting, and the computer stays unless both come out: the workspace first, so a computer that stays
+      // doesn't have its browser closed for a profile that then goes nowhere.
+      const workspace = await pack("workspace")
+      if (!workspace) return null
+      packed = [workspace, await pack("profile")]
+    }
+    const carried = names.flatMap((name, index): Array<[CarriedState, Uint8Array]> => { const bytes = packed[index]; return bytes ? [[name, bytes]] : [] })
+    if (!options.required && carried.length < names.length) return null
+    const exported = Date.now()
     await this.delete(sessionId)
+    const deleted = Date.now()
     // Not this.vm(): an idle replacement runs while the session's pause is in progress, which vm() waits for.
     const pending = this.resolve(sessionId)
     this.vms.set(sessionId, pending)
     pending.catch(() => { if (this.vms.get(sessionId) === pending) this.vms.delete(sessionId) })
     const fresh = await pending
-    const kept: CarriedState[] = []
-    for (const [name, bytes] of carried) {
+    const created = Date.now()
+    const unpacked = await Promise.all(carried.map(async ([name, bytes]) => {
       try {
         await this.desktop?.importState(fresh, name, bytes)
-        kept.push(name)
+        return name
       } catch (error) {
         console.error("[headless-computer] carrying state over failed", { sessionId, name, error: error instanceof Error ? error.message : "unknown" })
+        return null
       }
-    }
+    }))
+    const kept = unpacked.filter((name): name is CarriedState => name !== null)
     await this.desktop?.noteReplacement(fresh).catch(() => undefined)
-    console.log("[headless-computer] computer replaced", { sessionId, required: options.required, carried: kept, ms: Date.now() - started, image: this.snapshot })
+    const ended = Date.now()
+    // Where the time went: handing over the old computer's state, deleting it, the new one coming up, and unpacking.
+    const phases = { exportMs: exported - started, deleteMs: deleted - exported, createMs: created - deleted, importMs: ended - created }
+    console.log("[headless-computer] computer replaced", { sessionId, required: options.required, carried: kept, ms: ended - started, phases, image: this.snapshot })
     return fresh
   }
 

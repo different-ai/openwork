@@ -1,8 +1,30 @@
 import type { PreviewWorld } from "./index.ts";
 import { browserRecipe } from "./browser-recipe.ts";
 
+const NODE_VERSION = "v24.22.1";
+/** From https://nodejs.org/dist/v24.22.1/SHASUMS256.txt (node-v24.22.1-linux-x64.tar.xz). */
+const NODE_SHA256 = "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6";
+
+/**
+ * The base image's Node stopped shipping corepack, so every fresh tools layer
+ * failed at `corepack enable`. Install the pinned, checksummed Node 24 (as the
+ * Daytona base does) unless the image already has exactly that version.
+ */
+const NODE_RECIPE = `if [ "$(node --version 2>/dev/null)" != ${NODE_VERSION} ]; then
+  DEBIAN_FRONTEND=noninteractive apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils
+  curl -fsSL -o /tmp/node.tar.xz https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz
+  echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -
+  tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner
+  rm /tmp/node.tar.xz
+  hash -r
+fi
+test "$(node --version)" = ${NODE_VERSION}
+command -v corepack`;
+
 /** Workbot's VM runs Den on its own MySQL/Redis, the runner and Workbot: no desktop, browser or OpenCode. */
-const WORKBOT_TOOLS = `corepack enable
+const WORKBOT_TOOLS = `${NODE_RECIPE}
+corepack enable
 corepack prepare pnpm@11.4.0 --activate
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server redis-server
@@ -12,7 +34,8 @@ mkdir -p /opt/openwork-preview/tools`;
 
 export function toolsRecipe(world: PreviewWorld): string {
   if (world === "workbot") return WORKBOT_TOOLS;
-  return `${world === "desktop" ? `node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Desktop previews require Node 24 or newer")'
+  return `${NODE_RECIPE}
+${world === "desktop" ? `node -e 'if (Number(process.versions.node.split(".")[0]) < 24) throw new Error("Desktop previews require Node 24 or newer")'
 export COREPACK_HOME=/opt/openwork-preview/corepack
 ` : ""}corepack enable
 corepack prepare pnpm@11.4.0 --activate${world === "desktop" ? "\ncorepack prepare pnpm@10.27.0" : ""}

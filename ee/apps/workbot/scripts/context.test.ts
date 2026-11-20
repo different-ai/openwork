@@ -87,6 +87,39 @@ test("a runner without document navigation keeps a strict side chat's other sett
   assert.deepEqual(requests[1], { files: true, desktop: true, owner: "example", ref: "sidechat_example", memoryScope: "owner" })
 })
 
+test("only an accepted request to open the teaching window in the person's own message becomes a receipt", () => {
+  const messages = [
+    { messageId: "wb_teach_message", role: "user", text: "Let me show you how I look up a plan" },
+    { messageId: "wb_teach_message", role: "assistant", text: "Opening the teaching window", toolCalls: [{ id: "refused", name: "open_teaching", input: {} }, { id: "teach1", name: "open_teaching", input: {} }] },
+    { messageId: "wb_teach_message", role: "tool", callId: "refused", name: "open_teaching", output: "unavailable", isError: true },
+    { messageId: "wb_teach_message", role: "tool", callId: "teach1", name: "open_teaching", output: "requested", isError: false },
+  ] satisfies RunnerSnapshot["messages"]
+  const snapshot = { status: "idle", finalAssistantText: "Opening the teaching window", hasEarlier: false, turns: [{ messageId: "wb_teach_message", status: "completed", createdAt: 100, updatedAt: 200, error: null }], messages } satisfies RunnerSnapshot
+  const [turn] = buildWorkbotTurns(snapshot)
+  assert.deepEqual(turn?.teaching, { id: "teach1" })
+  // The receipt is not shown as a step or text.
+  assert.deepEqual(turn?.parts, [{ kind: "text", text: "Opening the teaching window", step: 0 }])
+  // A report or an automation's turn never opens anything on the person's page.
+  const [report] = buildWorkbotTurns({ ...snapshot, turns: [{ ...snapshot.turns[0]!, kind: "report" }] })
+  assert.equal(report?.teaching, undefined)
+  const base = { name: "Workbot", organizationName: "Example", firstName: "Alex", timeZone: "UTC", canSchedule: false }
+  assert.ok(!workbotInstructions(base).includes("open_teaching"))
+  assert.ok(workbotInstructions({ ...base, teachingNavigation: true }).includes("use open_teaching"))
+})
+
+test("a runner without teaching navigation keeps every other setting", async () => {
+  const requests: Record<string, unknown>[] = []
+  const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    requests.push(body)
+    return "teachingNavigation" in body ? Response.json({ error: "invalid_request" }, { status: 400 }) : Response.json({ id: "hs_main_example" })
+  } })
+  const saved = await client.putSession("hs_main_example", { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, teachingNavigation: true, sandboxGateway: true, browserRecovery: true })
+  assert.ok(saved.ok)
+  assert.equal(requests.length, 2)
+  assert.deepEqual(requests[1], { files: true, desktop: true, desktopViews: ["browser"], documentNavigation: true, sandboxGateway: true, browserRecovery: true })
+})
+
 test("a runner without a sandbox gateway keeps the conversation, on its own computer provider", async () => {
   const requests: Record<string, unknown>[] = []
   const client = createHeadlessRunnerClient({ config: { url: "http://runner", token: "x".repeat(32) }, mintToken: async () => ({ token: "scoped-test-token" }), maxTokenTtlMs: 60000, fetch: async (_url, init) => {

@@ -18,9 +18,11 @@ import type {
   AutomationSchedule,
   AutomationScheduleKind,
   CreateAutomationDefinition,
+  CopySharedAutomation,
   DesktopRunnerInventory,
   UpdateAutomation,
 } from "@openwork/types/automations"
+import { listSharedAutomations } from "./sharing.js"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { runnerStanding } from "../computer-disconnect.js"
@@ -371,7 +373,19 @@ export class AutomationService {
     return item && readableBy(scope, item.revision.schedule) ? this.reconcileModelAttention(item, scope) : null
   }
 
-  async create(scope: OwnerScope, definition: CreateAutomationDefinition) {
+  async copyShared(scope: OwnerScope, id: string, options: CopySharedAutomation) {
+    const [source] = (await listSharedAutomations(scope, { automationId: id, limit: 1 })).items
+    if (!source) throw new Error("automation_not_found")
+    const action = source.action.kind === "agent" && options.model
+      ? { ...source.action, model: options.model } : source.action
+    const common = { name: options.name ?? source.name, schedule: source.schedule }
+    const definition: CreateAutomationDefinition = source.executionTarget === "desktop" && action.kind === "agent"
+      ? { ...common, instructions: action.instructions, model: action.model }
+      : { ...common, action, executionTarget: "cloud" }
+    return this.create({ ...scope, modelAttentionCapable: true }, definition, { initialState: "inactive" })
+  }
+
+  async create(scope: OwnerScope, definition: CreateAutomationDefinition, options: { initialState?: "inactive" } = {}) {
     this.requireScheduleAllowed(scope, definition.schedule, "action" in definition ? definition.executionTarget : "desktop")
     await this.requireTargetAllowed(scope.organizationId, "action" in definition ? "cloud" : "desktop")
     if ("action" in definition) {
@@ -394,7 +408,7 @@ export class AutomationService {
     } else {
       await this.requireNewModel(scope, definition.model, "desktop")
     }
-    const created = await automationRepository.create({ ...scope, definition, now: Date.now() })
+    const created = await automationRepository.create({ ...scope, definition, initialState: options.initialState, now: Date.now() })
     return this.reconcileModelAttention(created, scope)
   }
 

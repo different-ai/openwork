@@ -36,6 +36,6 @@ export function isDuplicateEntry(error: unknown): boolean {
 }
 
 export type ResourceActionContext = Pick<Context, "json" | "body"> & {
-  get: <K extends "apiKey" | "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
+  get: <K extends "apiKey" | "organizationContext" | "session" | "signInSessionId">(key: K) => OrgRouteVariables[K]
 }
 export type ResourceOrganizationContext = NonNullable<OrgRouteVariables["organizationContext"]>

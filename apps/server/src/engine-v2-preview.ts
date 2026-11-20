@@ -1,5 +1,10 @@
 import { startupPhase } from "./startup-phase.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { assertSandboxEngineIdle, sandboxPolicyPending } from "./sandbox-engine-transition.js";
+import { localSandboxRuntime } from "./local-sandbox-runtime.js";
+import { applySandboxSettings, readAppliedSandboxSettings, readSandboxSettings } from "./sandbox-settings-store.js";
 import { withEngineSwitchFence } from "./engine-switch-fence.js";
+import { createEngineSystemProxy } from "./engine-system-proxy.js";
 import { engineAutoUpgradeRetry, waitForEngineIdle, type EngineAutoUpgradeRetry } from "./engine-auto-upgrade.js";
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import type { PrepareDriveUpload } from "./extensions/approved-drive-upload.js";
@@ -160,7 +165,12 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  assertSandboxReady(directory: string): Promise<void>;
+  assertProjectConfigReady(): Promise<void>;
+  ensureProjectIsolation(options?: { deferBusy?: boolean }): Promise<void>;
+  projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }>;
   refreshProviders(): Promise<void>;
+  refreshGatewayInventory(): void;
   /**
    * Reconcile a folder's MCP connections with the engine: register new or
    * changed ones, remove revoked ones, and restart failed ones after a back-off.
@@ -182,6 +192,8 @@ export interface EngineV2Preview {
    * once v1 is idle. Upstream owns in-place migration on startup. Turning it off changes no engine selection.
    */
   setV2Only(enabled: boolean): Promise<EngineV2PreviewStatus>;
+  /** Re-reads whether the engine follows the computer's proxy settings and replaces an idle engine started the other way. */
+  syncSystemProxy(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -789,6 +801,10 @@ export function createEngineV2Preview(options: {
     ...(autoUpgradeRetry ? { autoUpgradeRetry } : {}),
   });
   let allowRunning = true;
+  const systemProxy = createEngineSystemProxy(config);
+  /** What the running engine was started with. */
+  let sidecarSystemProxy = false;
+  let systemProxySync: Promise<void> = Promise.resolve();
   let running = false;
   let version: string | undefined;
   let pid: number | undefined;
@@ -827,6 +843,7 @@ export function createEngineV2Preview(options: {
   async function settleWorkspaceSkills(directory: string): Promise<void> {
     const active = sidecar;
     if (!active || !chatRouting) return;
+    await assertProjectConfigReady();
     await waitForEngineSkillChanges(directory, async () => {
       const response = await active.fetchJson("/api/skill", { directory, timeoutMs: 5_000 });
       if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
@@ -863,6 +880,7 @@ export function createEngineV2Preview(options: {
   async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<McpFailures> {
     const active = sidecar;
     if (!active) throw new Error("OpenCode v2 is not running");
+    await assertProjectConfigReady();
     const effective = await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId);
     const runtime = runtimeMcpMap(effective);
     const agentPermissionRules = agentPermissionRulesOf(effective.managedPolicy);
@@ -873,8 +891,9 @@ export function createEngineV2Preview(options: {
     const mcpRules = agentPermissionRules.some((rule) => rule.action === "mcp");
     if (mcpRules) await active.refreshConfig();
     const organizationMcp = mcpRules ? await registeredOrganizationMcpServers(config, [location.workspaceId]) : {};
+    const hostAllowed = await managedDesktopPolicy(config).assertHostExecution().then(() => true, () => false);
     const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-      if (agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
+      if (!hostAllowed || agentPermissionEngineMcpDenial(agentPermissionRules, name, value, organizationMcp)) return [];
       const mapped = mapRuntimeMcpToV2(value, name);
       return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
     }));
@@ -894,6 +913,7 @@ export function createEngineV2Preview(options: {
       applied.delete(name);
     };
     const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine connects before it answers (up to the startup timeout).
       const status = await active.fetchJson(`/api/experimental/mcp/${encodeURIComponent(name)}`, {
         method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
@@ -907,6 +927,7 @@ export function createEngineV2Preview(options: {
       applied.set(name, fingerprint);
     };
     const restart = async (name: string, fingerprint: string) => {
+      await managedDesktopPolicy(config).assertHostExecution();
       // The engine ignores a PUT identical to the config it has, so a failed
       // connection is restarted with /connect. On a healthy client /connect
       // closes and reopens it, which is why only unhealthy ones get here.
@@ -965,6 +986,114 @@ export function createEngineV2Preview(options: {
     if (result.status !== 200 || !isRecord(result.json) || !isRecord(result.json.output) || result.json.output.ready !== true) {
       throw new ApiError(503, "mcp_tools_not_ready", "This connection is saved, but its tools are not ready yet. Retry.");
     }
+  }
+
+  let isolationInFlight: Promise<void> | undefined;
+  let isolationRefreshing = false;
+  let isolationTimer: ReturnType<typeof setInterval> | undefined;
+  async function localSandboxSettingsPending(): Promise<boolean> {
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    return desired.forceSandbox !== applied.forceSandbox;
+  }
+  async function projectIsolationStatus(): Promise<{ pending: boolean; effectiveAllowHostExecution: boolean }> {
+    const policy = managedDesktopPolicy(config);
+    const [desired, applied] = await Promise.all([readSandboxSettings(config), readAppliedSandboxSettings(config)]);
+    const required = await policy.requiresSandbox(desired.forceSandbox);
+    return {
+      pending: isolationRefreshing || policy.projectIsolationTransition() || desired.forceSandbox !== applied.forceSandbox
+        || (sidecar !== undefined && sidecar.projectConfigDisabled !== required),
+      effectiveAllowHostExecution: !policy.projectIsolationTransition() && (sidecar ? !sidecar.projectConfigDisabled : !applied.forceSandbox),
+    };
+  }
+  function handleIsolationError(error: unknown, deferBusy = false): void {
+    if (error instanceof ApiError && ["engine_busy", "sandbox_engine_busy", "sandbox_engine_activity_unavailable"].includes(error.code)) {
+      if (deferBusy) return;
+      throw sandboxPolicyPending();
+    }
+    throw error;
+  }
+  async function waitForIsolation(refresh: Promise<void>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([refresh, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ApiError(503, "sandbox_engine_refresh_failed", "OpenWork is still applying your sandbox setting. Try again in a moment.")), 30_000);
+        timer.unref();
+      })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  async function ensureProjectIsolation(change: { deferBusy?: boolean } = {}): Promise<void> {
+    if (isolationInFlight) return waitForIsolation(isolationInFlight).catch(error => handleIsolationError(error, change.deferBusy));
+    const pending = (async () => {
+      if (startPromise) await startPromise;
+      // Do not override the embedding host's deferred startup/history handoff.
+      // A process that is not running will read the preference when it starts.
+      const policy = managedDesktopPolicy(config);
+      if (!sidecar) { if (!policy.projectIsolationTransition()) await applySandboxSettings(config); return; }
+      const needsChange = async () => sidecar !== undefined && (sidecar.projectConfigDisabled !== await policy.requiresSandbox() || await localSandboxSettingsPending());
+      if (!await needsChange()) return;
+      await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+        const active = sidecar;
+        if (!active) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped before it could apply your sandbox setting. Try again. Nothing ran.");
+        // Never restart into project-enabled mode on unknown authority. A fresh
+        // denial may update the desired mode and eliminate the transition.
+        if (!await policy.requiresSandbox()) {
+          try { await policy.verifySandboxHostAuthority(); }
+          catch (error) { if (!await policy.requiresSandbox()) throw error; }
+        }
+        if (!await needsChange()) return;
+        // The desired setting is already durable. Busy or unknown activity keeps
+        // this process intact; fresh admissions cannot cross its policy mismatch.
+        await assertSandboxEngineIdle(active);
+        isolationRefreshing = true;
+        policy.setProjectIsolationTransition(true);
+        const resume = allowRunning;
+        await stopRuntime();
+        if (stopping || !enabled || !resume) throw new ApiError(503, "sandbox_unavailable", "OpenWork stopped while applying your sandbox setting. Start it and try again.");
+        allowRunning = true;
+        try { await start(); }
+        catch (error) {
+          recordStartError(error);
+          throw new ApiError(503, "sandbox_engine_refresh_failed", "Your sandbox setting is saved, but OpenWork couldn’t apply it. Try again. Nothing ran.");
+        }
+        if (!sidecar || sidecar.projectConfigDisabled !== await policy.requiresSandbox()) {
+          throw new ApiError(503, "sandbox_engine_permission_changed", "Your sandbox permissions changed while OpenWork was applying them. Send your message again.");
+        }
+      } });
+    })();
+    const settled = pending.finally(() => {
+      if (isolationInFlight === settled) { isolationInFlight = undefined; isolationRefreshing = false; }
+    });
+    isolationInFlight = settled;
+    return waitForIsolation(settled).catch(error => handleIsolationError(error, change.deferBusy));
+  }
+
+  async function assertProjectConfigReady(): Promise<void> {
+    const status = await projectIsolationStatus();
+    const refresh = isolationRefreshing ? isolationInFlight : undefined;
+    if (refresh) await waitForIsolation(refresh);
+    // A refresh may also have finished during the snapshot's local reads.
+    if ((refresh || status.pending) && (await projectIsolationStatus()).pending) throw sandboxPolicyPending();
+  }
+
+  async function assertSandboxReady(directory: string): Promise<void> {
+    const policy = managedDesktopPolicy(config);
+    await policy.assertHostExecution().catch(() => undefined);
+    await ensureProjectIsolation();
+    if (!await policy.requiresSandbox()) return;
+    const active = sidecar;
+    if (!active || !contextBridge?.sandbox) throw new ApiError(503, "sandbox_unavailable", "The sandbox is not ready. Wait a moment and send your message again.");
+    if (!active.projectConfigDisabled) throw new ApiError(503, "sandbox_engine_restart_required", "Restart OpenWork to apply your sandbox setting, then send your message again.");
+    if (version?.replace(/^v/, "") !== OPENCODE_V2_VERSION) throw new ApiError(503, "sandbox_engine_unsupported", "This version of OpenWork can’t enforce your sandbox setting. Update OpenWork and try again.");
+    const plugins = await active.fetchJson("/api/plugin", { directory, timeoutMs: 10_000 });
+    const instance = engineInstanceId();
+    const expected = join(rootDir, ...(instance ? ["instances", instance] : []), "sandbox-plugin");
+    const data = isRecord(plugins.json) && Array.isArray(plugins.json.data) ? plugins.json.data : [];
+    const installed = data.filter(isRecord).some(plugin => plugin.id === "openwork.sandbox"
+      && isRecord(plugin.state) && plugin.state.status === "active"
+      && isRecord(plugin.source) && plugin.source.type === "local" && plugin.source.path === expected);
+    if (plugins.status !== 200 || !installed) throw new ApiError(503, "sandbox_unavailable", "OpenWork couldn’t verify that the sandbox is ready. Restart OpenWork and try again.");
   }
 
   function checkMcpHealth(): void {
@@ -1142,6 +1271,8 @@ export function createEngineV2Preview(options: {
     mcpLocations.clear();
     if (mcpHealthTimer) clearInterval(mcpHealthTimer);
     mcpHealthTimer = undefined;
+    if (isolationTimer) clearInterval(isolationTimer);
+    isolationTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
@@ -1165,19 +1296,31 @@ export function createEngineV2Preview(options: {
     // skills now use the same metadata/on-demand Connect path as v1.
     await rm(join(rootDir, "cloud-skills"), { recursive: true, force: true });
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
-    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends) : undefined;
+    // No old native process remains at cold startup or after the idle fence.
+    // Materialize durable desired intent before the bridge decides spawn policy.
+    await applySandboxSettings(config);
+    contextBridge = options.hostReadRequest ? await createV2ContextBridge(options.hostReadRequest, connection, options.prepareDriveUpload, options.fileSends, config) : undefined;
     providerSessionBridge = options.providerSession ? await createV2ProviderSessionBridge(() =>
       options.providerSession?.() ?? null) : undefined;
     const globalSkills = globalSkillDirectories();
     const historyDatabase = await selectHistoryDatabase();
+    const policy = managedDesktopPolicy(config);
+    const startedWithSystemProxy = systemProxy.wanted();
+    const systemProxyEnv = startedWithSystemProxy ? await systemProxy.env() : {};
     const managed = await createManagedOpencodeV2Server({
+      ...(policy.projectIsolationTransition() && contextBridge?.sandbox ? {
+        isolateProjectConfig: async () => {
+          try { await policy.verifySandboxHostAuthority(); } catch { return true; }
+          return policy.requiresSandbox();
+        },
+      } : {}),
       historyDatabase,
       contextTools: contextBridge,
       ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
       bin: resolved.bin,
       rootDir,
       instanceId: engineInstanceId(),
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: { ...systemProxyEnv, OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
         return executionRules(runtime.managedPolicy?.execution);
@@ -1195,6 +1338,7 @@ export function createEngineV2Preview(options: {
       onExit: (error) => engineExited(managed, error),
     });
     sidecar = managed;
+    sidecarSystemProxy = startedWithSystemProxy;
     if (!enabled || !allowRunning) {
       await closeSidecar();
       return;
@@ -1219,6 +1363,13 @@ export function createEngineV2Preview(options: {
       });
       mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
       mcpHealthTimer.unref?.();
+      // Native isolation is process-global. Reconcile both directions without
+      // making the person find an idle moment or resend their saved preference.
+      isolationTimer = setInterval(() => {
+        if (stopping || !allowRunning || !sidecar) return;
+        void ensureProjectIsolation({ deferBusy: true }).catch(error => warn(`Permissions: ${errorMessage(error)}`));
+      }, 500);
+      isolationTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
@@ -1229,6 +1380,10 @@ export function createEngineV2Preview(options: {
       if (!enabled || !allowRunning) {
         await closeSidecar();
         return;
+      }
+      if (policy.projectIsolationTransition() && running && managed === sidecar
+        && managed.projectConfigDisabled === await policy.requiresSandbox() && managed === sidecar) {
+        policy.setProjectIsolationTransition(false);
       }
     } catch (error) {
       await closeSidecar();
@@ -1288,6 +1443,35 @@ export function createEngineV2Preview(options: {
     void closeSidecar().then(scheduleRestart);
   }
 
+  // An engine reads its proxy once, at start. When the checked answer differs
+  // from what the running engine was started with, replace an idle engine. A
+  // busy one keeps working; the answer is remembered for its next start.
+  async function applySystemProxy(): Promise<void> {
+    if (!systemProxy.available || stopping) return;
+    await systemProxy.record(await managedDesktopPolicy(config).systemProxyEnabled());
+    if (startPromise) await startPromise.catch(() => undefined);
+    const mismatched = () => sidecar !== undefined && sidecarSystemProxy !== systemProxy.wanted();
+    if (!mismatched() || stopping) return;
+    await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => {
+      const active = sidecar;
+      if (!active || !mismatched() || stopping || !enabled || !allowRunning) return;
+      await assertSandboxEngineIdle(active);
+      await stopRuntime();
+      if (stopping || !enabled) return;
+      allowRunning = true;
+      await start().catch(recordStartError);
+    } });
+  }
+  function syncSystemProxy(): Promise<void> {
+    systemProxySync = systemProxySync.then(applySystemProxy).catch(() => undefined);
+    return systemProxySync;
+  }
+
+  // Nothing announces "nobody is signed in" at startup, so a signed-out
+  // install checks once the window has had time to deliver a sign-in.
+  const signedOutSystemProxyCheck = systemProxy.available ? setTimeout(() => { void syncSystemProxy(); }, 30_000) : undefined;
+  signedOutSystemProxyCheck?.unref?.();
+
   async function stopRuntime(): Promise<void> {
     allowRunning = false;
     if (restartTimer) clearTimeout(restartTimer);
@@ -1301,6 +1485,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function requireV1Allowed(): Promise<void> {
+    await managedDesktopPolicy(config).assertLegacyHostExecution();
     if (v2Only) {
       throw new ApiError(409, "engine_v2_only", "Your organization runs every chat on OpenCode v2. Switching to OpenCode v1 is turned off.");
     }
@@ -1363,6 +1548,7 @@ export function createEngineV2Preview(options: {
   }
 
   async function ensureWorkspaceReady(directory: string): Promise<void> {
+    await assertProjectConfigReady();
     // Read local inventory first so mixed local/Gateway startup keeps local
     // readiness. This is not the provider push or catalog confirmation join.
     if (ownsGateway() && providerDiscovery) await providerDiscovery;
@@ -1399,6 +1585,7 @@ export function createEngineV2Preview(options: {
 
   function warmWorkspace(workspaceId: string, directory: string): void {
     if (!sidecar || mcpLocations.has(directory)) return;
+    void localSandboxRuntime(config).prepare(directory, "workspace-ready");
     void ensureWorkspaceReady(directory).catch(() => undefined);
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
   }
@@ -1482,6 +1669,7 @@ export function createEngineV2Preview(options: {
 
   async function stop(): Promise<void> {
     stopping = true;
+    clearTimeout(signedOutSystemProxyCheck);
     autoUpgradeAbort.abort(new Error("Automatic upgrade paused while OpenWork closes."));
     await autoUpgradeJob;
     await v2OnlyJob;
@@ -1503,5 +1691,7 @@ export function createEngineV2Preview(options: {
     } else if (enabled && engineOrigin !== "reverted" && !(autoUpgradeEnabled && !chatRouting && !chosenV1Manually())) void start().catch(recordStartError);
   }
   if (!options.deferStart) startWhenReady();
-  return { start: startWhenReady, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, refreshProviders, syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
+  return { start: startWhenReady, syncSystemProxy, setForcePolicy, setV2Only, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, assertSandboxReady, assertProjectConfigReady, ensureProjectIsolation, projectIsolationStatus, refreshProviders,
+    refreshGatewayInventory: () => { providerSessionBridge?.invalidateInventory(); },
+    syncWorkspaceMcp, settleWorkspaceMcp, warmWorkspace, settleWorkspaceSkills, stop };
 }

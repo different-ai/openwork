@@ -424,6 +424,44 @@ const authorizationRevisionSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 /** A Microsoft Entra ID directory (tenant) ID. Only the GUID form: the token issuer names it. */
 export const microsoftTenantIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
+const MICROSOFT_API_SCOPE_EXAMPLE = "api://<application-id>/access";
+const MICROSOFT_GRAPH_APPLICATION_IDS = ["00000003-0000-0000-c000-000000000000", "00000002-0000-0000-c000-000000000000"];
+const MICROSOFT_GRAPH_HOSTS = ["graph.microsoft.com", "graph.microsoft.us", "dod-graph.microsoft.us", "microsoftgraph.chinacloudapi.cn", "graph.windows.net"];
+const MICROSOFT_COGNITIVE_SERVICES_HOSTS = ["cognitiveservices.azure.com", "cognitiveservices.azure.us", "cognitiveservices.azure.cn"];
+
+/**
+ * Why a value cannot be the API scope of a LiteLLM provider with member
+ * Microsoft Entra sign-in, or null when it can. The scope must be one scope of
+ * the organization's own app registration (`api://<application-id>/<scope>`):
+ * LiteLLM validates the token's issuer and audience, and it cannot validate a
+ * token for Microsoft Graph or another Microsoft service.
+ */
+export function microsoftApiScopeError(value: string): string | null {
+  const scope = value.trim();
+  if (!scope) return `Enter the API scope of your Entra app registration, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  if (scope.length > 512 || !/^[\x21-\x7e]+$/.test(scope)) return `Enter one API scope without spaces, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const lower = scope.toLowerCase();
+  if (["openid", "profile", "email", "offline_access"].includes(lower)) {
+    return `OpenWork adds ${lower} itself. Enter the API scope your app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  }
+  const graph = `That is a Microsoft Graph scope, and LiteLLM cannot validate Microsoft Graph tokens. Use a scope your own app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const incomplete = `Enter the application ID URI followed by the scope name, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const separator = lower.lastIndexOf("/");
+  // A bare permission name (User.Read) is a Microsoft Graph permission.
+  if (separator < 0) return graph;
+  if (separator === lower.length - 1) return incomplete;
+  const resource = lower.slice(0, separator);
+  if (MICROSOFT_GRAPH_APPLICATION_IDS.some((id) => resource === id || resource === `api://${id}`)) return graph;
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#@]+)(?:\/.*)?$/.exec(resource)?.[1];
+  if (!authority) return incomplete;
+  const host = authority.replace(/:\d+$/, "");
+  if (MICROSOFT_GRAPH_HOSTS.includes(host)) return graph;
+  if (MICROSOFT_COGNITIVE_SERVICES_HOSTS.includes(host)) {
+    return `That is the Azure Cognitive Services scope, which Microsoft Foundry uses. LiteLLM needs a scope your own app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  }
+  return null;
+}
+
 export const inferenceOauthTokenSecretSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
@@ -435,7 +473,7 @@ export const inferenceOauthTokenSecretSchema = z.object({
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema.optional(),
   }).optional(),
-  /** Member Entra ID sign-in (Microsoft Foundry). The tenant and client the refresh token belongs to. */
+  /** Member Entra ID sign-in (Microsoft Foundry, LiteLLM). The tenant and client the refresh token belongs to. */
   microsoftIdentity: z.object({
     tenantId: microsoftTenantIdSchema,
     objectId: z.string().min(1).max(255),
@@ -443,6 +481,8 @@ export const inferenceOauthTokenSecretSchema = z.object({
     userName: z.string().min(1).max(320).nullable(),
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema,
+    /** The API scope the access token was issued for. Absent: Azure Cognitive Services (Microsoft Foundry). */
+    scope: z.string().min(1).max(512).optional(),
   }).optional(),
 });
 export type InferenceOauthTokenSecret = z.infer<typeof inferenceOauthTokenSecretSchema>;
@@ -516,12 +556,15 @@ export const GATEWAY_MEMBER_SIGN_IN_CREDENTIAL_KINDS = {
 
 /**
  * The sign-in a provider supports for member credential sets, or null when
- * members cannot sign in (LiteLLM has its own per-person keys).
+ * members cannot sign in. LiteLLM has its own per-person keys, except in its
+ * member Microsoft Entra sign-in mode (`liteLlmEntraSignIn`), where each person
+ * signs in with Microsoft and their own access token is sent to the proxy.
  */
-export function gatewayMemberSignInMethod(providerId: string): GatewayMemberSignInMethod | null {
+export function gatewayMemberSignInMethod(providerId: string, options: { liteLlmEntraSignIn?: boolean } = {}): GatewayMemberSignInMethod | null {
   if (providerId === "google-vertex" || providerId === "google-vertex-anthropic") return "google";
   if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle") return "aws_sso";
   if (providerId === MICROSOFT_FOUNDRY_PROVIDER_ID) return "microsoft";
+  if (providerId === "litellm" && options.liteLlmEntraSignIn === true) return "microsoft";
   return null;
 }
 

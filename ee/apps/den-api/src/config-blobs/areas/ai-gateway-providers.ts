@@ -29,9 +29,7 @@ import { isDeepStrictEqual } from "node:util"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { gatewayAudienceKey, isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange, type ConfigSpec } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
@@ -86,7 +84,7 @@ function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref
     /** Custom OpenAI-compatible providers only: their own model list (address is settings.upstreamBaseUrl). */
     custom: z.object({ models: z.array(gatewayCustomModelSchema).min(1).max(500) }).strict().optional(),
     /** LiteLLM providers only, informational: they are synced from the proxy and can't be applied. */
-    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
+    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
     /** Provider universe policy: [] follows every supported catalog model. */
     modelIds: z.array(modelIdSchema).max(500),
     /** Ordered pins (catalog model ids). */

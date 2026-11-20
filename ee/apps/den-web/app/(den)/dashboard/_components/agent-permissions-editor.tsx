@@ -38,6 +38,7 @@ import {
   getEveryoneAgentsRoute,
   getEveryoneBrowserRoute,
   getOrgAccessFlags,
+  orgFeatureEnabled,
   permissionLockReason,
   type DenOrgContext,
 } from "../../_lib/den-org";
@@ -55,6 +56,8 @@ import {
   agentPermissionBlockedBy,
   agentPermissionChoiceOptions,
   agentPermissionChoiceValue,
+  agentPermissionToggleState,
+  sandboxRequirementVisibility,
   storedAgentPermissionDecision,
   visibleAgentPermissionGroups,
   visibleAgentPermissionTryKinds,
@@ -278,6 +281,7 @@ function ScopeAgents({ access, data, policy, team, area }: {
         scopeId={policy.scopeId}
         team={team}
         settings={settings}
+        saved={policy.settings}
         everyone={data.everyone.settings}
         area={area}
         editable={editable}
@@ -386,22 +390,30 @@ const ROW_COPY: Record<string, string> = {
 
 const PATTERN_NOUN: Record<string, string> = { website: "site" };
 
-export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area = "all", editable, onChange }: {
+export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyone, area = "all", editable, onChange }: {
   scopeId: AgentPermissionScopeId;
   /** The team's name, or null when editing Everyone's. */
   team: string | null;
   settings: AgentPermissionSettings;
+  /** What is stored, so a row being edited stays on screen until it is saved. */
+  saved: AgentPermissionSettings;
   everyone: AgentPermissionSettings;
   area?: AgentPermissionsArea;
   editable: boolean;
   onChange: (settings: AgentPermissionSettings) => void;
 }) {
   const scope = teamScopeOf(team === null ? null : { id: scopeId, name: team });
+  const { orgContext } = useOrgDashboard();
+  const features = { sandboxTools: orgFeatureEnabled(orgContext, "sandboxTools") };
+  const inherited = team === null ? null : everyone;
+  const draftRows = sandboxRequirementVisibility(features, settings, inherited);
+  const savedRows = sandboxRequirementVisibility(features, saved, inherited);
+  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut };
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       {/* The standard list panel; each group brings its own top and bottom padding. */}
       <ItemPanel className="!py-0">
-        {visibleAgentPermissionGroups(area).map((group) => (
+        {visibleAgentPermissionGroups(area, sandboxRows).map((group) => (
           <div key={group.label} className="pb-1">
             <h3 className="pb-1 pt-3 text-[12px] font-medium text-[var(--dls-text-secondary)]">{group.label}</h3>
             {group.definitions.map((definition) => {
@@ -414,7 +426,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, everyone, area
                   setting={settings[definition.key]}
                   everyoneSetting={team === null ? settings[definition.key] : everyone[definition.key]}
                   editable={editable}
-                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone)}
+                  blockedBy={agentPermissionBlockedBy(definition.key, settings, team === null ? null : everyone, features)}
                   onChange={(setting) => onChange(withSetting(settings, definition.key, setting))}
                 />
               );
@@ -439,10 +451,14 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
   onChange: (setting: AgentPermissionSetting | null) => void;
 }) {
   const labelId = useId();
+  const blockedById = useId();
   const defaultDecision = agentPermissionDefaultDecision(definition.key);
   const inheritedDecision = everyoneSetting?.decision ?? defaultDecision;
   const ownDecision = setting?.decision;
   const effective = team ? ownDecision ?? inheritedDecision : ownDecision ?? defaultDecision;
+  const toggle = agentPermissionToggleState(definition, effective, blockedBy?.key);
+  const requirementTestId = definition.key === "sandboxOptOut" ? "sandbox-use-requirement"
+    : definition.key === "hostExecution" ? "sandbox-force-requirement" : undefined;
   // A team's row is changed while it has anything of its own; otherwise it follows Everyone.
   const changed = team !== null && normalizeAgentPermissionSetting(definition, setting) !== null;
   // Existing Everyone Allow controls store nothing; upload Ask and Allow stay
@@ -457,7 +473,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:flex-nowrap">
         <div className="min-w-0 flex-1">
           <p id={labelId} className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{definition.label}</p>
-          <p className="truncate text-[12px] leading-4 text-[var(--dls-text-secondary)]" title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
+          <p className={`${definition.toggleMeans === "requires" ? "" : "truncate "}text-[12px] leading-4 text-[var(--dls-text-secondary)]`} title={definition.description}>{ROW_COPY[definition.key] ?? definition.description}</p>
         </div>
         {/* The chip, with "Use Everyone's" under it when both don't fit the lane. */}
         <div className="flex w-[150px] shrink-0 flex-wrap items-center gap-x-2 gap-y-0.5" data-testid={`agent-permission-${definition.key}-source`}>
@@ -469,9 +485,11 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
             <DenSwitch
               size="sm"
               aria-label={definition.label}
-              checked={effective === "allow"}
-              disabled={!editable}
-              onChange={(checked) => setDecision(checked ? "allow" : "deny")}
+              aria-describedby={blockedBy ? blockedById : undefined}
+              testId={requirementTestId}
+              checked={toggle.checked}
+              disabled={!editable || toggle.disabled}
+              onChange={(checked) => setDecision(checked ? toggle.onDecision : toggle.offDecision)}
             />
           ) : (
             <div className="w-full">
@@ -491,7 +509,7 @@ export function PermissionRow({ definition, team, scope, setting, everyoneSettin
         </div>
       </div>
       {blockedBy ? (
-        <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-${blockedBy.key}`}>
+        <p id={blockedById} className="mt-1.5 flex items-center gap-1.5 text-[12px] text-gray-600" data-testid={`agent-permission-${definition.key}-blocked-by-${blockedBy.key}`}>
           <Lock className="size-3.5 shrink-0" aria-hidden="true" />
           {blockedBy.reason}
         </p>

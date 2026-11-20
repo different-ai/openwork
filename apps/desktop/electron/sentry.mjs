@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { desktopErrorReportingAllowed } from "./desktop-distribution.mjs";
 
 let sentry = null;
 let initialized = false;
@@ -124,6 +125,7 @@ function readBuildConfig(app) {
 }
 
 export async function initOpenworkSentry({ app, distribution, packageMetadata }) {
+  if (!desktopErrorReportingAllowed(distribution)) return false;
   const buildConfig = readBuildConfig(app);
   const dsn = buildConfig.dsn;
   if (!dsn || envFlagEnabled("OPENWORK_DESKTOP_SENTRY_DISABLED")) return false;

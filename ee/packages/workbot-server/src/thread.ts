@@ -171,6 +171,8 @@ export type WorkbotTurn = {
   context?: WorkbotViewContext
   /** Accepted requests to open a document beside the chat. Only requests: whether one opened is the page's to say. */
   navigation?: Array<{ id: string; fileId: string }>
+  /** An accepted request to open the teaching window. Only a request: the person starts teaching themselves. */
+  teaching?: { id: string }
   sentAt: number | null
   finishedAt: number | null
   status: WorkbotTurnStatus
@@ -711,6 +713,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
 
     const parts: WorkbotPart[] = []
     const navigation: Array<{ id: string; fileId: string }> = []
+    let teaching: { id: string } | undefined
     let reaction: string | null = null
     let modelSteps = 0
     const greeting = isGreetingRunnerId(turn.messageId)
@@ -726,6 +729,11 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
           const target = workbotDocumentNavigationSchema.safeParse(call.input)
           const result = results.get(call.id)
           if (turn.kind === undefined && !greeting && target.success && result?.role === "tool" && !result.isError) navigation.push({ id: call.id, fileId: target.data.fileId })
+          continue
+        }
+        if (call.name === "open_teaching") {
+          const result = results.get(call.id)
+          if (turn.kind === undefined && !greeting && result?.role === "tool" && !result.isError) teaching = { id: call.id }
           continue
         }
         if (call.name === "react") {
@@ -803,6 +811,7 @@ export function buildWorkbotTurns(snapshot: RunnerSnapshot, files: FileNames = n
         : outputs,
       reaction,
       ...(navigation.length ? { navigation } : {}),
+      ...(teaching ? { teaching } : {}),
       parts,
       modelSteps,
       error: status === "failed" ? friendlyError(turn.error) : null,

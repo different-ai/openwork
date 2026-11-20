@@ -1,4 +1,4 @@
-import { libraryConnectorLink } from "../agent-links.js"
+import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -6,7 +6,7 @@ import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org
 import { organizationCloudModel } from "../workbot/model.js"
 import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
-import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, agentStoppedSourcesAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -78,6 +78,12 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     connections: listMemberConnections,
     connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
+    // Asked only for a member whose agent stopped reading a source: that is them using the feature.
+    stoppedSources: async ({ organizationId, memberId, userId }) => {
+      if (!(await agentStoppedSourcesAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentStoppedSources"] })
+      return { link: myAgentLink() }
+    },
     briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
     person: memberFirstName,
     check: (input) => runAgentSessionTurn(input, turnDeps),

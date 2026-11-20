@@ -189,16 +189,82 @@ Names and defaults are from [celld's docs](https://celld.dev/docs) (v0.6.3):
   bucket data grows on every wake. Needs every node on ≥ 0.6.1 and a bucket with list-after-write consistency (R2
   and S3 have it).
 - `CELLD_IDLE_EVICT_S` set, so idle cells leave memory. Unset, only memory pressure or the residency cap evicts them.
+- `CELLD_ALARM_RESIDENT_MS` set low (for example 60000). The name and its default of one hour are from celld's
+  source (`crates/celld/wake.rs`, v0.6.2 and v0.6.3), not its docs: a cell whose alarm is due within this long is
+  not put to sleep, and the idle sweep stops at the first such cell it meets, so one of them can hold every idle cell
+  on the node in memory until its alarm fires ([What keeps a cell in memory](#what-keeps-a-cell-in-memory)).
 - `CELLD_DEPLOY_MAX_AGE_S` left at its default (60 s): how long a busy cell may stay on the old runner after a deploy
   before celld cancels its work.
 - Platform shutdown grace above `CELLD_SHUTDOWN_TOTAL_MS` (default 40 s), or SIGKILL cuts the cell handoff.
 - At least 2 nodes, for failover.
+- Nodes built from the same celld release as `CELLD_VERSION` in `.github/workflows/celld-runner-deploy.yml`. The
+  nodes are built by the host (Render's build command), not by the deploy workflow, so the two can drift.
+- Where the host has an HTTP health check (a Render private service has none): `/.well-known/celld/health` on the
+  public listener, with a rollout deadline. It answers 503 while a node drains, and a new node's first 200 waits
+  until the fleet has settled, which includes every node being under its memory reopen line. With one node full, new
+  nodes therefore do not turn healthy until that node is restarted.
 - A supervisor that always restarts, with no attempt limit: a node that loses its lease exits, and only a restart
   brings it back.
 - A backup outside the live bucket. celld's replication copies bad writes and deletes too. On S3, use versioning plus
   replication to a second bucket (expire noncurrent versions, or epoch GC frees no space). R2 has no versioning: use
   dated snapshots in a second bucket ([Backups and restore](#backups-and-restore)).
 - `HEADLESS_COMPUTER=off` until the computer is verified on celld (see [Check it](#check-it)).
+
+## When a node is full
+
+celld closes a node to new cells once its memory passes a ceiling (`CELLD_MAX_RSS_MB`; unset, 80% of the machine) and
+reopens it only below 80% of that ceiling (64% of the machine). While it is closed:
+
+- A **new** cell that reaches it is handed to the least loaded node with room, so new conversations still start.
+- A **hibernated** cell wakes only on the node that owns it. Every conversation the closed node owns stops answering
+  until the node is back under its reopen line, or until balancing has moved the cell away (at most 32 idle cells
+  per round, and by cell count, not by memory). The other nodes being idle does not help.
+- celld holds each such request for `CELLD_OPERATION_DEADLINE_MS` (15 s) and then fails it with
+  `route failed: CapacityExhausted`.
+
+Adding nodes does not empty a full node, and an autoscaler that reads the fleet average does not see one: with one
+node at 86% and three near 20%, the average is 33%.
+
+**What callers get.** The router answers `503 { "error": "cell_unavailable", "reason": "capacity_exhausted" }` with
+`Retry-After: 5` (`src/worker/route-failure.ts`): nothing of the request ran, so sending it again is safe. The same
+answer, with its own `reason`, covers a node that is restarting or lost its lease (`node_fenced`, `node_unavailable`,
+`owner_unreachable` and the other route failures). Callers wait 20 s for an answer, longer than celld's 15 s, so they
+receive it instead of timing out first. With `HEADLESS_SENTRY_DSN`, these are reported as the warning
+`cell_unavailable`, one issue per reason, apart from `request_failed`.
+
+**What to do.**
+
+1. Confirm which node: Den's `/admin › Runner fleet` shows every node live (open or closed, memory against the
+   ceiling, cells in memory and owned, cells waiting for room) once `DEN_HEADLESS_FLEET_STATE_HOST` names the nodes,
+   and keeps a month of history. `.github/workflows/celld-fleet-health.yml` also runs every 15 minutes and names it
+   in Slack (its public run log only counts findings; run `.github/scripts/celld-fleet-health.mjs` by hand for a
+   fresh reading). It alerts in Slack when a node passes 75% of its memory, when celld reports a node under
+   pressure, when requests were refused, or when only one node is left.
+2. Before restarting, record what is using the memory, on that node: `curl -s 127.0.0.1:8081/state` (celld's
+   internal listener). `node_load` has `resident_cells`, `rss_bytes` and `in_use_bytes`; `allocator`, `libc_malloc`
+   and `deployment.isolates` (`heap_bytes`, `external_bytes`, `retiring`) say whether it is cells, V8 heaps or native
+   memory. A `retiring` count that stays up means a turn or a request still holds a heap.
+3. Restart that node with a normal stop (SIGTERM; on Render, restart the instance). It hands every cell to the other
+   nodes at once, and the conversations answer again.
+4. If nodes fill up regularly, close them earlier and more gently with `CELLD_MAX_RESIDENT_CELLS`: at that cap a
+   node sheds its least recently used idle cell to admit the next one, instead of refusing until memory falls. Size
+   it from step 2: the cap times the memory per resident cell must stay under the ceiling.
+
+### What keeps a cell in memory
+
+A node's memory is its cells in memory: about 190 MB plus 1.5 to 2 MB per cell (measured on production, 2026-11-17).
+A cell leaves memory after `CELLD_IDLE_EVICT_S` without a request or an alarm run, unless:
+
+- a request is still open on it (a live-event stream over SSE counts; the hibernatable WebSocket does not);
+- its alarm is due within `CELLD_ALARM_RESIDENT_MS` (default one hour), or the idle sweep is stuck behind another
+  cell whose alarm is.
+
+So a cell must not keep an alarm it has no work for. The runner sets a cell's alarm from three things only
+(`armResume` in `src/worker/index.ts`): turns running or waiting to resume, a step-mode step that is due, and
+background jobs that have work. A job's `nextAt()` returns a time only while it has something to do; one that always
+returns a time (a daily check, a periodic clean-up) wakes every conversation's cell on that schedule for ever, and
+with the hold above those cells stay in memory. `scripts/idle-upkeep.test.ts` holds the rule: a conversation with
+nothing to do asks for no alarm.
 
 ## Step mode: turns that outlast a deploy
 
@@ -239,7 +305,8 @@ Rehearse a restore into a throwaway bucket prefix before relying on it.
 Each cell's ownership record, `fleet/cells/<cell>/own.json`, must stay in the bucket for the life of the cell; celld
 never deletes it. If it is gone while the cell's LTX remains, celld ≥ 0.6.3 refuses the cell (requests for it fail and
 nodes log `celld ownership record lost`) instead of starting it with an empty database. The daily backup fails with
-"celld ownership record lost" and lists such cells. Find what deleted the record (a lifecycle rule, a script) and stop
+"celld ownership record lost" and saves the list of such cells to the backup bucket under `reports/` (its public
+run log only counts them). Find what deleted the record (a lifecycle rule, a script) and stop
 it first. Then restore each cell as celld's guarantees describe ("The ownership record"):
 
 1. Stop every node that served the cell with SIGTERM (restart the service), never `POST /shutdown?handoff=preserve`.

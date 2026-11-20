@@ -43,6 +43,9 @@ return credentials or URLs. Public `/health` remains a liveness check. See
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
+| `GET` | `/v1/computers` | | `{ version: 1, generatedAt, sources, sandboxes }`: every conversation computer as its provider reports it now, for Den's admin page. The runner asks the sandbox gateway (`sources[].source: "gateway"`, with each pool's health) and its own provider (`"direct"`) with its keys, and returns each computer's key (the `hc-…` slug), provider id, status and reason, place, size and times; never a conversation id or a credential. A source that does not answer comes back with `status: "unreachable"` and an error code while the other is still listed; a provider that cannot be listed in one read (Daytona) is `unsupported`. At most 2,000 computers per source (`truncated`). Answered by the router on celld, so it wakes no cell; `sources: []` when the runner has no computers |
+| `GET` | `/v1/computers/:source/:id` | | One of them in full, for the admin page's computer view: `{ version: 1, generatedAt, computer, limits, settings, placement, events, eventsError }`. `source` is `gateway` or `direct`; `id` is the provider's id from the list. `computer` is the list's record; `limits` are the provider's own rules for it; `settings` is how this runner treats that source's computers (the image new ones are built from, seconds before it pauses one, days it keeps one). `placement` is the gateway's decision with every pool it weighed. `events` are the gateway's lifecycle events, newest first (at most 40), never commands, file calls or ports; `null` with `eventsError` when the provider keeps none (`unsupported`) or the runner's key may not read them (`http_403`: the gateway needs `audit:read`). Nothing is run on the computer, so reading never wakes a paused one or keeps an idle one awake. `404 unknown_computer` for one the provider does not have or that is not this runner's, `502 provider_unreachable` with a `code`, `400 invalid_computer` |
+| `POST` | `/v1/cells/ids` | `{ names }` (at most 2,000) | celld only. `{ ids: { [name]: id } }`: the cell host's id for each cell name (`session:<session id>`, `owner:<owner>`, `service`); a name that is not a cell's is left out. A node's state report lists the cells it holds in memory by id alone, and this is how Den's admin page says whose each one is. Derived from the name by the router: no cell is woken or touched |
 | `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer?, reactions?, tasks?, owner?, ref?, timeZone?, autoTitle?, memoryOf?, memoryScope?: "owner" }` | session (`hs_…`). `files`, `computer`, `reactions` and `tasks` are off unless set to `true` (see [Isolation](#isolation)). `maxSteps` (0–100000) is the session's own limit on model calls per turn instead of `HEADLESS_MAX_STEPS`: `0` means no limit, and `null` goes back to the runner's. See [Several conversations per person](#several-conversations-per-person) for the rest |
 | `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Workbot derives one per member, and one per side chat |
 | `GET` | `/v1/sessions` | `?owner=&limit=` | `{ sessions: [{ id, ref, title, createdAt, updatedAt }] }`: one owner's conversations that have a message, most recently used first (on celld, chats in their own session cells included: [Session cells](./OWNER-CELLS.md#session-cells-each-workbot-chat-in-its-own-cell)) |
@@ -137,7 +140,9 @@ The model sees a conversation in whole turns (a message and everything that answ
   context never reads them. Removing a message that reaches a sealed turn rewrites that segment (a new object under a
   new name, the manifest swapped in one transaction, the old object deleted after).
 - **Orphan cleanup** (background job `segment-orphans`): retries object deletions queued in `storage_deletions`, and
-  once a day deletes this cell's segment and body objects that nothing references and that are over 24 hours old.
+  deletes this cell's segment and body objects that nothing references and that are over 24 hours old. That check
+  runs a day after the cell last stored an object (noted before each upload), not on a schedule: a conversation that
+  stores nothing is never checked, so the job gives an idle cell no reason to wake.
 
 `HEADLESS_SEGMENTS=off` (the default) is the kill switch: nothing new is sealed or moved; reading existing segments
 and large bodies keeps working. The schema is versioned by numbered migrations in a `meta` table (`schema_version`;
@@ -204,8 +209,9 @@ the runner keeps the latest with the session, never with the turn, in logs or in
 `ok`/`stale` are acknowledged; `rate_limited` is kept and retried (so is `index_disabled`, which only Dens from before
 the index was always on send); other rejections are dropped.
 Failures back off (immediately, 30 s, 2 min, 10 min, then hourly); rows older than 7 days, or that never got a
-capability, are dropped. Once a day the cell queues a fresh snapshot of every session. A Den outage delays the
-index, never a turn.
+capability, are dropped. At most once a day the cell queues a fresh snapshot of every session. Both happen when the
+flusher runs for an update: it asks for a run only while it has one to send, so it never wakes an idle cell. A Den
+outage delays the index, never a turn.
 
 ## Step mode
 
@@ -279,6 +285,7 @@ The runner is a private service with one caller (Den), which authorizes each per
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
 - **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
+- **Listing them:** `GET /v1/computers` lists every conversation's computer at the sandbox gateway and at the direct provider, by the labels the runner puts on each one (`kind: headless-computer`, and the deployment's scope when it has one). Den's `/admin › Computer fleet` page reads it, and `GET /v1/computers/:source/:id` for one computer's own page.
 - **Image:** the snapshot is built from the package's install script: `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
 - Every file under `memory/` in the scratch workspace is shown to the model at the start of each turn, so long-term memory survives older turns dropping out of context
 

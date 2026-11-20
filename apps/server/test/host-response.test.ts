@@ -49,8 +49,11 @@ for (const failure of ["http", "json"]) {
   });
 }
 
-for (const selector of ["displayName", "ids", "batch", "default"]) {
+for (const selector of ["displayName", "ids", "batch", "default", "linked"]) {
   test(`session.create dispatches its first prompt through the host transport (${selector})`, async () => {
+    // The app answers `session.tree` only while it lists started sessions under their parent.
+    const linked = selector === "linked";
+    const link = { openworkSessionLink: { kind: "sub", parentID: "caller" } };
     const model = { providerID: "test-provider", id: "test-model", variant: "high" };
     const writes: Array<{ path: string; body: unknown }> = [];
     const windowCommands: string[] = [];
@@ -62,7 +65,14 @@ for (const selector of ["displayName", "ids", "batch", "default"]) {
       } else if (path === "/workspace/ws1/opencode2/api/session/caller") {
         response = Response.json({ data: { id: "caller", title: "Caller" } });
       } else if (path === "/experimental/ui-control/request") {
-        if (body.kind === "query") {
+        if (body.kind === "query" && body.input.id === "session.tree") {
+          assert.deepEqual(body.input.args, { workspaceId: "ws1", sessionId: "caller" });
+          response = Response.json(linked
+            ? { ok: true, id: "session.tree", effects: { data: "read", ui: "none", external: false }, result: {
+              ok: true, workspaceId: "ws1", sessionId: "caller", parent: null, sessions: [], canStartLinked: true,
+            } }
+            : { ok: false, id: "session.tree", error: "Unknown query: session.tree", code: "unavailable" });
+        } else if (body.kind === "query") {
           assert.equal(body.input.id, "models.list");
           response = Response.json({ ok: true, id: "models.list", effects: { data: "read", ui: "none", external: false }, result: {
             ok: true, workspaceId: "ws1", models: [{
@@ -115,16 +125,20 @@ for (const selector of ["displayName", "ids", "batch", "default"]) {
       assert.deepEqual(receipt.result.failures, []);
       assert.equal(receipt.result.created[0].sessionId, "created");
       assert.equal(receipt.result.created[0].started, true);
-      assert.deepEqual(receipt.result.created[0].model, selector === "default" ? null : {
+      // Linked sessions say so, and the result says once that they report back.
+      assert.equal(receipt.result.created[0].linked, linked ? true : undefined);
+      assert.equal(typeof receipt.result.reports, linked ? "string" : "undefined");
+      assert.deepEqual(receipt.result.created[0].model, selector === "default" || linked ? null : {
         providerId: model.providerID, modelId: model.id, variant: "high",
         displayName: "Test Model", providerName: "Test Provider",
       });
       assert.deepEqual(writes, [
         { path: "/workspace/ws1/opencode2/api/session", body: {
-          title: "Investigate the issue", ...(selector === "default" ? {} : { model }),
+          title: "Investigate the issue", ...(selector === "default" || linked ? {} : { model }), ...(linked ? { metadata: link } : {}),
         } },
-        ...(selector === "default" ? [] : [{ path: "/workspace/ws1/opencode2/api/session/created/model", body: { model } }]),
-        { path: "/workspace/ws1/opencode2/api/session/created/prompt", body: { text: "Start the investigation", delivery: "steer" } },
+        ...(selector === "default" || linked ? [] : [{ path: "/workspace/ws1/opencode2/api/session/created/model", body: { model } }]),
+        // The first prompt names the session whose agent sent it.
+        { path: "/workspace/ws1/opencode2/api/session/created/prompt", body: { text: "Start the investigation", delivery: "steer", metadata: { openworkSentBy: "caller" } } },
       ]);
       assert.deepEqual(windowCommands, ["workspace.reload_sessions"], "no navigation or caller-session writes");
     } finally {
@@ -132,3 +146,23 @@ for (const selector of ["displayName", "ids", "batch", "default"]) {
     }
   });
 }
+
+test("a created session carries no metadata other than a well-formed link to its parent", async () => {
+  const bodies: unknown[] = [];
+  const post = async (_path: string, body: Record<string, unknown>) => {
+    bodies.push(body);
+    return { data: { id: "created", title: "T" } };
+  };
+  await postV2SessionWrite("/workspace/ws1/opencode/session", {
+    title: "T", metadata: { openworkSessionLink: { kind: "sub", parentID: "caller", extra: "dropped" }, other: "dropped" },
+  }, post);
+  await postV2SessionWrite("/workspace/ws1/opencode/session", {
+    title: "T", metadata: { openworkSessionLink: { kind: "owner", parentID: "caller" } },
+  }, post);
+  await postV2SessionWrite("/workspace/ws1/opencode/session", { title: "T", metadata: "not an object" }, post);
+  assert.deepEqual(bodies, [
+    { title: "T", metadata: { openworkSessionLink: { kind: "sub", parentID: "caller" } } },
+    { title: "T" },
+    { title: "T" },
+  ]);
+});

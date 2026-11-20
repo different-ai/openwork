@@ -7,7 +7,7 @@
 // the normal Gateway pipeline, which authorizes, meters and forwards it as if
 // the member had picked that model. Responses go back as Chat Completions.
 import { createHash } from "node:crypto"
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import {
   AUTO_ROUTER_THINKING_LABELS,
   AUTO_ROUTER_THINKING_LEVELS,
@@ -20,19 +20,13 @@ import {
   AUTO_ROUTER_RESPONSE_THINKING_HEADER,
 } from "@openwork/types/den/auto-router"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { classifyProtocolFamily, type ProtocolFamily } from "../protocols.js"
+import { classifyProtocolFamily, type ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import type { GatewayMemberAccessRow } from "../provider-access.js"
 import type { GatewayContext } from "../middleware/gateway-auth.js"
-import type { ProviderCatalog } from "../provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { isEventStreamContentType, isJsonContentType } from "../relay.js"
-import { isAwsEventStreamContentType } from "../usage/bedrock-converse.js"
-import { anthropicTranslator } from "./anthropic.js"
-import { bedrockTranslator } from "./bedrock.js"
-import { isJsonObject, openAiChatTranslator, readAutoPrompt, type AutoRouteInfo, type JsonObject } from "./chat.js"
-import { googleTranslator } from "./google.js"
-import { openAiResponsesTranslator } from "./openai-responses.js"
-import { chatToolCallIds, type AutoTranslator, type TranslateResponseInput } from "./protocol.js"
-import type { ReasoningStore } from "./reasoning-store.js"
+import { isAwsEventStreamContentType, anthropicTranslator, bedrockTranslator, isJsonObject, openAiChatTranslator, readAutoPrompt, type AutoRouteInfo, type JsonObject, googleTranslator, openAiResponsesTranslator, chatToolCallIds, type AutoTranslator, type TranslateResponseInput } from "@openwork-ee/gateway-protocols"
+import type { ReasoningStore } from "@openwork-ee/gateway-protocols"
 import type { AutoRouterConfigModel, LoadAutoRouterConfig } from "./config.js"
 import { decideAutoRoute, type AutoCandidate, type SharedTurnChoices } from "./decide.js"
 import type { AutoRouterConfig } from "./config.js"

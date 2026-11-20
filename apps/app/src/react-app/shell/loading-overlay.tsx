@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router";
 import type { RecoveryActionResult, RecoveryRelease } from "@/app/lib/desktop";
 import type { DenAppVersionMetadata, DenDesktopConfig } from "@/app/lib/den";
 import { readFreshDenAppVersionMetadata } from "@/app/lib/version-gate";
@@ -28,6 +29,8 @@ async function loadRecoveryPolicy(
  * boot hook and the first route load are ready.
  */
 export function LoadingOverlay() {
+  const { pathname } = useLocation();
+  const permissionsOnScreen = /^(?:\/workspace\/[^/]+)?\/settings\/permissions(?:\/|$)/.test(pathname);
   const visible = useBootOverlayVisible();
   const { phase, routeReady, message, error } = useBootState();
   const cloudWorkspace = useCloudWorkspaceStatus();
@@ -96,7 +99,7 @@ export function LoadingOverlay() {
 
   const useRelease = window.__OPENWORK_ELECTRON__?.recovery?.use;
 
-  if (!visible || ((suppressForGateway || orgOnboardingOnScreen) && !error)) return null;
+  if (!visible || ((permissionsOnScreen || suppressForGateway || orgOnboardingOnScreen) && !error)) return null;
 
   const fading = bootOverlayCanHide(phase, routeReady);
 

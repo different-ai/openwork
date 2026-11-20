@@ -25,6 +25,8 @@ export async function startCloudComputerBridge(config: ServerConfig): Promise<()
   if (process.platform !== "linux" || process.env.DEN_RUNTIME_MANAGED !== "1" || !display || !discovery) return async () => {};
   const computer = await createCloudComputer({ directory: join(dirname(discovery), "computer"), display,
     enabled: () => managedDesktopPolicy(config).remoteComputersEnabled(),
+    // Cloud secret handles remain off until human consent has an authority unavailable to guest tools.
+    secretsEnabled: async () => false,
     onActivity: touchCloudComputerActivity });
   computers.set(config, computer);
   const token = randomBytes(32).toString("base64url");

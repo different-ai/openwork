@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
 
 import { markFeatureUsed } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 export type QuestionPanelProps = {
   questions: QuestionInfo[];
   busy: boolean;
-  onReply: (answers: string[][]) => void;
+  onReply: (answers: string[][]) => unknown;
   /** Declines the whole request without answering. Hidden when omitted. */
   onDismiss?: () => void;
   /**
@@ -29,6 +29,7 @@ export type QuestionPanelProps = {
   requestId?: string;
   /** Whether this panel answers the collapse chord; one pane at a time. */
   shortcutActive?: boolean;
+  variant?: "composer" | "thread";
 };
 
 type QuestionState = {
@@ -49,8 +50,8 @@ type QuestionAction =
   | { type: "moveFocusedOption"; direction: 1 | -1; optionsCount: number }
   | { type: "toggleMultipleOption"; option: string }
   | { type: "selectOption"; option: string }
-  | { type: "advance"; answers: string[][] }
-  | { type: "setAnswers"; answers: string[][] };
+  | { type: "answer"; index: number; answer: string[]; nextOptions: string[] | null }
+  | { type: "back"; index: number; draft: string[]; previousOptions: string[] };
 
 const initialQuestionState: QuestionState = {
   currentIndex: 0,
@@ -96,19 +97,40 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
     }
     case "selectOption":
       return { ...state, currentSelection: [action.option] };
-    case "advance":
+    case "answer": {
+      if (state.currentIndex !== action.index) return state;
+      const answers = [...state.answers];
+      answers[action.index] = action.answer;
+      if (action.nextOptions === null) return { ...state, answers };
       return {
         ...state,
-        answers: action.answers,
-        currentIndex: state.currentIndex + 1,
-        currentSelection: [],
-        customInput: "",
-        customAnswerActive: false,
-        focusedOptionIndex: 0,
+        answers,
+        currentIndex: action.index + 1,
+        ...pickedAndTyped(answers[action.index + 1], action.nextOptions),
       };
-    case "setAnswers":
-      return { ...state, answers: action.answers };
+    }
+    case "back": {
+      if (state.currentIndex !== action.index || action.index === 0) return state;
+      const answers = [...state.answers];
+      answers[action.index] = action.draft;
+      return {
+        ...state,
+        answers,
+        currentIndex: action.index - 1,
+        ...pickedAndTyped(answers[action.index - 1], action.previousOptions),
+      };
+    }
   }
+}
+
+function pickedAndTyped(answer: string[] | undefined, optionLabels: string[]) {
+  const picked = (answer ?? []).filter((value) => optionLabels.includes(value));
+  const typed = (answer ?? []).find((value) => !optionLabels.includes(value)) ?? "";
+  return { currentSelection: picked, customInput: typed, customAnswerActive: typed.length > 0, focusedOptionIndex: 0 };
+}
+
+function optionLabels(question: QuestionInfo | undefined): string[] {
+  return (question?.options ?? []).map((option) => option.label);
 }
 
 type QuestionDraft = { state: QuestionState; collapsed: boolean };
@@ -134,6 +156,10 @@ export function clearQuestionDrafts() {
   questionDrafts.clear();
 }
 
+const QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE =
+  "mt-1 max-h-[min(9rem,22vh)] overflow-y-auto pl-7.5 wrap-anywhere text-sm leading-6 text-gray-11";
+const QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE = "max-h-[min(18rem,40vh)] space-y-3 overflow-auto px-4 py-3";
+
 export function QuestionPanel(props: QuestionPanelProps) {
   const draftKey = props.collapsible ? props.requestId : undefined;
   const [state, dispatch] = useReducer(
@@ -147,13 +173,20 @@ export function QuestionPanel(props: QuestionPanelProps) {
   // An answered or dismissed request must not be saved again by a late state change.
   const settledDraftKey = useRef<string | undefined>(undefined);
 
+  const advanceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const clearAdvanceTimer = () => {
+    if (advanceTimer.current !== undefined) clearTimeout(advanceTimer.current);
+    advanceTimer.current = undefined;
+  };
+
+  const requestIdentity = props.requestId ?? props.questions;
   useEffect(() => {
     if (!draftKey) {
       dispatch({ type: "reset", questionCount: props.questions.length });
-      return;
+      return clearAdvanceTimer;
     }
     // A request already on screen keeps its answers; a new one opens expanded.
-    if (loadedDraftKey.current === draftKey) return;
+    if (loadedDraftKey.current === draftKey) return clearAdvanceTimer;
     loadedDraftKey.current = draftKey;
     // The state still on screen belongs to the previous request; save after it is replaced.
     loadingDraft.current = true;
@@ -161,7 +194,8 @@ export function QuestionPanel(props: QuestionPanelProps) {
     if (draft) dispatch({ type: "restore", state: draft.state });
     else dispatch({ type: "reset", questionCount: props.questions.length });
     setCollapsed(draft?.collapsed === true);
-  }, [draftKey, props.questions]);
+    return clearAdvanceTimer;
+  }, [draftKey, requestIdentity]);
 
   useEffect(() => {
     if (!draftKey || loadedDraftKey.current !== draftKey || settledDraftKey.current === draftKey) return;
@@ -189,10 +223,27 @@ export function QuestionPanel(props: QuestionPanelProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [chordListening]);
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const replying = useRef(false);
+
   const reply = (answers: string[][]) => {
+    if (replying.current) return;
+    replying.current = true;
     settledDraftKey.current = draftKey;
     if (draftKey) questionDrafts.delete(draftKey);
-    props.onReply(answers);
+    let sent: unknown;
+    try {
+      sent = props.onReply(answers);
+    } catch {
+      replying.current = false;
+      return;
+    }
+    void Promise.resolve(sent)
+      .catch(() => {})
+      .finally(() => {
+        replying.current = false;
+      });
   };
   const dismiss = () => {
     settledDraftKey.current = draftKey;
@@ -213,21 +264,49 @@ export function QuestionPanel(props: QuestionPanelProps) {
     return state.currentSelection.length > 0;
   })();
 
-  const handleNext = () => {
-    if (!canProceed || !currentQuestion) return;
-    const nextAnswer = [...state.currentSelection];
-    if (customAnswerEnabled && state.customInput.trim()) {
-      nextAnswer.push(state.customInput.trim());
-    }
-    const newAnswers = [...state.answers];
-    newAnswers[state.currentIndex] = nextAnswer;
-    if (isLastQuestion) {
-      dispatch({ type: "setAnswers", answers: newAnswers });
-      reply(newAnswers);
-    } else {
-      dispatch({ type: "advance", answers: newAnswers });
-    }
+  const draftAnswer = () => {
+    const answer = state.currentSelection.filter(Boolean);
+    if (customAnswerEnabled && state.customInput.trim()) answer.push(state.customInput.trim());
+    return answer;
   };
+
+  const commitAnswer = (index: number, answer: string[]) => {
+    const latest = stateRef.current;
+    if (latest.currentIndex !== index || replying.current) return;
+    const next = props.questions[index + 1];
+    if (next) {
+      dispatch({ type: "answer", index, answer, nextOptions: optionLabels(next) });
+      return;
+    }
+    const answers = [...latest.answers];
+    answers[index] = answer;
+    dispatch({ type: "answer", index, answer, nextOptions: null });
+    reply(answers);
+  };
+
+  const handleNext = () => {
+    if (!canProceed || !currentQuestion || props.busy) return;
+    clearAdvanceTimer();
+    commitAnswer(state.currentIndex, draftAnswer());
+  };
+
+  const canGoBack = state.currentIndex > 0;
+  const goBack = () => {
+    if (!canGoBack || props.busy || replying.current) return;
+    clearAdvanceTimer();
+    dispatch({
+      type: "back",
+      index: state.currentIndex,
+      draft: draftAnswer(),
+      previousOptions: optionLabels(props.questions[state.currentIndex - 1]),
+    });
+  };
+  const backButton = canGoBack ? (
+    <Button variant="ghost" size="sm" disabled={props.busy} onClick={goBack} data-question-back="">
+      <ChevronLeft data-icon="inline-start" />
+      {t("common.back")}
+    </Button>
+  ) : null;
 
   const toggleOption = (option: string) => {
     if (!currentQuestion || props.busy) return;
@@ -236,22 +315,152 @@ export function QuestionPanel(props: QuestionPanelProps) {
       return;
     }
     dispatch({ type: "selectOption", option });
-    setTimeout(() => {
-      const newAnswers = [...state.answers];
-      newAnswers[state.currentIndex] = [option];
-      if (isLastQuestion) {
-        dispatch({ type: "setAnswers", answers: newAnswers });
-        reply(newAnswers);
-      } else {
-        dispatch({ type: "advance", answers: newAnswers });
-      }
+    clearAdvanceTimer();
+    const index = state.currentIndex;
+    advanceTimer.current = setTimeout(() => {
+      advanceTimer.current = undefined;
+      commitAnswer(index, [option]);
     }, 150);
   };
 
   if (!currentQuestion) return null;
 
+  if (props.variant === "thread") {
+    const otherSelected = customAnswerEnabled && state.customAnswerActive;
+    const radio = (on: boolean) => (
+      <span
+        aria-hidden="true"
+        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+          on ? "border-blue-9 bg-blue-9" : "border-gray-7 bg-transparent"
+        }`}
+      >
+        {on ? (currentQuestion.multiple ? <Check size={10} className="text-white" strokeWidth={3} /> : <span className="size-1.5 rounded-full bg-white" />) : null}
+      </span>
+    );
+    const pick = (label: string, idx: number) => {
+      if (props.busy) return;
+      dispatch({ type: "setFocusedOptionIndex", value: idx });
+      if (currentQuestion.multiple) {
+        dispatch({ type: "toggleMultipleOption", option: label });
+        return;
+      }
+      dispatch({ type: "selectOption", option: label });
+      if (customAnswerEnabled) {
+        dispatch({ type: "setCustomAnswerActive", value: false });
+        dispatch({ type: "setCustomInput", value: "" });
+      }
+    };
+    const pickOther = () => {
+      if (props.busy) return;
+      if (!currentQuestion.multiple) dispatch({ type: "selectOption", option: "" });
+      dispatch({ type: "setCustomAnswerActive", value: true });
+    };
+    const selection = state.currentSelection.filter(Boolean);
+    const threadCanProceed =
+      (customAnswerEnabled && state.customInput.trim().length > 0) || selection.length > 0;
+    const submitThread = () => {
+      if (!threadCanProceed || props.busy) return;
+      commitAnswer(state.currentIndex, draftAnswer());
+    };
+    return (
+      <section
+        className="my-4 overflow-hidden rounded-2xl border border-dls-border bg-dls-surface"
+        data-question-variant="thread"
+        aria-label={currentQuestion.header || t("common.question")}
+      >
+        <div className="flex items-center gap-2 px-4 pt-3 text-xs font-medium text-amber-11">
+          <span className="size-1.5 rounded-full bg-amber-9" aria-hidden="true" />
+          {t("question_modal.needs_input")}
+          {props.questions.length > 1 ? (
+            <span className="font-normal text-gray-9">
+              {t("question_modal.question_counter", undefined, {
+                current: state.currentIndex + 1,
+                total: props.questions.length,
+              })}
+            </span>
+          ) : null}
+        </div>
+        <div className="max-h-[min(12rem,30vh)] overflow-y-auto wrap-anywhere px-4 pb-3 pt-1.5 text-sm leading-6 text-gray-12" data-question-text="">
+          {currentQuestion.question}
+        </div>
+        <div className="divide-y divide-dls-border border-t border-dls-border" role={currentQuestion.multiple ? "group" : "radiogroup"}>
+          {options.map((opt, idx) => {
+            const on = selection.includes(opt.label);
+            return (
+              <button
+                key={`${opt.label}:${idx}`}
+                type="button"
+                role={currentQuestion.multiple ? "checkbox" : "radio"}
+                aria-checked={on}
+                disabled={props.busy}
+                onClick={() => pick(opt.label, idx)}
+                className="flex w-full items-start gap-3 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {radio(on)}
+                <span className="min-w-0">
+                  <span className="block text-gray-12">{opt.label}</span>
+                  {opt.description && opt.description !== opt.label ? (
+                    <span className="mt-0.5 block text-xs leading-5 text-gray-10">{opt.description}</span>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+          {customAnswerEnabled ? (
+            <div className="px-4 py-2.5">
+              <button
+                type="button"
+                role={currentQuestion.multiple ? "checkbox" : "radio"}
+                aria-checked={otherSelected}
+                disabled={props.busy}
+                onClick={pickOther}
+                className="flex w-full items-start gap-3 text-left text-sm text-gray-12 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {radio(otherSelected)}
+                <span>{t("question_modal.other")}</span>
+              </button>
+              {otherSelected ? (
+                <input
+                  type="text"
+                  autoFocus
+                  value={state.customInput}
+                  disabled={props.busy}
+                  onChange={(event) => dispatch({ type: "setCustomInput", value: event.currentTarget.value })}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    event.stopPropagation();
+                    submitThread();
+                  }}
+                  placeholder={t("question_modal.custom_answer_placeholder")}
+                  className="ml-7 mt-2 w-[calc(100%-1.75rem)] rounded-lg border border-dls-border bg-dls-surface px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:border-dls-accent focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-2.5">
+          <span className="text-xs text-gray-9">
+            {props.busy ? "Submitting..." : props.onDismiss ? t("question_modal.send_skips_hint") : null}
+          </span>
+          <div className="flex shrink-0 gap-2">
+            {backButton}
+            {props.onDismiss ? (
+              <Button variant="ghost" size="sm" disabled={props.busy} title={t("question_modal.dismiss_hint")} onClick={dismiss}>
+                {t("question_modal.skip")}
+              </Button>
+            ) : null}
+            <Button size="sm" disabled={!threadCanProceed || props.busy} onClick={submitThread}>
+              {isLastQuestion ? t("common.submit") : t("common.next")}
+              {!isLastQuestion ? <ChevronRight data-icon="inline-end" /> : null}
+            </Button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const body = (
-      <div className="max-h-72 space-y-3 overflow-auto px-4 py-3">
+      <div className={QUESTION_OPTIONS_SCROLL_IN_WINDOW_SHARE} data-question-body="">
         {options.length > 0 ? (
           <div className="space-y-2">
             {options.map((opt, idx) => {
@@ -339,6 +548,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
           </div>
 
           <div className="flex gap-2">
+            {backButton}
             {currentQuestion.multiple ? (
               <Button
                 onClick={handleNext}
@@ -387,7 +597,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                     })}
                   </div>
                 </div>
-                <div className="mt-1 text-sm leading-6 text-gray-11">{currentQuestion.question}</div>
               </div>
             )}
             <CollapsibleTrigger
@@ -418,6 +627,9 @@ export function QuestionPanel(props: QuestionPanelProps) {
               </Button>
             ) : null}
           </div>
+          {collapsed ? null : (
+            <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
+          )}
         </div>
         <CollapsibleContent className={QUESTION_COLLAPSE_PANEL_CLASS}>{body}</CollapsibleContent>
       </Collapsible>
@@ -443,9 +655,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
                 })}
               </div>
             </div>
-            <div className="mt-1 text-sm leading-6 text-gray-11">
-              {currentQuestion.question}
-            </div>
           </div>
           {props.onDismiss ? (
             <Button
@@ -461,6 +670,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
             </Button>
           ) : null}
         </div>
+        <div className={QUESTION_TEXT_SCROLLS_IN_WINDOW_SHARE} data-question-text="">{currentQuestion.question}</div>
       </div>
 
       {body}

@@ -25,7 +25,7 @@
  */
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
-import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { ConfigRef } from "@openwork/types/den/config-blobs"
 import { z } from "zod"

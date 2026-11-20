@@ -137,8 +137,14 @@ resource "aws_lb_listener_rule" "ai_gateway" {
   }
 }
 
-resource "aws_ecs_task_definition" "ai_gateway" {
+removed {
+  from = aws_ecs_task_definition.ai_gateway
+  lifecycle { destroy = false }
+}
+
+resource "aws_ecs_task_definition" "ai_gateway_v1" {
   count                    = var.ai_gateway_enabled ? 1 : 0
+  skip_destroy             = true
   family                   = "${var.name}-ai-gateway"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -174,7 +180,7 @@ resource "aws_ecs_service" "ai_gateway" {
   count                             = var.ai_gateway_enabled ? 1 : 0
   name                              = "${var.service_name_prefix}ai-gateway"
   cluster                           = local.cluster_arn
-  task_definition                   = aws_ecs_task_definition.ai_gateway[0].arn
+  task_definition                   = aws_ecs_task_definition.ai_gateway_v1[0].arn
   desired_count                     = 1
   launch_type                       = "FARGATE"
   wait_for_steady_state             = var.wait_for_steady_state

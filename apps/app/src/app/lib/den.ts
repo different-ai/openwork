@@ -34,6 +34,10 @@ import type {
   AutomationRun,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
+  AutomationSharing,
+  UpdateAutomationSharing,
+  SharedAutomationList,
+  CopySharedAutomation,
   CreateAutomation,
   CreateCloudAutomation,
   RunAutomationNow,
@@ -3012,6 +3016,10 @@ async function requestJsonRaw<T>(
   if (options.browserUploadPermissionsCapable) {
     headers["X-OpenWork-Browser-Upload-Permissions"] = "1";
   }
+  if (path === "/v1/me/desktop-config") {
+    headers["X-OpenWork-Sandbox-Only"] = "1";
+    headers["X-OpenWork-Sandbox-Modes"] = "1";
+  }
   if (options.automationModelAttentionCapable) {
     headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
     // Without it Den treats this desktop as a release that reads only once/daily/weekly schedules.
@@ -3715,6 +3723,39 @@ export function createDenClient(options: {
         `/v1/automations/${encodeURIComponent(automationId)}`,
         { method: "PATCH", token, organizationId: orgId, body: input, automationModelAttentionCapable: true },
       );
+    },
+
+    async getAutomationSharing(orgId: string, automationId: string): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}/sharing`, {
+        method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true,
+      });
+    },
+
+    async updateAutomationSharing(orgId: string, automationId: string, input: UpdateAutomationSharing): Promise<AutomationSharing> {
+      return requestJson<AutomationSharing>(baseUrls, `/v1/automations/${encodeURIComponent(automationId)}/sharing`, {
+        method: "PUT", token, organizationId: orgId, body: input, automationModelAttentionCapable: true,
+      });
+    },
+
+    async listSharedAutomations(orgId: string): Promise<SharedAutomationList> {
+      return requestJson<SharedAutomationList>(baseUrls, "/v1/shared-automations", {
+        method: "GET", token, organizationId: orgId, automationModelAttentionCapable: true,
+      });
+    },
+
+    async copySharedAutomation(orgId: string, automationId: string, input: CopySharedAutomation = {}): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(baseUrls, `/v1/shared-automations/${encodeURIComponent(automationId)}/copy`, {
+        method: "POST", token, organizationId: orgId, body: input, automationModelAttentionCapable: true,
+      });
+    },
+
+    async getAutomationSharingContext(orgId: string) {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", { method: "GET", token, organizationId: orgId });
+      const member = isRecord(payload) && isRecord(payload.currentMember) ? payload.currentMember : null;
+      return {
+        directory: parseDenLibraryOrgDirectory(payload),
+        canShareOrgWide: readStringArray(member?.permissions).includes("sharing.share_org_wide"),
+      };
     },
 
     async activateAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {

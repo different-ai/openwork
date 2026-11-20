@@ -53,7 +53,9 @@ function serializePolicy(scope: AgentPermissionAuditScope, state: AgentPermissio
 
 /** The decision a scope ends up with: an unset permission allows for Everyone and inherits for a team. */
 function decisionLabel(scope: AgentPermissionAuditScope, definition: AgentPermissionDefinition, setting: AgentPermissionSetting | undefined): string {
-  return setting?.decision ?? (scope.kind === "everyone" ? agentPermissionDefaultDecision(definition.key) : "inherit")
+  const decision = setting?.decision ?? (scope.kind === "everyone" ? agentPermissionDefaultDecision(definition.key) : "inherit")
+  if (definition.toggleMeans !== "requires" || decision === "inherit") return decision
+  return decision === "allow" ? "not required" : "required"
 }
 
 /** The stored patterns in `after` that `before` lacks, in audit form. */

@@ -17,12 +17,11 @@ const COMPUTER_ACTIONS = ["computer", "computer_files", "computer_clipboard", "s
  * Later failed reads keep the last verified rules; a verified empty policy allows use.
  * @param {{ readRules: () => Promise<unknown>, confirm: (rule: AgentPermissionRule) => Promise<boolean>, now?: () => number }} options
  */
-export function createComputerAgentPermissions({ readRules, confirm, now = Date.now }) {
+export function createComputerAgentPermissions({ readRules, confirm }) {
   /** @type {AgentPermissionRule[]} */
   let rules = [];
   let signature = "[]";
   let revision = 0;
-  let readAt = -Infinity;
   let verified = false;
   /** @type {Promise<void> | null} */
   let reading = null;
@@ -33,8 +32,8 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
 
   async function refresh() {
     if (reading) return reading;
-    if (verified && now() - readAt < 30_000) return;
-    readAt = now();
+    // Host execution can be revoked while a chat is open; recheck at every
+    // computer boundary, not thirty seconds after the next host action.
     reading = Promise.resolve().then(readRules).then((value) => {
       if (!Array.isArray(value)) throw new Error("Computer rules unavailable");
       const next = value.flatMap((entry) => {
@@ -51,7 +50,7 @@ export function createComputerAgentPermissions({ readRules, confirm, now = Date.
       }
       rules = next;
       verified = true;
-    }).catch(() => { /* Keep the last known policy when the server cannot answer. */ }).finally(() => { reading = null; });
+    }).catch(() => { /* Retain the last verified rules, including sandbox-only denials. */ }).finally(() => { reading = null; });
     return reading;
   }
 

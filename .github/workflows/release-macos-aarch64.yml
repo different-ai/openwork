@@ -729,6 +729,7 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && inputs.benchmark_only != true && '1' || '0' }}
         run: pnpm --filter @openwork/desktop build:electron
 
       - name: Package Electron (macOS, signed + notarized)
@@ -1273,6 +1274,13 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
     steps:
+      - name: Checkout registry wait script
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts/wait-for-npm-version.mjs
+          sparse-checkout-cone-mode: false
+
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -1319,22 +1327,21 @@ jobs:
           fi
           npm publish "$NPM_TARBALL" --access public --provenance
 
+      # npm publish returns while the registry is still processing the
+      # package (11-12 minutes for 0.18.69 and 0.18.70), so wait for the
+      # registry to serve this exact version before installing it.
+      - name: Wait for npm to serve the published version
+        run: node .github/scripts/wait-for-npm-version.mjs openwork-server "$RELEASE_VERSION"
+
       - name: Install the published package from npm
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
-            prefix="$(mktemp -d)"
-            if npm install -g --prefix "$prefix" "openwork-server@$RELEASE_VERSION" \
-              && actual="$("$prefix/bin/openwork-server" --version)" \
-              && [ "$actual" = "$RELEASE_VERSION" ]; then
-              echo "npm install -g openwork-server@$RELEASE_VERSION runs $actual"
-              exit 0
-            fi
-            echo "Registry not serving openwork-server@$RELEASE_VERSION yet (attempt $attempt); retrying in 30s."
-            sleep 30
-          done
-          exit 1
+          prefix="$(mktemp -d)"
+          npm install -g --prefer-online --prefix "$prefix" "openwork-server@$RELEASE_VERSION"
+          actual="$("$prefix/bin/openwork-server" --version)"
+          [ "$actual" = "$RELEASE_VERSION" ]
+          echo "npm install -g openwork-server@$RELEASE_VERSION runs $actual"
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot

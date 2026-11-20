@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import { createDenClient, readDenSettings, type DenClient, type DenExternalMcpConnection } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
@@ -239,7 +240,8 @@ export function useOrgMcpConnections() {
     const attempt = { startedAt: Date.now(), previousCheckedAt: previous?.readiness?.checkedAt ?? null };
 
     if (previous?.authType === "apikey" && previous.credentialMode === "per_member") {
-      await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
+      const saved = await openMemberApiKeyDialog(connectionId, { connectionName: previous.name, replacing: previous.connectedForMe === true });
+      if (saved) featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
       await refresh();
       return;
     }
@@ -262,6 +264,7 @@ export function useOrgMcpConnections() {
       const result = await client.startMcpConnectionConnect(orgId, connectionId);
       if (!isActionScopeCurrent(pollScope)) return;
       if (result.status === "connected") {
+        if (!previous?.connectedForMe || options?.forceFreshAuthorization) featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
         await refresh(pollScope);
         if (!isActionScopeCurrent(pollScope)) return;
         setConnectingId(null);
@@ -280,6 +283,7 @@ export function useOrgMcpConnections() {
       pollRef.current = window.setInterval(async () => {
         if (!isActionScopeCurrent(pollScope)) return;
         if (Date.now() - startedAt >= CONNECT_TIMEOUT_MS) {
+          featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
           stopPolling();
           setError(orgMcpConnectFailureMessage("timeout"));
           setConnectingId(null);
@@ -311,9 +315,11 @@ export function useOrgMcpConnections() {
             reconnectPending: match ? connectionNeedsReconnect(match) : false,
           });
           if (outcome.kind === "connected") {
+            featureAnalytics.connectionSignInSucceeded({ connector_kind: "custom" });
             stopPolling();
             setConnectingId(null);
           } else if (outcome.kind === "failed") {
+            featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
             stopPolling();
             setError(outcome.problem.reason);
             setConnectFailure({ ...outcome.problem, connectionId });
@@ -325,6 +331,7 @@ export function useOrgMcpConnections() {
       }, CONNECT_POLL_INTERVAL_MS);
     } catch (connectError) {
       if (!isActionScopeCurrent(pollScope)) return;
+      featureAnalytics.connectionSignInFailed({ connector_kind: "custom" });
       setError(connectError instanceof Error ? connectError.message : "Failed to start the connection.");
       setConnectingId(null);
     }

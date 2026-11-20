@@ -157,6 +157,7 @@ type ComposerProps = {
   flush?: boolean;
   topAccessory?: ReactNode;
   runModeControl?: ReactNode;
+  sandboxModeControl?: ReactNode;
   contextControl?: ReactNode;
 };
 
@@ -1692,6 +1693,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     if (!props.steering && !props.modelSelectionPending) props.onModelVariantChange(value);
                   }}
                 />
+                {props.sandboxModeControl}
                 {props.modelUnavailable ? props.onRefreshOrganizationModels ? (
                   <button
                     type="button"

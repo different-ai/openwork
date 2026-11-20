@@ -61,6 +61,10 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/workflow-runs", "tenant_read", "workflow_run.list", "workflow.run", "workflow_run", null, { notes: "Owners and admins; run receipts with tool call names, status and error text. No inputs or results." }),
 
   // Automations
+  member("GET", "/v1/automations/:id/sharing", "tenant_read", "automation.sharing.read", "automation.management", "automation", "id", { notes: MCP_NATIVE }),
+  member("PUT", "/v1/automations/:id/sharing", "tenant_change", "automation.sharing.update", "automation.management", "automation", "id", { notes: MCP_NATIVE }),
+  member("GET", "/v1/shared-automations", "tenant_access", "automation.shared.list", "automation.management", "automation", null, { notes: `Definition-only shared access; never capture instructions. ${MCP_NATIVE}` }),
+  member("POST", "/v1/shared-automations/:id/copy", "tenant_change", "automation.shared.copy", "automation.management", "automation", "id", { notes: `Creates an independently owned inactive Automation. ${MCP_NATIVE}` }),
   member("GET", "/v1/automations", "tenant_access", "automation.list", "automation.management", "automation", null, { notes: `Returns automation instructions. Read may persist needs_attention_reason (reconcileModelAttention). mcp/agent.ts also lists automations directly as a read-only resource index. ${MCP_NATIVE}` }),
   member("POST", "/v1/automations", "tenant_change", "automation.create", "automation.management", "automation", null, { notes: `Same automationService.create as POST /v1/cloud-automations. ${MCP_NATIVE}` }),
   member("POST", "/v1/cloud-automations", "tenant_change", "automation.cloud.create", "automation.management", "automation", null, { notes: `Same automationService.create as POST /v1/automations; validates Workflow access. Scheduled runs are started by the scheduler tick, not an HTTP route. ${MCP_NATIVE}` }),
@@ -127,6 +131,8 @@ export const contentAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("POST", "/v1/artifact-views/:artifactViewId/retire", "tenant_change", "artifact_view.retire", "workflow.management", "artifact_view", "artifactViewId", { notes: "MCP retire_artifact_view mutates directly (service layer)." }),
 
   // Config objects
+  member("GET", "/v1/me/personal-skills/export", "tenant_access", "personal_skills.export", "config_object.configuration", "config_object", null, { notes: "Session-only and recent sign-in; reads only the caller's own unshared SKILL.md source in the current workspace. Source is not audit evidence." }),
+  member("POST", "/v1/me/personal-skills/import", "tenant_change", "personal_skills.import", "config_object.configuration", "config_object", null, { notes: "Session-only and recent sign-in; creates new private skills for the caller. Source is not audit evidence." }),
   member("GET", "/v1/config-objects", "tenant_access", "config_object.list", "config_object.configuration", "config_object", null, { notes: `Each item embeds latestVersion including rawSourceText (Workflow/App source redacted). ${MCP_NATIVE}` }),
   member("POST", "/v1/config-objects", "tenant_change", "config_object.create", "config_object.configuration", "config_object", null, { notes: MCP_NATIVE }),
   member("GET", "/v1/config-objects/:configObjectId", "tenant_access", "config_object.read", "config_object.configuration", "config_object", "configObjectId", { notes: `Returns the latest version source. ${MCP_NATIVE}` }),

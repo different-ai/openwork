@@ -32,6 +32,8 @@ const host: WorkbotHost = {
   sideChats: search.get("sideChats") === "1",
   browser: search.get("browser") === "1",
   computer: search.get("computer") === "1",
+  // Teaching in the Browser view; a message that asks to be taught opens its window (`?browser=1&teaching=1`).
+  browserDemonstrations: search.get("teaching") === "1",
   scrollToBottom: search.get("scroll") === "1",
   calmChat: search.get("calm") === "1",
   // Devices rows say what Workbot is doing on each computer (`?deviceActivity=1`).

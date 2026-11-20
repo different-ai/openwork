@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { isSupportedGatewayNpm, createProviderCatalog } from "@openwork-ee/gateway-catalog"
 import {
   CatalogValidationError,
   CUSTOM_PROVIDER_NPM_PACKAGES,
@@ -20,7 +21,6 @@ import {
   validateProviderV2,
 } from "../src/models/catalog-v2.js"
 import { createPricingCatalog } from "../src/pricing.js"
-import { createProviderCatalog } from "../src/provider-catalog.js"
 
 const model = {
   id: "example-large",
@@ -305,4 +305,9 @@ test("a custom provider id already in base-v2.json fails the v2 build", () => {
   assert.throws(() => readPublishedCatalogV2("http://127.0.0.1:8791/api/v1", dir), (error) =>
     error instanceof CatalogValidationError && error.problems.some((line) => line.includes("already used by base-v2.json")),
   )
+})
+
+test("custom provider files may only use SDK packages the gateway supports", () => {
+  // catalog.ts keeps its own list because scripts/build-models.mjs runs it with plain Node.
+  for (const npm of CUSTOM_PROVIDER_NPM_PACKAGES) assert.ok(isSupportedGatewayNpm(npm), npm)
 })

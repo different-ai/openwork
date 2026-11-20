@@ -205,6 +205,11 @@ export function GatewayConnect() {
         if ((response.status === 401 || response.status === 403) && (code === "browser_signin_required" || code === "browser_account_mismatch")) {
           startAttempted.current = false;
           setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
+        } else if (response.status === 403 && code === "feature_disabled") {
+          // Turned off for the organization between the check and Continue: the same block the check reports.
+          startAttempted.current = false;
+          setStep("blocked");
+          setError(readString(payload, "message") ?? "You can't sign in to these models right now. Ask your admin.");
         } else {
           setStep("restart");
           setError("Sign-in could not continue. Start signing in again in OpenWork.");

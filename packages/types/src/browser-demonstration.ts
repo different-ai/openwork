@@ -47,9 +47,10 @@ export type BrowserTeachingContext = {
   label: string
 }
 
-export function demonstrationStepLabel(step: DemonstrationStep) {
+/** `opening` is the id of the demonstration's first page; every later page is the result of the step before it. */
+export function demonstrationStepLabel(step: DemonstrationStep, opening?: number) {
   const target = step.target?.name || "the control"
-  if (step.kind === "navigate") return "Navigate to the task page"
+  if (step.kind === "navigate") return opening === undefined || step.id === opening ? "Open the starting page" : "Wait for the next page"
   if (step.kind === "fill") return `Enter ${step.target?.name || "a value"}`
   if (step.kind === "select") return `Choose ${step.target?.name || "an option"}`
   if (step.kind === "extract") return `Collect ${step.target?.name || "selected information"}`
@@ -57,18 +58,54 @@ export function demonstrationStepLabel(step: DemonstrationStep) {
   return step.kind === "note" ? "Task instructions" : `Click ${target}`
 }
 
+export type DemonstrationStepGroup = { label: string; steps: DemonstrationStep[] }
+
+function repeatsStep(previous: DemonstrationStep, step: DemonstrationStep) {
+  if (previous.kind !== step.kind || !["click", "fill", "select", "key"].includes(step.kind) || previous.key !== step.key) return false
+  // Unnamed controls can be different controls: they stay separate lines.
+  if (step.kind !== "key" && !step.target?.name) return false
+  return previous.target?.name === step.target?.name && previous.target?.role === step.target?.role && previous.target?.tag === step.target?.tag
+}
+
+/** The steps as a person reads them: one action repeated in a row on one control is a single line. Nothing is dropped. */
+export function demonstrationStepGroups(steps: readonly DemonstrationStep[]): DemonstrationStepGroup[] {
+  const opening = steps.find(step => step.kind === "navigate")?.id
+  const groups: DemonstrationStepGroup[] = []
+  for (const step of steps) {
+    const last = groups.at(-1), previous = last?.steps.at(-1)
+    if (last && previous && repeatsStep(previous, step)) last.steps.push(step)
+    else groups.push({ label: demonstrationStepLabel(step, opening), steps: [step] })
+  }
+  return groups
+}
+
 export function browserInputLabel(name: string) {
   const label = name.replace(/_/g, " ")
   return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
+/**
+ * What a run asks for. `names` are the recorded parameters one answer fills: typing into one control several times in
+ * a row asks once, until the teacher names one of those entries as its own input.
+ */
 export function browserSkillInputs(demo: BrowserDemonstration) {
-  const inputs = new Map<string, { name: string; label: string; kind: "url" | "text" }>()
-  if (demo.steps.some(step => step.kind === "navigate")) inputs.set("start_url", { name: "start_url", label: "Starting page", kind: "url" })
-  for (const step of demo.steps) {
-    if (!step.parameter || inputs.has(step.parameter)) continue
-    const label = /^input_\d+$/.test(step.parameter) ? step.target?.name || `Value for step ${step.id}` : browserInputLabel(step.parameter)
-    inputs.set(step.parameter, { name: step.parameter, label, kind: "text" })
+  type Input = { name: string; names: string[]; label: string; kind: "url" | "text" }
+  const inputs = new Map<string, Input>()
+  if (demo.steps.some(step => step.kind === "navigate")) inputs.set("start_url", { name: "start_url", names: ["start_url"], label: "Starting page", kind: "url" })
+  const labels = new Set<string>()
+  for (const group of demonstrationStepGroups(demo.steps)) {
+    let shared: Input | undefined
+    for (const step of group.steps) {
+      if (!step.parameter || inputs.has(step.parameter)) continue
+      const automatic = /^input_\d+$/.test(step.parameter)
+      if (automatic && shared) { shared.names.push(step.parameter); continue }
+      const named = automatic ? step.target?.name || `Value for step ${step.id}` : browserInputLabel(step.parameter)
+      // Two inputs for one field name say which step each belongs to.
+      const input: Input = { name: step.parameter, names: [step.parameter], label: labels.has(named) ? `${named} (step ${step.id})` : named, kind: "text" }
+      labels.add(named)
+      inputs.set(step.parameter, input)
+      if (automatic) shared = input
+    }
   }
   return [...inputs.values()]
 }
@@ -111,7 +148,7 @@ export function browserSkillRunPrompt(name: string, demo: BrowserDemonstration, 
     const value = Object.hasOwn(values, input.name) ? values[input.name]?.trim() : undefined
     return value ? [{ ...input, value }] : []
   })
-  const snapshot = skillRunSchema.parse({ name, inputs: Object.fromEntries(supplied.map(input => [input.name, input.value])) })
+  const snapshot = skillRunSchema.parse({ name, inputs: Object.fromEntries(supplied.flatMap(input => input.names.map(key => [key, input.value]))) })
   const visible = [`Run my ${name} skill.`, ...supplied.map(input => `${input.label}: ${input.value}`)].join("\n")
   return `${RUN_PREFIX}\n${JSON.stringify(snapshot)}${RUN_MARKER}${visible}`
 }

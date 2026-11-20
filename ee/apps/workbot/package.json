@@ -21,6 +21,7 @@
     "test:session-cells": "tsx --conditions=development --test scripts/session-cells.test.ts",
     "test:command-palette": "tsx --conditions=development --test scripts/command-palette.test.ts",
     "test:devices": "tsx --conditions=development --test scripts/devices.test.ts",
+    "test:teaching-steps": "tsx --conditions=development --test scripts/teaching-steps.test.ts",
     "test:app-auth": "tsx --conditions=development --test scripts/app-auth.test.ts",
     "test:calendar-connections": "esbuild scripts/calendar-connections.test.ts --bundle --conditions=development --platform=node --format=cjs --jsx=automatic --external:react --external:react-dom --external:@tanstack/react-query --external:zod --outfile=node_modules/.cache/calendar-connections.test.cjs && node node_modules/.cache/calendar-connections.test.cjs"
   },
@@ -36,7 +37,7 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "^4.6.6",
-    "@modelcontextprotocol/sdk": "^1.31.0"
+    "@modelcontextprotocol/sdk": "^1.32.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

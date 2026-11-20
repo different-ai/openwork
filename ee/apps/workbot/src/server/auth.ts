@@ -3,7 +3,7 @@ import type { Context, ErrorHandler, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { routePath } from "hono/route"
 import { z } from "zod"
-import { WORKBOT_APP_CALLBACK_PATH, WORKBOT_APP_ID, type Config } from "./config.js"
+import { WORKBOT_APP_CALLBACK_PATH, WORKBOT_APP_ID, WORKBOT_IOS_APP_ID, type Config } from "./config.js"
 import { DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, type Den, type DenSession } from "./den.js"
 import { reportError } from "./error-reporting.js"
 import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
@@ -482,7 +482,7 @@ export function createAuth(input: {
     /** What iOS and Android check before they open the return address in the OpenWork app, and only in it. */
     app.get("/.well-known/apple-app-site-association", (c) => {
       if (!appLinks.iosTeamId) return c.json({ error: "not_found" }, 404)
-      const appId = `${appLinks.iosTeamId}.${WORKBOT_APP_ID}`
+      const appId = `${appLinks.iosTeamId}.${WORKBOT_IOS_APP_ID}`
       return c.json({ applinks: { details: [{ appIDs: [appId], components: [{ "/": WORKBOT_APP_CALLBACK_PATH }] }] }, webcredentials: { apps: [appId] } })
     })
     app.get("/.well-known/assetlinks.json", (c) => {

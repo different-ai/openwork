@@ -92,6 +92,7 @@ const turnSchema = z.object({
   text: z.string(),
   context: workbotViewContextSchema.optional(),
   navigation: z.array(z.object({ id: z.string(), fileId: workbotDocumentNavigationSchema.shape.fileId })).default([]),
+  teaching: z.object({ id: z.string() }).optional(),
   sentAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
   status: z.enum(["queued", "working", "done", "failed", "stopped"]),

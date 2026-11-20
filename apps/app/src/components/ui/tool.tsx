@@ -32,7 +32,7 @@ import {
   SquareCode,
   Wrench,
 } from "lucide-react"
-import { useCallback, useState } from "react"
+import { useCallback, useState, type ReactNode } from "react"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 
 function toolIcon(part: ToolPart) {
@@ -64,6 +64,8 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart
 
 export type ToolProps = {
   title?: string
+  detail?: string
+  children?: ReactNode
   toolPart: ToolPart
   defaultOpen?: boolean
   className?: string
@@ -142,6 +144,8 @@ function reconnectAttribution(action: ChatToolReconnectAction, label: string): T
 
 const Tool = ({
   title,
+  detail,
+  children,
   toolPart,
   defaultOpen = false,
   className,
@@ -210,7 +214,7 @@ const Tool = ({
               <Icon className={cn("size-3.5", isSkill && "text-violet-11")} />
             )}
           </span>
-          <span className="min-w-0 truncate">{label}</span>
+          <span className="min-w-0 truncate" title={detail}>{detail ? `${label} · ${detail}` : label}</span>
           {errorAttribution ? (
             <span
               className="shrink-0 text-xs text-dls-secondary"
@@ -260,6 +264,7 @@ const Tool = ({
               {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
             </Button>
           ) : null}
+          {children ?? (<>
           {hasInput ? (
             inputDiff !== null ? (
               <DiffLines diff={inputDiff} />
@@ -281,6 +286,7 @@ const Tool = ({
           {inFlight && !hasInput ? (
             <span className="text-muted-foreground">Waiting for input…</span>
           ) : null}
+          </>)}
         </div>
       </CollapsibleContent>
     </Collapsible>

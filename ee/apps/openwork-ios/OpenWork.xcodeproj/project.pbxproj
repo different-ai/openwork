@@ -253,7 +253,7 @@
 				);
 				MARKETING_VERSION = 0.1.0;
 				OPENWORK_SERVER_HOST = chat.openworklabs.com;
-				PRODUCT_BUNDLE_IDENTIFIER = com.differentai.openwork;
+				PRODUCT_BUNDLE_IDENTIFIER = com.differentai.openwork.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;

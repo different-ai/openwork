@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "@/components/ui/sonner";
 import { readDenSettings } from "@/app/lib/den";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
-import type { DeviceProviderShareRow, OrganizationShareEmptyState, ShareableDeviceProvider } from "./device-provider-share";
+import type { DeviceProviderShareRow, OrganizationShareEmptyState, ShareableDeviceProvider, SharedProviderArrival } from "./device-provider-share";
 import { ShareProviderDialog } from "./share-provider-dialog";
 import { useDeviceProviderShare } from "./use-device-provider-share";
 
@@ -33,7 +33,20 @@ export function useDeviceProviderShareFlow(input: {
   runtimeWorkspaceId: string | null | undefined;
   organizationName: string;
   /** Sends the share through this computer's server; rejects with the server's error. */
-  share: (providerId: string, verifiedToken?: string) => Promise<unknown>;
+  share: (providerId: string, verifiedToken?: string) => Promise<{ inferenceProviderId: string; name: string }>;
+  /**
+   * The guided ending (`providerFilterSyncFix`): the confirmation stays open
+   * until this device knows whether the shared provider is listed under the
+   * organization, then asks which copy this device keeps.
+   */
+  guided?: {
+    /** Refreshes this device and answers whether what Den created is listed here. Safe to call again. */
+    confirmArrival: (providerId: string, shared: { inferenceProviderId: string; name: string }) => Promise<SharedProviderArrival>;
+    /** Removes the person's own key from this device, moving their default model to the organization's copy first; rejects with a sentence to show. */
+    removeDeviceKey: (providerId: string, organizationProviderId: string) => Promise<void>;
+    /** Brings the organization's providers into view once the dialog closes. */
+    showOrganizationProviders: () => void;
+  };
 }): DeviceProviderShareFlow {
   const healthEntries = useProviderCredentialHealth((state) => state.entries);
   const workspaceId = input.runtimeWorkspaceId ?? null;
@@ -55,17 +68,45 @@ export function useDeviceProviderShareFlow(input: {
     return provider ? { id: provider.id, name: provider.name } : null;
   }, [providers, share.rows]);
 
+  const guided = input.guided;
+  // What Den created for each provider shared from this dialog, so "Check again" asks about the same one.
+  const shared = useRef(new Map<string, { inferenceProviderId: string; name: string }>());
+  const inputShare = input.share;
+  const shareAndRemember = useCallback(async (providerId: string, verifiedToken?: string) => {
+    const result = await inputShare(providerId, verifiedToken);
+    shared.current.set(providerId, result);
+    return result;
+  }, [inputShare]);
   const dialog = share.enabled ? (
     <ShareProviderDialog
       key={scope}
       provider={target}
       organizationName={organizationName}
       verificationRequired={share.options?.verificationRequired === true}
-      onShare={input.share}
+      onShare={shareAndRemember}
       onShared={(provider) => {
-        toast.success(`Shared ${provider.name} with ${organizationName}`);
+        // Guided, the dialog itself reports the result; a toast would repeat it.
+        if (!guided) toast.success(`Shared ${provider.name} with ${organizationName}`);
         void share.refresh();
       }}
+      guided={guided ? {
+        confirmArrival: async (providerId) => {
+          const created = shared.current.get(providerId);
+          return created ? guided.confirmArrival(providerId, created) : { status: "pending" };
+        },
+        useOrganizationCopy: async (provider, arrival) => {
+          if (arrival.status === "arrived") await guided.removeDeviceKey(provider.id, arrival.organizationProviderId);
+        },
+        onFinished: (provider, result) => {
+          void share.refresh();
+          if (result.arrival.status === "arrived") {
+            toast.success(result.kept
+              ? `Shared ${provider.name} with ${organizationName}`
+              : `Shared ${provider.name} with ${organizationName} and removed your key from this device`);
+            guided.showOrganizationProviders();
+          }
+        },
+      } : undefined}
       onClose={() => setSelection(null)}
     />
   ) : null;

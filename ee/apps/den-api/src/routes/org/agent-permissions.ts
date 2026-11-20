@@ -1,9 +1,10 @@
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
   AGENT_PERMISSION_EVERYONE,
+  AGENT_SANDBOX_MODES_CAPABILITY_HEADER,
+  AGENT_SANDBOX_ONLY_CAPABILITY_HEADER,
+  agentPermissionKeys,
   agentPermissionSettingsSchema,
-  withoutBrowserUploadPermissions,
-  withoutFileSendPermissions,
   type AgentPermissionKey,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions"
@@ -12,12 +13,14 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import {
   findOrganizationTeam,
+  isSandboxRequirement,
   listAgentPermissionPolicies,
   saveAgentPermissionPolicy,
   type AgentPermissionPolicyChange,
 } from "../../agent-permissions.js"
 import { agentPermissionPolicyChangedEvent, type AgentPermissionAuditScope } from "../../audit/domain/agent-permissions.js"
 import { appendDomainChanges } from "../../audit/domain/legacy.js"
+import { organizationFeatureEnabled } from "../../features.js"
 import { auditChangeCapture, type AuditChangeCapture } from "../../audit/request-capture.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import {
@@ -69,27 +72,29 @@ function auditPolicyChange(capture: AuditChangeCapture | null, organizationId: s
 }
 
 /** Which member-decided permissions the calling editor says it can show. */
-type EditorSupport = { browserUploads: boolean; fileSends: boolean }
+type EditorSupport = { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes: boolean }
 function editorSupport(c: { req: { header(name: string): string | undefined } }): EditorSupport {
   return {
     browserUploads: c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1",
     fileSends: c.req.header("X-OpenWork-File-Send-Permissions") === "1",
+    sandboxOnly: c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1",
+    sandboxModes: c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1",
   }
 }
 
 /** Old editors cannot replace permissions they do not understand. */
 function policyVisibility(supports: EditorSupport) {
-  const uploadsEnabled = supports.browserUploads
-  const fileSendsEnabled = supports.fileSends
-  const preserveKeys: AgentPermissionKey[] = [
-    ...(uploadsEnabled ? [] : ["browserUploads"] satisfies AgentPermissionKey[]),
-    ...(fileSendsEnabled ? [] : ["fileSends"] satisfies AgentPermissionKey[]),
-  ]
+  const preserveKeys: AgentPermissionKey[] = []
+  if (!supports.browserUploads) preserveKeys.push("browserUploads")
+  if (!supports.fileSends) preserveKeys.push("fileSends")
+  if (!supports.sandboxOnly) preserveKeys.push("hostExecution")
+  if (!supports.sandboxModes) preserveKeys.push("sandboxOptOut")
   return {
     preserveKeys,
     settings(settings: AgentPermissionSettings) {
-      const uploads = uploadsEnabled ? settings : withoutBrowserUploadPermissions(settings)
-      return fileSendsEnabled ? uploads : withoutFileSendPermissions(uploads)
+      const visible = { ...settings }
+      for (const key of preserveKeys) delete visible[key]
+      return visible
     },
   }
 }
@@ -106,11 +111,16 @@ async function savePolicy(
   if (input.teamId && !team) return c.json({ error: "team_not_found" }, 404)
 
   const visibility = policyVisibility(input.supports)
+  const newRequirements = agentPermissionKeys.filter((key) => !visibility.preserveKeys.includes(key) && isSandboxRequirement(key, input.settings[key]))
+  const preserveKeys = newRequirements.length > 0
+    && !(await organizationFeatureEnabled(payload.organization.id, "sandboxTools", { userId: payload.currentMember.userId }))
+    ? [...visibility.preserveKeys, ...newRequirements]
+    : visibility.preserveKeys
   const save = () => saveAgentPermissionPolicy({
     organizationId: payload.organization.id,
     teamId: input.teamId,
     settings: input.settings,
-    preserveKeys: visibility.preserveKeys,
+    preserveKeys,
     updatedByOrgMemberId: payload.currentMember.id,
     onChange: auditPolicyChange(input.capture, payload.organization.id, team ? { kind: "team", teamId: team.id, teamName: team.name } : { kind: "everyone" }),
   })
@@ -180,7 +190,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     describeRoute({
       tags: ["Agent Permissions"],
       summary: "Set everyone's agent permissions",
-      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads and files sent to connected accounts. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. Settings for files sent to connected accounts follow the same rule with X-OpenWork-File-Send-Permissions: 1.",
+      description: "Replaces the agent permissions that apply to every member. A permission left out uses its default: Allow for existing permissions, Ask first without administrator authority for browser uploads and files sent to connected accounts. Members' apps pick up the change the next time they refresh their organization's settings. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. The same rule applies to files sent to connected accounts (X-OpenWork-File-Send-Permissions: 1), Force OpenWork Sandbox (X-OpenWork-Sandbox-Only: 1), and Use OpenWork Sandbox (X-OpenWork-Sandbox-Modes: 1). While the sandbox rollout is off, new sandbox requirements are ignored and stored settings kept; removing a requirement is always accepted.",
       responses: {
         200: jsonResponse("Everyone's agent permissions saved.", agentPermissionPolicyResponseSchema),
         400: jsonResponse("A permission or pattern was not valid.", invalidRequestSchema),
@@ -204,7 +214,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     describeRoute({
       tags: ["Agent Permissions"],
       summary: "Set a team's agent permissions",
-      description: "Replaces one team's overrides. A team's decision replaces everyone's for its members (the strictest wins when a member is in several teams that set one), and its allowed and blocked patterns add to everyone's. A permission left out inherits everyone's; saving no permissions removes the team's overrides. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1.",
+      description: "Replaces one team's overrides. A team's decision replaces everyone's for its members (the strictest wins when a member is in several teams that set one), and its allowed and blocked patterns add to everyone's. A permission left out inherits everyone's; saving no permissions removes the team's overrides. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload settings are ignored and preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. Force OpenWork Sandbox requires X-OpenWork-Sandbox-Only: 1 and Use OpenWork Sandbox requires X-OpenWork-Sandbox-Modes: 1. New sandbox requirements are ignored while the sandbox rollout is off.",
       responses: {
         200: jsonResponse("The team's agent permissions saved.", agentPermissionPolicyResponseSchema),
         400: jsonResponse("A permission or pattern was not valid.", invalidRequestSchema),
@@ -230,7 +240,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     describeRoute({
       tags: ["Agent Permissions"],
       summary: "Remove a team's agent permissions",
-      description: "Removes one team's overrides, so its members get everyone's agent permissions. Idempotent. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload overrides are preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1.",
+      description: "Removes one team's overrides, so its members get everyone's agent permissions. Idempotent. Requires the agent_permissions.manage permission with a recent sign-in. Browser upload overrides are preserved unless the client sends X-OpenWork-Browser-Upload-Permissions: 1. Force and Use requirements are preserved without their respective sandbox capability headers.",
       responses: {
         204: emptyResponse("The team's overrides were removed."),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

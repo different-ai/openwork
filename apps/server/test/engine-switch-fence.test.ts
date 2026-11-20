@@ -139,6 +139,18 @@ test("mutation release is idempotent and waits for every current mutation", asyn
   assert.equal(switched, true);
 });
 
+test("bounded same-engine refresh refuses active HTTP mutations without stopping them", async () => {
+  const config = {};
+  const release = await enterEngineMutation(config, "v2");
+  let restarted = false;
+  await assert.rejects(withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => { restarted = true; } }),
+    error => error instanceof ApiError && error.status === 409 && error.code === "engine_busy");
+  assert.equal(restarted, false);
+  await release();
+  await withEngineSwitchFence(config, { from: "v2", to: "v2", rejectActive: true, operation: async () => { restarted = true; } });
+  assert.equal(restarted, true);
+});
+
 test("reads and another profile remain available while a profile switch is fenced", async () => {
   const config = {};
   const finish = deferred();

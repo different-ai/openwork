@@ -4,10 +4,22 @@ import { parseGatewayUsageError, gatewayUsageErrorEvidenceSchema, type GatewayUs
 import { openWorkModelsLimitSchema, parseOpenWorkModelsLimitError, type OpenWorkModelsLimit } from "../../cloud/usage-limit-state";
 
 import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
+import { GATEWAY_USAGE_LIMIT_ERROR_CODE, GATEWAY_USAGE_LIMIT_MESSAGE } from "@openwork/types/den/gateway-usage-limits";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "provider-incomplete" | "provider-unavailable" | "provider-access-denied" | "provider-credentials" | "rate-limited" | "gateway-usage-limit" | "conversation-too-long" | "output-invalid" | "output-limit" | "attachment-unsupported" | "network-unavailable" | "provider-unreachable" | "provider-connection-dropped" | "model-unavailable" | "workspace-unavailable" | "free-model-limit" | "disk-full" | "database-error" | "gateway-auth-required" | "gateway-provider-authentication-failed" | "gateway-provider-permission-denied" | "gateway-selection-required" | "session-group-assignment" | "config-invalid" | "generic";
+
+export function sessionErrorAnalyticsProperties(
+  kind: OpencodeSessionErrorKind,
+  model?: { providerId?: string | null; modelId?: string | null },
+) {
+  return {
+    error_kind: kind,
+    provider_id: model?.providerId ?? null,
+    model_id: model?.modelId ?? null,
+  };
+}
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -158,6 +170,7 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "workspace-unavailable") return "Can’t reach this workspace";
   if (kind === "provider-credentials") return "Check your model connection";
   if (kind === "rate-limited") return "This model is receiving too many requests";
+  if (kind === "gateway-usage-limit") return "You’ve reached your AI Gateway usage limit";
   if (kind === "conversation-too-long") return "This conversation is too long for the model";
   if (kind === "output-invalid") return "The model couldn’t finish a usable response";
   if (kind === "output-limit") return "The response reached the model’s length limit";
@@ -195,6 +208,7 @@ function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAu
   if (kind === "workspace-unavailable") return "Check the connection, then try again.";
   if (kind === "provider-credentials") return "Update your connection in model settings.";
   if (kind === "rate-limited") return "Wait a moment, then try again or choose another model.";
+  if (kind === "gateway-usage-limit") return "Wait for your limit to reset, or ask your admin for more.";
   if (kind === "conversation-too-long") return "Start a new conversation with a shorter summary, or choose another model.";
   if (kind === "output-invalid") return "Try again. Check any completed steps before continuing.";
   if (kind === "output-limit") return "Ask for a shorter response or continue from the last completed section.";
@@ -244,6 +258,16 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
     connectUrl: null,
     message: fields.code === GATEWAY_AUTH_REQUIRED_ERROR_CODE ? fields.message : null,
   };
+}
+
+function detectGatewayUsageLimitFromText(fields: ReturnType<typeof sessionErrorFields>): { providerLimit: boolean } | null {
+  if (fields.status !== null && fields.status !== 429) return null;
+  const message = fields.message ?? "";
+  const text = [message, fields.responseBody].filter(Boolean).join("\n");
+  if (text.length > 32_000) return null;
+  const http429 = fields.status === 429 || /\bHTTP 429\b/.test(message);
+  if (!(http429 && text.includes(GATEWAY_USAGE_LIMIT_ERROR_CODE)) && !text.includes(GATEWAY_USAGE_LIMIT_MESSAGE)) return null;
+  return { providerLimit: text.includes(`${GATEWAY_USAGE_LIMIT_MESSAGE} for `) };
 }
 
 type GatewayProviderAuthFailure = {
@@ -441,13 +465,15 @@ export function presentOpencodeSessionError(error: unknown, fallback = "Session 
   const gatewaySelection = safeStringify(error)?.includes("gateway_selection_required") === true;
   const gatewayUsage = parseGatewayUsageError(error);
   const openworkModelsLimit = gatewayUsage ? null : parseOpenWorkModelsLimitError(error);
-  const kind = gatewayProviderAuth?.kind ?? (gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : openworkModelsLimit ? "generic" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody, fields.status));
+  const gatewayUsageLimit = openworkModelsLimit ? null : gatewayUsage ? { providerLimit: Boolean(gatewayUsage.details.provider) } : detectGatewayUsageLimitFromText(fields);
+  const kind = gatewayProviderAuth?.kind ?? (gatewayAuth ? "gateway-auth-required" : gatewaySelection ? "gateway-selection-required" : openworkModelsLimit ? "generic" : gatewayUsageLimit ? "gateway-usage-limit" : sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody, fields.status));
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   const credentialCopy = kind === "provider-credentials" ? providerCredentialCopy(fields) : null;
   return {
     kind,
     title: openworkModelsLimit ? "Your workspace used its OpenWork Models allowance" : credentialCopy?.title ?? errorTitle(kind, fallbackTitle),
     description: gatewayProviderAuth?.message ?? credentialCopy?.description
+      ?? (gatewayUsageLimit?.providerLimit ? "Your limit for this provider is used up. Choose a model from another provider, or wait for it to reset." : null)
       ?? (kind === "config-invalid" ? describeOpencodeConfigError(error) ?? fields.message : null)
       ?? errorDescription(kind, gatewayAuth),
     technicalDetails: kind === "gateway-selection-required" ? "Error code: gateway_selection_required\nStatus: 409" : gatewayAuth ? "Error code: openwork_auth_required\nStatus: 401" : technicalErrorDetails(error, fallback, fields),

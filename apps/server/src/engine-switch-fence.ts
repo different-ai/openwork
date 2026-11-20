@@ -77,6 +77,8 @@ export async function withEngineSwitchFence<T>(config: object, options: {
   from: Engine;
   to: Engine;
   operation: () => Promise<T>;
+  /** Bounded refreshes refuse in-flight HTTP mutations instead of waiting on them. */
+  rejectActive?: boolean;
 }): Promise<T> {
   const state = stateFor(config);
   const previous = state.tail;
@@ -85,6 +87,7 @@ export async function withEngineSwitchFence<T>(config: object, options: {
   state.pending++;
   try {
     await previous;
+    if (options.rejectActive && state.active) throw new ApiError(409, "engine_busy", "Wait for the current task or engine request to finish, then retry. Nothing was restarted.");
     if (state.active) await new Promise<void>(resolve => state.drained.add(resolve));
     const result = await options.operation();
     if (options.from !== options.to) {

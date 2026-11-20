@@ -5,14 +5,18 @@
  * The chat's own card on this computer keeps working; whichever answers first
  * wins. A remote answer is "once" or "reject": it never becomes a standing
  * approval ("always", a remembered folder). What the person approves is shown
- * whole (the script, the file names, the site): a request too long to show is
- * reported, but can only be approved on this computer.
+ * whole (the script, the file names, the site, a saved secret's name and field):
+ * a request too long to show is reported, but can only be approved on this computer.
  */
 
 const TITLE_MAX = 240
 const DETAIL_MAX = 2000
 const EXACT_MAX = 2000
 const SCRIPT_APPS = { applescript: "AppleScript", jxa: "JavaScript for Automation", blender: "Blender" }
+const SECRET_KINDS = new Map([["password", "password"], ["code", "one-time code"], ["token", "API key or token"]])
+/** The input types a saved secret is filled into, in the card's words. */
+const SECRET_FIELDS = new Map([["password", "a password field"], ["text", "a text field"], ["email", "an email field"], ["tel", "a phone number field"],
+  ["url", "a web address field"], ["search", "a search field"], ["textarea", "a multi-line text field"]])
 /** The same characters the chat's card reveals: they change how text reads without changing what runs. */
 const HIDDEN_CHARACTERS = /[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F\u00AD\u061C\u115F-\u1160\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/gu
 
@@ -68,9 +72,20 @@ export function computerRequestPending(request) {
       detail = `${app} opened a file panel on that computer. The agent sees the file names it shows, and asks again before handing any file over.`
     }
   } else if (request.reason === "credential" && request.credential) {
-    const { site, app, appId } = request.credential
+    const { site, app, appId, secret } = request.credential
     allow = true
-    if (site) {
+    if (secret) {
+      // A saved secret is approved by its name, its exact site and the field it goes into: all three, or not here.
+      const kind = SECRET_KINDS.get(secret.kind)
+      const label = shown(secret.label)
+      const where = shown(site ?? "")
+      const field = shown(secret.field)
+      title = `Fill a saved ${kind ?? "secret"} on a website`
+      detail = "OpenWork fills it without showing it to the agent, and sends it only to the sites allowed for it. Check the name and the address are the ones you meant."
+      exact = `Name: ${label}\nSite: ${where}\nInto: ${SECRET_FIELDS.get(secret.field) ?? `a field of type ${field}`}`
+      // A line break in a name would read as another line of what is approved.
+      if (!kind || !label || !where || !field || /[\r\n]/.test(`${label}${where}${field}`)) allow = false
+    } else if (site) {
       title = "Enter your password or code on a website"
       detail = "The agent types what you gave it into this site's sign-in field. Check the address is the site you meant."
       exact = shown(site)

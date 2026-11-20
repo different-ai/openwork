@@ -14,6 +14,7 @@ import { appLogger } from "./observability/logger.js"
 import { sessionRefreshDue } from "./session-security-settings.js"
 
 type AuthSessionValue = {
+  signInSessionId: CachedAuthSession["session"]["id"] | null
   user: CachedAuthSession["user"]
   session: Omit<CachedAuthSession["session"], "id" | "token"> & {
     id: string
@@ -33,6 +34,8 @@ type SessionRequestContext = {
 }
 
 export type AuthContextVariables = {
+  /** Set only when authentication resolved a persisted Den sign-in session. */
+  signInSessionId: AuthSessionValue["signInSessionId"]
   user: AuthSessionValue["user"] | null
   session: AuthSessionValue["session"] | null
   apiKey: DenApiKeySession | null
@@ -225,6 +228,7 @@ async function getSessionFromInternalMcpPrincipal(headers: Headers): Promise<(Au
       ...user,
       id: normalizeDenTypeId("user", user.id),
     },
+    signInSessionId: null,
     session: {
       id: "mcp_internal",
       token: "mcp_internal",
@@ -258,6 +262,7 @@ function readBearerToken(headers: Headers): string | null {
 
 function bearerSessionValue(row: CachedAuthSession): AuthSessionValue {
   return {
+    signInSessionId: row.session.id,
     session: row.session,
     user: {
       ...row.user,
@@ -481,10 +486,11 @@ export const sessionMiddleware: MiddlewareHandler<{ Variables: AuthContextVariab
     ? null
     : await getSessionFromApiKey(c.req.raw.headers)
   const resolved = apiKeyResolution
-    ? { user: apiKeyResolution.user, session: null }
+    ? { user: apiKeyResolution.user, session: null, signInSessionId: null }
     : (skipRequestSession
     ? null
     : await getRequestSession(c.req.raw.headers, c))
+  c.set("signInSessionId", resolved?.signInSessionId ?? null)
   c.set("user", resolved?.user ?? null)
   c.set("session", resolved?.session ?? null)
   const activeOrganizationId = apiKeyResolution?.activeOrganizationId ?? resolved?.session?.activeOrganizationId

@@ -49,6 +49,7 @@ export const providerUncoveredRoutes = [
   "POST /v1/inference-providers/truefoundry",
   "POST /v1/inference-providers/:inferenceProviderId/truefoundry/sync",
   "PATCH /v1/inference-providers/:inferenceProviderId/truefoundry",
+  "POST /v1/inference-providers/:inferenceProviderId/truefoundry/members/:memberId/reset-tokens",
   "POST /v1/inference-providers/oauth/browser-truefoundry-check",
   // Custom OpenAI-compatible providers: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/custom/discover-models",
