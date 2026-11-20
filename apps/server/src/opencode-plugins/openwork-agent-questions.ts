@@ -18,9 +18,9 @@ export const askArgs = z.object({
 
 // All model-facing guidance for asking lives here.
 // How to write a question, for both the engine's question tool and ask_without_waiting.
-export const questionWritingGuidance = "Keep a question short: a sentence or a short paragraph that someone can read at a glance. If they need longer steps or values to copy, put those in a chat message before you ask.";
+export const questionWritingGuidance = "Ask only for a decision you cannot make yourself. When the person just has to finish a step, such as approving a sign-in, tell them what to do in a message and wait for or check the result yourself instead of asking whether they are done. Keep a question short: a sentence or a short paragraph that someone can read at a glance. The person sees your chat messages and the question, not tool output or your thinking, so never point at something they cannot see, such as \"the link above\" or \"this plan\": write the link, code or plan in a chat message before you ask.";
 
-export const askDescription = `Ask the person something without stopping. Takes the same questions as the question tool but returns at once: their answer arrives later as a message in this chat, and starts a new turn if yours has ended. Use it when other parts of the task do not depend on the answer, and keep working on those; use question when nothing useful can continue until they answer. Either way, never end your turn asking the person to reply, approve or tell you when they are done: ask with one of these tools instead. Do not ask again while a question is open. ${questionWritingGuidance}`;
+export const askDescription = `Ask the person something without stopping. Takes the same questions as the question tool but returns at once: their answer arrives later as a message in this chat, and starts a new turn if yours has ended. Use it when other parts of the task do not depend on the answer, and keep working on those; use question when nothing useful can continue until they answer. Either way, never end your turn on a question written in the chat: ask with one of these tools instead. Do not ask again while a question is open. ${questionWritingGuidance}`;
 
 /** Adds the writing guidance to the engine's own question tool. */
 export function questionToolDefinition(input: { toolID: string }, output: { description: string }) {

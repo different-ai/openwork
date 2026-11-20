@@ -3768,6 +3768,35 @@ export function SessionSurface(props: SessionSurfaceProps) {
   skipThreadQuestionBeforeSendRef.current = threadQuestion && props.respondQuestion && !props.questionReplyBusy
     ? () => { void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {}); }
     : null;
+  const threadQuestionCard = threadQuestion ? (
+    <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
+      {threadQuestion.form ? (
+        <AgentFormCard
+          key={threadQuestion.id}
+          form={threadQuestion.form}
+          busy={props.questionReplyBusy ?? false}
+          onReply={(answers) => {
+            void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
+          }}
+          onDismiss={props.respondQuestion ? () => {
+            void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+          } : undefined}
+        />
+      ) : (
+        <QuestionPanel
+          key={threadQuestion.id}
+          variant="thread"
+          questions={threadQuestion.questions}
+          busy={props.questionReplyBusy ?? false}
+          requestId={threadQuestion.id}
+          onReply={(answers) => Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {})}
+          onDismiss={props.respondQuestion ? () => {
+            void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
+          } : undefined}
+        />
+      )}
+    </div>
+  ) : null;
   // The agent is waiting for computer use in this chat (setup or allowance).
   const computerRequest = useComputerRequest(props.sessionId);
   // A turn that ended on a Connect card picks up once its sign-in lands, as if the person said so.
@@ -4092,6 +4121,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                           activityStatus={effectiveActivityStatus}
                           retryStatus={liveStatus.type === "retry" ? liveStatus : null}
                           syncHealth={runSyncHealth}
+                          trailing={threadQuestionCard}
                         />
                         </SandboxActivityContext.Provider>
                       </SkillSharingProvider>
@@ -4101,35 +4131,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </DevProfiler>
             )}
             </SessionHistoryBoundary>
-            {threadQuestion ? (
-              <div data-composer-interaction="question" className="mx-auto w-full max-w-3xl px-2 md:px-10">
-{threadQuestion.form ? (
-                  <AgentFormCard
-                    key={threadQuestion.id}
-                    form={threadQuestion.form}
-                    busy={props.questionReplyBusy ?? false}
-                    onReply={(answers) => {
-                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {});
-                    }}
-                    onDismiss={props.respondQuestion ? () => {
-                      void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
-                    } : undefined}
-                  />
-                ) : (
-                                <QuestionPanel
-                  key={threadQuestion.id}
-                  variant="thread"
-                  questions={threadQuestion.questions}
-                  busy={props.questionReplyBusy ?? false}
-                  requestId={threadQuestion.id}
-                  onReply={(answers) => Promise.resolve(props.respondQuestion?.(threadQuestion.id, answers)).catch(() => {})}
-                  onDismiss={props.respondQuestion ? () => {
-                    void Promise.resolve(props.respondQuestion?.(threadQuestion.id, null)).catch(() => {});
-                  } : undefined}
-                />
-                )}
-              </div>
-            ) : null}
+            {renderedMessages.length === 0 ? threadQuestionCard : null}
             {!archived && admissionOutcomeUnresolved && queuedDrainState.phase.kind !== "admission_unknown" && renderedMessages.length > 0 ? (
               <AdmissionOutcomeUnknownCard
                 resuming={resuming}
