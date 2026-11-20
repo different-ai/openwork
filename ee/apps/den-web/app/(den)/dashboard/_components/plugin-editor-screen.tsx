@@ -12,6 +12,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { getImportPluginRoute, getMcpConnectionsRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { SkillZipUploadButton } from "./skill-zip-actions";
 import { IntegrationIcon } from "./integration-icon";
 import { useMarketplaces } from "./marketplace-data";
 import { type ExternalMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -407,13 +408,16 @@ export function PluginEditorScreen() {
             Bundle skills, commands, and connectors your team can install in OpenWork with one click.
           </p>
         </div>
-        <Link
-          href={getImportPluginRoute(orgSlug)}
-          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 transition hover:bg-gray-50"
-        >
-          <Download size={14} />
-          {importDraft ? "Change import" : "Import from GitHub"}
-        </Link>
+        <div className="flex shrink-0 items-start gap-2">
+          {importDraft ? null : <SkillZipUploadButton />}
+          <Link
+            href={getImportPluginRoute(orgSlug)}
+            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-[13px] font-medium text-gray-700 transition hover:bg-gray-50"
+          >
+            <Download size={14} />
+            {importDraft ? "Change import" : "Import from GitHub"}
+          </Link>
+        </div>
       </div>
 
       <div className="mt-8 flex flex-col gap-5 rounded-[24px] border border-gray-200 bg-white p-6">
