@@ -15,6 +15,10 @@ import { linkedWorkbotOrganization, workbotSignInRoute } from "../_lib/workbot-t
 import { usePathname, useRouter } from "next/navigation";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
+import { markFeatureUsed } from "../../_lib/feature-usage";
+import { createReauthQueue } from "../../_lib/reauth-recovery";
+import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
   type DenOrgContext,
@@ -27,6 +31,7 @@ import {
   parseOrgListPayload,
   roleIncludesCanonicalRole,
   permissionLockReason,
+  orgFeatureEnabled,
   type AdminReauthMinutes,
   type MaxSessionLengthDays,
   type SessionLengthHours,
@@ -101,6 +106,7 @@ type OrgSettingsCompletion = {
 
 type PendingReauthMutation = {
   label: string;
+  location: string | null;
   prompt?: ReauthPrompt;
   action: () => Promise<void>;
   resolve: () => void;
@@ -154,7 +160,8 @@ export function OrgDashboardProvider({
   const [orgError, setOrgError] = useState<string | null>(null);
   const [mutationBusy, setMutationBusy] = useState<string | null>(null);
   const [orgSettingsCompletion, setOrgSettingsCompletion] = useState<OrgSettingsCompletion | null>(null);
-  const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
+  const [reauthQueue] = useState(() => createReauthQueue<PendingReauthMutation>());
+  const [reauthPaused, setReauthPaused] = useState(false);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
   const [reauthPrompt, setReauthPrompt] = useState<ReauthPrompt | null>(null);
@@ -180,6 +187,7 @@ export function OrgDashboardProvider({
     [orgDirectory],
   );
 
+  const recoveryEnabled = orgFeatureEnabled(orgContext, "adminSecurityCheckRecovery");
   const activeOrgId = activeOrg?.id ?? orgContext?.organization.id ?? null;
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
 
@@ -510,21 +518,30 @@ export function OrgDashboardProvider({
 
   /** Opens the re-sign-in dialog with the wording of the first action waiting on it. */
   function openReauthDialog() {
-    setReauthPrompt(pendingReauthMutationsRef.current[0]?.prompt ?? null);
+    setReauthPaused(false);
+    setReauthPrompt(reauthQueue.first()?.prompt ?? null);
     setReauthDialogOpen(true);
   }
 
   async function runReauthableAction(label: string, action: () => Promise<void>, prompt?: ReauthPrompt) {
     const organizationId = orgContext?.organization.id;
     const userId = user?.id;
-    const scopedAction = async () => {
+    const location = recoveryEnabled ? window.location.href : null;
+    const ensureSameScope = () => {
       if (!organizationId || !userId || !orgLoadRef.current.mounted || orgLoadRef.current.switching
         || orgLoadRef.current.organizationId !== organizationId || orgLoadRef.current.userId !== userId
-        || getRequestOrgScope() !== organizationId) {
-        throw new Error("The active workspace changed. Retry the action in the selected workspace.");
+        || getRequestOrgScope() !== organizationId || (location !== null && window.location.href !== location)) {
+        throw new Error("The page or workspace changed. Retry the action in the selected workspace.");
       }
+    };
+    const scopedAction = async () => {
+      ensureSameScope();
       await action();
     };
+    // Starting another action must not silently pick up a previously paused change.
+    const superseded = reauthQueue.clearPaused();
+    if (superseded.length > 0) setReauthPaused(false);
+    for (const entry of superseded) entry.reject(new Error("Pending change discarded."));
     try {
       await executeReauthableAction(label, scopedAction);
     } catch (error) {
@@ -532,11 +549,9 @@ export function OrgDashboardProvider({
         throw error;
       }
 
+      if (recoveryEnabled) ensureSameScope();
       await new Promise<void>((resolve, reject) => {
-        pendingReauthMutationsRef.current = [
-          ...pendingReauthMutationsRef.current,
-          { label, prompt, action: scopedAction, resolve, reject },
-        ];
+        reauthQueue.enqueue([{ label, location, prompt, action: scopedAction, resolve, reject }]);
         openReauthDialog();
       });
     }
@@ -559,23 +574,35 @@ export function OrgDashboardProvider({
     setOrgSettingsCompletion(null);
   }
 
-  function cancelReauth() {
-    const pending = pendingReauthMutationsRef.current;
-    pendingReauthMutationsRef.current = [];
+  function discardReauth(message: string) {
+    const pending = reauthQueue.clear();
     setReauthDialogOpen(false);
-    const error = new Error(WORKSPACE_REAUTH_SECURITY_MESSAGE);
-    for (const entry of pending) {
-      entry.reject(error);
+    setReauthPaused(false);
+    for (const entry of pending) entry.reject(new Error(message));
+  }
+
+  function cancelReauth() {
+    if (recoveryEnabled && reauthQueue.pause()) {
+      markFeatureUsed("adminSecurityCheckRecovery");
+      setReauthDialogOpen(false);
+      setReauthPaused(true);
+      return;
     }
+    discardReauth(WORKSPACE_REAUTH_SECURITY_MESSAGE);
+  }
+
+  function resumeReauth() {
+    if (reauthQueue.first()?.location !== window.location.href) {
+      discardReauth("The page changed. Retry the action on this page.");
+      return;
+    }
+    if (reauthQueue.resume()) openReauthDialog();
   }
 
   async function retryReauthMutation() {
-    const pending = pendingReauthMutationsRef.current;
-    if (pending.length === 0) {
-      return;
-    }
+    const pending = reauthQueue.takeVerified();
+    if (pending.length === 0) return;
 
-    pendingReauthMutationsRef.current = [];
     setReauthDialogOpen(false);
     try {
       await restoreDisplayedOrganization();
@@ -602,20 +629,14 @@ export function OrgDashboardProvider({
         }
       }
 
-      const queuedDuringRetry = pendingReauthMutationsRef.current;
-      pendingReauthMutationsRef.current = [];
-      setReauthDialogOpen(false);
-
       if (retryAfterReauth.length > 0) {
-        pendingReauthMutationsRef.current = [
-          ...retryAfterReauth,
-          ...queuedDuringRetry,
-        ];
+        reauthQueue.enqueue(retryAfterReauth, true);
         openReauthDialog();
         return;
       }
 
-      queuedActions = queuedDuringRetry;
+      queuedActions = recoveryEnabled ? [] : reauthQueue.takeVerified();
+      if (!recoveryEnabled) setReauthDialogOpen(false);
     }
   }
 
@@ -1125,8 +1146,16 @@ export function OrgDashboardProvider({
       orgLoadRef.current.generation += 1;
       orgLoadRef.current.switching = false;
       setRequestOrgScope(null);
+      for (const entry of reauthQueue.clear()) entry.reject(new Error("The page closed before confirmation."));
     };
   }, []);
+
+  const currentOrgId = orgContext?.organization.id;
+  useEffect(() => {
+    if (reauthQueue.first()?.location && (reauthQueue.first()?.location !== window.location.href || !recoveryEnabled)) {
+      discardReauth("The page or workspace changed before confirmation.");
+    }
+  }, [pathname, currentOrgId, user?.id, recoveryEnabled]);
 
   useEffect(() => {
     pathnameRef.current = pathname;
@@ -1180,7 +1209,7 @@ export function OrgDashboardProvider({
     orgBusy: orgBusy || !sessionHydrated || !user || orgLoadRef.current.userId !== user.id,
     orgError,
     mutationBusy,
-    reauthDialogOpen,
+    reauthDialogOpen: reauthDialogOpen || reauthPaused,
     orgSettingsCompletion,
     clearOrgSettingsCompletion,
     refreshOrgData,
@@ -1212,7 +1241,22 @@ export function OrgDashboardProvider({
           {!orgBusy ? <button type="button" onClick={() => void refreshOrgData()} className="font-medium text-gray-900 underline underline-offset-4">Retry setup workspace</button> : null}
         </div>
       ) : children}
+      {reauthPaused ? (
+        <div className="fixed inset-x-4 bottom-4 z-[85] mx-auto max-w-xl">
+          <DenNotice
+            tone="warning"
+            message={WORKSPACE_REAUTH_SECURITY_MESSAGE}
+            action={<div className="flex flex-col items-end gap-1">
+              <DenButton size="sm" onClick={resumeReauth}>Confirm it&apos;s you</DenButton>
+              <DenButton size="sm" variant="ghost" onClick={() => discardReauth("Pending change discarded.")}>
+                Discard pending change
+              </DenButton>
+            </div>}
+          />
+        </div>
+      ) : null}
       <ReauthDialog
+        recoveryEnabled={recoveryEnabled}
         open={reauthDialogOpen}
         user={user}
         orgContext={orgContext}
