@@ -1,0 +1,44 @@
+title = "OpenWork diff-scoped secret policy"
+betterleaksMinVersion = "v1.8.1"
+
+# Betterleaks 1.8.1 uses Expr; true means skip. Keep the unresolved report
+# outside all path exemptions. Its security disposition is a separate review.
+prefilter = '''
+attributes["path"] != "evals/results/first-connection-windows-20260721/report.md" &&
+matchesAny(attributes["path"], [
+  // Unit/integration fixtures in test directories.
+  `(?:^|/)test/`,
+  // Unit/integration fixtures in tests directories.
+  `(?:^|/)tests/`,
+  // Static synthetic test data.
+  `(?:^|/)testdata/`,
+  // Colocated test modules.
+  `(?:^|/)[^/]*\.test\.[^/]*$`,
+  // Colocated end-to-end modules.
+  `(?:^|/)[^/]*\.e2e\.[^/]*$`,
+  // Evaluation fixtures and harnesses (unresolved report excepted above).
+  `^evals/`,
+  // Example configuration, including **/.env.example.
+  `(?:^|/)[^/]*\.example$`,
+  // Local Compose defaults, not production credentials.
+  `(?:^|/)docker-compose[^/]*\.yml$`,
+  // Helm example values.
+  `^packaging/(?:.*/)?values[^/]*\.yaml$`,
+  // Packaging instructions, including packaging/docker/README.md.
+  `^packaging/(?:.*/)?README\.md$`,
+  // Synthetic database credentials used to build the sandbox image.
+  `^scripts/build-microsandbox-openwork-image\.sh$`,
+  // Retain the default JavaScript lockfile exclusion.
+  `(?:^|/)(?:deno\.lock|npm-shrinkwrap\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$`
+])
+'''
+
+# Exact instructional literals, never substring matches against issued tokens.
+# The URI exception is restricted to the postgres:postgres tuple on loopback.
+filter = '''
+matchesAny(finding["secret"], [`^(?:changeme|example|YOUR_TOKEN|YOUR_API_KEY|YOUR_PASSWORD)$`]) ||
+matchesAny(finding["match"], [`^postgres(?:ql)?://postgres:postgres@(?:localhost|127\.0\.0\.1)(?::[0-9]+)?(?:[/\s'"\x60]|$)`])
+'''
+
+[extend]
+useDefault = true
