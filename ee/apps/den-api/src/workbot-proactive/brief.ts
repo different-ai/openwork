@@ -73,7 +73,7 @@ export function memberNextChecks(input: {
 }): NonNullable<MemberAgentView["nextChecks"]> {
   const scheduled = Math.max(nextScheduledCheck(input), input.now)
   const requested = pendingCheckRequests(input.requests)
-    .filter((request) => request.at > input.now - 15 * 60_000 && (input.snoozedUntil === null || request.at > input.snoozedUntil))
+    .filter((request) => request.at > input.now - 15 * 60_000 && (input.snoozedUntil === null || input.snoozedUntil <= input.now || request.at > input.snoozedUntil))
     .map((request) => ({ at: Math.max(request.at, input.now), kind: "requested" as const, why: request.why || null }))
   return [{ at: scheduled, kind: "scheduled" as const, why: null }, ...requested]
     .sort((left, right) => left.at - right.at)
