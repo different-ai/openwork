@@ -51,7 +51,10 @@ export function modelTriggerSettings(input: {
     return { fast: true, summary: input.value === FAST_DEFAULT_VARIANT ? null : controls.options.find((option) => option.value === input.value)?.label ?? null };
   }
   const listed = selection.options.some((option) => option.value === input.value);
-  return { fast: false, summary: listed || input.verified ? nonDefaultModelSummary(input.model, input.value, selection.label) : null };
+  const summary = listed
+    ? nonDefaultModelSummary(input.model, input.value, selection.label)
+    : input.verified && input.value !== null ? "Saved setting" : null;
+  return { fast: false, summary };
 }
 
 // "OpenWork Free": the free model every desktop gets. Its ids (and the `Auto`
