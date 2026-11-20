@@ -12,6 +12,8 @@ import {
   SKILL_FILES_MAX_TOTAL_BYTES,
   checkSkillFiles,
   sameSkillFiles,
+  selectSkillFilesBySize,
+  skillFilesLeftOutMessage,
   skillFilesFromPayload,
   skillFileUri,
 } from "../src/skill-files.js"
@@ -134,4 +136,18 @@ test("a supporting file is readable only when a loadable skill lists it", () => 
     blocked: { status: "needs_connection", message: "Connect first.", action: null },
   }]]))
   assert.equal(findSkillFile(blocked, "skill://pdf-processing/references/FORMS.md"), undefined)
+})
+
+test("names the files of a skill folder that do not fit instead of dropping them silently", () => {
+  const selection = selectSkillFilesBySize([
+    { path: "references/GUIDE.md", size: 100 },
+    { path: "assets/huge.xsd", size: SKILL_FILE_MAX_BYTES + 1 },
+    { path: "assets/unknown.bin", size: null },
+    { path: "../escape.md", size: 10 },
+    { path: "scripts/run.sh", size: 20 },
+  ])
+  assert.deepEqual(selection.included, ["references/GUIDE.md", "scripts/run.sh"])
+  assert.deepEqual(selection.leftOut, ["../escape.md", "assets/huge.xsd", "assets/unknown.bin"])
+  assert.match(skillFilesLeftOutMessage({ skillName: "docx", leftOut: 3, total: 5 }), /^docx: 3 of 5 supporting files will be left out\./)
+  assert.match(skillFilesLeftOutMessage({ skillName: "docx", leftOut: 1, total: 5, atImport: true }), /^docx: 1 of 5 supporting files was left out\./)
 })
