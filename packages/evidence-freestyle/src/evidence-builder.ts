@@ -12,7 +12,7 @@ import { digest, sourceTree, dependencyFingerprint, ensureLayer, type SourceEntr
  * the Daytona builder, so both providers rebuild for the same changes. The
  * UI-guardrail checker/baseline run only in CI, never inside the guest runtime.
  */
-const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/freestyle\/|packages\/daytona-evidence\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:(?:prove|prepare|publish|verify|soak)-[^/]+|check-ui-guardrails(?:\.test)?\.mjs|ui-guardrails-baseline\.json)$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
+const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/evidence-freestyle\/|packages\/evidence-daytona\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:(?:prove|prepare|publish|verify|soak)-[^/]+|check-ui-guardrails(?:\.test)?\.mjs|ui-guardrails-baseline\.json)$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
 
 /** Bump the version when the template layout changes; cleanup reclaims older ones. */
 export const EVIDENCE_TEMPLATE_PREFIX = "ow-evidence-web-v3-";
@@ -37,7 +37,7 @@ CHROME
 chmod 755 /opt/openwork-preview/evidence-chrome
 `;
 /** Incremental on the image: pnpm only adds or removes what the lockfile changed. */
-export const EVIDENCE_DEPENDENCIES_RECIPE = dependencyRecipe("acme-web").replace("pnpm install --frozen-lockfile", "pnpm install --filter @openwork/freestyle... --frozen-lockfile");
+export const EVIDENCE_DEPENDENCIES_RECIPE = dependencyRecipe("acme-web").replace("pnpm install --frozen-lockfile", "pnpm install --filter @openwork/evidence-freestyle... --frozen-lockfile");
 
 /** Controller files copied into every evidence VM. */
 export const EVIDENCE_CONTROLLER_FILES: ControllerAsset[] = ["evidence-runtime.mjs", "evidence-control.mjs", "gateway.mjs", "origins.mjs"];

@@ -1,8 +1,8 @@
-# @openwork/daytona-evidence
+# @openwork/evidence-daytona
 
 The web evidence world (`core-chat`, tests tagged `checkpoints`) on Daytona
 Linux VMs, selected with `OPENWORK_EVIDENCE_PROVIDER=daytona`. It runs the same
-steps inside the VM as `@openwork/freestyle`'s evidence builder.
+steps inside the VM as `@openwork/evidence-freestyle`'s evidence builder.
 
 Layers, each cached as a Daytona snapshot:
 
@@ -82,7 +82,7 @@ an incident or grounds to restart services or allocate retries.
 when its server-side provider credentials are configured. No OpenWork Cloud
 organization, deployment rollout, or feature-authority request is required.
 `DAYTONA_PREVIEW_WORLDS`, exported from
-`@openwork/daytona-evidence/previews`, currently contains only **`app-web`**.
+`@openwork/evidence-daytona/previews`, currently contains only **`app-web`**.
 Desktop and ACME previews are refused before allocation; the evidence noVNC
 browser is never substituted for those worlds. Saved-checkpoint behavior is
 unchanged.

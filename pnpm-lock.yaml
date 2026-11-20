@@ -428,15 +428,15 @@ importers:
 
   apps/review:
     dependencies:
-      '@openwork/daytona-evidence':
+      '@openwork/evidence-daytona':
         specifier: workspace:*
-        version: link:../../packages/daytona-evidence
+        version: link:../../packages/evidence-daytona
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../../packages/evidence-provider
-      '@openwork/freestyle':
+      '@openwork/evidence-freestyle':
         specifier: workspace:*
-        version: link:../../packages/freestyle
+        version: link:../../packages/evidence-freestyle
       '@openwork/review':
         specifier: workspace:*
         version: link:../../packages/review
@@ -1704,14 +1704,14 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/daytona-evidence:
+  packages/evidence-daytona:
     dependencies:
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../evidence-provider
-      '@openwork/freestyle':
+      '@openwork/evidence-freestyle':
         specifier: workspace:*
-        version: link:../freestyle
+        version: link:../evidence-freestyle
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1876,7 +1876,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/freestyle:
+  packages/evidence-freestyle:
     dependencies:
       '@openwork/evidence-provider':
         specifier: workspace:*

@@ -108,7 +108,7 @@ jobs:
           restore-keys: ${{ runner.os }}-pnpm-core-
       - name: Install only the test tools
         run: |
-          pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --filter @openwork/evidence-freestyle... --filter @openwork/evidence-daytona... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
           pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
       - name: Prepare this commit's evidence world
         timeout-minutes: 35

@@ -12,6 +12,6 @@ checkpoints) and reviewer previews, and defines what each provider must offer.
 - `./review`: `ReviewPreviewProvider`, what the review app calls to build,
   launch and open checkpoints.
 
-Implementations: `@openwork/freestyle/review-provider` and
+Implementations: `@openwork/evidence-freestyle/review-provider` and
 `evals/packages/env/src/freestyle-evidence.ts`. Daytona can be selected but
 fails with a clear "not supported yet" error until its implementation lands.

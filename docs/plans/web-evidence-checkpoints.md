@@ -5,7 +5,7 @@
 > `checkpoints`), capture no longer waits for the snapshot to be saved, CI selects
 > tagged specs, and records publish through the normal evidence report. The
 > synthetic probe, branch-format report and per-PR review deployment below were
-> removed. See `packages/freestyle/README.md` for current behavior.
+> removed. See `packages/evidence-freestyle/README.md` for current behavior.
 
 ## Outcome and scope
 
@@ -40,8 +40,8 @@ Infisical integration are out of scope initially.
 ## M0 — live platform prerequisite (implemented first)
 
 Files:
-- `packages/freestyle/test/fixtures/checkpoint-stream.mjs`
-- `packages/freestyle/src/checkpoint-probe.ts`
+- `packages/evidence-freestyle/test/fixtures/checkpoint-stream.mjs`
+- `packages/evidence-freestyle/src/checkpoint-probe.ts`
 - `scripts/prove-freestyle-checkpoints.ts`
 - `.github/workflows/evidence-checkpoint-proof.yml`
 
@@ -66,7 +66,7 @@ required. Do not bypass the environment's human approval boundary.
 
 ## M1 — smallest complete evidence web world
 
-Reuse `packages/freestyle` building/cache primitives but add an explicit isolated
+Reuse `packages/evidence-freestyle` building/cache primitives but add an explicit isolated
 evidence recipe. Boot only what the selected web journeys need:
 
 - branch-head app, engine, Den and databases;
@@ -113,7 +113,7 @@ caller knows its ID.
 
 ## M3 — fork backend and lifecycle
 
-In `packages/freestyle`, expose checkpoint-specific launch separate from ordinary
+In `packages/evidence-freestyle`, expose checkpoint-specific launch separate from ordinary
 preview refresh. Verify ownership, report association, source, lifetime and
 recipe version. Each successful launch is a new fork with its own access token
 and bounded lifetime. Reject expired or missing snapshots before publishing a

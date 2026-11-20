@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/daytona-evidence",
+  "name": "@openwork/evidence-daytona",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@openwork/evidence-provider": "workspace:*",
-    "@openwork/freestyle": "workspace:*"
+    "@openwork/evidence-freestyle": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"

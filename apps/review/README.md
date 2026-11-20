@@ -147,7 +147,7 @@ Daytona needs server-only `DAYTONA_API_KEY` and a Linux-VM region (`OPENWORK_DAY
 
 **Configuration boundary:** only the review deployment's server-side provider credentials and advertised capabilities authorize a fresh preview. Missing credentials, unknown providers and unsupported worlds fail closed. Configuration is rechecked for POSTs, readiness polling and deferred builds; removing a provider configuration prevents new allocation without revoking already-issued access or changing checkpoint opening. Provider API origins still require HTTPS, and same-origin request checks, immutable report source, private gateway isolation and expiry remain mandatory. This infrastructure configuration is separate from product feature flags; it does not enable or alter any Cloud/customer rollout.
 
-Cold Daytona preparation can exceed the review function's 800-second budget. Operators can prewarm an exact pushed commit with the exported `buildDaytonaPreview(sha, "app-web")` in `@openwork/daytona-evidence/previews` using a scoped server credential; the same builder is used by the UI. Do not claim a ready preview until snapshot storage and authenticated app/backend probes pass. `OPENWORK_EVIDENCE_PROVIDER=daytona` chooses a preferred provider; it neither supplies credentials nor proves live availability.
+Cold Daytona preparation can exceed the review function's 800-second budget. Operators can prewarm an exact pushed commit with the exported `buildDaytonaPreview(sha, "app-web")` in `@openwork/evidence-daytona/previews` using a scoped server credential; the same builder is used by the UI. Do not claim a ready preview until snapshot storage and authenticated app/backend probes pass. `OPENWORK_EVIDENCE_PROVIDER=daytona` chooses a preferred provider; it neither supplies credentials nor proves live availability.
 
 ## Interactive Freestyle previews
 
@@ -238,7 +238,7 @@ web preview, and remains bound to the world that was launched. Switching choices
 clears the previous world's displayed links, not its VM. All choices keep the
 same two-hour expiry and access checks.
 
-Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
+Validate with `pnpm --filter @openwork/evidence-freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,
 C1, C2, and C6: the launch stays in place, failures are actionable, and snapshot
 details are collapsed. Review has no shared button component, so it uses a native

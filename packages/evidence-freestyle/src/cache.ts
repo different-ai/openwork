@@ -169,7 +169,7 @@ export async function ensureLayer(input: {
 }
 
 export function compiledFingerprint(entries: SourceEntry[], world: PreviewWorld = "acme-web"): string {
-  const runtimeSource = /^(apps\/app\/(src|public)\/|ee\/apps\/(den-web\/(src|app|public)|den-api\/src|gateway\/src)\/|packages\/freestyle\/|worlds\/|evals\/|\.github\/|docs\/)/;
+  const runtimeSource = /^(apps\/app\/(src|public)\/|ee\/apps\/(den-web\/(src|app|public)|den-api\/src|gateway\/src)\/|packages\/evidence-freestyle\/|worlds\/|evals\/|\.github\/|docs\/)/;
   return digest(JSON.stringify(entries.filter((entry) => entry.type === "blob" && worldSource(entry.path, world) && !runtimeSource.test(entry.path))
     .sort((a, b) => a.path.localeCompare(b.path)).map(({ path, sha, runtimeSha }) => [path, runtimeSha ?? sha])));
 }
