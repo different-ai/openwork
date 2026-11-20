@@ -303,6 +303,36 @@ function hasAnyComponentPaths(componentPaths: GithubDiscoveredPlugin["componentP
   return Object.values(componentPaths).some((paths) => paths.length > 0)
 }
 
+function isSameOrInside(path: string, parent: string) {
+  return path === parent || path.startsWith(`${parent}/`)
+}
+
+/**
+ * Paths a plugin.json declares add to the default folders; they do not
+ * replace them, as in Claude Code. A plugin that lists only its agents still
+ * has its skills/ folder. A path inside another one in the same bucket is
+ * dropped so no file is planned twice.
+ */
+function mergeComponentPaths(
+  declared: GithubDiscoveredPlugin["componentPaths"],
+  defaults: GithubDiscoveredPlugin["componentPaths"],
+): GithubDiscoveredPlugin["componentPaths"] {
+  const merge = (first: string[], second: string[]) => {
+    const unique = [...new Set([...first, ...second])]
+    return unique.filter((path) => !unique.some((other) => other !== path && isSameOrInside(path, other)))
+  }
+  return {
+    agents: merge(declared.agents, defaults.agents),
+    commands: merge(declared.commands, defaults.commands),
+    hooks: merge(declared.hooks, defaults.hooks),
+    lspServers: merge(declared.lspServers, defaults.lspServers),
+    mcpServers: merge(declared.mcpServers, defaults.mcpServers),
+    monitors: merge(declared.monitors, defaults.monitors),
+    settings: merge(declared.settings, defaults.settings),
+    skills: merge(declared.skills, defaults.skills),
+  }
+}
+
 function componentKindsFromPaths(componentPaths: GithubDiscoveredPlugin["componentPaths"]): GithubDiscoveredPluginComponentKind[] {
   const kinds: GithubDiscoveredPluginComponentKind[] = []
   if (componentPaths.skills.length > 0) kinds.push("skill")
@@ -336,7 +366,7 @@ function buildDiscoveredPlugin(input: {
     rootPath: input.rootPath,
   })
   const componentPaths = input.componentPathsOverride
-    ?? (hasAnyComponentPaths(manifestDeclaredPaths) ? manifestDeclaredPaths : collectComponentPaths(input.knownPaths, input.rootPath))
+    ?? mergeComponentPaths(manifestDeclaredPaths, collectComponentPaths(input.knownPaths, input.rootPath))
   const displayName = input.displayName?.trim()
     || metadata.name
     || basename(input.rootPath)
