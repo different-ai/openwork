@@ -97,7 +97,7 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
       if (input.decision === "approve" && input.organizationId) {
         // the device session inherits this approval, so an
         // organization that requires SSO is approved only from an SSO session.
-        const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("session")?.id ?? null, organizationId: input.organizationId })
+        const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("signInSessionId"), organizationId: input.organizationId })
         if (ssoBlock) {
           return c.json(ssoRequiredErrorBody(ssoBlock), 403)
         }

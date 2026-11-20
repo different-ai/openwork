@@ -10,7 +10,7 @@ import {
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import { freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { env } from "../env.js"

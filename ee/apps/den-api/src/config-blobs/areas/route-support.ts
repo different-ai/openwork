@@ -202,6 +202,7 @@ export async function configRouteContext(ctx: ConfigAreaContext): Promise<Config
   const c = new Context<ConfigRouteEnv>(new Request("http://config-blobs.invalid/apply"))
   c.set("organizationContext", payload)
   c.set("apiKey", null)
+  c.set("signInSessionId", null)
   c.set("session", {
     id: CONFIG_APPLY_SESSION_ID,
     token: CONFIG_APPLY_SESSION_ID,

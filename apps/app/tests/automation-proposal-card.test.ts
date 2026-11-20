@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { DynamicToolUIPart } from "ai"
-import { automationProposalCalls, isAutomationProposalToolPart, parseAutomationProposal } from "../src/components/tools/openwork-automation-proposal"
+import { automationProposalCalls, automationProposalsInParts, isAutomationProposalToolPart, parseAutomationProposal } from "../src/components/tools/openwork-automation-proposal"
 
 const envelope = JSON.stringify({
   ok: true,
@@ -40,4 +40,16 @@ test("a direct proposal step still reads its text result", () => {
   const part: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork_execute", toolCallId: "direct", state: "output-available", input: {}, output: envelope }
   expect(isAutomationProposalToolPart(part)).toBe(true)
   expect(automationProposalCalls(part)).toEqual([])
+})
+
+test("a turn's proposals are collected whether made directly or from a script", () => {
+  const input = { id: "automation.propose", args: {} }
+  const fromScript = script(
+    [{ invocationId: "script:0", ordinal: 0, tool: "openwork_execute", input, status: "completed", startedAt: 1, output: [{ type: "text", text: envelope }] }],
+    [{ tool: "openwork_execute", status: "completed", input }],
+  )
+  const direct: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork_execute", toolCallId: "direct", state: "output-available", input: {}, output: envelope }
+  const other: DynamicToolUIPart = { type: "dynamic-tool", toolName: "openwork_execute", toolCallId: "other", state: "output-available", input: {}, output: JSON.stringify({ ok: true, id: "session.rename", result: {} }) }
+  const found = automationProposalsInParts([{ type: "text", text: "Drafting it." }, direct, other, fromScript])
+  expect(found.map((part) => part.toolCallId)).toEqual(["direct", "script:call:0"])
 })

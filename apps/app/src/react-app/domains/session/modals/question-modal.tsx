@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect, useEffectEvent, useReducer, useRef, useState } from "react";
 import type { QuestionInfo } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, HelpCircle, X } from "lucide-react";
 
 import { markFeatureUsed } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 export type QuestionPanelProps = {
   questions: QuestionInfo[];
   busy: boolean;
-  onReply: (answers: string[][]) => void;
+  onReply: (answers: string[][]) => unknown;
   /** Declines the whole request without answering. Hidden when omitted. */
   onDismiss?: () => void;
   /**
@@ -50,8 +50,8 @@ type QuestionAction =
   | { type: "moveFocusedOption"; direction: 1 | -1; optionsCount: number }
   | { type: "toggleMultipleOption"; option: string }
   | { type: "selectOption"; option: string }
-  | { type: "advance"; answers: string[][] }
-  | { type: "setAnswers"; answers: string[][] };
+  | { type: "answer"; index: number; answer: string[]; nextOptions: string[] | null }
+  | { type: "back"; index: number; draft: string[]; previousOptions: string[] };
 
 const initialQuestionState: QuestionState = {
   currentIndex: 0,
@@ -97,19 +97,40 @@ function questionReducer(state: QuestionState, action: QuestionAction): Question
     }
     case "selectOption":
       return { ...state, currentSelection: [action.option] };
-    case "advance":
+    case "answer": {
+      if (state.currentIndex !== action.index) return state;
+      const answers = [...state.answers];
+      answers[action.index] = action.answer;
+      if (action.nextOptions === null) return { ...state, answers };
       return {
         ...state,
-        answers: action.answers,
-        currentIndex: state.currentIndex + 1,
-        currentSelection: [],
-        customInput: "",
-        customAnswerActive: false,
-        focusedOptionIndex: 0,
+        answers,
+        currentIndex: action.index + 1,
+        ...pickedAndTyped(answers[action.index + 1], action.nextOptions),
       };
-    case "setAnswers":
-      return { ...state, answers: action.answers };
+    }
+    case "back": {
+      if (state.currentIndex !== action.index || action.index === 0) return state;
+      const answers = [...state.answers];
+      answers[action.index] = action.draft;
+      return {
+        ...state,
+        answers,
+        currentIndex: action.index - 1,
+        ...pickedAndTyped(answers[action.index - 1], action.previousOptions),
+      };
+    }
   }
+}
+
+function pickedAndTyped(answer: string[] | undefined, optionLabels: string[]) {
+  const picked = (answer ?? []).filter((value) => optionLabels.includes(value));
+  const typed = (answer ?? []).find((value) => !optionLabels.includes(value)) ?? "";
+  return { currentSelection: picked, customInput: typed, customAnswerActive: typed.length > 0, focusedOptionIndex: 0 };
+}
+
+function optionLabels(question: QuestionInfo | undefined): string[] {
+  return (question?.options ?? []).map((option) => option.label);
 }
 
 type QuestionDraft = { state: QuestionState; collapsed: boolean };
@@ -152,13 +173,20 @@ export function QuestionPanel(props: QuestionPanelProps) {
   // An answered or dismissed request must not be saved again by a late state change.
   const settledDraftKey = useRef<string | undefined>(undefined);
 
+  const advanceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const clearAdvanceTimer = () => {
+    if (advanceTimer.current !== undefined) clearTimeout(advanceTimer.current);
+    advanceTimer.current = undefined;
+  };
+
+  const requestIdentity = props.requestId ?? props.questions;
   useEffect(() => {
     if (!draftKey) {
       dispatch({ type: "reset", questionCount: props.questions.length });
-      return;
+      return clearAdvanceTimer;
     }
     // A request already on screen keeps its answers; a new one opens expanded.
-    if (loadedDraftKey.current === draftKey) return;
+    if (loadedDraftKey.current === draftKey) return clearAdvanceTimer;
     loadedDraftKey.current = draftKey;
     // The state still on screen belongs to the previous request; save after it is replaced.
     loadingDraft.current = true;
@@ -166,7 +194,8 @@ export function QuestionPanel(props: QuestionPanelProps) {
     if (draft) dispatch({ type: "restore", state: draft.state });
     else dispatch({ type: "reset", questionCount: props.questions.length });
     setCollapsed(draft?.collapsed === true);
-  }, [draftKey, props.questions]);
+    return clearAdvanceTimer;
+  }, [draftKey, requestIdentity]);
 
   useEffect(() => {
     if (!draftKey || loadedDraftKey.current !== draftKey || settledDraftKey.current === draftKey) return;
@@ -194,10 +223,27 @@ export function QuestionPanel(props: QuestionPanelProps) {
     return () => window.removeEventListener("keydown", handler);
   }, [chordListening]);
 
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const replying = useRef(false);
+
   const reply = (answers: string[][]) => {
+    if (replying.current) return;
+    replying.current = true;
     settledDraftKey.current = draftKey;
     if (draftKey) questionDrafts.delete(draftKey);
-    props.onReply(answers);
+    let sent: unknown;
+    try {
+      sent = props.onReply(answers);
+    } catch {
+      replying.current = false;
+      return;
+    }
+    void Promise.resolve(sent)
+      .catch(() => {})
+      .finally(() => {
+        replying.current = false;
+      });
   };
   const dismiss = () => {
     settledDraftKey.current = draftKey;
@@ -218,21 +264,49 @@ export function QuestionPanel(props: QuestionPanelProps) {
     return state.currentSelection.length > 0;
   })();
 
-  const handleNext = () => {
-    if (!canProceed || !currentQuestion) return;
-    const nextAnswer = [...state.currentSelection];
-    if (customAnswerEnabled && state.customInput.trim()) {
-      nextAnswer.push(state.customInput.trim());
-    }
-    const newAnswers = [...state.answers];
-    newAnswers[state.currentIndex] = nextAnswer;
-    if (isLastQuestion) {
-      dispatch({ type: "setAnswers", answers: newAnswers });
-      reply(newAnswers);
-    } else {
-      dispatch({ type: "advance", answers: newAnswers });
-    }
+  const draftAnswer = () => {
+    const answer = state.currentSelection.filter(Boolean);
+    if (customAnswerEnabled && state.customInput.trim()) answer.push(state.customInput.trim());
+    return answer;
   };
+
+  const commitAnswer = (index: number, answer: string[]) => {
+    const latest = stateRef.current;
+    if (latest.currentIndex !== index || replying.current) return;
+    const next = props.questions[index + 1];
+    if (next) {
+      dispatch({ type: "answer", index, answer, nextOptions: optionLabels(next) });
+      return;
+    }
+    const answers = [...latest.answers];
+    answers[index] = answer;
+    dispatch({ type: "answer", index, answer, nextOptions: null });
+    reply(answers);
+  };
+
+  const handleNext = () => {
+    if (!canProceed || !currentQuestion || props.busy) return;
+    clearAdvanceTimer();
+    commitAnswer(state.currentIndex, draftAnswer());
+  };
+
+  const canGoBack = state.currentIndex > 0;
+  const goBack = () => {
+    if (!canGoBack || props.busy || replying.current) return;
+    clearAdvanceTimer();
+    dispatch({
+      type: "back",
+      index: state.currentIndex,
+      draft: draftAnswer(),
+      previousOptions: optionLabels(props.questions[state.currentIndex - 1]),
+    });
+  };
+  const backButton = canGoBack ? (
+    <Button variant="ghost" size="sm" disabled={props.busy} onClick={goBack} data-question-back="">
+      <ChevronLeft data-icon="inline-start" />
+      {t("common.back")}
+    </Button>
+  ) : null;
 
   const toggleOption = (option: string) => {
     if (!currentQuestion || props.busy) return;
@@ -241,15 +315,11 @@ export function QuestionPanel(props: QuestionPanelProps) {
       return;
     }
     dispatch({ type: "selectOption", option });
-    setTimeout(() => {
-      const newAnswers = [...state.answers];
-      newAnswers[state.currentIndex] = [option];
-      if (isLastQuestion) {
-        dispatch({ type: "setAnswers", answers: newAnswers });
-        reply(newAnswers);
-      } else {
-        dispatch({ type: "advance", answers: newAnswers });
-      }
+    clearAdvanceTimer();
+    const index = state.currentIndex;
+    advanceTimer.current = setTimeout(() => {
+      advanceTimer.current = undefined;
+      commitAnswer(index, [option]);
     }, 150);
   };
 
@@ -290,16 +360,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
       (customAnswerEnabled && state.customInput.trim().length > 0) || selection.length > 0;
     const submitThread = () => {
       if (!threadCanProceed || props.busy) return;
-      const nextAnswer = [...selection];
-      if (customAnswerEnabled && state.customInput.trim()) nextAnswer.push(state.customInput.trim());
-      const newAnswers = [...state.answers];
-      newAnswers[state.currentIndex] = nextAnswer;
-      if (isLastQuestion) {
-        dispatch({ type: "setAnswers", answers: newAnswers });
-        reply(newAnswers);
-      } else {
-        dispatch({ type: "advance", answers: newAnswers });
-      }
+      commitAnswer(state.currentIndex, draftAnswer());
     };
     return (
       <section
@@ -382,6 +443,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
             {props.busy ? "Submitting..." : props.onDismiss ? t("question_modal.send_skips_hint") : null}
           </span>
           <div className="flex shrink-0 gap-2">
+            {backButton}
             {props.onDismiss ? (
               <Button variant="ghost" size="sm" disabled={props.busy} title={t("question_modal.dismiss_hint")} onClick={dismiss}>
                 {t("question_modal.skip")}
@@ -486,6 +548,7 @@ export function QuestionPanel(props: QuestionPanelProps) {
           </div>
 
           <div className="flex gap-2">
+            {backButton}
             {currentQuestion.multiple ? (
               <Button
                 onClick={handleNext}

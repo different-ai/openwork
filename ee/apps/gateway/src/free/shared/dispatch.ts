@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto"
 import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "./allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "./config.js"
-import type { FreePrincipal } from "./principal.js"
+import { freeSafetyIdentifier, type FreePrincipal } from "./principal.js"
 import { meterFreeResponse, upstreamErrorDetails, type UpstreamErrorDetails } from "./meter.js"
 import { retryFreeSettlement } from "./settlement.js"
 import { freeError } from "./errors.js"
@@ -80,7 +80,7 @@ export async function dispatchFreeCompletion(input: {
   const startedAt = Date.now()
   // One line per failure, with what is needed to find it at OpenAI. Never the prompt, output, keys, or OpenAI's message text.
   const logFailure = (level: "info" | "error", message: string, fields: Record<string, string | number | undefined>) => log[level](message, {
-    request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free",
+    request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free", safety_identifier: freeSafetyIdentifier(principal),
     organization_id: principal.kind === "member" ? principal.organizationId : undefined,
     model: config.upstreamModel, protocol: prepared.protocol ?? "chat", stream: prepared.stream,
     duration_ms: Date.now() - startedAt, ...fields,

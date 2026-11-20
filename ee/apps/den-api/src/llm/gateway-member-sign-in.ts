@@ -14,7 +14,7 @@
  */
 import { isDeepStrictEqual } from "node:util"
 import { GatewayCredentialSetTable, GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
-import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
+import { liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
 import { GATEWAY_MEMBER_SIGN_IN_CREDENTIAL_KINDS, gatewayAwsSsoSettingsSchema, gatewayMemberSignInMethod, microsoftTenantIdSchema, type GatewayAwsSsoSettings, type GatewayMemberSignInMethod, type InferenceProviderSecret } from "@openwork/types/den/inference"
 import { googleOAuthClientBinding } from "./inference-provider-google-oauth.js"
 

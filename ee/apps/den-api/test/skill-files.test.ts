@@ -8,6 +8,8 @@ import { findSkillFile, registerSkillsExtension, resolveSkills } from "../src/mc
 import type { RemoteSkillSource } from "../src/mcp/skill-tools.js"
 import {
   SKILL_FILE_MAX_BYTES,
+  SKILL_FILES_MAX_COUNT,
+  SKILL_FILES_MAX_TOTAL_BYTES,
   checkSkillFiles,
   sameSkillFiles,
   skillFilesFromPayload,
@@ -52,6 +54,19 @@ test("refuses binary content and files over the size limit", () => {
   assert.ok("problem" in checkSkillFiles([{ path: "a.bin", text: "a\u0000b" }]))
   assert.ok("problem" in checkSkillFiles([{ path: "a.bin", text: "a�b" }]))
   assert.ok("problem" in checkSkillFiles([{ path: "big.md", text: "x".repeat(SKILL_FILE_MAX_BYTES + 1) }]))
+})
+
+test("accepts a fair-sized skill: full-size files up to the total, but no more", () => {
+  const full = (count: number, char = "x") => Array.from({ length: count }, (_, index) => ({ path: `references/part-${index}.md`, text: char.repeat(SKILL_FILE_MAX_BYTES) }))
+  assert.equal(SKILL_FILES_MAX_TOTAL_BYTES / SKILL_FILE_MAX_BYTES, 8)
+  const fits = checkSkillFiles(full(8))
+  assert.ok("files" in fits && fits.files.length === 8)
+  const over = checkSkillFiles(full(9))
+  assert.ok("problem" in over && /total at most 8 MiB/.test(over.problem.message))
+  // Text that doubles when JSON-escaped could not be stored, so it is refused up front instead of failing the write.
+  const escaped = checkSkillFiles(full(8, "\""))
+  assert.ok("problem" in escaped && /too large to store/.test(escaped.problem.message))
+  assert.ok("files" in checkSkillFiles(Array.from({ length: SKILL_FILES_MAX_COUNT }, (_, index) => ({ path: `notes/${index}.md`, text: "x" }))))
 })
 
 test("reads stored files from a version payload and treats a malformed one as none", () => {

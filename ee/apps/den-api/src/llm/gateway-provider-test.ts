@@ -3,7 +3,7 @@
 // catalog, settings and key shape first; the gateway owns the upstream call.
 import type { GatewayProviderTestResult } from "@openwork/types/den/gateway"
 import type { GatewayCustomModel } from "@openwork/types/den/gateway-custom-providers"
-import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/utils/provider-test-signature"
+import { PROVIDER_TEST_SIGNATURE_HEADER, signProviderTest } from "@openwork-ee/gateway-upstreams"
 
 export type GatewayProviderTestInput = {
   providerId: string

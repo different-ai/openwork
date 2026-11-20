@@ -10,8 +10,8 @@ import { inspect } from "node:util";
 import { app, BrowserWindow, WebContentsView, clipboard, dialog, nativeImage, session, shell } from "electron";
 import {
   AGENT_VIEWPORTS,
+  DEFAULT_AGENT_VIEWPORT as DEFAULT_PAGE_SIZE,
   BACKGROUND_TAB_VIEWPORT,
-  DEFAULT_AGENT_VIEWPORT,
   DRAFT_OWNER_KEY,
   agentViewportEmulationCommands,
   backgroundTabEmulationCommands,
@@ -400,9 +400,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
   let browserControlEnabled = true;
-  // The size tabs lock to while the agent controls them (AGENT_VIEWPORTS key).
-  /** @type {string} */
-  let agentViewportKey = DEFAULT_AGENT_VIEWPORT;
   let menuRequest = null;
   let menuShowSerial = 0;
   let linkChoiceRequest = null;
@@ -1002,7 +999,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     siteTools: (args) => webMcpBroker.listTools(args),
     runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
     inFlight: (tab, since) => [...tab.inFlight.values()].filter((started) => started >= since).length,
-    prepare: (tab) => lockAgentViewport(tab),
+    prepare: async (tab, args) => {
+      if (args?.pageSize) await setTabPageSize(tab, args.pageSize, "agent");
+      return lockAgentViewport(tab);
+    },
     inputScale: (tab) => tab.agentViewport && !tab.background ? tab.viewportScale : 1,
     capture: (tab, viewport) => captureAgentViewport(tab, viewport),
   });
@@ -1079,6 +1079,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       /** @type {Readonly<import("@openwork/browser-tabs").AgentViewport> | null} */
       agentViewportSize: null,
       agentViewportAwaitsPanel: false,
+      // A fixed page size (phone, tablet, desktop) someone picked for this tab.
+      // Without one the page shows at the panel's own width, like any website.
+      // The person's pick stays until they change it; the agent's ends with its turn.
+      /** @type {{ key: string, by: "person" | "agent" } | null} */
+      pageSize: null,
       viewportScale: 1,
       agentViewportQueued: false,
       /** @type {((error: Error | null) => void) | null} */
@@ -1477,17 +1482,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   }
 
   /**
-   * Lock a tab the agent is about to use to the chosen size; resolves once it
-   * is applied. A failed emulation leaves the page at the panel's size rather
-   * than failing the agent's operation.
+   * Lock a tab to its picked page size, or to the panel's width when none is
+   * picked; resolves once it is applied. A failed emulation leaves the page at
+   * the panel's size rather than failing the agent's operation.
    */
   function lockAgentViewport(tab) {
-    if (tab.agentViewport !== agentViewportKey) {
-      tab.agentViewport = agentViewportKey;
+    const key = tab.pageSize?.key ?? DEFAULT_PAGE_SIZE;
+    if (tab.agentViewport !== key) {
+      tab.agentViewport = key;
       // `panel` keeps the page's current size, so taking the tab rescales
       // nothing. A page off screen takes the panel's size when it is shown.
       const bounds = tab.background ? null : lastBrowserBounds;
-      tab.agentViewportSize = lockedAgentViewport(agentViewportKey, bounds);
+      tab.agentViewportSize = lockedAgentViewport(key, bounds);
       tab.agentViewportAwaitsPanel = Boolean(tab.agentViewportSize.fitsPanel && !bounds);
       if (tab.background) enterBackgroundSize(tab);
       else {
@@ -1499,7 +1505,29 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return tab.emulation.catch(() => {});
   }
 
-  function releaseAgentViewport(tab) {
+  /**
+   * Pick a fixed page size for a tab, or `panel` for the normal website view.
+   * The person's page reloads when phone changes, because sites choose their
+   * phone layout from the first request's user agent; the agent's next
+   * navigation loads with it.
+   */
+  async function setTabPageSize(tab, key, by) {
+    const wasMobile = Boolean(tab.agentViewportSize?.mobile);
+    tab.pageSize = key === DEFAULT_PAGE_SIZE ? null : { key, by };
+    if (tab.pageSize) await lockAgentViewport(tab);
+    else releaseAgentViewport(tab, { keepPersonSize: false });
+    const contents = tab.view.webContents;
+    if (by === "person" && wasMobile !== Boolean(tab.agentViewportSize?.mobile) && !contents.isDestroyed() && contents.getURL()) contents.reload();
+  }
+
+  /**
+   * Hand a tab back at the panel's own width when the agent's turn ends or the
+   * person takes over. A size the person picked for the tab stays.
+   */
+  function releaseAgentViewport(tab, { keepPersonSize = true } = {}) {
+    if (keepPersonSize && tab.pageSize?.by === "person") return;
+    const wasMobile = Boolean(tab.agentViewportSize?.mobile);
+    tab.pageSize = null;
     if (!tab.agentViewport) return;
     tab.agentViewport = null;
     tab.agentViewportSize = null;
@@ -1524,6 +1552,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
           if (isOwned() && !tab.background && !tab.agentViewport) detachTabDebugger(tab);
         }
       });
+      if (wasMobile && keepPersonSize && tab.view.webContents.getURL()) tab.view.webContents.reload();
     }
     sendBrowserState();
   }
@@ -2353,13 +2382,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (!browserControlEnabled) for (const tab of browserTabs.values()) taskHost.pause(tab.tabId, "Browser control disabled");
       return browserControlEnabled;
     });
-    ipcMain.handle("openwork:browser:setAgentViewport", (event, key) => {
-      if (!isMainRenderer(event) || typeof key !== "string" || !Object.hasOwn(AGENT_VIEWPORTS, key)) return agentViewportKey;
-      agentViewportKey = key;
-      // Tabs the agent is using switch now; the agent observes the new layout.
-      for (const tab of browserTabs.values()) if (tab.agentViewport && tab.agentViewport !== key) lockAgentViewport(tab);
-      sendBrowserState();
-      return agentViewportKey;
+    ipcMain.handle("openwork:browser:setTabPageSize", async (event, tabId, key) => {
+      const tab = typeof tabId === "string" ? browserTabs.get(tabId) : null;
+      if (!isMainRenderer(event) || !tab || typeof key !== "string" || !Object.hasOwn(AGENT_VIEWPORTS, key)) return false;
+      await setTabPageSize(tab, key, "person");
+      return true;
     });
     // The person took over, then wrote to the agent again: that message
     // hands the conversation's tabs back, so the new turn can use them.

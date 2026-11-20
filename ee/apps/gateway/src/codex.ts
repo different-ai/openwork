@@ -11,16 +11,14 @@
 //                               custom and hosted tools intact); any other is translated through
 //                               Chat Completions and back. Both run the normal Gateway pipeline
 //                               under the member's own alias.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwork/types/den/gateway-cursor"
 import { forwardedHeaders } from "./auto-router/handler.js"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
-import { CODEX_BASE_INSTRUCTIONS } from "./codex-instructions.js"
+import { isJsonObject, type JsonObject, CODEX_BASE_INSTRUCTIONS, responsesToChat, responsesToolNames } from "@openwork-ee/gateway-protocols"
 import { asResponses, cursorError, cursorModels, requestedEffort, sendTranslatedChat, type CursorDependencies, type CursorModel } from "./cursor.js"
-import { responsesToChat, responsesToolNames } from "./cursor-responses.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import type { ProtocolFamily } from "./protocols.js"
+import type { ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import { resolveSmartRouter, smartAcceptsImages, smartContextWindow, type SmartToolRouter } from "./smart-tools.js"
 
 export const codexPathPrefix = "/api/v1/codex"

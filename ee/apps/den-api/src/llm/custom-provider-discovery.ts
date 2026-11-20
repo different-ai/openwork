@@ -7,7 +7,7 @@
  * HTTPS or operator-allowlisted origins, guarded DNS, no redirects), time-boxed
  * and size-capped. Nothing here logs or returns the API key.
  */
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import {
   GATEWAY_CUSTOM_MATCH_PROVIDER_ID,
   GATEWAY_CUSTOM_MAX_MODELS,

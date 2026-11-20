@@ -369,7 +369,12 @@ jobs:
             --head "$BRANCH_NAME" \
             --title "docs(changelog): release notes for $TAG" \
             --body-file /tmp/pr_body.txt)"
-          gh pr merge "$pr_url" --auto --squash --delete-branch
+          # Auto-merge is a repository setting; when it is off, a maintainer merges.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge)" = true ]; then
+            gh pr merge "$pr_url" --auto --squash --delete-branch
+          else
+            echo "::notice::Auto-merge is off for this repository; $pr_url is open for a maintainer to merge."
+          fi
 
       # Runs for already-documented tags too, so a manual dispatch can repair a
       # release whose notes were hand-written or whose original dispatch failed.

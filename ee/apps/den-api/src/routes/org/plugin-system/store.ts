@@ -397,7 +397,7 @@ type GrantTarget = ConfigObjectGrantTarget | MarketplaceGrantTarget | PluginGran
 
 export class PluginArchRouteFailure extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 502,
+    readonly status: 400 | 404 | 409 | 413 | 502,
     readonly error: string,
     message: string,
     options?: ErrorOptions,
@@ -682,7 +682,7 @@ function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigOb
 
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-function deriveSkillProjection(value: ConfigObjectInput) {
+export function deriveSkillProjection(value: ConfigObjectInput) {
   const rawSourceText = normalizeOptionalString(value.rawSourceText)
   if (!rawSourceText) {
     throw new PluginArchRouteFailure(
