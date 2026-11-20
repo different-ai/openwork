@@ -1,10 +1,7 @@
 // Provider catalog (src/models/base.json from models.dev plus the custom
 // providers in src/models/providers), read once and exposed as
 // npm/api/env per provider id. The gateway classifies protocols from `npm`.
-import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { withLiteLlmProvider } from "@openwork-ee/utils/litellm-catalog"
-import { withTrueFoundryProvider } from "@openwork-ee/utils/truefoundry-catalog"
-import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider, withLiteLlmProvider, withTrueFoundryProvider, MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 import { GATEWAY_CUSTOM_PROVIDER_ID, GATEWAY_CUSTOM_PROVIDER_NPM } from "@openwork/types/den/gateway-custom-providers"
 import { readProviderCatalog } from "./models/catalog.js"
 

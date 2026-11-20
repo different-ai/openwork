@@ -1,41 +1,15 @@
 // Protocol classification for the org provider gateway (plan §5.3). The
-// family comes from the models.dev `npm` package; the per-request protocol
+// family comes from the models.dev `npm` package (GATEWAY_SDK_FAMILIES in
+// @openwork-ee/gateway-catalog); the per-request protocol
 // (which usage parser to run) comes from the forwarded path.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, GATEWAY_FAMILY_DEFAULT_BASE_URLS, gatewaySdkFamily, microsoftFoundryBaseUrl, type ProtocolFamily } from "@openwork-ee/gateway-catalog"
 import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/utils/inference-egress"
-import { microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
 import type { CatalogProvider } from "./provider-catalog.js"
 
-export type ProtocolFamily =
-  | "anthropic"
-  | "openai"
-  | "mistral"
-  | "azure"
-  | "openai_compatible"
-  | "google"
-  | "google_vertex"
-  | "google_vertex_anthropic"
-  | "bedrock"
-  | "bedrock_mantle"
-  /** Claude on Microsoft Foundry: the Anthropic Messages API on `<resource>.services.ai.azure.com/anthropic`. */
-  | "microsoft_foundry"
+export type { ProtocolFamily }
 
 export type AuthHeader = { name: string; value: string }
-
-const familyByNpm: Record<string, ProtocolFamily> = {
-  "@ai-sdk/anthropic": "anthropic",
-  "@ai-sdk/openai": "openai",
-  "@ai-sdk/mistral": "mistral",
-  "@ai-sdk/azure": "azure",
-  "@ai-sdk/openai-compatible": "openai_compatible",
-  "@openrouter/ai-sdk-provider": "openai_compatible",
-  "@ai-sdk/google": "google",
-  "@ai-sdk/google-vertex": "google_vertex",
-  "@ai-sdk/google-vertex/anthropic": "google_vertex_anthropic",
-  "@ai-sdk/amazon-bedrock": "bedrock",
-  "@ai-sdk/amazon-bedrock/mantle": "bedrock_mantle",
-}
 
 const commonHeaderAllowlist = ["content-type", "accept", "user-agent"]
 
@@ -54,17 +28,10 @@ const familyHeaderAllowlist: Record<ProtocolFamily, string[]> = {
   microsoft_foundry: ["anthropic-version", "anthropic-beta"],
 }
 
-const defaultBaseUrlByFamily: Partial<Record<ProtocolFamily, string>> = {
-  anthropic: "https://api.anthropic.com/v1",
-  openai: "https://api.openai.com/v1",
-  mistral: "https://api.mistral.ai/v1",
-  google: "https://generativelanguage.googleapis.com/v1beta",
-}
-
 export function classifyProtocolFamily(catalog: CatalogProvider | null): ProtocolFamily | null {
   if (!catalog) return null
   if (catalog.family) return catalog.family
-  const family = catalog.npm ? familyByNpm[catalog.npm] : undefined
+  const family = gatewaySdkFamily(catalog.npm)
   if (family) return family
   // Unknown SDK package but a known API base: best-effort OpenAI-compatible.
   return catalog.api ? "openai_compatible" : null
@@ -177,7 +144,7 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
     if (region === undefined || region === "") return `https://bedrock-mantle.api.aws${BEDROCK_MANTLE_DEFAULT_API_PATH}`
     return isAwsRegion(region) ? `https://${bedrockMantleHost(region)}${BEDROCK_MANTLE_DEFAULT_API_PATH}` : null
   }
-  return defaultBaseUrlByFamily[family] ?? null
+  return GATEWAY_FAMILY_DEFAULT_BASE_URLS[family] ?? null
 }
 
 export { vertexHost, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"

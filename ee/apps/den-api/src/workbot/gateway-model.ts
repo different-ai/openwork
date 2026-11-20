@@ -1,5 +1,5 @@
 import type { HeadlessModelAccess, HeadlessModelCatalog } from "@openwork-ee/headless-protocol"
-import { parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { parseGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { WORKBOT_DEFAULT_MODEL_ID } from "@openwork/types/den/workbot-settings"
 import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings"
 import type { GatewayProviderSummary } from "@openwork/types/den/gateway"
@@ -97,10 +97,10 @@ export function createCloudAgentGatewayModelService(deps: CloudAgentGatewayDeps)
 // Lazy server imports keep the projections and injectable service usable without booting Den/DB.
 const databaseDeps: CloudAgentGatewayDeps = {
   async snapshot(actor) {
-    const [{ and, asc, eq, isNull }, { AuthUserTable, GatewayProviderTable, MemberTable, OrganizationTable }, { normalizeDenTypeId }, { db }, { env }, { gatewaySummary }, { scheduleLiteLlmProvisioning }, { isLiteLlmProviderId }, { scheduleTrueFoundryProvisioning }, { isTrueFoundryProviderId }] = await Promise.all([
+    const [{ and, asc, eq, isNull }, { AuthUserTable, GatewayProviderTable, MemberTable, OrganizationTable }, { normalizeDenTypeId }, { db }, { env }, { gatewaySummary }, { scheduleLiteLlmProvisioning }, { isLiteLlmProviderId, isTrueFoundryProviderId }, { scheduleTrueFoundryProvisioning }] = await Promise.all([
       import("@openwork-ee/den-db/drizzle"), import("@openwork-ee/den-db/schema"), import("@openwork-ee/utils/typeid"),
-      import("../db.js"), import("../env.js"), import("../llm/gateway-matrix.js"), import("../llm/litellm-issued.js"), import("@openwork-ee/utils/litellm-catalog"),
-      import("../llm/truefoundry-sync.js"), import("@openwork-ee/utils/truefoundry-catalog"),
+      import("../db.js"), import("../env.js"), import("../llm/gateway-matrix.js"), import("../llm/litellm-issued.js"), import("@openwork-ee/gateway-catalog"),
+      import("../llm/truefoundry-sync.js"),
     ])
     if (!env.gatewayEnabled) throw new CloudAgentGatewayAccessError("gateway_not_configured")
     const organizationId = normalizeDenTypeId("organization", actor.organizationId)

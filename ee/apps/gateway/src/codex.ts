@@ -11,7 +11,7 @@
 //                               custom and hosted tools intact); any other is translated through
 //                               Chat Completions and back. Both run the normal Gateway pipeline
 //                               under the member's own alias.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwork/types/den/gateway-cursor"
 import { forwardedHeaders } from "./auto-router/handler.js"

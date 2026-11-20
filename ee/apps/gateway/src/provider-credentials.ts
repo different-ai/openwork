@@ -8,9 +8,8 @@
 // and IAM Identity Center role credentials are handed to the SigV4 signer.
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
-export { pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
+import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap as pickApiKeyFromMap, liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
+export { pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/gateway-catalog"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
 import type { MintAwsRoleCredentials } from "./credentials/aws-sso-role-credentials.js"

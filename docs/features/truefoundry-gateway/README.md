@@ -58,7 +58,7 @@ A token owned by the person's TrueFoundry user follows that user's teams and mod
 
 | Piece | Where |
 | --- | --- |
-| Synthetic `truefoundry` catalog provider | `ee/packages/utils/src/truefoundry-catalog.ts`, used by `ee/apps/gateway/src/provider-catalog.ts` |
+| Synthetic `truefoundry` catalog provider | `ee/packages/gateway-catalog/src/truefoundry.ts`, used by `ee/apps/gateway/src/provider-catalog.ts` |
 | TrueFoundry client | `ee/apps/den-api/src/llm/truefoundry.ts` |
 | Model facts from models.dev | `ee/apps/den-api/src/llm/truefoundry-models.ts` |
 | Settings, catalog, status | `ee/apps/den-api/src/llm/truefoundry-settings.ts` (`gateway_providers.settings.truefoundry`) |

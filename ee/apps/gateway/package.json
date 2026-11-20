@@ -17,6 +17,7 @@
   "dependencies": {
     "@hono/node-server": "2.1.6",
     "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/gateway-catalog": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
     "@openwork/features": "workspace:*",
