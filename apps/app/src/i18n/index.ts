@@ -9,18 +9,19 @@ import ca from "./locales/ca";
 import es from "./locales/es";
 import ru from "./locales/ru";
 import it from "./locales/it";
+import ko from "./locales/ko";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 
 /**
  * Supported languages
  */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it" | "ko";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it", "ko"];
 
 /**
  * Language options for UI - single source of truth
@@ -37,9 +38,10 @@ export const LANGUAGE_OPTIONS = [
   { value: "es" as Language, label: "Spanish", nativeName: "Español" },
   { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
   { value: "it" as Language, label: "Italian", nativeName: "Italiano" },
+  { value: "ko" as Language, label: "Korean", nativeName: "한국어" },
 ] as const;
 
-const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
+const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th", "ko"]);
 
 /**
  * Current translation strings use an English-style plural suffix placeholder.
@@ -69,6 +71,7 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   es,
   ru,
   it,
+  ko,
 };
 
 /**
@@ -135,6 +138,7 @@ const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
   es: new Intl.PluralRules("es"),
   ru: new Intl.PluralRules("ru"),
   it: new Intl.PluralRules("it"),
+  ko: new Intl.PluralRules("ko"),
 };
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
   return pluralRulesByLanguage[loc].select(count);
