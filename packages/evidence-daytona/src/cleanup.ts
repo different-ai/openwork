@@ -1,4 +1,4 @@
-import { digest } from "@openwork/evidence-freestyle/cache";
+import { digest } from "@openwork/world-freestyle/cache";
 import { DaytonaApi, type Sandbox } from "./api.ts";
 import { DAYTONA_BASE_PREFIX, DAYTONA_BASE_SNAPSHOT, DAYTONA_IMAGE_PREFIX, DAYTONA_TEMPLATE_PREFIX } from "./builder.ts";
 import { CAPTURE_KIND, CHECKPOINT_PREFIX, COPY_KIND } from "./checkpoints.ts";

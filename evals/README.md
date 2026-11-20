@@ -43,7 +43,7 @@ gets its world one of three ways; the job summary says which, and why:
 | Anything else | build from the warm image | ~3 min |
 
 The rules are `HOT_RULES` in
-[`packages/evidence-freestyle/src/evidence-builder.ts`](../packages/evidence-freestyle/src/evidence-builder.ts).
+[`packages/world-freestyle/src/evidence-builder.ts`](../packages/world-freestyle/src/evidence-builder.ts).
 If the fast path fails, the world is built in full instead: a PR can get
 slower, never red, because of it.
 

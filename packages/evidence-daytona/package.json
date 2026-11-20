@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@openwork/evidence-provider": "workspace:*",
-    "@openwork/evidence-freestyle": "workspace:*"
+    "@openwork/world-freestyle": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"

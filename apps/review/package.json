@@ -14,7 +14,7 @@
   "dependencies": {
     "@openwork/evidence-daytona": "workspace:*",
     "@openwork/evidence-provider": "workspace:*",
-    "@openwork/evidence-freestyle": "workspace:*",
+    "@openwork/world-freestyle": "workspace:*",
     "@openwork/review": "workspace:*",
     "next": "16.4.5",
     "react": "catalog:",

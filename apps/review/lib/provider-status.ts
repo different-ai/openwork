@@ -1,6 +1,6 @@
 import { EVIDENCE_PROVIDER_LABELS, EVIDENCE_PROVIDERS, evidenceProviderFromEnv, type EvidenceProviderId } from "@openwork/evidence-provider";
 import { daytonaConfigured, DAYTONA_PREVIEW_WORLDS } from "@openwork/evidence-daytona/credentials";
-import { freestyleConfigured } from "@openwork/evidence-freestyle/credentials";
+import { freestyleConfigured } from "@openwork/world-freestyle/credentials";
 import type { PreviewProviderOption } from "./preview-options.ts";
 
 /** Credential presence is checked on the review server, never against a local CLI profile. */

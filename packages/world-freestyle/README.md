@@ -1,4 +1,6 @@
-# Freestyle preview preparation
+# `@openwork/world-freestyle`: Freestyle worlds and previews
+
+Builds, caches and runs OpenWork in Freestyle VMs: PR previews, persistent worlds such as `acme-web`, and the web evidence world. `@openwork/evidence-daytona` reuses its build recipes and cache.
 
 ## Opt-in web evidence checkpoints
 
@@ -11,7 +13,7 @@ pnpm --filter @openwork/review-app build
 pnpm evals:e2e web-checkpoint-fork --local --engine v1 --surface web --checkpoints
 # Any spec: tag its test { tags: ["checkpoints"] } and run it with --local --checkpoints.
 # Or open a standalone world, using the merged world/source API:
-pnpm world up ./packages/evidence-freestyle/worlds/evidence-web.ts --place freestyle --source app-web=sha:<full-pushed-sha>
+pnpm world up ./packages/world-freestyle/worlds/evidence-web.ts --place freestyle --source app-web=sha:<full-pushed-sha>
 ```
 
 Supply `FREESTYLE_API_KEY` to the host environment. Do not put it in a guest or

@@ -25,7 +25,7 @@ const INTERNAL_PATH_PATTERNS = [
   /^packages\/world\//,
   /^apps\/review\//,
   /^packages\/review\//,
-  /^packages\/evidence-freestyle\//,
+  /^packages\/world-freestyle\//,
   /^packages\/agent-lab\//,
   /^apps\/labs\//,
   /^apps\/story-book\//,

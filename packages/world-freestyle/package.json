@@ -1,5 +1,5 @@
 {
-  "name": "@openwork/evidence-freestyle",
+  "name": "@openwork/world-freestyle",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -23,6 +23,6 @@
     "@openwork/sandbox-freestyle": "workspace:*"
   },
   "scripts": {
-    "build": "pnpm --filter \"@openwork/evidence-freestyle^...\" --if-present run build"
+    "build": "pnpm --filter \"@openwork/world-freestyle^...\" --if-present run build"
   }
 }

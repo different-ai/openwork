@@ -1,8 +1,8 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { BuildProgress, PreviewSession, PreviewWorld, ReviewPreviewProvider } from "@openwork/evidence-provider/review";
-import { readAsset } from "@openwork/evidence-freestyle/assets";
-import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "@openwork/evidence-freestyle/build-recipes";
-import { digest, sourceTree } from "@openwork/evidence-freestyle/cache";
+import { readAsset } from "@openwork/world-freestyle/assets";
+import { checkoutRecipe, compiledRecipe, dependencyRecipe, toolsRecipe } from "@openwork/world-freestyle/build-recipes";
+import { digest, sourceTree } from "@openwork/world-freestyle/cache";
 import { DaytonaApi, daytonaConfig, type Sandbox } from "./api.ts";
 import { DAYTONA_BASE_SNAPSHOT, ensureBase, ensureLayer, runScript, type DaytonaBuildOptions } from "./builder.ts";
 
