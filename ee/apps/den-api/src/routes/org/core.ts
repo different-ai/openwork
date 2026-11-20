@@ -347,8 +347,7 @@ export async function updateOrganizationAction(c: ResourceActionContext, payload
         // Requiring SSO takes effect at once for every member, the admin too:
         // only an admin signed in through it can turn it on, so nobody locks
         // themselves out of the organization by mistake.
-        const session = c.get("session")
-        if (!await sessionCanRequireOrganizationSso({ sessionId: session?.id ?? null, organizationId: payload.organization.id })) {
+        if (!await sessionCanRequireOrganizationSso({ sessionId: c.get("signInSessionId") ?? null, organizationId: payload.organization.id })) {
           const signInPath = `/sso/${encodeURIComponent(payload.organization.slug)}`
           return c.json({
             error: "sso_session_required",

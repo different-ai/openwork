@@ -509,7 +509,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
 
     // never hand a session to the desktop inside an
     // organization that requires SSO unless the session signed in through it.
-    const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: activateOrganizationId ?? session.activeOrganizationId })
+    const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("signInSessionId"), organizationId: activateOrganizationId ?? session.activeOrganizationId })
     if (ssoBlock) {
       return c.json(ssoRequiredErrorBody(ssoBlock), 403)
     }
