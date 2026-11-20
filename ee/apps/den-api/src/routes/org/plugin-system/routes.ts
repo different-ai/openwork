@@ -5,7 +5,8 @@ import { describeRoute } from "hono-openapi"
 import { bodyLimit } from "hono/body-limit"
 import { z } from "zod"
 import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
-import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
+import { SECURE_ENTRY_REQUIRED, refuseMachineSecrets } from "../../../middleware/refuse-machine-secrets.js"
+import { ANTHROPIC_SKILLS_MAX, AnthropicSkillsError, downloadAnthropicSkill, listAnthropicCustomSkills } from "../../../anthropic-skills-import.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
 import { binaryResponse, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
@@ -336,6 +337,27 @@ async function uploadedSkillZip(c: OrgContext): Promise<{ skillMarkdown: string;
     if (error instanceof SkillZipError) throw new PluginArchRouteFailure(400, "invalid_skill_zip", error.message)
     throw error
   }
+}
+
+const anthropicApiKeySchema = z.string().trim().min(1).max(512).describe("An Anthropic API key from the workspace that holds the skills. Used for this request only; never stored.")
+const anthropicSkillsPreviewSchema = z.object({ apiKey: anthropicApiKeySchema }).strict()
+const anthropicSkillsImportSchema = z.object({
+  apiKey: anthropicApiKeySchema,
+  skillIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).min(1).max(ANTHROPIC_SKILLS_MAX).describe("Custom skill ids from the preview."),
+}).strict()
+const anthropicSkillsPreviewResponseSchema = z.object({
+  skills: z.array(z.object({ id: z.string(), displayName: z.string(), latestVersionId: z.string(), updatedAt: z.string().datetime({ offset: true }) })),
+  truncated: z.boolean().describe(`True when the workspace has more than ${ANTHROPIC_SKILLS_MAX} custom skills; only the first are listed.`),
+}).meta({ ref: "AnthropicSkillsPreviewResponse" })
+const anthropicSkillsImportResponseSchema = z.object({
+  results: z.array(z.union([
+    z.object({ skillId: z.string(), name: z.string(), ok: z.literal(true), pluginId: z.string() }),
+    z.object({ skillId: z.string(), name: z.string().nullable(), ok: z.literal(false), error: z.string(), message: z.string() }),
+  ])),
+}).meta({ ref: "AnthropicSkillsImportResponse" })
+
+function anthropicFailure(error: unknown): unknown {
+  return error instanceof AnthropicSkillsError ? new PluginArchRouteFailure(error.status, error.code, error.message) : error
 }
 
 const skillZipBodyLimit = bodyLimit({
@@ -964,6 +986,80 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         }, 201)
       } catch (error) {
         return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.anthropicSkillsPreview,
+    refuseMachineSecrets(["apiKey"]),
+    jsonValidator(anthropicSkillsPreviewSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "List a workspace's custom skills on Anthropic",
+      description: `Lists the custom Agent Skills in the Anthropic workspace of the API key a person enters, so they can choose which to bring to OpenWork. The key is used for this request only and is never stored; the agent and API keys cannot send it. Lists at most ${ANTHROPIC_SKILLS_MAX} skills.`,
+      responses: {
+        200: jsonResponse("The workspace's custom skills.", anthropicSkillsPreviewResponseSchema),
+        400: jsonResponse("The key was missing, not accepted, or sent by the agent.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+        502: jsonResponse("Anthropic could not be reached or answered with an error.", invalidRequestSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const body = validJson<z.infer<typeof anthropicSkillsPreviewSchema>>(c)
+        return c.json(await listAnthropicCustomSkills(body.apiKey))
+      } catch (error) {
+        return routeErrorResponse(c, anthropicFailure(error))
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.anthropicSkillsImport,
+    refuseMachineSecrets(["apiKey"]),
+    jsonValidator(anthropicSkillsImportSchema),
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Import custom skills from Anthropic",
+      description: "Downloads each chosen custom skill's latest version from Anthropic with the API key a person enters, and creates one private plugin per skill holding it with all its files, like a ZIP import. The key is used for this request only and is never stored; the agent and API keys cannot send it. Each skill succeeds or fails on its own; the results say which and why.",
+      responses: {
+        200: jsonResponse("Each chosen skill's outcome.", anthropicSkillsImportResponseSchema),
+        400: jsonResponse("The request was invalid or the key was sent by the agent.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const body = validJson<z.infer<typeof anthropicSkillsImportSchema>>(c)
+        const results: z.infer<typeof anthropicSkillsImportResponseSchema>["results"] = []
+        for (const skillId of [...new Set(body.skillIds)]) {
+          let name: string | null = null
+          try {
+            const downloaded = await downloadAnthropicSkill(body.apiKey, skillId)
+            name = downloaded.displayName
+            const skill = readSkillZip(downloaded.zip)
+            const plugin = await createPluginBundle({
+              context,
+              name: downloaded.displayName || skillNameFromMarkdown(skill.skillMarkdown) || "Imported skill",
+              components: [{ type: "skill", value: { rawSourceText: skill.skillMarkdown, normalizedPayloadJson: { files: skill.files } } }],
+            })
+            results.push({ skillId, name, ok: true, pluginId: plugin.id })
+          } catch (error) {
+            const failure = error instanceof SkillZipError
+              ? new PluginArchRouteFailure(400, "invalid_skill_zip", error.message)
+              : anthropicFailure(error)
+            if (!(failure instanceof PluginArchRouteFailure)) throw failure
+            results.push({ skillId, name, ok: false, error: failure.error, message: failure.message })
+          }
+        }
+        return c.json({ results })
+      } catch (error) {
+        return routeErrorResponse(c, anthropicFailure(error))
       }
     })
 

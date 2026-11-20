@@ -1093,6 +1093,10 @@ export function getImportPluginRoute(orgSlug?: string | null): string {
   return `${getPluginsRoute(orgSlug)}/import`;
 }
 
+export function getImportClaudeSkillsRoute(orgSlug?: string | null): string {
+  return `${getPluginsRoute(orgSlug)}/import-claude`;
+}
+
 export function getMarketplacesRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/marketplaces`;
 }
