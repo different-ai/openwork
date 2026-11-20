@@ -49,6 +49,22 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends -- "$@"
 `
 
+/**
+ * One import per package in requirements-desktop.in, by its module name. The desktop image imports them all
+ * right after installing, so a package that will not load fails the image build instead of an assistant's
+ * first script. The system Python, which is where the desktop installs them on every provider.
+ */
+export const DESKTOP_PYTHON_IMPORTS: Record<string, string> = {
+  "openpyxl": "openpyxl", "xlsxwriter": "xlsxwriter", "xlrd": "xlrd", "python-docx": "docx", "python-pptx": "pptx",
+  "markitdown": "markitdown", "defusedxml": "defusedxml", "pypdf": "pypdf", "pdfplumber": "pdfplumber",
+  "pypdfium2": "pypdfium2", "pdf2image": "pdf2image", "reportlab": "reportlab", "img2pdf": "img2pdf",
+  "pytesseract": "pytesseract", "numpy": "numpy", "pandas": "pandas", "pyarrow": "pyarrow", "scipy": "scipy",
+  "scikit-learn": "sklearn", "statsmodels": "statsmodels", "sympy": "sympy", "matplotlib": "matplotlib",
+  "seaborn": "seaborn", "pillow": "PIL", "opencv-python-headless": "cv2", "requests": "requests",
+  "beautifulsoup4": "bs4", "tqdm": "tqdm", "pytz": "pytz",
+}
+const DESKTOP_PYTHON_CHECK = `MPLBACKEND=Agg /usr/bin/python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`
+
 function installScript(officePackages: string, lockedPython = false) { return `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -69,7 +85,8 @@ echo "$node_sha256  $node_tmp/node.tar.xz" | sha256sum -c -
 tar -xJf "$node_tmp/node.tar.xz" -C /usr/local --strip-components=1 --no-same-owner
 rm -rf "$node_tmp"
 test "$(node --version)" = v24.22.1
-${lockedPython ? `python3 -m pip install --no-cache-dir --quiet --break-system-packages --require-hashes --only-binary=:all: -r /usr/local/share/openwork-computer/requirements-desktop.lock` : `python3 -m pip install --no-cache-dir --quiet --break-system-packages \\
+${lockedPython ? `python3 -m pip install --no-cache-dir --quiet --break-system-packages --require-hashes --only-binary=:all: -r /usr/local/share/openwork-computer/requirements-desktop.lock
+${DESKTOP_PYTHON_CHECK}` : `python3 -m pip install --no-cache-dir --quiet --break-system-packages \\
   pandas numpy matplotlib openpyxl xlsxwriter python-docx python-pptx pdfplumber pypdf pillow opencv-python-headless requests beautifulsoup4 \\
   || python3 -m pip install --no-cache-dir --quiet \\
   pandas numpy matplotlib openpyxl xlsxwriter python-docx python-pptx pdfplumber pypdf pillow opencv-python-headless requests beautifulsoup4`}

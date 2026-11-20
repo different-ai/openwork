@@ -1,0 +1,45 @@
+# Python packages every desktop computer has, so an assistant (and the Agent
+# Skills it runs) can work on real files without installing anything first.
+# Matches what Anthropic's code execution container offers, plus what
+# Anthropic's own document skills (docx, pptx, xlsx, pdf) import.
+# Regenerate requirements-desktop.lock from this with:
+#   node scripts/lock-desktop-python.mjs
+
+# Documents and spreadsheets
+openpyxl
+xlsxwriter
+xlrd
+python-docx
+python-pptx
+markitdown
+defusedxml
+
+# PDF
+pypdf
+pdfplumber
+pypdfium2
+pdf2image
+reportlab
+img2pdf
+pytesseract
+
+# Data, math and charts
+numpy
+pandas
+pyarrow
+scipy
+scikit-learn
+statsmodels
+sympy
+matplotlib
+seaborn
+
+# Images
+pillow
+opencv-python-headless
+
+# Web and utilities
+requests
+beautifulsoup4
+tqdm
+pytz
