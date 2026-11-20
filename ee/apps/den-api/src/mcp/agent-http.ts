@@ -8,6 +8,12 @@ import {
 } from "@modelcontextprotocol/server"
 import { onInventoryChanged } from "../inventory-writes.js"
 
+/**
+ * Room for create_skill or update_skill with a skill's full supporting files
+ * (up to 8 MiB of text, more once JSON-escaped). The SDK's default is 4 MiB.
+ */
+export const AGENT_MCP_MAX_REQUEST_BYTES = 16 * 1024 * 1024
+
 /** The dual-era, sessionless HTTP entry used by the public agent MCP route. */
 export function createAgentMcpHttpHandler(
   serverForRequest: (request: Request) => McpServer,
@@ -132,6 +138,7 @@ export function createScopedAgentMcpHttpHandlers(
     legacy: "stateless",
     onerror,
     bus,
+    maxRequestBodySize: AGENT_MCP_MAX_REQUEST_BYTES,
   })
 
   const notify: ScopedAgentMcpHttpHandlers["notify"] = {

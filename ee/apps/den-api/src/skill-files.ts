@@ -10,10 +10,17 @@ import { createHash } from "node:crypto"
  */
 export type SkillFile = { path: string; text: string }
 
-// Together they keep a version's payload under the 1 MiB the config object API accepts.
-export const SKILL_FILES_MAX_COUNT = 200
-export const SKILL_FILE_MAX_BYTES = 256 * 1024
-export const SKILL_FILES_MAX_TOTAL_BYTES = 768 * 1024
+const MiB = 1024 * 1024
+export const SKILL_FILES_MAX_COUNT = 500
+// About 250,000 tokens: more than an agent can read back in one get_skill result.
+export const SKILL_FILE_MAX_BYTES = 1 * MiB
+// Every skill listing loads and hashes each listed skill's files (about 13 ms
+// and 11 MB from the database for a full 8 MiB skill), so stay well below what
+// one version can store.
+export const SKILL_FILES_MAX_TOTAL_BYTES = 8 * MiB
+// The files as stored, after JSON escaping: one encrypted MEDIUMTEXT column
+// holds about 12.5 MB of plaintext, and the rest of the payload needs room too.
+export const SKILL_FILES_MAX_STORED_BYTES = 11 * MiB
 const SKILL_FILE_PATH_MAX_CHARS = 255
 
 /** Why a path cannot be a supporting file, or null when it can. */
@@ -58,13 +65,16 @@ export function checkSkillFiles(value: unknown): { files: SkillFile[] } | { prob
     if (!isSkillFileText(entry.text)) return { problem: { path, message: "Supporting files must be UTF-8 text." } }
     const bytes = Buffer.byteLength(entry.text, "utf8")
     if (bytes > SKILL_FILE_MAX_BYTES) {
-      return { problem: { path, message: `A supporting file can be at most ${SKILL_FILE_MAX_BYTES} bytes.` } }
+      return { problem: { path, message: `A supporting file can be at most ${SKILL_FILE_MAX_BYTES / MiB} MiB.` } }
     }
     total += bytes
     if (total > SKILL_FILES_MAX_TOTAL_BYTES) {
-      return { problem: { path, message: `A skill's supporting files can total at most ${SKILL_FILES_MAX_TOTAL_BYTES} bytes.` } }
+      return { problem: { path, message: `A skill's supporting files can total at most ${SKILL_FILES_MAX_TOTAL_BYTES / MiB} MiB.` } }
     }
     files.push({ path, text: entry.text })
+  }
+  if (Buffer.byteLength(JSON.stringify(files), "utf8") > SKILL_FILES_MAX_STORED_BYTES) {
+    return { problem: { path: null, message: `A skill's supporting files are too large to store once encoded; keep them under ${SKILL_FILES_MAX_TOTAL_BYTES / MiB} MiB of mostly plain text.` } }
   }
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)) }
 }
