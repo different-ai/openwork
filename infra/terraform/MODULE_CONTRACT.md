@@ -166,7 +166,7 @@ Additional setup/reference sections may follow. Show a visible callout using:
 > - **Security issues:** report them privately ([SECURITY.md](https://github.com/different-ai/openwork/blob/dev/SECURITY.md)).
 
 Keep reports free of secrets and private state. Public bug/usage reporting follows
-[SUPPORT.md](../../SUPPORT.md); existing support agreements retain their usual
+[SUPPORT.md](../../.github/SUPPORT.md); existing support agreements retain their usual
 channel.
 State guidance must cover encrypted, access-controlled remote state and locking.
 For S3 use `use_lockfile = true`, not deprecated DynamoDB locking.

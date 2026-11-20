@@ -11,7 +11,7 @@
 - シェアリング・イズ・ケアリング: localhostでソロ作業を始め、必要に応じてリモート共有を明示的にオプトインできます。
 
 <p align="center">
-  <img src="../app-demo.gif" alt="OpenWork デモ" width="800" />
+  <img src="../docs/images/model-picker.png" width="560" alt="モデルピッカーを開いた OpenWork のコンポーザー" />
 </p>
 
 OpenWorkは、エージェントワークフローを再現可能なプロダクト化されたプロセスとして簡単にリリースできるように設計されています。
@@ -207,10 +207,9 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 コミュニティドキュメント:
 
-- `CODE_OF_CONDUCT.md`
+- `.github/CODE_OF_CONDUCT.md`
 - `SECURITY.md`
-- `SUPPORT.md`
-- `TRIAGE.md`
+- `.github/SUPPORT.md`
 
 初回コントリビューションチェックリスト:
 
