@@ -5232,7 +5232,7 @@ async function computeGithubPluginMcpImportPlan(input: {
     servers.splice(0, servers.length, ...await withExistingConnectionReuse({ organizationId: input.organizationId, servers }))
   }
 
-  const plugins = discovery.discoveredPlugins
+  const countedPlugins = discovery.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => ({
       description: plugin.description,
@@ -5241,7 +5241,11 @@ async function computeGithubPluginMcpImportPlan(input: {
       name: plugin.displayName,
       skillCount: skills.filter((skill) => skill.pluginKey === plugin.key && skill.supported).length,
     } satisfies GithubPluginMcpImportPlugin))
-    .filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  const plugins = countedPlugins.filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  // Say why a plugin is missing from the preview instead of leaving it out silently.
+  const emptyPluginWarnings = countedPlugins
+    .filter((plugin) => plugin.mcpCount === 0 && plugin.skillCount === 0)
+    .map((plugin) => `${plugin.name}: no skills or MCP servers that OpenWork can import were found.`)
   const sourceSchemaVersions = new Set(discovery.discoveredPlugins
     .filter((plugin) => plugin.supported && plugin.sourceKind === "agent_plugin_manifest")
     .flatMap((plugin) => plugin.sourceSchemaVersion ? [plugin.sourceSchemaVersion] : []))
@@ -5261,6 +5265,7 @@ async function computeGithubPluginMcpImportPlan(input: {
     warnings: [
       ...discovery.warnings,
       ...(snapshot.truncated ? ["GitHub truncated the repository tree; some MCP files may be missing."] : []),
+      ...emptyPluginWarnings,
       ...skillFileWarnings,
     ],
   }
