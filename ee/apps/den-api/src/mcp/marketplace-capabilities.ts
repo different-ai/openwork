@@ -1445,7 +1445,6 @@ async function latestVersionsForReadiness(organizationId: OrganizationId, config
 }
 
 export async function resolveMarketplacePluginCloudReadiness(input: {
-  desktopManifestPluginIds?: PluginId[]
   member: McpMemberIdentity
   organizationId: OrganizationId
   pluginIds: PluginId[]
@@ -1474,14 +1473,13 @@ export async function resolveMarketplacePluginCloudReadiness(input: {
 
   const objectsByPluginId = groupReadinessObjects(rows)
   const latestVersions = await latestVersionsForReadiness(input.organizationId, rows.map((row) => row.id))
-  const desktopManifestPluginIds = new Set(input.desktopManifestPluginIds ?? [])
 
   const pending: Array<{ dependencies: MarketplaceMcpDependency[]; hasInstructional: boolean; pluginId: PluginId; requiredDependencies: MarketplaceMcpDependency[] }> = []
   for (const pluginId of pluginIds) {
     const objects = objectsByPluginId.get(pluginId) ?? []
     if (objects.length === 0) {
       readiness.set(pluginId, {
-        state: desktopManifestPluginIds.has(pluginId) ? "desktop_only" : "not_synced",
+        state: "not_synced",
         hasInstructional: false,
         connections: [],
       })
