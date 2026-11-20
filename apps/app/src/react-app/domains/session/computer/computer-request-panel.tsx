@@ -132,11 +132,9 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-medium leading-5 text-dls-text" title={saving ?? undefined}>{saving ? `Save ${savingName} to ${savingFolder} from ${files.app}?` : count ? `Give ${count === 1 ? "this file" : `these ${count} files`} to ${files.app}?` : `Let the agent look through your files for ${files.app}?`}</div>
-            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{saving
-              ? `The agent chose where ${files.app} saves on ${request.computer}.`
-              : count
+            {!saving ? <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{count
               ? `The agent chose ${count === 1 ? "it" : "them"} on ${request.computer}. ${files.app} can upload what it receives.`
-              : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div>
+              : `${files.app} opened a file panel on ${request.computer}. The agent sees the file names it shows, and asks again before handing any file over.`}</div> : null}
             {files.canRemember && files.site ? <div className="mt-1 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-files-remember-scope">Choosing a folder remembers file sharing with {files.site} from that folder across chats and Slack tasks on this computer. A system folder picker opens next. Remove permission in Settings → Computer use.</div> : null}
             {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-files-hidden">These names have {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't give them unless you expected that.</div> : null}
             {count ? <ul dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="mt-2 max-h-32 overflow-auto rounded-lg border border-dls-border bg-dls-hover p-2 font-mono text-[12px] leading-5 text-dls-text" data-testid="session-computer-files">
