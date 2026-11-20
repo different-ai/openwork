@@ -2,8 +2,7 @@
 // providers in src/models/providers. Prices are USD per 1M tokens, so
 // micro-USD per token equals the listed price.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { withBedrockMantleProvider, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 import { readProviderCatalog } from "./models/catalog.js"
 
 export type ModelPrice = {

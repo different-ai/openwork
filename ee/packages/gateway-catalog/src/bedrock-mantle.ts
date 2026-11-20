@@ -67,7 +67,7 @@ export function deriveBedrockMantleProvider(catalog: JsonRecord): JsonRecord | n
   for (const [key, model] of Object.entries(source.models)) {
     if (!isMantleModel(model)) continue
     const { npm: _npm, api: _api, provider, ...rest } = model
-    const { api: _providerApi, npm: _providerNpm, ...providerRest } = isRecord(provider) ? provider : {}
+    const { api: _providerApi, npm: _providerNpm, ...providerRest } = isRecord(provider) ? provider : ({} as JsonRecord)
     models[key] = { ...rest, provider: { ...providerRest, npm: BEDROCK_MANTLE_NPM } }
   }
   if (!Object.keys(models).length) return null

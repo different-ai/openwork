@@ -3,10 +3,9 @@
 // the gateway sends one short prompt the same way it would forward a member's
 // request, and answers whether the provider replied. Nothing is stored or logged
 // as usage, and the upstream body never reaches the caller.
-import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/gateway-catalog"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, isPublicInferenceAddress, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import type { InferenceAddressResolver } from "@openwork-ee/utils/inference-egress"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import { PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature } from "@openwork-ee/utils/provider-test-signature"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayGcpServiceAccountSecret, GatewayProviderTestResult } from "@openwork/types/den/gateway"

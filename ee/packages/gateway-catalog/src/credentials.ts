@@ -1,4 +1,4 @@
-import { liteLlmEntraScope } from "./litellm-catalog.js"
+import { liteLlmEntraScope } from "./litellm.js"
 
 /** Only pass env names from the trusted catalog, never request bodies or stored custom config. */
 export function inferenceCredentialEnvNames(trustedEnvNames: readonly string[]): string[] {

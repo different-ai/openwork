@@ -6,7 +6,7 @@
 import { z } from "zod"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayProviderCredentialTable, GatewayTrueFoundryUserTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { TRUEFOUNDRY_ADMIN_CREDENTIAL_SUBJECT, TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_ENV, TRUEFOUNDRY_NPM, TRUEFOUNDRY_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_NAME, isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { TRUEFOUNDRY_ADMIN_CREDENTIAL_SUBJECT, TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_ENV, TRUEFOUNDRY_NPM, TRUEFOUNDRY_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_NAME, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
 import type { GatewayTrueFoundryAttentionReason, GatewayTrueFoundryStatus } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import type { ModelsDevProvider } from "./models-dev.js"

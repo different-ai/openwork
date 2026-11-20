@@ -7,7 +7,7 @@
 // the normal Gateway pipeline, which authorizes, meters and forwards it as if
 // the member had picked that model. Responses go back as Chat Completions.
 import { createHash } from "node:crypto"
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import {
   AUTO_ROUTER_THINKING_LABELS,
   AUTO_ROUTER_THINKING_LEVELS,

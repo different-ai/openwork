@@ -11,7 +11,7 @@
 //                                                   Both run the normal Gateway pipeline under the
 //                                                   member's own alias.
 // POST /api/v1/claude-code/v1/messages/count_tokens an estimate; nothing is sent upstream.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { AUTO_ROUTER_THINKING_LEVELS, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { claudeCodeModelName, matchCursorModel, parseClaudeCodeModelName } from "@openwork/types/den/gateway-cursor"
 import { forwardedHeaders, maxOutputTokens, translateResponse, type AutoTarget } from "./auto-router/handler.js"

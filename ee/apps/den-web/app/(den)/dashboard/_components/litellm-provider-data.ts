@@ -10,7 +10,7 @@ import { z } from "zod";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { readInferenceProviderFromPayload, type DenInferenceProvider } from "./inference-provider-request";
 
-export const LITELLM_PROVIDER_ID = "litellm";
+export { LITELLM_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 export const LITELLM_DOC_URL = "https://docs.litellm.ai";
 export const LITELLM_ENTRA_DOC_URL = "https://openworklabs.com/docs/ai-gateway/litellm#microsoft-sign-in";
 /** Microsoft sign-in for LiteLLM is a rollout: without it the choice stays locked. */

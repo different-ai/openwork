@@ -1,4 +1,4 @@
-import { type DenTypeId, typeId } from "./typeid"
+import { type DenTypeId, typeId } from "@openwork-ee/utils/typeid"
 
 export type GatewayWireModelId = `gwm_${string}_${string}_${string}`
 

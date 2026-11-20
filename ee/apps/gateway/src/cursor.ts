@@ -9,7 +9,7 @@
 // Both resolve the name, rewrite the request for the model's own protocol under the member's
 // Gateway alias, and hand it to the normal Gateway pipeline, which authorizes, meters and forwards
 // it, so any model works through either API whatever its provider speaks.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { AUTO_ROUTER_THINKING_LEVELS, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwork/types/den/gateway-cursor"
 import {

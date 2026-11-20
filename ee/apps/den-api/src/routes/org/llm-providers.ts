@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util"
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
-import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog"
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import {

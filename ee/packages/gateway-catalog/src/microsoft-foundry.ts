@@ -67,7 +67,7 @@ export function deriveMicrosoftFoundryProvider(catalog: JsonRecord): JsonRecord 
     for (const [key, model] of Object.entries(source.models)) {
       if (!isFoundryAnthropicModel(model) || Object.hasOwn(models, key)) continue
       const { npm: _npm, api: _api, provider, ...rest } = model
-      const { api: _providerApi, npm: _providerNpm, ...providerRest } = isRecord(provider) ? provider : {}
+      const { api: _providerApi, npm: _providerNpm, ...providerRest } = isRecord(provider) ? provider : ({} as JsonRecord)
       models[key] = { ...rest, provider: { ...providerRest, npm: MICROSOFT_FOUNDRY_NPM } }
     }
   }
