@@ -402,8 +402,8 @@ export interface FreestyleDesktopDeps {
 }
 
 async function defaultFreestyleDeps(): Promise<FreestyleDesktopDeps> {
-  const { ensureSnapshot } = await import("../../packages/freestyle/src/builder.ts");
-  const { launchPreview, deletePreview } = await import("../../packages/freestyle/src/index.ts");
+  const { ensureSnapshot } = await import("../../packages/evidence-freestyle/src/builder.ts");
+  const { launchPreview, deletePreview } = await import("../../packages/evidence-freestyle/src/index.ts");
   return {
     ensureSnapshot: (sha) => ensureSnapshot(sha, undefined, (message) => console.error(message), "desktop"),
     launch: (sha, lifetimeMinutes) => launchPreview({ gitSha: sha, lifetimeMinutes, world: "desktop" }),

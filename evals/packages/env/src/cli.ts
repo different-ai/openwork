@@ -9,7 +9,7 @@ import { daytonaLoginCheck, diagnoseWorldFailure, freestyleKeyCheck } from "./wo
  * What the world driver and its recipes load from this checkout. When a remote
  * world builds another commit, drift here means the driver is not that commit's.
  */
-const WORLD_RECIPE_PATHS = ["worlds", "packages/world", "packages/freestyle", "evals/packages", ".devcontainer"];
+const WORLD_RECIPE_PATHS = ["worlds", "packages/world", "packages/evidence-freestyle", "evals/packages", ".devcontainer"];
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const WORLDS_DIRECTORY = fileURLToPath(new URL("../../../../worlds", import.meta.url));
@@ -120,13 +120,13 @@ export function main(argv = process.argv.slice(2)): Promise<number> {
       },
       "freestyle-evidence": async (entry) => {
         if (entry.match !== entry.id) return { status: "skipped", reason: "identity mismatch" };
-        const { deleteEvidenceVm } = await import("../../../../packages/freestyle/src/checkpoints.ts");
+        const { deleteEvidenceVm } = await import("../../../../packages/evidence-freestyle/src/checkpoints.ts");
         await deleteEvidenceVm(entry.id);
         return { status: "reaped" };
       },
       "freestyle-preview": async (entry) => {
         if (entry.match !== entry.id) return { status: "skipped", reason: "identity mismatch" };
-        const { deletePreview } = await import("../../../../packages/freestyle/src/index.ts");
+        const { deletePreview } = await import("../../../../packages/evidence-freestyle/src/index.ts");
         await deletePreview(entry.id);
         return { status: "reaped" };
       },

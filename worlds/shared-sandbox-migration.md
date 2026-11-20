@@ -4,7 +4,7 @@ The first world moved onto the MIT sandbox layer is `preview-workbot`, on both
 Freestyle and Daytona. Other world recipes keep their current transports.
 
 - Freestyle previews use `@openwork/sandbox-freestyle` for create/run/files/delete.
-  Preview policy remains in `packages/freestyle`: TTL, inline TLS rules, secret
+  Preview policy remains in `packages/evidence-freestyle`: TTL, inline TLS rules, secret
   access files, sign-in routing, readiness and ownership checks. A narrow guest
   facade keeps older bootstrap recipes unchanged while this one host migrates.
 - Daytona API-key previews use `@openwork/sandbox-daytona`. The existing Linux

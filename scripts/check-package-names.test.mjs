@@ -8,7 +8,7 @@ test("the repository's workspace packages follow the naming rule", () => {
 
 test("a package named differently from its folder is reported", () => {
   assert.deepEqual(packageNameProblems("packages/mcp-apps", "@openwork", "@openwork/mcp-apps"), []);
-  assert.match(packageNameProblems("packages/daytona-evidence", "@openwork", "@openwork/evidence-daytona")[0], /name it @openwork\/daytona-evidence/);
+  assert.match(packageNameProblems("packages/widget-alpha", "@openwork", "@openwork/alpha-widget")[0], /name it @openwork\/widget-alpha/);
   assert.match(packageNameProblems("ee/packages/sso", "@openwork-ee", "@openwork/sso")[0], /name it @openwork-ee\/sso/);
 });
 
