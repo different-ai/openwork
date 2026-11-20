@@ -63,7 +63,7 @@
     "@openwork/codemode": "workspace:*",
     "@openwork/connect-link": "workspace:*",
     "@openwork/email": "workspace:*",
-    "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/mcp-enterprise-client": "workspace:*",
     "@openwork/features": "workspace:*",
     "@openwork/free-auto": "workspace:*",
     "@openwork/headless-threads": "workspace:*",

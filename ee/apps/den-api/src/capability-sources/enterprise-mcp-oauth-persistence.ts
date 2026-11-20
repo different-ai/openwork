@@ -10,7 +10,7 @@ import {
   type EnterpriseMcpPersistenceContext,
   type StoredOAuthClientInformation,
   type StoredOAuthTokens,
-} from "@openwork/enterprise-mcp-client"
+} from "@openwork/mcp-enterprise-client"
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import {

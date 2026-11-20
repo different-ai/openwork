@@ -45,7 +45,7 @@
     "typecheck": "pnpm --filter @openwork/app typecheck",
     "api:snapshot": "pnpm --filter @openwork-ee/den-api openapi:snapshot",
     "api:lint": "node scripts/api-lint.mjs",
-    "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
+    "check:mcp-enterprise-mock-server": "pnpm --filter @openwork/mcp-enterprise-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:sessions": "pnpm --filter @openwork/app test:sessions",

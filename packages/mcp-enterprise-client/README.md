@@ -1,4 +1,4 @@
-# `@openwork/enterprise-mcp-client`
+# `@openwork/mcp-enterprise-client`
 
 Reference implementation for server-side remote MCP consumption in OpenWork.
 

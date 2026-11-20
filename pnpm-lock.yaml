@@ -346,9 +346,9 @@ importers:
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../packages/enterprise-mcp-client
+        version: link:../../packages/mcp-enterprise-client
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -480,9 +480,9 @@ importers:
       '@openwork/computer-use':
         specifier: workspace:*
         version: link:../../packages/computer-use
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../packages/enterprise-mcp-client
+        version: link:../../packages/mcp-enterprise-client
       '@openwork/free-auto':
         specifier: workspace:*
         version: link:../../packages/free-auto
@@ -670,9 +670,9 @@ importers:
       '@openwork/email':
         specifier: workspace:*
         version: link:../../../packages/email
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-client
+        version: link:../../../packages/mcp-enterprise-client
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
@@ -915,9 +915,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
-      '@openwork/enterprise-mcp-client':
+      '@openwork/mcp-enterprise-client':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-client
+        version: link:../../../packages/mcp-enterprise-client
       '@openwork/features':
         specifier: workspace:*
         version: link:../../../packages/features
@@ -1000,9 +1000,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.6
         version: 2.1.6(hono@4.13.16)
-      '@openwork/enterprise-mcp-mock-server':
+      '@openwork/mcp-enterprise-mock-server':
         specifier: workspace:*
-        version: link:../../../packages/enterprise-mcp-mock-server
+        version: link:../../../packages/mcp-enterprise-mock-server
       hono:
         specifier: 4.13.16
         version: 4.13.16
@@ -1797,7 +1797,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/enterprise-mcp-client:
+  packages/mcp-enterprise-client:
     dependencies:
       '@modelcontextprotocol/client':
         specifier: ^2.3.1
@@ -1819,7 +1819,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/enterprise-mcp-mock-server:
+  packages/mcp-enterprise-mock-server:
     dependencies:
       zod:
         specifier: ^4.6.6
