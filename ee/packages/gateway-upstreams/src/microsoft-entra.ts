@@ -112,3 +112,29 @@ export function readMicrosoftTokens(body: unknown, apiScope: string | null = nul
   if (record.scope !== undefined && (typeof record.scope !== "string" || !record.scope.split(/\s+/).some((scope) => matchesMicrosoftScope(scope, apiScope)))) return null
   return { accessToken, refreshToken, expiresIn, idToken, scope: typeof record.scope === "string" ? record.scope : null }
 }
+
+/**
+ * Whether a member's access token works only for the organization's own app registration.
+ * A LiteLLM provider sends members' tokens to a proxy URL its administrator chose, so a token
+ * for Azure management, Key Vault, Outlook or any other Microsoft API must never be kept.
+ * Entra v2 access tokens name the API's application (client) ID in `aud`; v1 tokens its
+ * default `api://` URI. The token comes straight from Entra's token endpoint over TLS, so
+ * this reads its claims and does not verify the signature: the proxy does that.
+ */
+export function isMicrosoftAccessTokenForApp(accessToken: string, clientId: string) {
+  const expected = clientId.trim().toLowerCase()
+  if (!guid.test(expected)) return false
+  const parts = accessToken.split(".")
+  if (parts.length !== 3 || !parts[1]) return false
+  let claims: unknown
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/")
+    claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")), (char) => char.charCodeAt(0))))
+  } catch { return false }
+  const aud = typeof claims === "object" && claims !== null && "aud" in claims ? claims.aud : null
+  const audiences = typeof aud === "string" ? [aud] : Array.isArray(aud) && aud.every((value) => typeof value === "string") ? aud : []
+  return audiences.length > 0 && audiences.every((value) => {
+    const audience = value.toLowerCase()
+    return audience === expected || audience === `api://${expected}`
+  })
+}
