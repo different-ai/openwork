@@ -1,0 +1,20 @@
+id: org_branding
+title: "Show organization branding"
+surface: admin
+label: REAL
+status: draft
+requires: [admin_signed_in]
+do:
+  - {type: manual, instruction: "Show the existing rehearsal branding and its corresponding signed-out screen."}
+  - {type: show, seconds: 5}
+say: "Identify which branded elements were configured for the fictional company."
+paste: {}
+see: "The approved Acme Robotics display name is configured."
+checks:
+  - {"type": "admin_setting_equals", "setting": "org_display_name", "value": "{{display_name}}"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not update logos, domains, or settings live."]

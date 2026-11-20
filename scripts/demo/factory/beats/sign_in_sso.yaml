@@ -1,0 +1,22 @@
+id: sign_in_sso
+title: Sign in with company identity
+surface: desktop
+label: REAL
+status: grounded
+requires: [employee_signed_out]
+provides: [employee_connected]
+do:
+  - {type: sign_in, email: employee-email, secret_ref: employee-idp-password}
+  - {type: show, seconds: 3}
+say: '{{employee}} signs in to {{display_name}} with company identity. This is real OpenWork; the company and its source data are fictional.'
+paste:
+  employee-email: '{{employee_email}}'
+see: The app returns from SSO and Connect shows ready.
+checks:
+  - {type: connect_ready}
+reset: [Sign out the employee in the desktop app and the employee IdP browser only.]
+fallback: Raise OpenWork from the taskbar if the callback returned without bringing the app forward. If sign-in fails, use the approved signed-in rehearsal clip.
+expect_seconds: 45
+questions:
+  - {question: Does Dana need an API key?, answer: No. This demo uses company identity and an org-managed model.}
+avoid: [Never display the password or edit SSO configuration.]
