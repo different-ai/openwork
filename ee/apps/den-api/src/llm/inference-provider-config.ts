@@ -1,6 +1,6 @@
 import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
-import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import { inferenceCredentialEnvNames, isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/gateway-catalog"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
 

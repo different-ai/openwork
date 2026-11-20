@@ -14,7 +14,7 @@
  * admin entered (liteLlmStaticModels).
  */
 import { createHash } from "node:crypto"
-import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import type { ModelsDevProvider } from "./models-dev.js"
 import { matchTrueFoundryModel as matchCatalogModel } from "./truefoundry-models.js"
 

@@ -9,7 +9,7 @@
  */
 import { createHmac } from "node:crypto"
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose"
-import { classifyMicrosoftTokenError, microsoftAuthorizeUrl, microsoftIssuer, microsoftJwksUrl, microsoftSignInScopes, microsoftTokenUrl, readMicrosoftTokens, type MicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { classifyMicrosoftTokenError, microsoftAuthorizeUrl, microsoftIssuer, microsoftJwksUrl, microsoftSignInScopes, microsoftTokenUrl, readMicrosoftTokens, type MicrosoftTokens } from "@openwork-ee/gateway-upstreams"
 import { OAuthTokenExchangeError } from "../capability-sources/generic-oauth.js"
 import type { FetchLike } from "./inference-provider-google-oauth.js"
 

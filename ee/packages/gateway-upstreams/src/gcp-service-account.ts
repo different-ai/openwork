@@ -2,7 +2,7 @@
 // org-level Vertex): RS256 JWT → token endpoint, cached per credential until
 // 60s before expiry. node:crypto only.
 import { createHash, createSign } from "node:crypto"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams/egress"
 import type { GatewayGcpServiceAccountSecret } from "@openwork/types/den/gateway"
 
 export const GCP_CLOUD_PLATFORM_SCOPE = "https://www.googleapis.com/auth/cloud-platform"

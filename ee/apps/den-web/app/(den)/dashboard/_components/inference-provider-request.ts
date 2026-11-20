@@ -152,7 +152,7 @@ export function isGatewayOnlyNpm(npm: string | null, providerId: string | null =
   return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
 }
 
-/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+/** Mirrors `isAwsRegion` in @openwork-ee/gateway-upstreams (egress). */
 export function isAwsRegion(value: string): boolean {
   return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
 }

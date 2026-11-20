@@ -44,6 +44,7 @@ COPY evals/packages/labs/package.json /app/evals/packages/labs/package.json
 COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/gateway-catalog/package.json /app/ee/packages/gateway-catalog/package.json
+COPY ee/packages/gateway-upstreams/package.json /app/ee/packages/gateway-upstreams/package.json
 COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
 COPY ee/packages/cloud-runtime/package.json /app/ee/packages/cloud-runtime/package.json
 COPY packages/sandbox/package.json /app/packages/sandbox/package.json
@@ -76,6 +77,7 @@ COPY packages/browser-tabs /app/packages/browser-tabs
 COPY packages/computer-use /app/packages/computer-use
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/gateway-catalog /app/ee/packages/gateway-catalog
+COPY ee/packages/gateway-upstreams /app/ee/packages/gateway-upstreams
 COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
 COPY ee/packages/cloud-runtime /app/ee/packages/cloud-runtime
 COPY packages/sandbox /app/packages/sandbox

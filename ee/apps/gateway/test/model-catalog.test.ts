@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { isSupportedGatewayNpm } from "@openwork-ee/gateway-catalog"
+import { isSupportedGatewayNpm, createProviderCatalog } from "@openwork-ee/gateway-catalog"
 import {
   CatalogValidationError,
   CUSTOM_PROVIDER_NPM_PACKAGES,
@@ -21,7 +21,6 @@ import {
   validateProviderV2,
 } from "../src/models/catalog-v2.js"
 import { createPricingCatalog } from "../src/pricing.js"
-import { createProviderCatalog } from "../src/provider-catalog.js"
 
 const model = {
   id: "example-large",

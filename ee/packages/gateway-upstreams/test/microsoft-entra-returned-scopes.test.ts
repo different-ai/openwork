@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { readMicrosoftTokens } from "../src/microsoft-entra.js"
 
 const appId = "11111111-2222-4333-8444-555555555555"
 const otherAppId = "66666666-7777-4888-8999-aaaaaaaaaaaa"

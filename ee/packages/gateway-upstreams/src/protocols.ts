@@ -4,8 +4,8 @@
 // (which usage parser to run) comes from the forwarded path.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH, GATEWAY_FAMILY_DEFAULT_BASE_URLS, gatewaySdkFamily, microsoftFoundryBaseUrl, type ProtocolFamily } from "@openwork-ee/gateway-catalog"
-import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/utils/inference-egress"
-import type { CatalogProvider } from "./provider-catalog.js"
+import { bedrockMantleHost, bedrockRuntimeHost, isAwsRegion } from "@openwork-ee/gateway-upstreams/egress"
+import type { CatalogProvider } from "@openwork-ee/gateway-catalog"
 
 export type { ProtocolFamily }
 
@@ -147,7 +147,7 @@ export function defaultBaseUrl(family: ProtocolFamily, settings: Record<string, 
   return GATEWAY_FAMILY_DEFAULT_BASE_URLS[family] ?? null
 }
 
-export { vertexHost, vertexPublisherBase } from "@openwork-ee/utils/inference-egress"
+export { vertexHost, vertexPublisherBase } from "@openwork-ee/gateway-upstreams/egress"
 
 // The desktop speaks the public Google/Anthropic API shape; drop its version
 // segment so the rest of the path can hang off the Vertex publisher base.

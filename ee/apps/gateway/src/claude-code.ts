@@ -19,9 +19,9 @@ import { isJsonObject, type JsonObject, chatToolCallIds, chatErrorToMessages, ch
 import type { ReasoningStore } from "@openwork-ee/gateway-protocols"
 import { cursorModels, type CursorModel } from "./cursor.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import type { ProtocolFamily } from "./protocols.js"
+import type { ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
-import type { ProviderCatalog } from "./provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
 import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 

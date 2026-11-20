@@ -14,7 +14,7 @@ import type { GatewayAccessRow, GatewayMemberAccessRow } from "../src/provider-a
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes } = await import("../src/gateway.js")
-const { createProviderCatalog } = await import("../src/provider-catalog.js")
+const { createProviderCatalog } = await import("@openwork-ee/gateway-catalog")
 const { createMemoryReasoningStore } = await import("@openwork-ee/gateway-protocols")
 const { normalizeCursorChatBody } = await import("../src/cursor.js")
 

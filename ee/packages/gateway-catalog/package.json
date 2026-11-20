@@ -68,6 +68,14 @@
       },
       "development": "./src/credentials.ts",
       "default": "./src/credentials.ts"
+    },
+    "./provider-catalog": {
+      "types": {
+        "openwork-build": "./dist/types/src/provider-catalog.d.ts",
+        "default": "./src/provider-catalog.ts"
+      },
+      "development": "./src/provider-catalog.ts",
+      "default": "./src/provider-catalog.ts"
     }
   },
   "scripts": {
@@ -76,7 +84,8 @@
     "test": "node --conditions=development --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@openwork-ee/utils": "workspace:*"
+    "@openwork-ee/utils": "workspace:*",
+    "@openwork/types": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

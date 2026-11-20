@@ -11,10 +11,9 @@
 import type { ProviderCheck, ProviderCheckReason, ProviderCheckState } from "@openwork/types/den/diagnostics"
 import { parseGatewayProviderSecret, type GatewayProviderCredentialKind, type GatewayProviderCredentialStatus, type GatewayProviderSecret } from "@openwork/types/den/gateway"
 import { readProviderEnvNames, selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config"
-import { AwsSsoError, getAwsCallerIdentity } from "@openwork-ee/utils/aws-identity-center"
-import type { AwsCredentials } from "@openwork-ee/utils/aws-sigv4"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog"
-import { InferenceEgressError, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { AwsSsoError, getAwsCallerIdentity, InferenceEgressError, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
+import type { AwsCredentials } from "@openwork-ee/gateway-upstreams"
+import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId, MICROSOFT_FOUNDRY_PROVIDER_ID, gatewaySdkFamily, type ProtocolFamily } from "@openwork-ee/gateway-catalog"
 import { gatewayUpstreamDestination } from "../credential-prompt.js"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { detectVendor, probeEndpoint } from "../llm/endpoint-probe.js"
@@ -126,25 +125,26 @@ export type GatewayModelInput = { gateway_provider_id: string; model_id: string 
 
 type GatewayFamily = "openai" | "anthropic" | "google" | "bedrock" | "none"
 
-const FAMILY_BY_NPM: Record<string, GatewayFamily> = {
-  "@ai-sdk/openai": "openai",
-  "@ai-sdk/openai-compatible": "openai",
-  "@ai-sdk/mistral": "openai",
-  "@ai-sdk/azure": "openai",
-  "@openrouter/ai-sdk-provider": "openai",
-  "@ai-sdk/anthropic": "anthropic",
-  "@ai-sdk/google": "google",
-  "@ai-sdk/amazon-bedrock": "bedrock",
-  "@ai-sdk/amazon-bedrock/mantle": "none",
-  "@ai-sdk/google-vertex": "none",
-  "@ai-sdk/google-vertex/anthropic": "none",
+/** How diagnostics can read a provider's model list, by the protocol family its SDK speaks. */
+const PROBE_BY_FAMILY: Record<ProtocolFamily, GatewayFamily> = {
+  openai: "openai",
+  openai_compatible: "openai",
+  mistral: "openai",
+  azure: "openai",
+  anthropic: "anthropic",
+  google: "google",
+  bedrock: "bedrock",
+  bedrock_mantle: "none",
+  google_vertex: "none",
+  google_vertex_anthropic: "none",
+  microsoft_foundry: "none",
 }
 
 function gatewayFamily(provider: GatewayProviderInput): GatewayFamily {
   // Claude on Microsoft Foundry uses the Anthropic SDK against an Entra-authenticated host.
   if (provider.provider_id === MICROSOFT_FOUNDRY_PROVIDER_ID) return "none"
-  const npm = readProviderConfigNpm(provider.provider_config)
-  if (npm && Object.hasOwn(FAMILY_BY_NPM, npm)) return FAMILY_BY_NPM[npm]
+  const family = gatewaySdkFamily(readProviderConfigNpm(provider.provider_config))
+  if (family) return PROBE_BY_FAMILY[family]
   // The gateway forwards an unknown SDK with a known API base as OpenAI-compatible.
   return readString(provider.provider_config, "api") ? "openai" : "none"
 }

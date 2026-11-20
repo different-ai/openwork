@@ -10,7 +10,7 @@ import type { AutoRouterConfig, LoadMemberAutoRouters } from "./auto-router/conf
 import { autoCandidates, autoRouterError, type RoutedCandidate } from "./auto-router/handler.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
-import type { ProviderCatalog } from "./provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 
 export type SmartToolDependencies = {
   /** False when the Gateway has no TypeSafe key: Smart is then off and nothing is listed. */

@@ -3,8 +3,8 @@
 // cached per credential and token until five minutes before they expire. The
 // keys then sign Bedrock requests with SigV4 like organization AWS keys.
 import { createHash } from "node:crypto"
-import { AwsSsoError, getAwsSsoRoleCredentials, type FetchLike } from "@openwork-ee/utils/aws-identity-center"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { AwsSsoError, getAwsSsoRoleCredentials, type FetchLike } from "@openwork-ee/gateway-upstreams/aws-identity-center"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams/egress"
 import type { GatewayAwsKeysSecret, GatewayAwsSsoSecret } from "@openwork/types/den/gateway"
 
 const EXPIRY_MARGIN_MS = 5 * 60_000
