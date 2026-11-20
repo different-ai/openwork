@@ -1,5 +1,4 @@
 import type { BillingPlanTier } from "@openwork/types/den/billing-plans";
-import type { SsoSettings } from "./sso-settings";
 import { parseDeploymentCapabilities, type DeploymentCapabilities } from "@openwork/types/den/deployment-capabilities";
 import { mapFeatures, type FeatureMap } from "@openwork/features";
 import { BUILT_IN_ROLES } from "./role-catalog";
@@ -504,25 +503,6 @@ export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): 
   }
 
   return [...new Set(values.map((entry) => normalizeDesktopVersionString(entry)).filter((entry): entry is string => Boolean(entry)))];
-}
-
-export function getRequireSsoFromMetadata(metadata: string | null): boolean {
-  const parsed = parseOrganizationMetadata(metadata);
-  return parsed?.requireSso === true;
-}
-
-/** ssoPerOrganization: every email on the verified SSO domain must sign in with this organization's SSO. */
-export function getRestrictDomainToSsoFromMetadata(metadata: string | null): boolean {
-  const parsed = parseOrganizationMetadata(metadata);
-  return parsed?.restrictDomainToSso === true;
-}
-
-/** The organization's stored SSO requirement settings. */
-export function getSsoSettingsFromMetadata(metadata: string | null): SsoSettings {
-  return {
-    requireSso: getRequireSsoFromMetadata(metadata),
-    restrictDomainToSso: getRestrictDomainToSsoFromMetadata(metadata),
-  };
 }
 
 /**

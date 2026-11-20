@@ -51,9 +51,9 @@ see the email step as before.
   for an SSO-managed email is redirected to SSO, and so is a Google or GitHub
   sign-in.
 
-Logic and tests: `ee/apps/den-api/src/last-sign-in-method.ts`
-(`test/last-sign-in-method.test.ts`) and
-`ee/apps/den-web/app/(den)/_lib/last-sign-in.ts` (`last-sign-in.test.ts`).
+Logic and tests: `ee/packages/sso/src/last-sign-in.ts`
+(`ee/packages/sso/test/last-sign-in.test.ts`), shared by Den API, which writes
+the cookie, and Den web, which reads it.
 
 ## Availability and recovery
 
