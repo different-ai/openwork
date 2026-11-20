@@ -14,7 +14,7 @@ here cannot tell you. Read `README.md` for what the app does and how to run it.
 
 ## Commands
 
-Run from `ee/apps/openwork-ios`. Name the scheme and destination every time.
+Run from `ee/apps/mobile-ios`. Name the scheme and destination every time.
 
 ```bash
 swift test --package-path OpenWorkKit

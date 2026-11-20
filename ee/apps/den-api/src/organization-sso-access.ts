@@ -19,7 +19,7 @@ import {
   readOrganizationSsoPolicy,
   type DomainSsoRequirement,
   type SignInSsoCandidate,
-} from "@openwork-ee/sso"
+} from "@openwork-ee/den-sso"
 
 /**
  * Den side of SSO routing: organization settings govern which sessions may

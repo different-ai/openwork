@@ -1,8 +1,8 @@
-import type { OrganizationSsoPolicy } from "@openwork-ee/sso";
+import type { OrganizationSsoPolicy } from "@openwork-ee/den-sso";
 
 /**
  * The organization's SSO settings as saved and as drafted on the settings
- * screen: the policy Den API enforces (@openwork-ee/sso).
+ * screen: the policy Den API enforces (@openwork-ee/den-sso).
  */
 export type SsoSettings = OrganizationSsoPolicy;
 

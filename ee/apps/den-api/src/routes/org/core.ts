@@ -21,7 +21,7 @@ import { cachedOrganizationServiceReadiness } from "../../service-readiness-runt
 import { canManageDeploymentServices } from "../../middleware/admin.js"
 import { findEnterpriseAuthRequirementForEmailDomain, resolveNonSsoSignInMethodForEmail } from "../../enterprise-auth-requirement.js"
 import { findDomainSsoRequirement, sessionCanRequireOrganizationSso, ssoSignInUrl } from "../../organization-sso-access.js"
-import { organizationRequiresSsoSession } from "@openwork-ee/sso"
+import { organizationRequiresSsoSession } from "@openwork-ee/den-sso"
 import { ADMIN_REAUTH_MINUTES, MAX_SESSION_LENGTH_DAYS, organizationSessionLimits, SESSION_LENGTH_HOURS } from "../../session-security-settings.js"
 import { shortenMemberSessions } from "../../session-security-lifetime.js"
 import { jsonValidator, memberPermissionsForOrganizationContext, orgMemberRoute, orgPermissionRoute, publicRoute, queryValidator, resolveMemberPermissionsMiddleware, resolveMemberTeamsMiddleware, userSessionRoute } from "../../middleware/index.js"

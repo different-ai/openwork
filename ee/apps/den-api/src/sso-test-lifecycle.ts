@@ -13,7 +13,7 @@ import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
-import { isOrganizationSsoReady, ssoStateVerificationIdentifier } from "@openwork-ee/sso"
+import { isOrganizationSsoReady, ssoStateVerificationIdentifier } from "@openwork-ee/den-sso"
 import { ssoTestDomainMismatchMessage } from "./sso-test-domain.js"
 
 // Every read here uses the primary: the test lifecycle is a sequence of steps

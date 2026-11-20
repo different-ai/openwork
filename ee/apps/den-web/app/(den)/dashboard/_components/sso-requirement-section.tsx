@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { SsoSessionRequiredError } from "../../_lib/den-flow";
-import { readOrganizationSsoPolicy } from "@openwork-ee/sso";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
 import {
   getOrgAccessFlags,
   permissionLockReason,
