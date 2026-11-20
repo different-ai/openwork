@@ -1,0 +1,29 @@
+id: deck_from_report
+title: Turn the report into a deck and open it
+surface: desktop
+label: SEEDED
+status: grounded
+requires: [report_shown]
+provides: [deck_shown]
+do:
+  - {type: return_to_chat, turn: report}
+  - {type: ask, turn: deck, prompt: deck-prompt, model: '{{model}}', same_thread: true}
+  - {type: wait_turn, turn: deck, timeout_seconds: 360}
+  - {type: return_to_chat, turn: deck}
+  - {type: open_file_link, match: '{{deck_preview}}'}
+  - {type: show, turn: deck, seconds: 8}
+say: Now let’s turn the same analysis into an editable PowerPoint. We’ll come back and open its PDF companion to inspect the slides here.
+paste:
+  deck-prompt: Make a five-slide leadership deck in Arial. Save it as {{deck_file}} and save a faithful PDF preview as {{deck_preview}}. Keep committed and conditional values separate. Do not send or upload anything.
+see: An editable PowerPoint export and five-slide PDF preview in OpenWork.
+checks:
+  - {type: turn_succeeded, turn: deck}
+  - {type: file_created, turn: deck, glob: '{{deck_file}}'}
+  - {type: file_created, turn: deck, glob: '{{deck_preview}}'}
+  - {type: pptx_slide_count, turn: deck, glob: '{{deck_file}}', count: 5}
+reset: [Remove fresh deck and preview only; keep the approved rehearsal outputs.]
+fallback: Open the approved retained deck PDF from the earlier sample snapshot. Identify it as a fallback, not today’s generated result.
+expect_seconds: 150
+questions:
+  - {question: Is the PPTX editable?, answer: Yes. The PDF is only the inline preview; this build does not render PPTX inline.}
+avoid: [Do not claim native inline PPTX preview or skip visual review of a fresh deck.]
