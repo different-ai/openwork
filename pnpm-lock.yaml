@@ -1309,6 +1309,9 @@ importers:
       mysql2:
         specifier: ^3.23.1
         version: 3.24.2(@types/node@20.12.12)
+      undici:
+        specifier: 7.30.1
+        version: 7.30.1
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
