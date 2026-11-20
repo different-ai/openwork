@@ -1051,10 +1051,17 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     installBrowserSessionHooks();
     ensureWebMcpFramePolicy();
     const tabId = restoreTabId ?? createBrowserTabId();
+    const { webContents: openerWebContents, ...restContentsOptions } = contentsOptions;
+    // Guard: Electron's C++ constructor requires webContents to be a real
+    // WebContents instance. When setWindowOpenHandler supplies a non-object
+    // or falsy value (e.g. undefined from certain window.open calls), drop it
+    // to avoid "TypeError: options.webContents must be a WebContents".
+    const isValidWebContents = openerWebContents != null && typeof openerWebContents === "object" && typeof openerWebContents.getURL === "function";
     const view = new WebContentsView({
-      ...contentsOptions,
+      ...restContentsOptions,
+      ...(isValidWebContents ? { webContents: openerWebContents } : {}),
       webPreferences: {
-        ...contentsOptions.webPreferences,
+        ...restContentsOptions.webPreferences,
         backgroundThrottling: false,
         // The agent and policy checks load pages too: a load must never take the
         // keyboard from what the person is typing. Their own navigations focus the page.
