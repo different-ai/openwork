@@ -3,8 +3,8 @@
 // response back as Chat Completions (JSON body, SSE stream, or error body).
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import type { AutoRouteInfo, JsonObject } from "./chat.js"
-import type { ReasoningPayload } from "./reasoning-store.js"
+import type { AutoRouteInfo, JsonObject } from "@openwork-ee/gateway-protocols/chat"
+import type { ReasoningPayload } from "@openwork-ee/gateway-protocols/reasoning"
 
 export type TranslateRequestInput = {
   /** The client's chat request. Never mutated. */

@@ -1,6 +1,6 @@
 // OpenAI-compatible prompt tokens include cache reads; output includes reasoning.
-import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
-import type { ParsedUsage, UsageParser } from "./shared.js"
+import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
+import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 
 export type OpenAiChatUsage = ParsedUsage
 export type OpenAiChatSseUsageParser = UsageParser

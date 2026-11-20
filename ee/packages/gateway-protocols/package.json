@@ -1,0 +1,182 @@
+{
+  "name": "@openwork-ee/gateway-protocols",
+  "private": true,
+  "type": "module",
+  "description": "AI Gateway wire formats: translating Chat Completions to and from Anthropic, Bedrock, Gemini and OpenAI Responses, the Claude Code / Cursor / Codex client shapes, prompt-cache and output-limit rewrites, and reading usage from provider responses. No database, server or environment code.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./chat": {
+      "types": {
+        "openwork-build": "./dist/types/src/chat.d.ts",
+        "default": "./src/chat.ts"
+      },
+      "development": "./src/chat.ts",
+      "default": "./src/chat.ts"
+    },
+    "./clients/claude-code-messages": {
+      "types": {
+        "openwork-build": "./dist/types/src/clients/claude-code-messages.d.ts",
+        "default": "./src/clients/claude-code-messages.ts"
+      },
+      "development": "./src/clients/claude-code-messages.ts",
+      "default": "./src/clients/claude-code-messages.ts"
+    },
+    "./clients/codex-instructions": {
+      "types": {
+        "openwork-build": "./dist/types/src/clients/codex-instructions.d.ts",
+        "default": "./src/clients/codex-instructions.ts"
+      },
+      "development": "./src/clients/codex-instructions.ts",
+      "default": "./src/clients/codex-instructions.ts"
+    },
+    "./clients/cursor-responses": {
+      "types": {
+        "openwork-build": "./dist/types/src/clients/cursor-responses.d.ts",
+        "default": "./src/clients/cursor-responses.ts"
+      },
+      "development": "./src/clients/cursor-responses.ts",
+      "default": "./src/clients/cursor-responses.ts"
+    },
+    "./output-limit": {
+      "types": {
+        "openwork-build": "./dist/types/src/output-limit.d.ts",
+        "default": "./src/output-limit.ts"
+      },
+      "development": "./src/output-limit.ts",
+      "default": "./src/output-limit.ts"
+    },
+    "./prompt-cache": {
+      "types": {
+        "openwork-build": "./dist/types/src/prompt-cache.d.ts",
+        "default": "./src/prompt-cache.ts"
+      },
+      "development": "./src/prompt-cache.ts",
+      "default": "./src/prompt-cache.ts"
+    },
+    "./protocol": {
+      "types": {
+        "openwork-build": "./dist/types/src/protocol.d.ts",
+        "default": "./src/protocol.ts"
+      },
+      "development": "./src/protocol.ts",
+      "default": "./src/protocol.ts"
+    },
+    "./providers/anthropic": {
+      "types": {
+        "openwork-build": "./dist/types/src/providers/anthropic.d.ts",
+        "default": "./src/providers/anthropic.ts"
+      },
+      "development": "./src/providers/anthropic.ts",
+      "default": "./src/providers/anthropic.ts"
+    },
+    "./providers/bedrock": {
+      "types": {
+        "openwork-build": "./dist/types/src/providers/bedrock.d.ts",
+        "default": "./src/providers/bedrock.ts"
+      },
+      "development": "./src/providers/bedrock.ts",
+      "default": "./src/providers/bedrock.ts"
+    },
+    "./providers/google": {
+      "types": {
+        "openwork-build": "./dist/types/src/providers/google.d.ts",
+        "default": "./src/providers/google.ts"
+      },
+      "development": "./src/providers/google.ts",
+      "default": "./src/providers/google.ts"
+    },
+    "./providers/openai-responses": {
+      "types": {
+        "openwork-build": "./dist/types/src/providers/openai-responses.d.ts",
+        "default": "./src/providers/openai-responses.ts"
+      },
+      "development": "./src/providers/openai-responses.ts",
+      "default": "./src/providers/openai-responses.ts"
+    },
+    "./reasoning": {
+      "types": {
+        "openwork-build": "./dist/types/src/reasoning.d.ts",
+        "default": "./src/reasoning.ts"
+      },
+      "development": "./src/reasoning.ts",
+      "default": "./src/reasoning.ts"
+    },
+    "./tool-schema": {
+      "types": {
+        "openwork-build": "./dist/types/src/tool-schema.d.ts",
+        "default": "./src/tool-schema.ts"
+      },
+      "development": "./src/tool-schema.ts",
+      "default": "./src/tool-schema.ts"
+    },
+    "./usage/anthropic-messages": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/anthropic-messages.d.ts",
+        "default": "./src/usage/anthropic-messages.ts"
+      },
+      "development": "./src/usage/anthropic-messages.ts",
+      "default": "./src/usage/anthropic-messages.ts"
+    },
+    "./usage/bedrock-converse": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/bedrock-converse.d.ts",
+        "default": "./src/usage/bedrock-converse.ts"
+      },
+      "development": "./src/usage/bedrock-converse.ts",
+      "default": "./src/usage/bedrock-converse.ts"
+    },
+    "./usage/google-generate-content": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/google-generate-content.d.ts",
+        "default": "./src/usage/google-generate-content.ts"
+      },
+      "development": "./src/usage/google-generate-content.ts",
+      "default": "./src/usage/google-generate-content.ts"
+    },
+    "./usage/openai-chat": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/openai-chat.d.ts",
+        "default": "./src/usage/openai-chat.ts"
+      },
+      "development": "./src/usage/openai-chat.ts",
+      "default": "./src/usage/openai-chat.ts"
+    },
+    "./usage/openai-responses": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/openai-responses.d.ts",
+        "default": "./src/usage/openai-responses.ts"
+      },
+      "development": "./src/usage/openai-responses.ts",
+      "default": "./src/usage/openai-responses.ts"
+    },
+    "./usage/shared": {
+      "types": {
+        "openwork-build": "./dist/types/src/usage/shared.d.ts",
+        "default": "./src/usage/shared.ts"
+      },
+      "development": "./src/usage/shared.ts",
+      "default": "./src/usage/shared.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --conditions=development --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@openwork/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}

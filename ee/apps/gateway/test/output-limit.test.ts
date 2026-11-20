@@ -14,7 +14,7 @@ process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes, gatewayPathPrefix } = await import("../src/gateway.js")
 const { createProviderCatalog } = await import("../src/provider-catalog.js")
-const { createLearnedOutputLimits, fitOutputCap, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap } = await import("../src/output-limit.js")
+const { createLearnedOutputLimits, fitOutputCap, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap } = await import("@openwork-ee/gateway-protocols")
 
 const OPENAI_REFUSAL = { error: { message: "max_tokens is too large: 32000. This model supports at most 16384 completion tokens, whereas you provided 32000.", type: "invalid_request_error", param: "max_tokens", code: "invalid_value" } }
 const ANTHROPIC_REFUSAL = { type: "error", error: { type: "invalid_request_error", message: "max_tokens: 32000 > 8192, which is the maximum allowed number of output tokens for claude-3-5-haiku-20241022" } }

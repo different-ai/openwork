@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
-import { toAnthropicBody } from "../src/auto-router/anthropic.js"
-import { bedrockTranslator } from "../src/auto-router/bedrock.js"
-import { isJsonObject, type JsonObject } from "../src/auto-router/chat.js"
-import { googleTranslator } from "../src/auto-router/google.js"
-import type { TranslateRequestInput } from "../src/auto-router/protocol.js"
-import { objectToolSchema, toDraft2020 } from "../src/auto-router/tool-schema.js"
+import { toAnthropicBody } from "../src/providers/anthropic.js"
+import { bedrockTranslator } from "../src/providers/bedrock.js"
+import { isJsonObject, type JsonObject } from "../src/chat.js"
+import { googleTranslator } from "../src/providers/google.js"
+import type { TranslateRequestInput } from "../src/protocol.js"
+import { objectToolSchema, toDraft2020 } from "../src/tool-schema.js"
 
 const COMBINATORS = ["anyOf", "oneOf", "allOf"]
 

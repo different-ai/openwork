@@ -41,8 +41,7 @@ import type { AuthHeader, ProtocolFamily } from "./protocols.js"
 import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, loadMemberGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
-import { applyClaudePromptCache } from "./prompt-cache.js"
-import { createLearnedOutputLimits, fitOutputCap, knownOutputLimit, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap } from "./output-limit.js"
+import { applyClaudePromptCache, createLearnedOutputLimits, fitOutputCap, knownOutputLimit, modelOutputLimit, rejectedOutputCap, relaxOutputCap, requestedOutputCap, createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage, createBedrockConverseEventStreamUsageParser, isAwsEventStreamContentType, parseBedrockConverseJsonUsage, createGoogleGenerateContentSseUsageParser, parseGoogleGenerateContentJsonUsage, createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage, createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage, createJsonBodyUsageParser, emptyUsage } from "@openwork-ee/gateway-protocols"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
 import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provider-credentials.js"
@@ -56,26 +55,13 @@ import type { EarlyStreamProtocol } from "./early-response.js"
 import { createRequestLogRecorder, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
-import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "./usage/anthropic-messages.js"
-import {
-  createBedrockConverseEventStreamUsageParser,
-  isAwsEventStreamContentType,
-  parseBedrockConverseJsonUsage,
-} from "./usage/bedrock-converse.js"
-import {
-  createGoogleGenerateContentSseUsageParser,
-  parseGoogleGenerateContentJsonUsage,
-} from "./usage/google-generate-content.js"
-import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
-import { createOpenAiResponsesSseUsageParser, parseOpenAiResponsesJsonUsage } from "./usage/openai-responses.js"
-import { createJsonBodyUsageParser, emptyUsage } from "./usage/shared.js"
-import type { ParsedUsage, UsageParser } from "./usage/shared.js"
+import type { ParsedUsage, UsageParser, ReasoningStore } from "@openwork-ee/gateway-protocols"
 import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
 import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
 import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
 import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
 import { createJevClient, type AskJev } from "./auto-router/jev.js"
-import { createDbReasoningStore, type ReasoningStore } from "./auto-router/reasoning-store.js"
+import { createDbReasoningStore } from "./auto-router/reasoning-store.js"
 import { cursorApiPaths, cursorModels, cursorModelsPath, cursorPathPrefix, handleCursorChat, listCursorModels, type CursorApi } from "./cursor.js"
 import { codexModelsPath, codexPathPrefix, codexResponsesPath, handleCodexResponses, listCodexModels } from "./codex.js"
 import { claudeCodeCountTokens, claudeCodeCountTokensPath, claudeCodeError, claudeCodeMessagesPath, claudeCodeModelsPath, claudeCodePathPrefix, handleClaudeCodeMessages, listClaudeCodeModels } from "./claude-code.js"

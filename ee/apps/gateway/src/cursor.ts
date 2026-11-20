@@ -15,15 +15,13 @@ import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwo
 import {
   accessPriority, forwardedHeaders, maxOutputTokens, translateResponse, translatorFor, type AutoTarget,
 } from "./auto-router/handler.js"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
-import { chatToolCallIds, type AutoTranslator } from "./auto-router/protocol.js"
-import type { ReasoningStore } from "./auto-router/reasoning-store.js"
+import { isJsonObject, type JsonObject, chatToolCallIds, type AutoTranslator, chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "@openwork-ee/gateway-protocols"
+import type { ReasoningStore } from "@openwork-ee/gateway-protocols"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import { classifyProtocolFamily, type ProtocolFamily } from "./protocols.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
 import type { ProviderCatalog } from "./provider-catalog.js"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
-import { chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "./cursor-responses.js"
 import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 
 export const cursorPathPrefix = "/api/v1/cursor"

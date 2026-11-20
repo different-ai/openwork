@@ -4,7 +4,7 @@
 // Messages request is read as a chat request, and the Chat Completions answer is written back as a
 // Messages object (JSON) or Messages event stream (SSE).
 import { randomUUID } from "node:crypto"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 /** The fewest output tokens every translated provider accepts. */
 const MIN_OUTPUT_TOKENS = 16

@@ -4,7 +4,7 @@
 // model's own protocol as usual, and the Chat Completions answer is written back as a Responses
 // object (JSON) or Responses event stream (SSE).
 import { randomUUID } from "node:crypto"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 /** The text of a Responses content array (`input_text`, `output_text`, `text` parts) or a plain string. */
 function partsText(content: unknown): string {

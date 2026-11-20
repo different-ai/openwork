@@ -42,9 +42,9 @@ import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILAB
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
-import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "@openwork-ee/gateway-protocols"
 import type { FreeMemberHandler } from "./free/member/handler.js"
-import type { ParsedUsage } from "./usage/shared.js"
+import type { ParsedUsage } from "@openwork-ee/gateway-protocols"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {

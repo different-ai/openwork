@@ -15,7 +15,7 @@ process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes } = await import("../src/gateway.js")
 const { createProviderCatalog } = await import("../src/provider-catalog.js")
-const { createMemoryReasoningStore } = await import("../src/auto-router/reasoning-store.js")
+const { createMemoryReasoningStore } = await import("@openwork-ee/gateway-protocols")
 const { normalizeCursorChatBody } = await import("../src/cursor.js")
 
 const organizationId = createDenTypeId("organization")
@@ -293,7 +293,7 @@ test("a streamed Responses request gets Responses events, text and tool call inc
 })
 
 test("a Responses conversation with tool calls becomes the same chat conversation", async () => {
-  const { responsesToChat } = await import("../src/cursor-responses.js")
+  const { responsesToChat } = await import("@openwork-ee/gateway-protocols")
   const chat = responsesToChat({
     model: "openwork/x-abcd",
     instructions: "System prompt",

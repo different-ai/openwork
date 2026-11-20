@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { bedrockTranslator, converseErrorToChat, converseJsonToChat, toConverseBody } from "../src/auto-router/bedrock.js"
-import type { AutoRouteInfo, JsonObject } from "../src/auto-router/chat.js"
-import type { ReasoningPayload } from "../src/auto-router/reasoning-store.js"
-import type { TranslateRequestInput } from "../src/auto-router/protocol.js"
+import { bedrockTranslator, converseErrorToChat, converseJsonToChat, toConverseBody } from "../src/providers/bedrock.js"
+import type { AutoRouteInfo, JsonObject } from "../src/chat.js"
+import type { ReasoningPayload } from "../src/reasoning.js"
+import type { TranslateRequestInput } from "../src/protocol.js"
 
 const route: AutoRouteInfo = { provider: "bedrock", model: "anthropic.claude-opus-5", thinking: "high", reason: "jev" }
 
