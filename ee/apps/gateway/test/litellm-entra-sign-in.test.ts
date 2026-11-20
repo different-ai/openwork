@@ -260,7 +260,7 @@ test("a renewal answered for another API is not stored", async () => {
 test("a LiteLLM member token is kept only when it works for the provider's own app registration", async () => {
   assert.ok(isMicrosoftAccessTokenForApp(accessTokenFor(clientId, "v2"), clientId))
   assert.ok(isMicrosoftAccessTokenForApp(accessTokenFor(`api://${clientId.toUpperCase()}`, "v1"), clientId))
-  for (const aud of ["https://management.azure.com", "https://vault.azure.net", "https://outlook.office.com", "00000003-0000-0000-c000-000000000000", [clientId, "https://management.azure.com"], []]) {
+  for (const aud of ["https://management.azure.com", "https://vault.azure.net", "https://outlook.office.com", "00000003-0000-0000-c000-000000000000", "https://litellm.contoso.com", `api://${clientId}/access`, [clientId, "https://management.azure.com"], []]) {
     assert.equal(isMicrosoftAccessTokenForApp(accessTokenFor(aud, "other"), clientId), false, JSON.stringify(aud))
   }
   assert.equal(isMicrosoftAccessTokenForApp("opaque-access-token", clientId), false)

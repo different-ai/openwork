@@ -81,7 +81,12 @@ comes back to a confirmation.
   sign-in and at every renewal, the token's audience (`aud`) must be the app
   registration's client ID (v2 tokens) or `api://<client-id>` (v1 tokens).
   A token for Azure management, Key Vault, Outlook or any other API is not
-  stored, and a renewal that returns one signs the person out.
+  stored, and a renewal that returns one signs the person out. An app
+  registration with a custom Application ID URI (for example
+  `https://litellm.contoso.com`) gets v1 tokens with that URI as audience,
+  so Connect is refused: use a scope under `api://<client-id>/`, or set
+  `requestedAccessTokenVersion` to `2` in the app manifest, and match
+  LiteLLM's JWT audience to it.
 - **Desktop.** No change: it already shows **Connect** for
   `member_auth_required` providers and opens the connect page that
   `oauth/start` returns.

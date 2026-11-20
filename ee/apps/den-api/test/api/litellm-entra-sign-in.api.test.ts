@@ -299,6 +299,7 @@ test("a sign-in whose token works for another Microsoft API is not stored", asyn
   const { callback } = await signIn(other, entraProviderId)
   accessAudience = CLIENT
   assert.equal(callback.status, 400, summary(callback))
+  assert.match(callback.text, /issue v2 access tokens/)
   assert.equal((await usable(other, entraProviderId))?.credentialStatus, "member_auth_required")
 })
 

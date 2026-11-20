@@ -72,7 +72,7 @@ export async function exchangeMicrosoftAuthorizationCode(input: {
   const tokens = readMicrosoftTokens(body, apiScope)
   if (!tokens || !tokens.idToken) throw new OAuthTokenExchangeError("Microsoft returned an invalid token response. Sign in again.", "oauth_token_response_invalid")
   if (apiScope !== null && !isMicrosoftAccessTokenForApp(tokens.accessToken, input.clientId)) {
-    throw new OAuthTokenExchangeError("This provider's API scope must belong to its own app registration. An administrator must set an API scope that the app registration exposes, then Connect again.", "oauth_token_response_invalid")
+    throw new OAuthTokenExchangeError(`Microsoft issued a token for a different API than this provider's app registration. An administrator must set the API scope to one under api://${input.clientId}/ (or set the app registration to issue v2 access tokens), then Connect again.`, "oauth_token_response_invalid")
   }
   if (!tokens.refreshToken) throw new OAuthTokenExchangeError("Microsoft did not grant offline access. Ask your administrator to allow the offline_access permission, then Connect again.", "oauth_refresh_token_required")
   return { ...tokens, refreshToken: tokens.refreshToken, idToken: tokens.idToken }
