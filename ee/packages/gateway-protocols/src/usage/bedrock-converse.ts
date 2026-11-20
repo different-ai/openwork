@@ -4,8 +4,8 @@
 // `metadata` event. Frame layout (big-endian):
 //   total length (4) | headers length (4) | prelude CRC (4) | headers | payload | message CRC (4)
 // Headers: name length (1) | name | value type (1) | value. CRCs are not verified.
-import { captureResponseIdentity, defaultMaxBufferLength, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
-import type { ParsedUsage, UsageParser } from "./shared.js"
+import { captureResponseIdentity, defaultMaxBufferLength, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
+import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 
 const preludeLength = 12
 const messageCrcLength = 4

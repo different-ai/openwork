@@ -5,7 +5,7 @@
 // Chat Completions; each endpoint writes the answer back in its own protocol.
 import { autoRouterIdFromModel, autoRouterModelName } from "@openwork/types/den/auto-router"
 import { isSmartRouterToolName, matchSmartRouter, parseClaudeCodeModelName, smartRouterToolName } from "@openwork/types/den/gateway-cursor"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols"
 import type { AutoRouterConfig, LoadMemberAutoRouters } from "./auto-router/config.js"
 import { autoCandidates, autoRouterError, type RoutedCandidate } from "./auto-router/handler.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"

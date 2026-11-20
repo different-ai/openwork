@@ -14,8 +14,8 @@ process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes } = await import("../src/gateway.js")
 const { createProviderCatalog } = await import("../src/provider-catalog.js")
-const { createMemoryReasoningStore } = await import("../src/auto-router/reasoning-store.js")
-const { messagesToChat } = await import("../src/claude-code-messages.js")
+const { createMemoryReasoningStore } = await import("@openwork-ee/gateway-protocols")
+const { messagesToChat } = await import("@openwork-ee/gateway-protocols")
 
 const organizationId = createDenTypeId("organization")
 const orgMembershipId = createDenTypeId("member")

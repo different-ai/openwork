@@ -3,7 +3,7 @@
 // it for an OpenAI-protocol upstream.
 import { createHash } from "node:crypto"
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
-import type { AutoTranslator } from "./protocol.js"
+import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
 
 export type JsonObject = Record<string, unknown>
 

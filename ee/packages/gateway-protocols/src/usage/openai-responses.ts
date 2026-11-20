@@ -1,7 +1,7 @@
 // Usage parser for the OpenAI Responses API. Stream: the terminal
 // `response.completed` / `response.incomplete` event carries `response.usage`.
-import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
-import type { ParsedUsage, UsageParser } from "./shared.js"
+import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
+import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 
 const terminalEventTypes = new Set(["response.completed", "response.incomplete"])
 

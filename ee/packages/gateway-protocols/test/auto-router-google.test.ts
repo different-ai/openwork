@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AutoRouteInfo, JsonObject } from "../src/auto-router/chat.js"
-import { geminiThinkingConfig, googleTranslator, sanitizeGeminiSchema, SKIP_THOUGHT_SIGNATURE } from "../src/auto-router/google.js"
-import type { TranslateRequestInput } from "../src/auto-router/protocol.js"
-import type { ReasoningPayload } from "../src/auto-router/reasoning-store.js"
+import type { AutoRouteInfo, JsonObject } from "../src/chat.js"
+import { geminiThinkingConfig, googleTranslator, sanitizeGeminiSchema, SKIP_THOUGHT_SIGNATURE } from "../src/providers/google.js"
+import type { TranslateRequestInput } from "../src/protocol.js"
+import type { ReasoningPayload } from "../src/reasoning.js"
 
 const route: AutoRouteInfo = { provider: "google", model: "gemini-3-pro-preview", thinking: "high", reason: "jev" }
 

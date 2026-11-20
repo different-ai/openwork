@@ -11,11 +11,10 @@
 // response produced before its tool calls are handed to `remember` and
 // replayed ahead of those calls on the next request of the turn.
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
-import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "./chat.js"
-import type { AutoTranslator } from "./protocol.js"
-import type { ReasoningPayload } from "./reasoning-store.js"
+import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
+import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
+import type { ReasoningPayload, RememberReasoning } from "@openwork-ee/gateway-protocols/reasoning"
 
-type RememberReasoning = (toolCallIds: string[], payload: ReasoningPayload) => void
 
 /** Responses reasoning efforts; Auto's `max` is OpenAI's `xhigh`. */
 export function responsesEffort(level: AutoRouterThinkingLevel): string | null {

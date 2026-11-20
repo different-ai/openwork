@@ -9,7 +9,7 @@
 // A request that already marks any breakpoint is left exactly as the client
 // sent it.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 const MAX_BREAKPOINTS = 4
 /** Conversation messages marked at the tail: the newest turn and the one before it, so a retried or forked turn still reads the cache. */

@@ -11,8 +11,7 @@ import type { GatewayCredential, GatewayProvider } from "../src/provider-credent
 import type { GatewayRequestLogRow } from "../src/request-log.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
 import type { OrganizationVariables } from "../src/middleware/org-context.js"
-import { applyClaudePromptCache, bedrockCachesModel, isAnthropicModelId } from "../src/prompt-cache.js"
-import { parseOpenAiChatJsonUsage } from "../src/usage/openai-chat.js"
+import { applyClaudePromptCache, bedrockCachesModel, isAnthropicModelId, parseOpenAiChatJsonUsage } from "@openwork-ee/gateway-protocols"
 
 // env.ts validates at import; nothing here touches a database.
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"

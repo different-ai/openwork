@@ -13,12 +13,12 @@
 // preceded and come back in `reasoning`; when they are missing, thinking is
 // turned off for that request instead of failing it.
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
-import { readEventStreamFrames, type EventStreamFrame } from "../usage/bedrock-converse.js"
-import { claudeTakesEffort, type RememberReasoning } from "./anthropic.js"
-import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "./chat.js"
-import type { ReasoningPayload } from "./reasoning-store.js"
-import type { AutoTranslator } from "./protocol.js"
-import { objectToolSchema } from "./tool-schema.js"
+import { readEventStreamFrames, type EventStreamFrame } from "@openwork-ee/gateway-protocols/usage/bedrock-converse"
+import { claudeTakesEffort } from "@openwork-ee/gateway-protocols/providers/anthropic"
+import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
+import type { ReasoningPayload, RememberReasoning } from "@openwork-ee/gateway-protocols/reasoning"
+import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
+import { objectToolSchema } from "@openwork-ee/gateway-protocols/tool-schema"
 
 function parseDataUrl(url: string) {
   const match = /^data:([^;,]+);base64,(.*)$/s.exec(url)

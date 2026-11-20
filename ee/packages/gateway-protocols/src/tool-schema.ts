@@ -12,7 +12,7 @@
 // them) and the argument sets named in its description, `allOf` is merged,
 // local `$ref`s at the root are inlined, and draft-04/07 keywords nested
 // anywhere are rewritten to their draft 2020-12 form.
-import { isJsonObject, type JsonObject } from "./chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 const MAX_DEPTH = 32
 const TYPES = new Set(["object", "array", "string", "number", "integer", "boolean", "null"])

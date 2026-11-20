@@ -1022,6 +1022,9 @@ importers:
       '@openwork-ee/gateway-catalog':
         specifier: workspace:*
         version: link:../../packages/gateway-catalog
+      '@openwork-ee/gateway-protocols':
+        specifier: workspace:*
+        version: link:../../packages/gateway-protocols
       '@openwork-ee/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -1316,6 +1319,22 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../utils
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsx:
+        specifier: ^4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/packages/gateway-protocols:
+    dependencies:
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
     devDependencies:
       '@types/node':
         specifier: ^20.11.30
