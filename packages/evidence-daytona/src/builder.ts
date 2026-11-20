@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { EVIDENCE_KIND } from "./kinds.ts";
-import { readAsset } from "@openwork/evidence-freestyle/assets";
-import { checkoutRecipe } from "@openwork/evidence-freestyle/build-recipes";
-import { dependencyFingerprint, digest, sourceTree, type ObserveBuild, type SourceEntry } from "@openwork/evidence-freestyle/cache";
+import { readAsset } from "@openwork/world-freestyle/assets";
+import { checkoutRecipe } from "@openwork/world-freestyle/build-recipes";
+import { dependencyFingerprint, digest, sourceTree, type ObserveBuild, type SourceEntry } from "@openwork/world-freestyle/cache";
 import {
   devHead, evidenceRuntimeFingerprint, fastPathDecision, runtimeChanges,
   EVIDENCE_CONTROLLER_FILES, EVIDENCE_DEPENDENCIES_RECIPE, EVIDENCE_TOOLS_RECIPE,
-} from "@openwork/evidence-freestyle/evidence-builder";
+} from "@openwork/world-freestyle/evidence-builder";
 import { DaytonaApi, DaytonaApiError, type Sandbox } from "./api.ts";
 import { LOCALHOST_RECIPE } from "./localhost.ts";
 import { boundedDiagnostic, inspectGuest, requireLocalEvidenceReady } from "./health.ts";

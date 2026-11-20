@@ -22,7 +22,7 @@
   "dependencies": {
     "@openwork/cdp": "workspace:*",
     "@openwork/design-review": "workspace:*",
-    "@openwork/evidence-freestyle": "link:../../../packages/evidence-freestyle",
+    "@openwork/world-freestyle": "link:../../../packages/world-freestyle",
     "@openwork/env": "workspace:*",
     "@openwork/timeline": "workspace:*",
     "@openwork/evidence-provider": "link:../../../packages/evidence-provider"

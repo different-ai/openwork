@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { launchPreview, deletePreview } from "@openwork/evidence-freestyle";
+import { launchPreview, deletePreview } from "@openwork/world-freestyle";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 

@@ -434,9 +434,9 @@ importers:
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../../packages/evidence-provider
-      '@openwork/evidence-freestyle':
+      '@openwork/world-freestyle':
         specifier: workspace:*
-        version: link:../../packages/evidence-freestyle
+        version: link:../../packages/world-freestyle
       '@openwork/review':
         specifier: workspace:*
         version: link:../../packages/review
@@ -1715,9 +1715,9 @@ importers:
       '@openwork/evidence-provider':
         specifier: workspace:*
         version: link:../evidence-provider
-      '@openwork/evidence-freestyle':
+      '@openwork/world-freestyle':
         specifier: workspace:*
-        version: link:../evidence-freestyle
+        version: link:../world-freestyle
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1882,7 +1882,7 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/evidence-freestyle:
+  packages/world-freestyle:
     dependencies:
       '@openwork/evidence-provider':
         specifier: workspace:*

@@ -1,6 +1,6 @@
 import { appendFile } from "node:fs/promises";
-import { client } from "../packages/evidence-freestyle/src/index.ts";
-import { deleteSnapshots, isOurs, listAllSnapshots, planCleanup, snapshotsInUse } from "../packages/evidence-freestyle/src/cleanup.ts";
+import { client } from "../packages/world-freestyle/src/index.ts";
+import { deleteSnapshots, isOurs, listAllSnapshots, planCleanup, snapshotsInUse } from "../packages/world-freestyle/src/cleanup.ts";
 
 // Usage: FREESTYLE_API_KEY=... node scripts/cleanup-freestyle.ts [--dry-run]
 const dryRun = process.argv.includes("--dry-run");

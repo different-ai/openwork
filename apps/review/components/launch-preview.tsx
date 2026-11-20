@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CopyButton } from "./copy-button";
 import { BuildReadiness, advance, startTracking, type BuildStepView, type BuildTracker } from "./build-readiness";
-import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/evidence-freestyle/outputs";
+import { parsePreviewOutputs, type PreviewOutputs } from "@openwork/world-freestyle/outputs";
 import { previewAccessUrl, type PreviewProviderOption } from "../lib/preview-options";
 
 interface Session { url: string; expiresAt: string; outputs: PreviewOutputs; desktop: boolean; world: string; providerLabel: string }

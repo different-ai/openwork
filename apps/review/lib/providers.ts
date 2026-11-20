@@ -1,7 +1,7 @@
 import { evidenceProviderFromEnv, type EvidenceProviderId } from "@openwork/evidence-provider";
 import type { ReviewPreviewProvider } from "@openwork/evidence-provider/review";
 import { daytonaReviewProvider } from "@openwork/evidence-daytona/review-provider";
-import { freestyleReviewProvider } from "@openwork/evidence-freestyle/review-provider";
+import { freestyleReviewProvider } from "@openwork/world-freestyle/review-provider";
 
 const providers: Record<EvidenceProviderId, ReviewPreviewProvider> = {
   freestyle: freestyleReviewProvider,

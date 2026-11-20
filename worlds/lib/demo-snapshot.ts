@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { DaytonaApi, DaytonaApiError, daytonaConfig } from "../../packages/daytona-evidence/src/api.ts";
+import { DaytonaApi, DaytonaApiError, daytonaConfig } from "../../packages/evidence-daytona/src/api.ts";
 import { demoSnapshotName, MAX_DEMO_DISK, parseDemoSource } from "./demo-options.ts";
 
 export const DEMO_CPU = 4;

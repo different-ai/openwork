@@ -176,7 +176,7 @@ test("review follows all evidence dependencies and its external shared-color imp
     "packages/review/src/schema.ts",
     "packages/evidence-provider/src/provider.ts",
     "packages/evidence-daytona/src/review-provider.ts",
-    "packages/evidence-freestyle/src/builder.ts",
+    "packages/world-freestyle/src/builder.ts",
     "apps/app/src/styles/colors.css",
     ".vercelignore",
     ".github/workflows/review-app-deploy.yml",

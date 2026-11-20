@@ -2,7 +2,7 @@
 
 The web evidence world (`core-chat`, tests tagged `checkpoints`) on Daytona
 Linux VMs, selected with `OPENWORK_EVIDENCE_PROVIDER=daytona`. It runs the same
-steps inside the VM as `@openwork/evidence-freestyle`'s evidence builder.
+steps inside the VM as `@openwork/world-freestyle`'s evidence builder.
 
 Layers, each cached as a Daytona snapshot:
 

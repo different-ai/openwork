@@ -238,7 +238,7 @@ web preview, and remains bound to the world that was launched. Switching choices
 clears the previous world's displayed links, not its VM. All choices keep the
 same two-hour expiry and access checks.
 
-Validate with `pnpm --filter @openwork/evidence-freestyle test`, the world package tests,
+Validate with `pnpm --filter @openwork/world-freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,
 C1, C2, and C6: the launch stays in place, failures are actionable, and snapshot
 details are collapsed. Review has no shared button component, so it uses a native

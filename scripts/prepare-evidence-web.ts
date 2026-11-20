@@ -25,14 +25,14 @@ const options = {
 };
 try {
   if (provider === "freestyle") {
-    const { ensureEvidenceSnapshot } = await import("../packages/evidence-freestyle/src/evidence-builder.ts");
+    const { ensureEvidenceSnapshot } = await import("../packages/world-freestyle/src/evidence-builder.ts");
     await ensureEvidenceSnapshot(sha, undefined, options);
   } else {
     const { ensureEvidenceTemplate, ensureImage } = await import("../packages/evidence-daytona/src/builder.ts");
     if (process.env.OPENWORK_DAYTONA_EPHEMERAL_WORLD === "1") {
       // Prepare the expensive shared dependencies here. The journey builds its
       // own running VM and consumes it in-process, without saving a PR template.
-      const { devHead } = await import("../packages/evidence-freestyle/src/evidence-builder.ts");
+      const { devHead } = await import("../packages/world-freestyle/src/evidence-builder.ts");
       const { DaytonaApi } = await import("../packages/evidence-daytona/src/api.ts");
       await ensureImage(new DaytonaApi(), imageSha ?? await devHead(), options);
     } else {

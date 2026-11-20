@@ -24,7 +24,7 @@
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/hosts": "workspace:*",
-    "@openwork/evidence-freestyle": "link:../../../packages/evidence-freestyle",
+    "@openwork/world-freestyle": "link:../../../packages/world-freestyle",
     "@openwork/labs": "workspace:*",
     "@openwork/world": "link:../../../packages/world",
     "mysql2": "^3.11.3",

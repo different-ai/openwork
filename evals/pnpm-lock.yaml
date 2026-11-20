@@ -156,9 +156,9 @@ importers:
       '@openwork/evidence-provider':
         specifier: link:../../../packages/evidence-provider
         version: link:../../../packages/evidence-provider
-      '@openwork/evidence-freestyle':
-        specifier: link:../../../packages/evidence-freestyle
-        version: link:../../../packages/evidence-freestyle
+      '@openwork/world-freestyle':
+        specifier: link:../../../packages/world-freestyle
+        version: link:../../../packages/world-freestyle
       '@openwork/hosts':
         specifier: workspace:*
         version: link:../hosts
@@ -216,9 +216,9 @@ importers:
       '@openwork/evidence-provider':
         specifier: link:../../../packages/evidence-provider
         version: link:../../../packages/evidence-provider
-      '@openwork/evidence-freestyle':
-        specifier: link:../../../packages/evidence-freestyle
-        version: link:../../../packages/evidence-freestyle
+      '@openwork/world-freestyle':
+        specifier: link:../../../packages/world-freestyle
+        version: link:../../../packages/world-freestyle
       '@openwork/timeline':
         specifier: workspace:*
         version: link:../timeline
