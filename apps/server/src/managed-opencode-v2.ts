@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
+import { engineSpawnTimeoutMs } from "./engine-spawn-timeout.js";
 import { resolveOpencodeHistoryDatabase } from "./opencode-history.js";
 import { providerCredentialBrokerSource } from "./opencode-v2-provider-channel.js";
 
@@ -463,7 +464,7 @@ async function createManagedOpencodeV2ServerInner(
 ): Promise<ManagedOpencodeV2Server> {
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? 0;
-  const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
+  const bootTimeoutMs = options.bootTimeoutMs ?? engineSpawnTimeoutMs(60_000);
   const instanceRoot = options.instanceId ? join(options.rootDir, "instances", options.instanceId) : options.rootDir;
   const configDir = join(instanceRoot, "config");
   const providerSyncPluginDirectory = join(instanceRoot, "provider-sync-plugin");
