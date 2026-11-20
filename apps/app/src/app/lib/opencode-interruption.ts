@@ -1,5 +1,6 @@
 import type { Client } from "../types";
 import type { Message, Part } from "@opencode-ai/sdk/v2/client";
+import { toast } from "@/components/ui/sonner";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, PromptAdmissionUnknownError, unwrap } from "./opencode";
 import { isOpencodeV2BaseUrl } from "./opencode-v2-adapter";
 import { engineDirectory } from "./session-ownership";
@@ -93,11 +94,68 @@ export function submitImmediateSessionTurn<T>(
   return submitAfterInterruption(baseUrl, sessionID, send, options.messageID);
 }
 
+const LOCAL_COMMAND_DIRECTIVE = "@openwork-local-command ";
+
+export function localCommandHook(template: string | undefined): URL | null {
+  const firstLine = template?.split(/\r?\n/, 1)[0]?.trim();
+  if (!firstLine?.startsWith(LOCAL_COMMAND_DIRECTIVE)) return null;
+  try {
+    const url = new URL(firstLine.slice(LOCAL_COMMAND_DIRECTIVE.length).trim());
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function listedCommandTemplate(data: unknown, name: string): string | undefined {
+  if (!Array.isArray(data)) return undefined;
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object" || !("name" in entry) || entry.name !== name) continue;
+    if ("template" in entry && typeof entry.template === "string") return entry.template;
+  }
+  return undefined;
+}
+
+async function findLocalSessionCommand(client: Client, command: string): Promise<URL | null> {
+  try {
+    const listed = await client.command.list();
+    return localCommandHook(listedCommandTemplate(listed.data, command));
+  } catch {
+    return null;
+  }
+}
+
+async function runLocalSessionCommand(hook: URL, parameters: Parameters<Client["session"]["command"]>[0]) {
+  const response = await fetch(hook, {
+    method: "POST",
+    headers: { "content-type": "text/plain;charset=UTF-8" },
+    body: JSON.stringify({
+      sessionID: parameters.sessionID,
+      command: parameters.command,
+      arguments: parameters.arguments,
+    }),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+      ? payload.message
+      : `Local command failed with HTTP ${response.status}.`;
+    throw new Error(message);
+  }
+  if (payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string") {
+    toast.success(payload.message);
+  }
+  return { data: payload, error: undefined, request: new Request(hook), response };
+}
+
 /** Commands can be acknowledged by the proxy before asynchronous dispatch.
  * Keep their exact admission in the shared Stop coordinator, even after HTTP settles. */
-export function sendSessionCommand(baseUrl: string, client: Client, parameters: Parameters<Client["session"]["command"]>[0]) {
+export async function sendSessionCommand(baseUrl: string, client: Client, parameters: Parameters<Client["session"]["command"]>[0]) {
   const messageID = parameters.messageID ?? createPromptMessageID();
+  const hook = parameters.command ? await findLocalSessionCommand(client, parameters.command) : null;
   return submitAfterInterruption(baseUrl, parameters.sessionID, async () => {
+    if (hook) return runLocalSessionCommand(hook, parameters);
     const result = await client.session.command({ ...parameters, messageID }).catch((cause: unknown) => {
       throw new PromptAdmissionUnknownError({ cause, messageID });
     });
@@ -107,7 +165,7 @@ export function sendSessionCommand(baseUrl: string, client: Client, parameters: 
       throw new PromptAdmissionUnknownError({ cause: result.error, messageID });
     }
     return result;
-  }, messageID, true);
+  }, messageID, !hook);
 }
 
 export function sessionWorkHeld(baseUrl: string, sessionID: string) {
