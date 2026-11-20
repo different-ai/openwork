@@ -249,7 +249,7 @@ export function createAuth(input: {
           }
           // Den answered (signed out, not a member, something unreadable), or its last answer is too old or for
           // another token: nothing remembered may speak for the person.
-          denSessions.delete(sessionId)
+          if (last?.tokenHash === tokenHash) denSessions.delete(sessionId)
           throw error
         })
         .finally(() => denSessionChecks.delete(key))
