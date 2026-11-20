@@ -6,7 +6,7 @@ import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH,
 import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"

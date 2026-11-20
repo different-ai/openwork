@@ -18,7 +18,7 @@ import { forwardedHeaders } from "./auto-router/handler.js"
 import { isJsonObject, type JsonObject, CODEX_BASE_INSTRUCTIONS, responsesToChat, responsesToolNames } from "@openwork-ee/gateway-protocols"
 import { asResponses, cursorError, cursorModels, requestedEffort, sendTranslatedChat, type CursorDependencies, type CursorModel } from "./cursor.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import type { ProtocolFamily } from "./protocols.js"
+import type { ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import { resolveSmartRouter, smartAcceptsImages, smartContextWindow, type SmartToolRouter } from "./smart-tools.js"
 
 export const codexPathPrefix = "/api/v1/codex"

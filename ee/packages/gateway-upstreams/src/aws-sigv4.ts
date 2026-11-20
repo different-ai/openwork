@@ -124,3 +124,7 @@ export function signAwsRequest(input: SignAwsRequestInput) {
   )
   return { canonicalRequest, stringToSign, signature }
 }
+
+/** SigV4 service names the Gateway signs Bedrock requests for. */
+export const bedrockService = "bedrock"
+export const bedrockMantleService = "bedrock-mantle"

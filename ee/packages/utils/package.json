@@ -38,14 +38,6 @@
       "development": "./src/den-urls.ts",
       "default": "./dist/den-urls.js"
     },
-    "./provider-test-signature": {
-      "types": {
-        "openwork-build": "./dist/types/src/provider-test-signature.d.ts",
-        "default": "./src/provider-test-signature.ts"
-      },
-      "development": "./src/provider-test-signature.ts",
-      "default": "./dist/provider-test-signature.js"
-    },
     "./client-ip-signature": {
       "types": {
         "openwork-build": "./dist/types/src/client-ip-signature.d.ts",
@@ -53,14 +45,6 @@
       },
       "development": "./src/client-ip-signature.ts",
       "default": "./dist/client-ip-signature.js"
-    },
-    "./inference-egress": {
-      "types": {
-        "openwork-build": "./dist/types/src/inference-egress.d.ts",
-        "default": "./src/inference-egress.ts"
-      },
-      "development": "./src/inference-egress.ts",
-      "default": "./dist/inference-egress.js"
     },
     "./free-inference-digest": {
       "types": {
@@ -109,30 +93,6 @@
       },
       "development": "./src/ai-sdk-env-settings.ts",
       "default": "./dist/ai-sdk-env-settings.js"
-    },
-    "./aws-sigv4": {
-      "types": {
-        "openwork-build": "./dist/types/src/aws-sigv4.d.ts",
-        "default": "./src/aws-sigv4.ts"
-      },
-      "development": "./src/aws-sigv4.ts",
-      "default": "./dist/aws-sigv4.js"
-    },
-    "./aws-identity-center": {
-      "types": {
-        "openwork-build": "./dist/types/src/aws-identity-center.d.ts",
-        "default": "./src/aws-identity-center.ts"
-      },
-      "development": "./src/aws-identity-center.ts",
-      "default": "./dist/aws-identity-center.js"
-    },
-    "./microsoft-entra": {
-      "types": {
-        "openwork-build": "./dist/types/src/microsoft-entra.d.ts",
-        "default": "./src/microsoft-entra.ts"
-      },
-      "development": "./src/microsoft-entra.ts",
-      "default": "./dist/microsoft-entra.js"
     }
   },
   "scripts": {

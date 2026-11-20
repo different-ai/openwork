@@ -13,8 +13,8 @@
  *   portal.sso.<region>.amazonaws.com    GetRoleCredentials, Logout
  *   sts.<region>.amazonaws.com           GetCallerIdentity (who signed in)
  */
-import { signAwsRequest, type AwsCredentials } from "./aws-sigv4.js"
-import { isAwsRegion } from "./inference-egress.js"
+import { signAwsRequest, type AwsCredentials } from "@openwork-ee/gateway-upstreams/aws-sigv4"
+import { isAwsRegion } from "@openwork-ee/gateway-upstreams/egress"
 
 export const AWS_SSO_SCOPE = "sso:account:access"
 export const AWS_SSO_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -38,9 +38,14 @@ export type AwsSsoErrorCode =
   | "aws_sso_role_forbidden"
 
 export class AwsSsoError extends Error {
-  constructor(readonly code: AwsSsoErrorCode, message: string, readonly status?: number) {
+  readonly code: AwsSsoErrorCode
+  readonly status?: number
+
+  constructor(code: AwsSsoErrorCode, message: string, status?: number) {
     super(message)
     this.name = "AwsSsoError"
+    this.code = code
+    this.status = status
   }
 
   /** Worth retrying later with the same token: AWS or the network had a problem. */

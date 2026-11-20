@@ -8,7 +8,7 @@ import {
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { untaggedAutoEnabled, type AutoConfig } from "../shared/config.js"

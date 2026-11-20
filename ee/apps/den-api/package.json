@@ -53,6 +53,7 @@
     "@openwork-ee/cloud-runtime": "workspace:*",
     "@openwork-ee/den-db": "workspace:*",
     "@openwork-ee/gateway-catalog": "workspace:*",
+    "@openwork-ee/gateway-upstreams": "workspace:*",
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",

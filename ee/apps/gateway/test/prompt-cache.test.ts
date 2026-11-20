@@ -17,7 +17,7 @@ import { applyClaudePromptCache, bedrockCachesModel, isAnthropicModelId, parseOp
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes, gatewayPathPrefix } = await import("../src/gateway.js")
-const { createProviderCatalog } = await import("../src/provider-catalog.js")
+const { createProviderCatalog } = await import("@openwork-ee/gateway-catalog")
 
 const EPHEMERAL = { type: "ephemeral" }
 

@@ -20,10 +20,10 @@ import {
   AUTO_ROUTER_RESPONSE_THINKING_HEADER,
 } from "@openwork/types/den/auto-router"
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
-import { classifyProtocolFamily, type ProtocolFamily } from "../protocols.js"
+import { classifyProtocolFamily, type ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import type { GatewayMemberAccessRow } from "../provider-access.js"
 import type { GatewayContext } from "../middleware/gateway-auth.js"
-import type { ProviderCatalog } from "../provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { isEventStreamContentType, isJsonContentType } from "../relay.js"
 import { isAwsEventStreamContentType, anthropicTranslator, bedrockTranslator, isJsonObject, openAiChatTranslator, readAutoPrompt, type AutoRouteInfo, type JsonObject, googleTranslator, openAiResponsesTranslator, chatToolCallIds, type AutoTranslator, type TranslateResponseInput } from "@openwork-ee/gateway-protocols"
 import type { ReasoningStore } from "@openwork-ee/gateway-protocols"

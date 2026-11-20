@@ -29,7 +29,7 @@ import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthCl
 import { buildMicrosoftAuthorizeUrl, exchangeMicrosoftAuthorizationCode, microsoftOAuthNonce, verifyMicrosoftIdentity } from "../../llm/inference-provider-microsoft-oauth.js"
 import { memberSignInBinding, memberSignInBrand, memberSignInConfigurationError, providerMemberSignInMethod, providerMemberSignInScope, readAwsSsoSettings, type GatewayMemberSignInMethod } from "../../llm/gateway-member-sign-in.js"
 import { awsSsoFetch, pollAwsSsoSignIn, readAwsSsoAttempt, startAwsSsoSignIn } from "../../llm/inference-provider-aws-sso.js"
-import { AwsSsoError, logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
+import { AwsSsoError, logoutAwsSso } from "@openwork-ee/gateway-upstreams"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeUpstreamCredentials } from "../../llm/inference-provider-lifecycle.js"
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevCatalogProviders, getModelsDevProvider } from "../../llm/models-dev.js"

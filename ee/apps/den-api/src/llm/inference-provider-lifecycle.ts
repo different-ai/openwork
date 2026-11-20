@@ -3,8 +3,7 @@ import { GatewayApiKeyTable, GatewayKeyTable, GatewayCredentialSetTable, Gateway
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
+import { createInferenceEgressFetch, logoutAwsSso } from "@openwork-ee/gateway-upstreams"
 import { revokeGoogleToken } from "./inference-provider-google-oauth.js"
 import { providerMemberSignInMethod, providerMemberSignInScope, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 

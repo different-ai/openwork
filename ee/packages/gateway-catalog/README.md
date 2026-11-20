@@ -9,6 +9,8 @@ Den API (`ee/apps/den-api`) and Den Web (`ee/apps/den-web`), so each rule is wri
   providers derived from, or added beside, the models.dev catalog.
 - `model-alias.ts`: the `gwm_` model ids the Gateway hands out.
 - `credentials.ts`: which credential kinds and key names a provider can use.
+- `provider-catalog.ts`: a models.dev-shaped catalog as npm/api/env per provider id, with the
+  derived and synthetic providers. The Gateway reads the catalog file itself.
 
 It does no I/O and imports no database, server or environment code, so Den Web can use
 it in the browser. Code that reaches a provider or reads storage stays in the apps.
