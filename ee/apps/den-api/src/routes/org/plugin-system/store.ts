@@ -6271,13 +6271,11 @@ export async function importGithubPluginMcps(input: {
     throw new PluginArchRouteFailure(400, "no_supported_plugin_components", "No supported remote MCP servers or skills were selected from that plugin.")
   }
 
+  // No audience means private to the creator, who manages what they create.
   const access = input.access ?? {
     memberIds: [],
-    orgWide: true,
+    orgWide: false,
     teamIds: [],
-  }
-  if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
-    throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported plugin.")
   }
   const pluginName = input.name ?? importedPluginName(plan)
   const sourceRepositoryUrl = `https://github.com/${plan.repositoryFullName}`
