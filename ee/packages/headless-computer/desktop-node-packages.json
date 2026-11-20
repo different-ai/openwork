@@ -1,0 +1,13 @@
+{
+  "name": "openwork-desktop-node-packages",
+  "private": true,
+  "description": "Node packages every desktop computer has, so Agent Skills can require them without installing first (Anthropic's docx and pptx skills expect these). Installed with npm ci into /usr/local/lib/openwork-node, which NODE_PATH points to. Regenerate desktop-node-packages.lock.json with: node scripts/lock-desktop-node.mjs",
+  "dependencies": {
+    "docx": "9.15.4",
+    "pptxgenjs": "4.0.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-icons": "5.7.0",
+    "sharp": "0.35.5"
+  }
+}

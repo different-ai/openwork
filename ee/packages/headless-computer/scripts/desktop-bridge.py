@@ -286,8 +286,9 @@ def main(argv):
             raise ValueError('Provide only a shell command.')
         # The provider account can operate the bridge; the model's shell cannot.
         # No host or desktop bearer enters the command process environment.
+        # NODE_PATH: the image's preinstalled Node packages, so a script anywhere can require them.
         env = {'PATH': ENV['PATH'] + ':/home/openwork-command/.local/bin', 'HOME': '/home/openwork-command', 'LANG': 'C.UTF-8',
-               'WORKBOT_COMMAND': parsed['command']}
+               'NODE_PATH': '/usr/local/lib/openwork-node/node_modules', 'WORKBOT_COMMAND': parsed['command']}
         os.execve('/usr/sbin/runuser', ['runuser', '-u', 'openwork-command', '--', '/bin/bash', '-c',
                   'umask 007; cd /workspace; exec bash -c "$WORKBOT_COMMAND"'], env)
     return call(argument, body)
