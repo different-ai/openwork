@@ -34,7 +34,7 @@
  * /v1/mcp-connections with kind `native_provider`), the same replace handler
  * for name and access, and `saveOrgOAuthProviderClient` for the OAuth app.
  */
-import { manualOAuthEndpointSchema } from "@openwork/enterprise-mcp-client"
+import { manualOAuthEndpointSchema } from "@openwork/mcp-enterprise-client"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"

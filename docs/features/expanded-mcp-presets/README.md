@@ -31,7 +31,7 @@ Context7). The new presets:
 - Vercel — `https://mcp.vercel.com` (OAuth)
 
 Each OAuth preset uses the same CIMD/DCR auth pipeline as the existing presets
-(`packages/enterprise-mcp-client`); no new auth path was added.
+(`packages/mcp-enterprise-client`); no new auth path was added.
 
 Manage › Connectors › Add a connector by default (the additional rows follow
 Context7, each with its own brand mark):

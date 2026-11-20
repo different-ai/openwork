@@ -35,7 +35,7 @@ import {
   type EnterpriseMcpOAuthPersistence,
   type EnterpriseMcpPersistenceContext,
   type EnterpriseMcpRequestPhase,
-} from "@openwork/enterprise-mcp-client";
+} from "@openwork/mcp-enterprise-client";
 import { ApiError } from "./errors.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import { runtimeStorageDir } from "./runtime-db.js";

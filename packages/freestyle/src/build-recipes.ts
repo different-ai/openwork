@@ -98,7 +98,7 @@ ${world === "acme-web" ? "pnpm --filter @openwork-ee/den-api run build:workspace
 pnpm --filter @openwork/computer-use build
 pnpm --filter openwork-server build
 wait "$DESKTOP_BUILD"
-` : "pnpm --filter @openwork/types build\npnpm --filter @openwork/enterprise-mcp-client build"}
+` : "pnpm --filter @openwork/types build\npnpm --filter @openwork/mcp-enterprise-client build"}
 ${world === "desktop" ? "pnpm --filter @openwork/desktop rebuild:electron-native" : ""}
 ${ARCHIVE_COMPILED}`;
 }

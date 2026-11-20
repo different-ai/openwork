@@ -4,7 +4,7 @@ on:
   push:
     branches: [dev]
     paths:
-      - "packages/enterprise-mcp-mock-server/**"
+      - "packages/mcp-enterprise-mock-server/**"
       - "ee/apps/enterprise-mock-lab/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -42,11 +42,11 @@ jobs:
       - name: Install focused dependencies
         run: >-
           pnpm install --frozen-lockfile --ignore-scripts
-          --filter @openwork/enterprise-mcp-mock-server...
+          --filter @openwork/mcp-enterprise-mock-server...
           --filter @openwork-ee/enterprise-mock-lab...
 
       - name: Check reusable mock package
-        run: pnpm check:enterprise-mcp-mock-server
+        run: pnpm check:mcp-enterprise-mock-server
 
       - name: Check standalone mock lab
         run: pnpm check:enterprise-mock-lab

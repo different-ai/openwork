@@ -10,7 +10,7 @@ import {
   type EnterpriseMcpClient,
   type EnterpriseMcpConnection,
   type EnterpriseMcpDiagnosticEvent,
-} from "@openwork/enterprise-mcp-client"
+} from "@openwork/mcp-enterprise-client"
 import { env } from "../env.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
